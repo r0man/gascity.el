@@ -1,0 +1,41 @@
+; -*- mode: emacs-lisp; lexical-binding: t -*-
+
+;; Eldev configuration for gascity.el
+
+(eldev-use-package-archive 'gnu)
+(eldev-use-package-archive 'nongnu)
+(eldev-use-package-archive 'melpa)
+
+(setq eldev-project-main-file "lisp/gascity.el")
+
+;; beads.el is not on ELPA/MELPA.  Satisfy the `beads' dependency from a
+;; sibling checkout, and put its lisp dir (and the vui it bundles) on the
+;; load path so byte-compilation resolves `beads-meta'/`beads-command'
+;; even when run outside Eldev's managed package environment.
+(let ((beads-dir (expand-file-name "~/workspace/beads.el")))
+  (when (file-directory-p beads-dir)
+    (ignore-errors (eldev-use-local-dependency beads-dir 'source))
+    (push (expand-file-name "lisp" beads-dir) load-path)
+    (let ((vui (expand-file-name ".eldev/30.2/packages/vui-1.0.0" beads-dir)))
+      (when (file-directory-p vui)
+        (push vui load-path)))))
+
+;; Runtime dependencies (resolved from archives when not already present
+;; on the load path, e.g. via the system site-lisp).
+(eldev-add-extra-dependencies 'runtime '(:package transient :version "0.10.1"))
+(eldev-add-extra-dependencies 'runtime '(:package sesman :version "0.3.2"))
+(eldev-add-extra-dependencies 'runtime '(:package vui :version "1.0.0" :archive melpa))
+
+;; Development dependencies.
+(eldev-add-extra-dependencies 'test '(:package ert))
+(eldev-add-extra-dependencies 'lint '(:package package-lint :archive melpa))
+
+;; Source and test loading roots.
+(eldev-add-loading-roots 'build "lisp")
+(eldev-add-loading-roots 'test "lisp")
+(eldev-add-loading-roots 'test "lisp/test")
+(setf eldev-test-fileset '("lisp/test/*.el"))
+
+;; Keep build artifacts and polecat worktrees out of the project fileset.
+(setf eldev-standard-excludes
+      `(:or ,eldev-standard-excludes "worktrees/**"))

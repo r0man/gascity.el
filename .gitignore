@@ -4,3 +4,24 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Byte-compiled Emacs Lisp
+*.elc
+
+# Eldev
+/.eldev/
+/Eldev-local
+
+# Coverage
+/coverage-final.json
+/.undercover-report.json
+
+# Gas City runtime / polecat worktree artifacts
+/.gc/
+/.runtime/
+/worktrees/
+
+# Editor / OS noise
+*~
+\#*\#
+.DS_Store
