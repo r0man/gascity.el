@@ -1,0 +1,8 @@
+issue_prefix: gce
+issue-prefix: gce
+dolt.auto-start: false
+export.auto: false
+gc.endpoint_origin: inherited_city
+gc.endpoint_status: verified
+
+sync.remote: "git+ssh://git@github.com/r0man/gascity.el.git"
