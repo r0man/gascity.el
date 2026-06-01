@@ -28,8 +28,10 @@
 ;;                 after the prefix).
 ;;
 ;; `g' refreshes in place (preserving point); `RET' drills into the
-;; agent or bead at point; the agent action keys (`d'/`t'/`N'/`s'/`K'/
-;; `w'/`D'/`p') match the status dashboard and session list.
+;; agent or bead at point; `b' opens the rig's whole bead store as a
+;; beads.el board (DESIGN.md §4.3); the agent action keys
+;; (`d'/`t'/`N'/`s'/`K'/`w'/`D'/`p') match the status dashboard and
+;; session list.
 
 ;;; Code:
 
@@ -56,6 +58,12 @@
 (declare-function gascity-session-peek-at-point "gascity-action")
 
 ;;; Buffer
+
+(defvar-local gascity-rig-dashboard--rig-name nil
+  "The rig name this dashboard buffer is showing.
+Set when the buffer is created so buffer-wide actions (e.g. `b', which
+opens the rig's beads in beads.el) act on the dashboard's rig regardless
+of point.")
 
 (defun gascity-rig-dashboard--buffer-name (rig-name)
   "Return the dashboard buffer name for RIG-NAME."
@@ -256,7 +264,7 @@ degrades to a dim placeholder rather than blanking the dashboard."
          (gascity-rig--beads-section "In progress" inprog inprog-res)
          (gascity-rig--orders-vnode orders orders-res)
          (gascity-rig--dolt-vnode db dolt-res)
-         (vui-text (concat "g refresh · RET open · d dired · t tmux · "
+         (vui-text (concat "g refresh · RET open · b beads · d dired · t tmux · "
                            "N/s/K/w/D session · p peek · q bury")
                    :face 'gascity-dim)))))))
 
@@ -278,6 +286,14 @@ Falls back to pressing a widget, else reports there is nothing to open."
   (unless (gascity-section-refresh-instance (current-buffer))
     (user-error "No rig dashboard to refresh here")))
 
+(defun gascity-rig-dashboard-beads ()
+  "Open beads.el's board for this dashboard's rig, scoped to its store.
+Acts on the rig the dashboard is showing (DESIGN.md §4.3), not the row at
+point — the whole dashboard is one rig."
+  (interactive)
+  (gascity-rig-beads (or gascity-rig-dashboard--rig-name
+                         (user-error "No rig dashboard here"))))
+
 ;;;###autoload
 (defun gascity-rig-dashboard-at-point ()
   "Open the rig dashboard for the rig at point."
@@ -293,6 +309,7 @@ Falls back to pressing a widget, else reports there is nothing to open."
   :parent gascity-section-mode-map
   "g"   #'gascity-rig-dashboard-refresh
   "RET" #'gascity-rig-dashboard-activate
+  "b"   #'gascity-rig-dashboard-beads
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
   "N"   #'gascity-session-nudge-at-point
@@ -310,8 +327,8 @@ Falls back to pressing a widget, else reports there is nothing to open."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Rig dashboard  (g refresh · RET open · d dired · t tmux"
-                      " · N/s/K/w/D/p session · q bury)")))
+              (concat " Rig dashboard  (g refresh · RET open · b beads · d dired"
+                      " · t tmux · N/s/K/w/D/p session · q bury)")))
 
 ;;;###autoload
 (defun gascity-rig-dashboard (rig-name)
@@ -328,7 +345,8 @@ contextual rig."
   (let ((buf (get-buffer-create (gascity-rig-dashboard--buffer-name rig-name))))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-rig-dashboard-mode)
-        (gascity-rig-dashboard-mode)))
+        (gascity-rig-dashboard-mode))
+      (setq gascity-rig-dashboard--rig-name rig-name))
     (unless (gascity-section-refresh-instance buf)
       ;; vui-mount switch-to-buffers internally; contain that so the buffer is
       ;; displayed once, via pop-to-buffer, on both the cold and refresh paths.

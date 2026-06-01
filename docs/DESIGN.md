@@ -141,17 +141,36 @@ identically (same keymaps, same `g`/`q`, same collapsible idioms).
 gc owns beads through `gc bd <…>` with **prefix-based routing** (e.g. `exc-*` →
 example.city). gascity does **not** render beads. Instead:
 
-- A rig row / rig dashboard exposes **“beads”** → opens beads.el's bead list
-  **scoped to that rig's store** (resolve the rig's `.beads` path / prefix from
-  `gc rig status --json`, hand it to beads.el's list command).
+- A rig row / rig dashboard exposes **“beads”** (`b`) → opens beads.el's board
+  **scoped to that rig's store** (resolve the rig's repo `path` — the directory
+  holding its `.beads/` — from `gc rig status`/`gc rig list --json`, bind
+  `default-directory` to it, then call beads.el).
 - A routed/ready bead reference (in status, sling, convoy views) → `RET` opens
-  **beads.el's bead detail** (already a vui buffer).
+  **beads.el's bead detail** (already a vui buffer), scoped to the store that
+  owns the bead's id prefix.
 - “Sling” / “route” actions are gascity's (they call `gc sling` or set
   `gc.routed_to`); the *display* of the resulting beads is beads.el's.
 
-Open question for §9: does beads.el's list command already accept an explicit
-store/prefix arg, or do we set its store via `default-directory` / a dynamic
-var? This determines how clean the scoping is.
+**Scoping mechanism (resolves the §9.1 open question).** beads.el's
+high-level entry points — `beads-show` (detail), `beads-dashboard` (board),
+`beads-ready`/`beads-blocked` (lists) — resolve *which* store to act on from
+`default-directory` (via `beads--project-root`, which walks up for a
+`.beads`/VC root). There is **no explicit store/prefix argument** on these
+interactive commands; the lower `beads-command` layer does carry `--db` and
+`--directory`/`-C` slots, but the UI entries are purely directory-driven. So
+gascity scopes a delegated view by **binding `default-directory` to the rig's
+repo path**. A freshly created beads buffer inherits that bound directory, and
+the detail/list entries persist it buffer-locally, so the scoping survives `g`
+refreshes. (The `beads-list` *transient* is deliberately **not** used for
+programmatic scoping: its suffixes read `default-directory` when the user later
+picks one, after the `let` binding has unwound — so the rig's `b` opens the
+directory-scoped board `beads-dashboard` instead.)
+
+Bead **detail** is scoped the same way, keyed off the bead id's prefix: gc
+routes beads by prefix (`gce-*` → the gascity.el rig), so the id determines the
+owning store regardless of which (often city-wide) view the reference appears
+in. `gascity-bead-show` maps the prefix to that rig's `path` and binds
+`default-directory` before delegating to `beads-show`.
 
 ---
 
@@ -260,7 +279,14 @@ data-tick for expensive derivations.
   the subject. `RET` from the rig list, session list, and status dashboard opens
   these instead of the former Dired/`beads-show` stand-ins. Adds `peek`
   (read-only output capture) and `runtime drain` to the command surface.
-- ⬜ **P5 — beads.el bead-UI delegation.** Per-rig scoping done cleanly (§4.3).
+- ✅ **P5 — beads.el bead-UI delegation.** Per-rig scoping done cleanly (§4.3,
+  §9.1): gascity binds `default-directory` to a rig's repo `path` and hands off
+  to beads.el, which resolves the store from that directory. `gascity-rig-beads`
+  opens the rig's board (`beads-dashboard`); the rig list and rig dashboard bind
+  it to `b`, and the `gascity` transient adds `b` (prompts, defaulting to the
+  contextual rig). Bead `RET` (`gascity-bead-show`) now scopes detail to the
+  store owning the bead id's prefix, so convoy / rig-dashboard / session-detail
+  references open against the right store instead of the ambient directory.
 - ⬜ **P6 — Polish.** completion, error surfaces, `whats-new`, Eldev/guix.scm.
 
 The MVP (P0 + P2 + P3 + agent actions + P1 dispatch + P4 detail views) is
@@ -281,9 +307,15 @@ delivered and verified against a live town; it is already a usable porcelain.
 
 ## 9. Open decisions
 
-1. **beads.el store scoping API** (§4.3) — explicit arg vs `default-directory`
-   vs dynamic var. Drives how clean rig-scoped bead views are. *Needs a look at
-   beads.el's list command signature.*
+1. **beads.el store scoping API** (§4.3) — *Resolved.* beads.el's interactive
+   entries (`beads-show`, `beads-dashboard`, `beads-ready`) take no store/prefix
+   argument; they resolve the store from `default-directory` via
+   `beads--project-root`. (The `beads-command` layer carries `--db`/`--directory`
+   slots, but the UI commands are directory-driven, and the `beads-list`
+   transient can't be scoped programmatically — its suffixes read
+   `default-directory` after the `let` unwinds.) gascity therefore binds
+   `default-directory` to the rig's repo `path` and lets beads.el find the
+   `.beads/` there. See §4.3.
 2. **magit-section dependency** — the old vui doc kept magit-section for status;
    greenfield + vui-first means we can drop it (beads-section-mode is vui). Keep
    it out unless a view truly needs the tree. Decision: **vui-only** for status.
@@ -328,8 +360,12 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    list, and status dashboard now opens them instead of the Dired stand-in
    (gce-3iq). Added `gc session peek` and `gc runtime drain` to the command
    surface for the detail action bar.
-4. **beads.el bead-UI delegation (P5).** Open beads.el's list/detail scoped to a
-   rig's store; today convoy `RET` calls `beads-show` on the bead id.
+4. ✅ **beads.el bead-UI delegation (P5).** `gascity-rig-beads` opens beads.el's
+   board scoped to a rig's store (rig list / rig dashboard `b`, plus a `b` entry
+   on the `gascity` transient); `gascity-bead-show` scopes bead detail to the
+   store owning the bead's id prefix, so convoy / rig-dashboard / session `RET`
+   delegate against the right store instead of the ambient directory (gce-afq,
+   §4.3 / §9.1).
 5. **Mail row shape.** The live inbox was empty, so mail columns use tolerant
    key-guessing; confirm the real `gc mail inbox` message schema and tighten.
 6. **tmux socket from gc.** gc does not expose the tmux server socket in

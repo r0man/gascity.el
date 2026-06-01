@@ -29,9 +29,15 @@
 (require 'wid-edit)
 (require 'gascity-custom)
 (require 'gascity-context)
+(require 'gascity-reader)
 (require 'gascity-terminal)
 
-(declare-function beads-show "beads")
+;; Bead UI is delegated to beads.el (DESIGN.md §4.3).  Its entry points
+;; live in modules we do not hard-require (so this package byte-compiles
+;; without beads on the load path); reference them by name, soft-require
+;; their providing module at call time, and guard with `fboundp'.
+(declare-function beads-show "beads-command-show")
+(declare-function beads-dashboard "beads-dashboard")
 
 ;;; Base mode
 
@@ -181,21 +187,112 @@ gc emits either a bare array of beads or an object wrapping them under
   (let ((beads (if (vectorp data) data (alist-get 'issues data))))
     (append beads nil)))
 
-(defun gascity-bead-show (id)
-  "Open bead ID in beads.el, or signal a `user-error'.
-gascity does not render beads itself; it hands the id to beads.el's
-existing detail view (DESIGN.md §4.3)."
-  (cond ((or (null id) (and (stringp id) (string-empty-p id)))
-         (user-error "No bead to show"))
-        ((fboundp 'beads-show) (beads-show id))
-        (t (user-error "beads.el is not available to show %s" id))))
+;;; Bead-store scoping (DESIGN.md §4.3, §9.1)
+;;
+;; beads.el resolves *which* store to act on from `default-directory'
+;; (its entries walk up for a `.beads'/VC root; there is no store/prefix
+;; argument on the high-level commands).  So gascity scopes a delegated
+;; view by binding `default-directory' to the rig's repo path — the
+;; directory holding its `.beads/', which gc reports as `path'.
+
+(defun gascity-beads--rig-path (rig)
+  "Return the absolute store directory for RIG, or nil.
+RIG is a rig name (string) or a rig alist as returned by `gc rig
+list'/`gc rig status'.  The store directory is the rig's repo `path' (the
+directory that holds its `.beads/').  A name is resolved against
+`gascity-reader-rigs'; any failure degrades to nil."
+  (let ((alist (cond ((and (consp rig) (not (stringp rig))) rig)
+                     ((stringp rig)
+                      (ignore-errors
+                        (seq-find (lambda (r) (equal (alist-get 'name r) rig))
+                                  (append (gascity-reader-rigs) nil)))))))
+    (when-let* ((path (alist-get 'path alist))
+                ((stringp path))
+                ((not (string-empty-p path))))
+      (file-name-as-directory (expand-file-name path)))))
+
+(defun gascity-beads--id-prefix (id)
+  "Return the store prefix of bead ID (text before the first `-'), or nil."
+  (when (and (stringp id) (string-match "\\`\\([^-]+\\)-" id))
+    (match-string 1 id)))
+
+(defun gascity-beads--bead-path (id)
+  "Return the store directory owning bead ID, or nil.
+Gas City routes beads by id prefix (`gce-*' -> the gascity.el rig); this
+maps ID's prefix to the owning rig's store via `gascity-reader-rigs'.
+Failures degrade to nil so callers fall back to the ambient directory."
+  (when-let* ((prefix (gascity-beads--id-prefix id))
+              (rig (ignore-errors
+                     (seq-find (lambda (r) (equal (alist-get 'prefix r) prefix))
+                               (append (gascity-reader-rigs) nil)))))
+    (gascity-beads--rig-path rig)))
+
+(defun gascity-bead-show (id &optional directory)
+  "Open bead ID in beads.el, scoped to its rig's bead store.
+gascity does not render beads itself; it hands ID to beads.el's detail
+view (DESIGN.md §4.3).  beads.el resolves the store from
+`default-directory', so bind it to DIRECTORY when supplied, else to the
+store of the rig that owns ID's prefix; fall back to the ambient
+directory when neither resolves (a single-rig checkout already sits in
+the right tree).  Resolves DESIGN §9.1 by directory binding."
+  (cond
+   ((or (null id) (and (stringp id) (string-empty-p id)))
+    (user-error "No bead to show"))
+   (t
+    (unless (fboundp 'beads-show)
+      (require 'beads-command-show nil t))
+    (if (fboundp 'beads-show)
+        (let ((default-directory
+               (or (and directory (file-name-as-directory
+                                   (expand-file-name directory)))
+                   (gascity-beads--bead-path id)
+                   default-directory)))
+          (beads-show id))
+      (user-error "beads.el is not available to show %s" id)))))
 
 ;;;###autoload
 (defun gascity-bead-visit ()
-  "Open the bead at point in beads.el."
+  "Open the bead at point in beads.el, scoped to its store."
   (interactive)
   (gascity-bead-show (or (gascity-bead-at-point)
                          (user-error "No bead at point"))))
+
+;;; Rig beads — delegate a rig's whole store to beads.el (DESIGN.md §4.3)
+
+;;;###autoload
+(defun gascity-rig-beads (rig)
+  "Open beads.el's board for RIG, scoped to that rig's bead store.
+RIG is a rig name (string) or a rig alist.  Delegates to beads.el's
+project board (`beads-dashboard') with `default-directory' bound to
+RIG's store directory, so beads.el renders that rig's beads (DESIGN.md
+§4.3).  Called interactively, prompts for the rig, defaulting to the
+contextual one."
+  (interactive
+   (list (completing-read
+          "Beads for rig: "
+          (condition-case nil
+              (delq nil (mapcar (lambda (r) (alist-get 'name r))
+                                (append (gascity-reader-rigs) nil)))
+            (gascity-error nil))
+          nil nil nil nil (gascity-context-rig-name))))
+  (let ((name (if (stringp rig) rig (alist-get 'name rig)))
+        (dir (gascity-beads--rig-path rig)))
+    (unless dir
+      (user-error "Could not resolve the bead store for rig %s" (or name "?")))
+    (unless (fboundp 'beads-dashboard)
+      (require 'beads-dashboard nil t))
+    (if (fboundp 'beads-dashboard)
+        (let ((default-directory dir))
+          (beads-dashboard))
+      (user-error "beads.el is not available to show beads for %s"
+                  (or name "?")))))
+
+;;;###autoload
+(defun gascity-rig-beads-at-point ()
+  "Open beads.el's board for the rig at point, scoped to its store."
+  (interactive)
+  (gascity-rig-beads (or (gascity-rig-at-point)
+                         (user-error "No rig at point"))))
 
 ;;; Rig at point
 

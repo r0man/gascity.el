@@ -42,7 +42,10 @@
 (require 'gascity-command)
 (require 'gascity-types)
 
-(declare-function beads-show "beads")
+;; Bead delegation (convoy `RET' -> beads.el) goes through
+;; `gascity-bead-show' in gascity-section, which scopes the store; the
+;; rig list's `b' opens a rig's beads via `gascity-rig-beads-at-point'.
+;; Both live in gascity-section, hard-required above.
 
 ;; At-point mutating actions live in gascity-action (loaded after this
 ;; module via gascity.el); the list keymaps below bind keys to them.
@@ -334,6 +337,7 @@ and adds `g' refresh, `/' filter, and `RET'."
   "g"   #'gascity-rig-list-refresh
   "/"   #'gascity-rig-list-filter
   "RET" #'gascity-rig-dashboard-at-point
+  "b"   #'gascity-rig-beads-at-point
   "d"   #'gascity-rig-list-dired
   "s"   #'gascity-rig-suspend-at-point
   "r"   #'gascity-rig-resume-at-point
@@ -341,9 +345,10 @@ and adds `g' refresh, `/' filter, and `RET'."
 
 (define-derived-mode gascity-rig-list-mode tabulated-list-mode "GC-Rigs"
   "Major mode listing the rigs registered in the city.
-`RET' opens the rig's dashboard; `d' opens the rig's directory in Dired;
-`s' suspends, `r' resumes, and `R' restarts (kills the agent sessions
-of) the rig at point.
+`RET' opens the rig's dashboard; `b' opens the rig's beads in beads.el
+\(scoped to its store); `d' opens the rig's directory in Dired; `s'
+suspends, `r' resumes, and `R' restarts (kills the agent sessions of)
+the rig at point.
 \\{gascity-rig-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
@@ -528,12 +533,10 @@ The entry id is the convoy's bead id, so `RET' can open it in beads.el."
                   (format "%d/%d" closed total)))))
 
 (defun gascity-convoy-list-visit ()
-  "Open the convoy bead at point in beads.el."
+  "Open the convoy bead at point in beads.el, scoped to its store."
   (interactive)
-  (let ((id (tabulated-list-get-id)))
-    (cond ((not id) (user-error "No convoy at point"))
-          ((fboundp 'beads-show) (beads-show id))
-          (t (user-error "beads.el is not available to show %s" id)))))
+  (gascity-bead-show (or (tabulated-list-get-id)
+                         (user-error "No convoy at point"))))
 
 (defun gascity-convoy-list-refresh ()
   "Refresh the convoy list, applying the current filter."

@@ -34,8 +34,10 @@
 ;; tmux attach via beads.el's terminal module (`gascity-terminal') — the
 ;; mutating-command dispatch (`gascity-action'), and the vui detail views:
 ;; the rig dashboard (`gascity-rig') and the session/polecat detail
-;; (`gascity-session').  Bead-UI delegation and polish arrive in later
-;; phases — see docs/DESIGN.md.
+;; (`gascity-session').  Bead UI is delegated to beads.el, scoped to a
+;; rig's store (`gascity-rig-beads', and store-scoped bead detail in
+;; `gascity-section'); remaining polish arrives in later phases — see
+;; docs/DESIGN.md.
 
 ;;; Code:
 
@@ -90,7 +92,8 @@ the lists and the status dashboard."
   ["Gas City"
    ["Overview"
     ("s" "Status dashboard" gascity-status)
-    ("d" "Rig dashboard…" gascity-rig-dashboard)]
+    ("d" "Rig dashboard…" gascity-rig-dashboard)
+    ("b" "Beads (rig)…" gascity-rig-beads)]
    ["Lists"
     ("r" "Rigs" gascity-rig-list)
     ("a" "Sessions" gascity-session-list)

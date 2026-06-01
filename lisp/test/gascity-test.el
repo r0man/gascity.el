@@ -388,6 +388,88 @@ JSONL output never mis-reads as a failure."
                  '(((id . "c")))))
   (should (null (gascity-section-beads []))))
 
+;;; Bead-UI delegation / store scoping (DESIGN.md §4.3, §9.1)
+
+(ert-deftest gascity-test-beads-id-prefix ()
+  "A bead id's store prefix is the text before the first hyphen."
+  (should (equal (gascity-beads--id-prefix "gce-afq") "gce"))
+  (should (equal (gascity-beads--id-prefix "bl-1jp") "bl"))
+  (should (equal (gascity-beads--id-prefix "exc-12ab") "gxc"))
+  (should (null (gascity-beads--id-prefix "noprefix")))
+  (should (null (gascity-beads--id-prefix "")))
+  (should (null (gascity-beads--id-prefix nil))))
+
+(ert-deftest gascity-test-beads-rig-path-from-alist ()
+  "A rig alist's store directory is its `path', a directory name."
+  (should (equal (gascity-beads--rig-path '((name . "gascity.el")
+                                            (path . "/home/x/gascity.el")
+                                            (prefix . "gce")))
+                 "/home/x/gascity.el/"))
+  (should (null (gascity-beads--rig-path '((name . "x") (path)))))
+  (should (null (gascity-beads--rig-path '((name . "x") (path . ""))))))
+
+(ert-deftest gascity-test-beads-rig-path-from-name ()
+  "A rig name resolves to its `path' via the rig list."
+  (cl-letf (((symbol-function 'gascity-reader-rigs)
+             (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))
+                         ((name . "bright-lights") (path . "/r/bl") (prefix . "bl"))])))
+    (should (equal (gascity-beads--rig-path "gascity.el") "/r/gce/"))
+    (should (equal (gascity-beads--rig-path "bright-lights") "/r/bl/"))
+    (should (null (gascity-beads--rig-path "nope")))))
+
+(ert-deftest gascity-test-beads-bead-path ()
+  "A bead id maps to the store of the rig whose prefix it carries."
+  (cl-letf (((symbol-function 'gascity-reader-rigs)
+             (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))
+                         ((name . "bright-lights") (path . "/r/bl") (prefix . "bl"))])))
+    (should (equal (gascity-beads--bead-path "gce-afq") "/r/gce/"))
+    (should (equal (gascity-beads--bead-path "bl-1") "/r/bl/"))
+    (should (null (gascity-beads--bead-path "zz-9")))       ; unknown prefix
+    (should (null (gascity-beads--bead-path "noprefix")))))  ; no prefix at all
+
+(ert-deftest gascity-test-bead-show-scopes-default-directory ()
+  "`gascity-bead-show' binds `default-directory' to the bead's rig store."
+  (let (seen-dir seen-id)
+    (cl-letf (((symbol-function 'gascity-reader-rigs)
+               (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))
+              ((symbol-function 'beads-show)
+               (lambda (id) (setq seen-id id seen-dir default-directory))))
+      ;; Prefix resolution picks the owning rig's store.
+      (gascity-bead-show "gce-afq")
+      (should (equal seen-id "gce-afq"))
+      (should (equal seen-dir "/r/gce/"))
+      ;; An explicit directory wins over prefix resolution.
+      (gascity-bead-show "gce-afq" "/explicit")
+      (should (equal seen-dir "/explicit/"))
+      ;; An unresolvable prefix degrades to the ambient directory.
+      (let ((default-directory "/ambient/"))
+        (gascity-bead-show "zz-9")
+        (should (equal seen-dir "/ambient/"))))))
+
+(ert-deftest gascity-test-bead-show-rejects-empty ()
+  "`gascity-bead-show' refuses a nil or empty id before touching beads.el."
+  (should-error (gascity-bead-show nil) :type 'user-error)
+  (should-error (gascity-bead-show "") :type 'user-error))
+
+(ert-deftest gascity-test-rig-beads-scopes-default-directory ()
+  "`gascity-rig-beads' opens the board with `default-directory' at the store."
+  (let (seen-dir)
+    (cl-letf (((symbol-function 'gascity-reader-rigs)
+               (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))
+              ((symbol-function 'beads-dashboard)
+               (lambda () (setq seen-dir default-directory))))
+      (gascity-rig-beads "gascity.el")
+      (should (equal seen-dir "/r/gce/"))
+      ;; A rig alist works directly, no rig-list lookup needed.
+      (setq seen-dir nil)
+      (gascity-rig-beads '((name . "x") (path . "/r/x") (prefix . "x")))
+      (should (equal seen-dir "/r/x/")))))
+
+(ert-deftest gascity-test-rig-beads-unresolved-errors ()
+  "`gascity-rig-beads' errors when the rig's store cannot be resolved."
+  (cl-letf (((symbol-function 'gascity-reader-rigs) (lambda () [])))
+    (should-error (gascity-rig-beads "ghost") :type 'user-error)))
+
 (ert-deftest gascity-test-rig-db-for-prefix ()
   "The rig's Dolt database is matched on its bead prefix."
   (let ((dbs [((name . "hq")) ((name . "gce") (commits . 5)) ((name . "beads"))]))
