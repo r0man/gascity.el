@@ -29,7 +29,7 @@
 (require 'wid-edit)
 (require 'gascity-custom)
 (require 'gascity-context)
-(require 'gascity-reader)
+(require 'gascity-types)         ; gascity-command-rig-list! (rig-store lookup)
 (require 'gascity-terminal)
 
 ;; Bead UI is delegated to beads.el (DESIGN.md §4.3).  Its entry points
@@ -207,12 +207,12 @@ gc emits either a bare array of beads or an object wrapping them under
 RIG is a rig name (string) or a rig alist as returned by `gc rig
 list'/`gc rig status'.  The store directory is the rig's repo `path' (the
 directory that holds its `.beads/').  A name is resolved against
-`gascity-reader-rigs'; any failure degrades to nil."
+`gascity-command-rig-list!'; any failure degrades to nil."
   (let ((alist (cond ((and (consp rig) (not (stringp rig))) rig)
                      ((stringp rig)
                       (ignore-errors
                         (seq-find (lambda (r) (equal (alist-get 'name r) rig))
-                                  (append (gascity-reader-rigs) nil)))))))
+                                  (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))))))
     (when-let* ((path (alist-get 'path alist))
                 ((stringp path))
                 ((not (string-empty-p path))))
@@ -226,12 +226,12 @@ directory that holds its `.beads/').  A name is resolved against
 (defun gascity-beads--bead-path (id)
   "Return the store directory owning bead ID, or nil.
 Gas City routes beads by id prefix (`gce-*' -> the gascity.el rig); this
-maps ID's prefix to the owning rig's store via `gascity-reader-rigs'.
+maps ID's prefix to the owning rig's store via `gascity-command-rig-list!'.
 Failures degrade to nil so callers fall back to the ambient directory."
   (when-let* ((prefix (gascity-beads--id-prefix id))
               (rig (ignore-errors
                      (seq-find (lambda (r) (equal (alist-get 'prefix r) prefix))
-                               (append (gascity-reader-rigs) nil)))))
+                               (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))))
     (gascity-beads--rig-path rig)))
 
 (defun gascity-bead-show (id &optional directory)
@@ -279,7 +279,7 @@ contextual one."
           "Beads for rig: "
           (condition-case nil
               (delq nil (mapcar (lambda (r) (alist-get 'name r))
-                                (append (gascity-reader-rigs) nil)))
+                                (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))
             (gascity-error nil))
           nil nil nil nil (gascity-context-rig-name))))
   (let ((name (if (stringp rig) rig (alist-get 'name rig)))

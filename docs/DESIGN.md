@@ -81,7 +81,7 @@ All symbols prefixed `gascity-`; executable defcustom defaults to `"gc"`.
 - `gascity-custom.el` — defgroup, `gascity-executable` ("gc"), faces, terminal backend choice.
 - `gascity-error.el` — `define-error` conditions (`gascity-command-error`, `gascity-json-parse-error`, `gascity-validation-error`).
 - `gascity-context.el` — resolve current city/rig from `default-directory` (walk up) or explicit selection; cache.
-- `gascity-reader.el` — run `gc … --json` via `process-file`, capture stdout/stderr/exit, parse JSON → alist/vector; typed accessors (`gascity-reader-rigs`, `-sessions`, `-convoys`, …).
+- `gascity-reader.el` — **the** read primitive layer (the single place `gc` is invoked): `gascity-reader-run` (sync `process-file`, captures stdout/stderr/exit), `gascity-reader-parse-json` (JSON → alist/vector), `gascity-reader-read` (sync `gc … --json` → payload), and `gascity-reader-read-async` (the `make-process` variant backing `vui-use-async`). There are deliberately **no** per-subcommand `gascity-reader-*` accessors: named sync reads are the `gascity-command-*!` bang functions below (e.g. `(gascity-command-rig-list!)` for the rig list), so there is one documented read path, not two parallel ones.
 
 **Command layer (built on beads-meta)**
 - `gascity-command.el` — `gascity-defcommand` macro + EIEIO base classes

@@ -8,7 +8,13 @@
 
 ;; The data plane.  Every gascity view is a function of `gc ... --json'
 ;; output, and this module is the single place that runs `gc' and turns
-;; its JSON into Elisp data.
+;; its JSON into Elisp data.  It is the *only* read API: the typed,
+;; named-command layer (`gascity-command-*!' bang functions, built on
+;; `gascity-command'/`gascity-types') and the views both reach `gc'
+;; through these primitives.  There is deliberately no second set of
+;; per-subcommand sync accessors here — a `gc status' read is
+;; `(gascity-command-status!)', a rig list is
+;; `(gascity-command-rig-list!)', and so on.
 ;;
 ;; Layers, lowest first:
 ;;
@@ -18,9 +24,9 @@
 ;; - `gascity-reader-parse-json' decode a JSON string to alist/vector.
 ;; - `gascity-reader-read'       run `gc ARGS... --json' and return the
 ;;                               parsed payload, signalling on failure.
-;; - typed accessors             `gascity-reader-status', `-rigs',
-;;                               `-sessions', `-convoys', ... — each a
-;;                               thin wrapper returning decoded data.
+;; - `gascity-reader-read-async' the make-process variant backing
+;;                               `vui-use-async' (status dashboard, detail
+;;                               views), with stderr captured separately.
 
 ;;; Code:
 
@@ -182,23 +188,9 @@ whose returned process is auto-killed on key change or unmount."
                                   (error-message-string err))))
        nil))))
 
-;;; Typed accessors
-
-(defun gascity-reader-status ()
-  "Return `gc status' as an alist."
-  (gascity-reader-read "status"))
-
-(defun gascity-reader-rigs ()
-  "Return the rigs registered in the city as a vector of alists."
-  (alist-get 'rigs (gascity-reader-read "rig" "list")))
-
-(defun gascity-reader-sessions ()
-  "Return the city's sessions as a vector of alists."
-  (alist-get 'sessions (gascity-reader-read "session" "list")))
-
-(defun gascity-reader-convoys ()
-  "Return the city's convoys as a vector of alists."
-  (alist-get 'convoys (gascity-reader-read "convoy" "list")))
+;; Named per-subcommand reads are the `gascity-command-*!' bang
+;; functions (see `gascity-command'/`gascity-types'); there is no
+;; parallel set of `gascity-reader-*' accessors.
 
 (provide 'gascity-reader)
 ;;; gascity-reader.el ends here

@@ -114,7 +114,7 @@ This is the interactive backend for the quick mutations; the streaming
   "Return the city's rig names, or nil when `gc' is unreachable."
   (condition-case nil
       (delq nil (mapcar (lambda (r) (alist-get 'name r))
-                        (append (gascity-reader-rigs) nil)))
+                        (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))
     (gascity-error nil)))
 
 (defun gascity-action--session-names ()
@@ -123,7 +123,7 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
   (condition-case nil
       (delq nil (mapcar (lambda (s) (or (alist-get 'agent_name s)
                                         (alist-get 'name s)))
-                        (append (gascity-reader-sessions) nil)))
+                        (append (alist-get 'sessions (gascity-command-session-list!)) nil)))
     (gascity-error nil)))
 
 (defun gascity-action--order-names ()

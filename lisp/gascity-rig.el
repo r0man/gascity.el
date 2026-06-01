@@ -39,7 +39,8 @@
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
-(require 'gascity-reader)
+(require 'gascity-reader)             ; gascity-reader-read-async (per-section loads)
+(require 'gascity-types)             ; gascity-command-rig-list! (rig-name completion)
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters (--str, --vector->list)
 (require 'gascity-status)            ; session-map + agent-plist join helpers
@@ -339,7 +340,7 @@ contextual rig."
    (list (completing-read "Rig: "
                           (condition-case nil
                               (delq nil (mapcar (lambda (r) (alist-get 'name r))
-                                                (append (gascity-reader-rigs) nil)))
+                                                (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))
                             (gascity-error nil))
                           nil nil nil nil (gascity-context-rig-name))))
   (let ((buf (get-buffer-create (gascity-rig-dashboard--buffer-name rig-name))))

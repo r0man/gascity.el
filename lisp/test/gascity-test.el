@@ -464,18 +464,20 @@ JSONL output never mis-reads as a failure."
 
 (ert-deftest gascity-test-beads-rig-path-from-name ()
   "A rig name resolves to its `path' via the rig list."
-  (cl-letf (((symbol-function 'gascity-reader-rigs)
-             (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))
-                         ((name . "bright-lights") (path . "/r/bl") (prefix . "bl"))])))
+  (cl-letf (((symbol-function 'gascity-command-rig-list!)
+             (lambda (&rest _)
+               '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))
+                          ((name . "bright-lights") (path . "/r/bl") (prefix . "bl"))])))))
     (should (equal (gascity-beads--rig-path "gascity.el") "/r/gce/"))
     (should (equal (gascity-beads--rig-path "bright-lights") "/r/bl/"))
     (should (null (gascity-beads--rig-path "nope")))))
 
 (ert-deftest gascity-test-beads-bead-path ()
   "A bead id maps to the store of the rig whose prefix it carries."
-  (cl-letf (((symbol-function 'gascity-reader-rigs)
-             (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))
-                         ((name . "bright-lights") (path . "/r/bl") (prefix . "bl"))])))
+  (cl-letf (((symbol-function 'gascity-command-rig-list!)
+             (lambda (&rest _)
+               '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))
+                          ((name . "bright-lights") (path . "/r/bl") (prefix . "bl"))])))))
     (should (equal (gascity-beads--bead-path "gce-afq") "/r/gce/"))
     (should (equal (gascity-beads--bead-path "bl-1") "/r/bl/"))
     (should (null (gascity-beads--bead-path "zz-9")))       ; unknown prefix
@@ -484,8 +486,9 @@ JSONL output never mis-reads as a failure."
 (ert-deftest gascity-test-bead-show-scopes-default-directory ()
   "`gascity-bead-show' binds `default-directory' to the bead's rig store."
   (let (seen-dir seen-id)
-    (cl-letf (((symbol-function 'gascity-reader-rigs)
-               (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
               ((symbol-function 'beads-show)
                (lambda (id) (setq seen-id id seen-dir default-directory))))
       ;; Prefix resolution picks the owning rig's store.
@@ -508,8 +511,9 @@ JSONL output never mis-reads as a failure."
 (ert-deftest gascity-test-rig-beads-scopes-default-directory ()
   "`gascity-rig-beads' opens the board with `default-directory' at the store."
   (let (seen-dir)
-    (cl-letf (((symbol-function 'gascity-reader-rigs)
-               (lambda () [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
               ((symbol-function 'beads-dashboard)
                (lambda () (setq seen-dir default-directory))))
       (gascity-rig-beads "gascity.el")
@@ -521,7 +525,8 @@ JSONL output never mis-reads as a failure."
 
 (ert-deftest gascity-test-rig-beads-unresolved-errors ()
   "`gascity-rig-beads' errors when the rig's store cannot be resolved."
-  (cl-letf (((symbol-function 'gascity-reader-rigs) (lambda () [])))
+  (cl-letf (((symbol-function 'gascity-command-rig-list!)
+             (lambda (&rest _) '((rigs . [])))))
     (should-error (gascity-rig-beads "ghost") :type 'user-error)))
 
 (ert-deftest gascity-test-rig-db-for-prefix ()
