@@ -118,6 +118,70 @@ non-zero exit and `gascity-json-parse-error' on malformed JSON."
                     :exit-code exit-code :stdout stdout :stderr stderr)))
     (gascity-reader-parse-json stdout)))
 
+;;; Asynchronous reader
+
+(defun gascity-reader-read-async (args callback &optional errback)
+  "Run `gc ARGS... --json' asynchronously and parse its output.
+ARGS are the subcommand tokens and any flags (strings); `--json' is
+appended unless already present.
+
+On a clean exit CALLBACK is called with the decoded payload
+\(alist/vector).  On any failure — the executable cannot be launched, a
+non-zero exit, or malformed JSON — ERRBACK, when non-nil, is called with
+a human-readable error string; CALLBACK is not.
+
+Standard error is captured separately so a stray warning on stderr never
+corrupts the JSON parsed from stdout.  Returns the process object, or
+nil when it could not be started.  Designed to drive `vui-use-async',
+whose returned process is auto-killed on key change or unmount."
+  (let* ((full-args (if (member "--json" args)
+                        args
+                      (append args (list "--json"))))
+         (output "")
+         (stderr-buffer (generate-new-buffer " *gascity-gc-stderr*")))
+    (when (fboundp 'gascity--log)
+      (gascity--log 'info "Running async: %s %s"
+                    gascity-executable (mapconcat #'identity full-args " ")))
+    (condition-case err
+        (make-process
+         :name "gascity-gc"
+         :command (cons gascity-executable full-args)
+         :noquery t
+         :connection-type 'pipe
+         :stderr stderr-buffer
+         :filter (lambda (_proc chunk) (setq output (concat output chunk)))
+         :sentinel
+         (lambda (proc _event)
+           (when (memq (process-status proc) '(exit signal))
+             (let ((code (process-exit-status proc)))
+               (unwind-protect
+                   (cond
+                    ((not (eql code 0))
+                     (when (fboundp 'gascity--log)
+                       (gascity--log 'error "Async gc exited %s: %s" code
+                                     (mapconcat #'identity args " ")))
+                     (when errback
+                       (funcall errback
+                                (format "gc %s failed (exit %s)"
+                                        (mapconcat #'identity args " ") code))))
+                    (t
+                     (condition-case perr
+                         (let ((data (gascity-reader-parse-json output)))
+                           (funcall callback data))
+                       (gascity-json-parse-error
+                        (when errback
+                          (funcall errback (error-message-string perr)))))))
+                 (when (buffer-live-p stderr-buffer)
+                   (kill-buffer stderr-buffer)))))))
+      (error
+       (when (buffer-live-p stderr-buffer)
+         (kill-buffer stderr-buffer))
+       (when errback
+         (funcall errback (format "Cannot run %s: %s"
+                                  gascity-executable
+                                  (error-message-string err))))
+       nil))))
+
 ;;; Typed accessors
 
 (defun gascity-reader-status ()

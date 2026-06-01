@@ -48,6 +48,36 @@ Only consulted when `gascity-enable-debug' is non-nil.
                  (const :tag "Everything, including output" verbose))
   :group 'gascity)
 
+;;; Terminal backend
+
+(defcustom gascity-terminal-backend nil
+  "Terminal backend for attaching to an agent's tmux session.
+gascity delegates the actual spawn to beads.el's terminal module
+\(`beads-terminal-spawn'); this choice selects which backend class it
+uses.  When nil, beads auto-detects the best available backend in the
+order vterm > eat > term.  (Future interactive commands such as peek or
+shell will share this setting.)
+
+- nil:   auto-detect (vterm, then eat, then the built-in term).
+- vterm: requires the `vterm' package.
+- eat:   requires the `eat' package.
+- term:  the built-in `term-mode' (always available)."
+  :type '(choice (const :tag "Auto-detect (vterm > eat > term)" nil)
+                 (const :tag "Vterm (requires vterm package)" vterm)
+                 (const :tag "Eat (requires eat package)" eat)
+                 (const :tag "Term mode (built-in)" term))
+  :group 'gascity)
+
+(defcustom gascity-tmux-socket nil
+  "Name of the tmux server socket the city's agents run on (tmux -L).
+Gas City runs one tmux server per city, named after the city, so when
+this is nil the socket is auto-detected as the city name.  Set a string
+to override (passed as `tmux -L NAME'); the literal \"default\" means
+the default tmux server (no -L flag)."
+  :type '(choice (const :tag "Auto-detect (city name)" nil)
+                 (string :tag "Explicit socket name"))
+  :group 'gascity)
+
 ;;; Faces
 
 (defgroup gascity-faces nil

@@ -3,9 +3,21 @@
 *A Magit-style Emacs porcelain for [Gas City](https://github.com/gastownhall/gascity)
 (`gc`), integrated with [beads.el](https://github.com/r0man/beads.el).*
 
-Status: design draft. Approach: **greenfield**, built on beads.el's command
-infrastructure and vui rendering. `gastown.el` (the pre-rename precursor that
-targeted the old `gt` CLI) is a **reference**, not a fork.
+Status: **read-only MVP implemented** (P0 skeleton + P2 tabulated lists + P3 vui
+status dashboard + agent actions). Approach: **greenfield**, built on beads.el's
+command infrastructure and vui rendering. `gastown.el` (the pre-rename precursor
+that targeted the old `gt` CLI) is a **reference**, not a fork.
+
+> **UI direction (binding; supersedes the auto-generated-transient framing
+> below).** The primary UI is **hand-built, magit/forge-style**: deliberately
+> designed, keyboard-driven, sectioned buffers — the vui status dashboard and
+> detail views, and `tabulated-list-mode` for homogeneous lists. The
+> beads/gascity command **classes** (`beads-meta`) are reused **only as the
+> execution + parse layer** — they run `gc` commands (synchronously or
+> asynchronously) and decode `--json` into Elisp data. We do **not** make
+> beads.el's *auto-generated* transients the primary interface. Transients are
+> fine as a **command-dispatch backend** (the `gascity` entry menu, per-list
+> `/` filters), never as the porcelain itself.
 
 ---
 
@@ -18,9 +30,12 @@ git.
 
 Three things we deliberately **reuse rather than rebuild**:
 
-1. **`beads-meta`** — beads.el's EIEIO slot-metadata engine. A command class
-   declares slots; beads-meta infers CLI options, builds the command line, and
-   generates the transient. We get auto-generated, consistent menus for free.
+1. **`beads-meta`** — beads.el's EIEIO slot-metadata engine, reused as the
+   **execution + parse layer**. A command class declares slots; beads-meta
+   infers CLI options and builds the command line, and gascity runs it (sync or
+   async) and decodes `--json`. (beads-meta *can* also generate a transient from
+   the same metadata; per the UI direction above we use that only for
+   command-dispatch backends, not as the porcelain.)
 2. **vui** — beads.el's rendering layer. `beads-section-mode` *derives from
    `vui-mode`*; `beads-dashboard-mode` derives from that. gascity's rich views
    derive from `beads-section-mode`, inheriting vui's reconciler, layout
@@ -197,22 +212,36 @@ data-tick for expensive derivations.
 
 ## 7. Build phases
 
-- **P0 — Skeleton & bridge.** Package metadata
+- ✅ **P0 — Skeleton & bridge.** Package metadata
   (`Package-Requires: ((emacs "29.1") (transient "0.10.1") (vui "1.0.0") (beads "…") (sesman "0.3.2"))`),
   `gascity-custom`, `gascity-error`, `gascity-reader`, `gascity-context`,
-  `gascity-command` on beads-meta. Smoke test: `gascity-command-status!` round-trips
+  `gascity-command` on beads-meta. `gascity-command-status!` round-trips
   `gc status --json` → alist.
-- **P1 — Command menus.** `gascity-types` + `gascity-command-*` + the main
-  `gascity` transient. Reaches functional parity (dispatch everything via
-  transient; output to terminal or messages).
-- **P2 — Tabulated lists.** rigs, sessions, convoys, mail, orders, dolt; `RET`
-  → detail, action keys, `g` refresh.
-- **P3 — vui status dashboard.** `gascity-status-app` (collapsible, async per-rig).
-- **P4 — vui detail views.** rig dashboard, session/polecat detail.
-- **P5 — beads.el bead-UI delegation.** Per-rig scoping done cleanly (§4.3).
-- **P6 — Polish.** completion, error surfaces, README, `whats-new`, Eldev/guix.scm.
+- ✅ **P2 — Tabulated lists.** `gascity-tabulated`: rigs, sessions, convoys,
+  mail, orders, dolt databases. `RET` drills in, `g` refreshes; on a session
+  row, `d` opens its worktree in Dired and `t` attaches to its tmux session.
+  Concrete command classes live in `gascity-types`. *(Pagination and per-list
+  `/` filters are deferred — see §11.)*
+- ✅ **P3 — vui status dashboard.** `gascity-status` (`gascity-status-app`):
+  collapsible per-rig sections, two async loads (`gc status` + `gc session
+  list`) joined client-side, `g` refresh (in-place, preserves expanded rigs),
+  agent rows actionable with `d`/`t`. (`gc status` returns the whole tree in one
+  fast call, so a single async fetch replaces the originally-sketched
+  per-rig fan-out; revisit if towns grow large enough to need it.)
+- ✅ **Agent actions.** `gascity-section` (Dired + at-point dispatch) +
+  `gascity-terminal` (tmux attach via beads.el's `beads-terminal-spawn`, the
+  reused terminal module). Worktree comes from a session's `work_dir`; the tmux
+  server socket is the city name (`gascity-tmux-socket` to override) — gc does
+  not expose it in `--json`, unlike the old `gt`.
+- ⬜ **P1 — Command dispatch.** Broaden the hand-written `gascity` transient
+  (dispatch backend only) and add mutating commands. *Not* an auto-generated
+  primary UI.
+- ⬜ **P4 — vui detail views.** rig dashboard, session/polecat detail.
+- ⬜ **P5 — beads.el bead-UI delegation.** Per-rig scoping done cleanly (§4.3).
+- ⬜ **P6 — Polish.** completion, error surfaces, `whats-new`, Eldev/guix.scm.
 
-Each phase is independently shippable; P0–P2 already give a usable porcelain.
+The read-only MVP (P0 + P2 + P3 + agent actions) is delivered and verified
+against a live town; it is already a usable porcelain.
 
 ---
 
@@ -239,8 +268,8 @@ Each phase is independently shippable; P0–P2 already give a usable porcelain.
    Reuse for linking a code buffer ↔ its rig/polecat? Defer to P4+.
 4. **Naming of the entry command** — `M-x gascity` (prefix transient). A short
    alias?
-5. **Async transport** — `vui-use-async` wants a thunk; `gascity-reader` should
-   offer an async variant (`make-process`) so dashboards never block redisplay.
+5. **Async transport** — *Resolved.* `gascity-reader-read-async` (make-process,
+   separate stderr) backs `vui-use-async`; the status dashboard never blocks.
 6. **City vs rig scope** — many gc commands are city-wide; some rig-scoped. The
    `gascity-context` must make “current rig” explicit and switchable (header
    line + a `R` switch-rig command).
@@ -253,4 +282,27 @@ Each phase is independently shippable; P0–P2 already give a usable porcelain.
 - `gastown.el/docs/vui-design.md` — the view-technology research this builds on.
 - `beads.el/lisp/beads-meta.el` — the command-metadata engine we reuse.
 - `beads.el/lisp/beads-section.el` — `beads-section-mode` (vui) base to derive from.
+- `beads.el/lisp/beads-terminal.el` — `beads-terminal-spawn`, the reused terminal module.
 - vui.el — bundled in `beads.el/.eldev/30.2/packages/vui-1.0.0/`.
+
+---
+
+## 11. Deferred work (read-only MVP follow-ups)
+
+Tracked as beads off the MVP. None block the shipped porcelain.
+
+1. **List pagination.** Port gastown's paged mixin (`]`/`[`/`G`, window-sized
+   pages) into `gascity-tabulated`; today long lists scroll natively.
+2. **List filters.** Per-list `/` transient (status/rig/order …) writing filter
+   slots on the command classes — a command-dispatch backend, not the UI.
+3. **vui detail views (P4).** Rig dashboard and session/polecat detail (`RET`
+   from a list/dashboard currently opens Dired or the convoy bead).
+4. **beads.el bead-UI delegation (P5).** Open beads.el's list/detail scoped to a
+   rig's store; today convoy `RET` calls `beads-show` on the bead id.
+5. **Mail row shape.** The live inbox was empty, so mail columns use tolerant
+   key-guessing; confirm the real `gc mail inbox` message schema and tighten.
+6. **tmux socket from gc.** gc does not expose the tmux server socket in
+   `--json` (the old `gt` did); we infer it from the city name. Add the field to
+   `gc` (or a stable accessor) and read it instead of inferring.
+7. **Dashboard refresh ergonomics.** Optional auto-refresh/watch and semantic
+   cursor preservation across re-renders (gastown has both).

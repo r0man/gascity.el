@@ -15,24 +15,40 @@
 ;; output: gascity renders gc's state and dispatches its commands, the
 ;; way Magit fronts git.
 ;;
-;; It is built on beads.el's command infrastructure (`beads-meta', for
-;; auto-generated transient menus from EIEIO slot metadata) and vui
-;; rendering layer, and delegates all bead UI to beads.el.
+;; The porcelain — the status dashboard, the lists, and the detail views
+;; — is hand-built in the deliberate magit/forge style: sectioned,
+;; keyboard-driven buffers (vui for the heterogeneous dashboard/detail
+;; views, `tabulated-list-mode' for homogeneous lists).  The EIEIO
+;; command layer (`gascity-command' on beads.el's `beads-meta') is used
+;; only as the execution + parse layer — it runs `gc' commands and
+;; decodes their `--json' output — not as an auto-generated UI.
+;; Transient menus, where present (the `gascity' dispatcher), are a
+;; command-dispatch backend, not the primary interface.  Bead UI is
+;; delegated to beads.el.
 ;;
-;; This is the P0 foundation: the gc -> JSON bridge (`gascity-reader'),
-;; the EIEIO command layer (`gascity-command'), city/rig context
-;; resolution (`gascity-context'), and a smoke command
-;; (`gascity-command-status').  Command menus, tabulated lists, and vui
-;; dashboards arrive in later phases — see docs/DESIGN.md.
+;; This entry point loads the read-only MVP: the gc -> JSON bridge
+;; (`gascity-reader', sync and async), the command layer
+;; (`gascity-command' + `gascity-types'), context resolution
+;; (`gascity-context'), the status dashboard (`gascity-status'), the
+;; tabulated lists (`gascity-tabulated'), and the agent actions — Dired
+;; and tmux attach via beads.el's terminal module (`gascity-terminal').
+;; Write/mutate actions and richer detail views arrive in later phases —
+;; see docs/DESIGN.md.
 
 ;;; Code:
 
+(require 'transient)
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'gascity-reader)
 (require 'gascity-command)
 (require 'gascity-context)
+(require 'gascity-types)
 (require 'gascity-command-status)
+(require 'gascity-terminal)
+(require 'gascity-section)
+(require 'gascity-tabulated)
+(require 'gascity-status)
 
 ;;; Debug logging
 
@@ -55,6 +71,24 @@ passed to `format'.  Honours `gascity-enable-debug' and
         (goto-char (point-max))
         (let ((inhibit-read-only t))
           (insert line))))))
+
+;;; Dispatcher
+
+;;;###autoload (autoload 'gascity "gascity" nil t)
+(transient-define-prefix gascity ()
+  "Dispatch the Gas City porcelain.
+A hand-written command-dispatch menu — the views it opens are the
+deliberately-designed porcelain, not auto-generated from this prefix."
+  ["Gas City"
+   ["Overview"
+    ("s" "Status dashboard" gascity-status)]
+   ["Lists"
+    ("r" "Rigs" gascity-rig-list)
+    ("a" "Sessions" gascity-session-list)
+    ("c" "Convoys" gascity-convoy-list)
+    ("m" "Mail inbox" gascity-mail-inbox)
+    ("o" "Orders" gascity-order-list)
+    ("D" "Dolt databases" gascity-dolt-list)]])
 
 (provide 'gascity)
 ;;; gascity.el ends here
