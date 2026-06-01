@@ -95,7 +95,11 @@ Gas City runs one tmux server per city, named after the city.  Honours
 `gascity-tmux-socket' when set; otherwise uses CITY-NAME (e.g. from a
 `gc status' payload already in hand) or, failing that, the city name
 resolved from context.  May return nil (no city found), meaning the
-default tmux server."
+default tmux server.
+
+The city-name step is a deliberate inference: gc does not expose the tmux
+server socket in `--json' (the old `gt' did).  When gc grows a stable
+socket field, read it here in preference to the inference (see gce-je4)."
   (or gascity-tmux-socket
       city-name
       (gascity-context-city-name)))

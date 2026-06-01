@@ -370,9 +370,12 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    `mail_message` schema (`from` / `subject` / `created_at` / boolean `read`);
    `gascity-mail-inbox--entry` reads those keys directly and the tolerant
    key-guesser (`gascity-tabulated--field`) was removed (gce-384).
-6. **tmux socket from gc.** gc does not expose the tmux server socket in
-   `--json` (the old `gt` did); we infer it from the city name. Add the field to
-   `gc` (or a stable accessor) and read it instead of inferring.
+6. **tmux socket from gc** (gce-je4). gc does not expose the tmux server socket
+   in `--json` (the old `gt` did); `gascity-resolve-tmux-socket` infers it from
+   the city name (override via `gascity-tmux-socket`). Verified 2026-06-02 that
+   `gc session list`/`gc status --json` still carry no socket field, so the
+   read-side fix is blocked on an upstream `gc` change to expose it (or a stable
+   accessor); the inference stays a deliberate fallback until then.
 7. **Dashboard refresh ergonomics.** Optional auto-refresh/watch and semantic
    cursor preservation across re-renders (gastown has both).
 8. **Richer sling infixes (P1 follow-up).** The `gascity-command-sling` class
