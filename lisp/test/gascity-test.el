@@ -219,6 +219,135 @@ and joins must use `agent_name'."
   (should (null (gascity-terminal--socket-args "")))
   (should (null (gascity-terminal--socket-args nil))))
 
+;;; ============================================================
+;;; Mutating commands (P1 — command dispatch)
+;;; ============================================================
+
+(ert-deftest gascity-test-mutate-command-lines ()
+  "Mutating classes derive positional `gc' lines with `--json' OFF.
+Actions report from gc's exit status, so an exit-0 command with empty or
+JSONL output never mis-reads as a failure."
+  (should (equal (gascity-command-line (gascity-command-rig-suspend :name "gascity.el"))
+                 '("gc" "rig" "suspend" "gascity.el")))
+  (should (equal (gascity-command-line (gascity-command-rig-resume :name "gascity.el"))
+                 '("gc" "rig" "resume" "gascity.el")))
+  (should (equal (gascity-command-line (gascity-command-rig-restart :name "r"))
+                 '("gc" "rig" "restart" "r")))
+  (should (equal (gascity-command-line
+                  (gascity-command-session-nudge :target "mayor" :message "hi there"))
+                 '("gc" "session" "nudge" "mayor" "hi there")))
+  (should (equal (gascity-command-line (gascity-command-session-suspend :target "rig/agent"))
+                 '("gc" "session" "suspend" "rig/agent")))
+  (should (equal (gascity-command-line (gascity-command-session-kill :target "rig/agent"))
+                 '("gc" "session" "kill" "rig/agent")))
+  (should (equal (gascity-command-line (gascity-command-session-wake :target "rig/agent"))
+                 '("gc" "session" "wake" "rig/agent")))
+  (should (equal (gascity-command-line (gascity-command-order-run :name "patrol"))
+                 '("gc" "order" "run" "patrol")))
+  ;; No action command emits --json.
+  (dolist (cmd (list (gascity-command-rig-suspend :name "x")
+                     (gascity-command-session-nudge :target "x" :message "y")
+                     (gascity-command-order-run :name "x")
+                     (gascity-command-sling :target "t" :arg "a")))
+    (should-not (member "--json" (gascity-command-line cmd)))))
+
+(ert-deftest gascity-test-lifecycle-command-lines ()
+  "City lifecycle commands stream (no --json); stop honours --force."
+  (should (equal (gascity-command-line (gascity-command-start)) '("gc" "start")))
+  (should (equal (gascity-command-line (gascity-command-stop)) '("gc" "stop")))
+  (should (equal (gascity-command-line (gascity-command-stop :force t))
+                 '("gc" "stop" "--force")))
+  (should-not (member "--json" (gascity-command-line (gascity-command-start)))))
+
+(ert-deftest gascity-test-sling-command-line ()
+  "Sling emits target/arg positionals first, then its flags (no --json)."
+  (let ((line (gascity-command-line
+               (gascity-command-sling :target "mayor" :arg "gce-1"
+                                      :formula t :nudge t))))
+    (should (equal (cl-subseq line 0 4) '("gc" "sling" "mayor" "gce-1")))
+    (should (member "--formula" line))
+    (should (member "--nudge" line))
+    (should-not (member "--json" line))
+    (should-not (member "--dry-run" line)))
+  (should (equal (gascity-command-line (gascity-command-sling :target "t" :arg "x"))
+                 '("gc" "sling" "t" "x")))
+  (should (equal (gascity-command-line
+                  (gascity-command-sling :target "t" :arg "x" :dry-run t))
+                 '("gc" "sling" "t" "x" "--dry-run"))))
+
+(ert-deftest gascity-test-mutate-subcommand-derivation ()
+  "Subcommands derive from the mutating class names."
+  (should (equal (gascity-command-subcommand (gascity-command-rig-suspend)) "rig suspend"))
+  (should (equal (gascity-command-subcommand (gascity-command-session-nudge)) "session nudge"))
+  (should (equal (gascity-command-subcommand (gascity-command-order-run)) "order run"))
+  (should (equal (gascity-command-subcommand (gascity-command-sling)) "sling")))
+
+(ert-deftest gascity-test-mutate-validation ()
+  "Required positional arguments are enforced before execution."
+  (should (gascity-command-validate (gascity-command-session-nudge :target "x")))
+  (should (gascity-command-validate (gascity-command-session-nudge :message "y")))
+  (should-not (gascity-command-validate
+               (gascity-command-session-nudge :target "x" :message "y")))
+  (should (gascity-command-validate (gascity-command-session-kill)))
+  (should-not (gascity-command-validate (gascity-command-session-kill :target "x")))
+  (should (gascity-command-validate (gascity-command-sling :target "x")))
+  (should-not (gascity-command-validate (gascity-command-sling :target "x" :arg "y")))
+  (should (gascity-command-validate (gascity-command-order-run))))
+
+(ert-deftest gascity-test-action-summarize ()
+  "A mutation result is summarised to one human line."
+  (should (equal (gascity-action--summarize "suspended\nmore") "suspended"))
+  (should (equal (gascity-action--summarize "   ") "done"))
+  (should (equal (gascity-action--summarize '((message . "routed bead"))) "routed bead"))
+  (should (equal (gascity-action--summarize '((ok . t))) "ok"))
+  (should (equal (gascity-action--summarize '((ok))) "failed"))
+  (should (equal (gascity-action--summarize nil) "done")))
+
+(ert-deftest gascity-test-action-error-detail ()
+  "Error detail prefers gc's stderr, falling back to the message."
+  (should (equal (gascity-action--error-detail
+                  '(gascity-command-error "msg" :command "c" :stderr "  rig not found  "))
+                 "rig not found"))
+  (should (equal (gascity-action--error-detail
+                  '(gascity-command-error "the message" :command "c" :stderr ""))
+                 "the message")))
+
+(ert-deftest gascity-test-action-routes-through-act ()
+  "`execute-interactive' on an action command delegates to `gascity-command-act'."
+  (let ((seen nil)
+        (cmd (gascity-command-rig-suspend :name "x")))
+    (cl-letf (((symbol-function 'gascity-command-act)
+               (lambda (c) (setq seen c) 'stub-result)))
+      (should (eq (gascity-command-execute-interactive cmd) 'stub-result))
+      (should (eq seen cmd)))))
+
+(ert-deftest gascity-test-act-reports-success ()
+  "`gascity-command-act' returns the parsed result on success (executor stubbed)."
+  (cl-letf (((symbol-function 'gascity-command-execute)
+             (lambda (command)
+               (gascity-command-execution
+                :command command :exit-code 0
+                :result "Suspended rig x"))))
+    (should (equal (gascity-command-act (gascity-command-rig-suspend :name "x"))
+                   "Suspended rig x"))))
+
+(ert-deftest gascity-test-act-surfaces-command-error ()
+  "A `gascity-command-error' becomes a `user-error' carrying gc's stderr."
+  (cl-letf (((symbol-function 'gascity-command-execute)
+             (lambda (_command)
+               (signal 'gascity-command-error
+                       (list "Command failed" :command "gc rig suspend x"
+                             :exit-code 1 :stdout "" :stderr "rig not found")))))
+    (let ((err (should-error (gascity-command-act (gascity-command-rig-suspend :name "x"))
+                             :type 'user-error)))
+      (should (string-match-p "rig not found" (error-message-string err))))))
+
+(ert-deftest gascity-test-act-surfaces-validation-error ()
+  "A missing required argument fails locally as a `user-error' (no gc call)."
+  (let ((err (should-error (gascity-command-act (gascity-command-order-run))
+                           :type 'user-error)))
+    (should (string-match-p "order name is required" (error-message-string err)))))
+
 ;;; Round-trip integration (acceptance) — needs a live gc + city
 
 (ert-deftest gascity-test-status-round-trip ()

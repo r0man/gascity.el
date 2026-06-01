@@ -121,5 +121,135 @@ Payload: an alist with an `orders' vector and a `summary'.")
 Payload: an alist with `server', a `databases' vector, and more.  Used
 in place of `gc dolt list', which does not support `--json'.")
 
+;;; ============================================================
+;;; Mutating commands (P1 — command dispatch)
+;;; ============================================================
+;;
+;; Write/mutate `gc' subcommands, modelled like the read-only classes
+;; above: slot metadata declares positional arguments (`:positional N',
+;; emitted first in order) and option flags, and `gascity-command-line'
+;; builds the line.  Quick mutations inherit from `gascity-command-action',
+;; whose interactive execution (in `gascity-action') runs synchronously
+;; and reports the outcome; the long-running lifecycle commands
+;; (`start'/`stop') inherit from `gascity-command-global-options' and
+;; stream via the base `async-shell-command' backend.
+;;
+;; Required positional arguments are enforced by `gascity-command-validate'
+;; so a missing target fails locally with a clear message rather than a
+;; confusing `gc' usage error.
+
+;;; Rig control
+
+(gascity-defcommand gascity-command-rig-suspend (gascity-command-action)
+  ((name :initarg :name :type string :initform "" :positional 1
+         :documentation "Rig to suspend; empty means the contextual rig."))
+  :documentation "Suspend a rig (the reconciler then skips its agents).")
+
+(gascity-defcommand gascity-command-rig-resume (gascity-command-action)
+  ((name :initarg :name :type string :initform "" :positional 1
+         :documentation "Rig to resume; empty means the contextual rig."))
+  :documentation "Resume a suspended rig.")
+
+(gascity-defcommand gascity-command-rig-restart (gascity-command-action)
+  ((name :initarg :name :type string :initform "" :positional 1
+         :documentation "Rig whose agent sessions to kill (reconciler restarts)."))
+  ;; `gc rig restart' has no --json flag at all; the action base already
+  ;; defaults --json off, so nothing extra is needed here.
+  :documentation "Restart a rig by killing its agent sessions.")
+
+;;; Session control
+
+(gascity-defcommand gascity-command-session-nudge (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias (e.g. a qualified agent name).")
+   (message :initarg :message :type string :initform "" :positional 2
+            :documentation "Message text; `gc' joins multi-word input."))
+  :documentation "Send a text message to a running session.")
+
+(gascity-defcommand gascity-command-session-suspend (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to suspend."))
+  :documentation "Suspend a session (stop its runtime; the bead persists).")
+
+(gascity-defcommand gascity-command-session-kill (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to force-kill."))
+  :documentation "Force-kill a session's runtime (the reconciler restarts it).")
+
+(gascity-defcommand gascity-command-session-wake (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to wake."))
+  :documentation "Wake a session and clear holds.")
+
+;;; Dispatch
+
+(gascity-defcommand gascity-command-sling (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Target agent qualified name.")
+   (arg :initarg :arg :type string :initform "" :positional 2
+        :documentation "Bead id, formula name (with --formula), or task text.")
+   (formula :initarg :formula :type boolean :initform nil
+            :long-option "formula" :option-type :boolean
+            :documentation "Treat ARG as a formula name.")
+   (nudge :initarg :nudge :type boolean :initform nil
+          :long-option "nudge" :option-type :boolean
+          :documentation "Nudge the target after routing.")
+   (dry-run :initarg :dry-run :type boolean :initform nil
+            :long-option "dry-run" :option-type :boolean
+            :documentation "Show what would be done without executing."))
+  :documentation "Route a bead (or task text/formula) to a session or agent.")
+
+;;; Orders
+
+(gascity-defcommand gascity-command-order-run (gascity-command-action)
+  ((name :initarg :name :type string :initform "" :positional 1
+         :documentation "Order to execute manually."))
+  :documentation "Execute an order manually, bypassing its trigger conditions.")
+
+;;; City lifecycle (streaming; not `gascity-command-action')
+
+(gascity-defcommand gascity-command-start (gascity-command-global-options)
+  ((json :initarg :json :type boolean :initform nil
+         :long-option "json" :option-type :boolean
+         :documentation "Off: lifecycle output streams to a buffer."))
+  :documentation "Start the city under the machine-wide supervisor.")
+
+(gascity-defcommand gascity-command-stop (gascity-command-global-options)
+  ((force :initarg :force :type boolean :initform nil
+          :long-option "force" :option-type :boolean
+          :documentation "Skip the interrupt grace period; force-kill sessions.")
+   (json :initarg :json :type boolean :initform nil
+         :long-option "json" :option-type :boolean
+         :documentation "Off: lifecycle output streams to a buffer."))
+  :documentation "Stop all agent sessions in the city (graceful shutdown).")
+
+;;; Validation — required positional arguments
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-nudge))
+  "Require a session target and a message."
+  (cond ((gascity-command--blank-p command 'target) "a session target is required")
+        ((gascity-command--blank-p command 'message) "a message is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-suspend))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-kill))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-wake))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-sling))
+  "Require both a target and a bead/text argument."
+  (cond ((gascity-command--blank-p command 'target) "a sling target is required")
+        ((gascity-command--blank-p command 'arg) "a bead id or task text is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-order-run))
+  "Require an order name."
+  (and (gascity-command--blank-p command 'name) "an order name is required"))
+
 (provide 'gascity-types)
 ;;; gascity-types.el ends here

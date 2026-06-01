@@ -34,6 +34,13 @@
 (require 'gascity-command-status)
 (require 'gascity-section)
 
+;; Session actions on the agent at point live in gascity-action (loaded
+;; after this module via gascity.el); the dashboard keymap binds to them.
+(declare-function gascity-session-nudge-at-point "gascity-action")
+(declare-function gascity-session-suspend-at-point "gascity-action")
+(declare-function gascity-session-kill-at-point "gascity-action")
+(declare-function gascity-session-wake-at-point "gascity-action")
+
 ;;; Buffer
 
 (defconst gascity-status-buffer-name "*gascity-status*"
@@ -239,6 +246,10 @@ collapse state); nil when BUFFER has no mounted instance."
   "RET" #'gascity-status-activate
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
+  "N"   #'gascity-session-nudge-at-point
+  "s"   #'gascity-session-suspend-at-point
+  "K"   #'gascity-session-kill-at-point
+  "w"   #'gascity-session-wake-at-point
   "n"   #'next-line
   "p"   #'previous-line)
 
@@ -250,7 +261,8 @@ collapse state); nil when BUFFER has no mounted instance."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              " Gas City  (g refresh · RET toggle · d dired · t tmux · q bury)"))
+              (concat " Gas City  (g refresh · RET toggle · d dired · t tmux"
+                      " · N/s/K/w session · q bury)")))
 
 ;;;###autoload
 (defun gascity-status ()

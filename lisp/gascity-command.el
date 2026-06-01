@@ -137,6 +137,27 @@ Concrete commands inherit from `gascity-command-global-options'.")
 `--json' defaults on because gascity parses command output;
 interactive/streaming commands set :json nil.")
 
+(defclass gascity-command-action (gascity-command-global-options)
+  ((json
+    :initarg :json
+    :type boolean
+    :initform nil
+    :documentation "Off by default for mutations.
+Actions report success from gc's exit status (and a one-line summary of
+its plain stdout); they do not parse a JSON payload, so `--json' — whose
+support and shape vary across the mutating subcommands — stays off and
+an exit-0 command with empty or JSONL output never reads as a failure."
+    :long-option "json"
+    :option-type :boolean))
+  :abstract t
+  :documentation "Base for mutating `gc' commands (suspend, nudge, sling, …).
+Concrete actions inherit from this; `gascity-action' specializes
+`gascity-command-execute-interactive' on it to run the command
+synchronously and report the outcome in the echo area, rather than the
+streaming `async-shell-command' backend used for read/long-running
+commands.  `--json' is off by default (see the `json' slot); positional
+and option slots are declared per concrete command.")
+
 (defclass gascity-command-execution ()
   ((command
     :initarg :command
@@ -243,6 +264,14 @@ is how methods read slots — such as the macro-injected, class-allocated
 `cli-command' — that are not statically declared on `gascity-command'."
   (and (slot-exists-p command slot)
        (slot-value command slot)))
+
+(defun gascity-command--blank-p (command slot)
+  "Return non-nil when COMMAND's SLOT is unbound, nil, or a blank string.
+Used by the mutating commands' `gascity-command-validate' methods to
+reject missing required positional arguments before `gc' is invoked."
+  (let ((value (and (slot-boundp command slot) (slot-value command slot))))
+    (or (null value)
+        (and (stringp value) (string-empty-p (string-trim value))))))
 
 (cl-defmethod gascity-command-subcommand ((command gascity-command))
   "Derive the `gc' subcommand string for COMMAND.

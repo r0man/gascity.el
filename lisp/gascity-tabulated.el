@@ -44,6 +44,17 @@
 
 (declare-function beads-show "beads")
 
+;; At-point mutating actions live in gascity-action (loaded after this
+;; module via gascity.el); the list keymaps below bind keys to them.
+(declare-function gascity-rig-suspend-at-point "gascity-action")
+(declare-function gascity-rig-resume-at-point "gascity-action")
+(declare-function gascity-rig-restart-at-point "gascity-action")
+(declare-function gascity-order-run-at-point "gascity-action")
+(declare-function gascity-session-nudge-at-point "gascity-action")
+(declare-function gascity-session-suspend-at-point "gascity-action")
+(declare-function gascity-session-kill-at-point "gascity-action")
+(declare-function gascity-session-wake-at-point "gascity-action")
+
 ;;; Shared helpers
 
 (defun gascity-tabulated--vector->list (data)
@@ -315,10 +326,15 @@ and adds `g' refresh, `/' filter, and `RET'."
   :parent gascity-tabulated-base-map
   "g"   #'gascity-rig-list-refresh
   "/"   #'gascity-rig-list-filter
-  "RET" #'gascity-rig-list-dired)
+  "RET" #'gascity-rig-list-dired
+  "s"   #'gascity-rig-suspend-at-point
+  "r"   #'gascity-rig-resume-at-point
+  "R"   #'gascity-rig-restart-at-point)
 
 (define-derived-mode gascity-rig-list-mode tabulated-list-mode "GC-Rigs"
   "Major mode listing the rigs registered in the city.
+`RET' opens the rig's directory in Dired; `s' suspends, `r' resumes,
+and `R' restarts (kills the agent sessions of) the rig at point.
 \\{gascity-rig-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
@@ -441,12 +457,17 @@ applied client-side to the decoded rows."
   "/"   #'gascity-session-list-filter
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
-  "RET" #'gascity-dired-at-point)
+  "RET" #'gascity-dired-at-point
+  "N"   #'gascity-session-nudge-at-point
+  "s"   #'gascity-session-suspend-at-point
+  "K"   #'gascity-session-kill-at-point
+  "w"   #'gascity-session-wake-at-point)
 
 (define-derived-mode gascity-session-list-mode tabulated-list-mode "GC-Sessions"
   "Major mode listing the city's agent sessions.
 `d' opens a session's worktree in Dired; `t' attaches to its tmux
-session.
+session.  `N' nudges (sends a message), `s' suspends, `K' force-kills
+the runtime of, and `w' wakes the session at point.
 \\{gascity-session-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
@@ -772,11 +793,13 @@ The entry id is the whole order alist, so `RET' can open its source."
   :parent gascity-tabulated-base-map
   "g"   #'gascity-order-list-refresh
   "/"   #'gascity-order-list-filter
-  "RET" #'gascity-order-list-visit)
+  "RET" #'gascity-order-list-visit
+  "x"   #'gascity-order-run-at-point)
 
 (define-derived-mode gascity-order-list-mode tabulated-list-mode "GC-Orders"
   "Major mode listing the city's orders.
-`RET' opens the order's source file.
+`RET' opens the order's source file; `x' runs the order at point
+manually (bypassing its trigger).
 \\{gascity-order-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format

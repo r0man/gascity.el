@@ -49,6 +49,7 @@
 (require 'gascity-section)
 (require 'gascity-tabulated)
 (require 'gascity-status)
+(require 'gascity-action)
 
 ;;; Debug logging
 
@@ -77,8 +78,11 @@ passed to `format'.  Honours `gascity-enable-debug' and
 ;;;###autoload (autoload 'gascity "gascity" nil t)
 (transient-define-prefix gascity ()
   "Dispatch the Gas City porcelain.
-A hand-written command-dispatch menu — the views it opens are the
-deliberately-designed porcelain, not auto-generated from this prefix."
+A hand-written command-dispatch menu — the views in the left columns are
+the deliberately-designed porcelain (not auto-generated from this
+prefix), and the Dispatch column routes the mutating actions, prompting
+for their arguments.  The same actions are also available at point in
+the lists and the status dashboard."
   ["Gas City"
    ["Overview"
     ("s" "Status dashboard" gascity-status)]
@@ -88,7 +92,13 @@ deliberately-designed porcelain, not auto-generated from this prefix."
     ("c" "Convoys" gascity-convoy-list)
     ("m" "Mail inbox" gascity-mail-inbox)
     ("o" "Orders" gascity-order-list)
-    ("D" "Dolt databases" gascity-dolt-list)]])
+    ("D" "Dolt databases" gascity-dolt-list)]
+   ["Dispatch"
+    ("R" "Rig control…" gascity-rig-dispatch)
+    ("A" "Session control…" gascity-session-dispatch)
+    ("S" "Sling…" gascity-sling)
+    ("O" "Run order…" gascity-order-run)
+    ("L" "City lifecycle…" gascity-lifecycle-dispatch)]])
 
 (provide 'gascity)
 ;;; gascity.el ends here

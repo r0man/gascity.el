@@ -3,8 +3,9 @@
 *A Magit-style Emacs porcelain for [Gas City](https://github.com/gastownhall/gascity)
 (`gc`), integrated with [beads.el](https://github.com/r0man/beads.el).*
 
-Status: **read-only MVP implemented** (P0 skeleton + P2 tabulated lists + P3 vui
-status dashboard + agent actions). Approach: **greenfield**, built on beads.el's
+Status: **read-only MVP + command dispatch implemented** (P0 skeleton + P2
+tabulated lists + P3 vui status dashboard + agent actions + P1 mutating-command
+dispatch). Approach: **greenfield**, built on beads.el's
 command infrastructure and vui rendering. `gastown.el` (the pre-rename precursor
 that targeted the old `gt` CLI) is a **reference**, not a fork.
 
@@ -233,9 +234,18 @@ data-tick for expensive derivations.
   reused terminal module). Worktree comes from a session's `work_dir`; the tmux
   server socket is the city name (`gascity-tmux-socket` to override) — gc does
   not expose it in `--json`, unlike the old `gt`.
-- ⬜ **P1 — Command dispatch.** Broaden the hand-written `gascity` transient
-  (dispatch backend only) and add mutating commands. *Not* an auto-generated
-  primary UI.
+- ✅ **P1 — Command dispatch.** Mutating command classes
+  (`gascity-command-action` base, `--json` off so success is read from the
+  exit status): rig suspend/resume/restart, session nudge/suspend/kill/wake,
+  sling, order run, and city start/stop. `gascity-action` runs the quick ones
+  synchronously and reports the outcome (`gascity-command-act`), streaming the
+  long-running lifecycle ones. Reached two ways, both hand-built (not an
+  auto-generated UI): at point in the lists and the status dashboard (rig
+  `s`/`r`/`R`; session `N`/`s`/`K`/`w`; order `x`), and by prompt from the
+  broadened `gascity' dispatcher's sub-transients (`gascity-rig-dispatch',
+  `gascity-session-dispatch', `gascity-lifecycle-dispatch'), which complete
+  arguments over live `gc` data. *(Deferred: richer sling infixes
+  (`--formula`/`--merge`/…) and `order run --rig` disambiguation — see §11.)*
 - ⬜ **P4 — vui detail views.** rig dashboard, session/polecat detail.
 - ⬜ **P5 — beads.el bead-UI delegation.** Per-rig scoping done cleanly (§4.3).
 - ⬜ **P6 — Polish.** completion, error surfaces, `whats-new`, Eldev/guix.scm.
@@ -311,3 +321,10 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    `gc` (or a stable accessor) and read it instead of inferring.
 7. **Dashboard refresh ergonomics.** Optional auto-refresh/watch and semantic
    cursor preservation across re-renders (gastown has both).
+8. **Richer sling infixes (P1 follow-up).** The `gascity-command-sling` class
+   already models `--formula`/`--nudge`/`--dry-run`; the interactive
+   `gascity-sling` only prompts target + bead/text. Add a sling sub-transient
+   exposing those flags (plus `--merge`, `--no-convoy`) as infixes.
+9. **`order run --rig` disambiguation (P1 follow-up).** `gascity-order-run`
+   passes only the order name; add the rig (available on the at-point order
+   row, and promptable elsewhere) so same-named orders across rigs resolve.
