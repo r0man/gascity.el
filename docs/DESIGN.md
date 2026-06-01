@@ -221,7 +221,7 @@ data-tick for expensive derivations.
   mail, orders, dolt databases. `RET` drills in, `g` refreshes; on a session
   row, `d` opens its worktree in Dired and `t` attaches to its tmux session.
   Concrete command classes live in `gascity-types`. *(Pagination and per-list
-  `/` filters are deferred — see §11.)*
+  `/` filters landed as a follow-up — see §11.1-2, gce-ahl.)*
 - ✅ **P3 — vui status dashboard.** `gascity-status` (`gascity-status-app`):
   collapsible per-rig sections, two async loads (`gc status` + `gc session
   list`) joined client-side, `g` refresh (in-place, preserves expanded rigs),
@@ -291,10 +291,15 @@ against a live town; it is already a usable porcelain.
 
 Tracked as beads off the MVP. None block the shipped porcelain.
 
-1. **List pagination.** Port gastown's paged mixin (`]`/`[`/`G`, window-sized
-   pages) into `gascity-tabulated`; today long lists scroll natively.
-2. **List filters.** Per-list `/` transient (status/rig/order …) writing filter
-   slots on the command classes — a command-dispatch backend, not the UI.
+1. ✅ **List pagination.** gastown's paged mixin (`]`/`[`/`G`, window-sized
+   pages, mode-line `[page/total]`, resize-aware) ported into `gascity-tabulated`
+   as a shared base keymap plus buffer-local paging state (gce-ahl).
+2. ✅ **List filters.** Per-list `/` transient writing filter slots on the
+   `gascity-command-*` classes (gce-ahl). `gc` list subcommands expose almost no
+   server-side filter flags, so filtering is **client-side** on the decoded rows
+   — the session `--state` filter is the lone server-side exception; client-side
+   slots carry no `:long-option` and never reach the command line. Dolt has no
+   meaningful filter dimension, so it keeps pagination only.
 3. **vui detail views (P4).** Rig dashboard and session/polecat detail (`RET`
    from a list/dashboard currently opens Dired or the convoy bead).
 4. **beads.el bead-UI delegation (P5).** Open beads.el's list/detail scoped to a

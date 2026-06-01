@@ -232,5 +232,118 @@ and joins must use `agent_name'."
     (should (consp result))
     (should (assq 'ok result))))
 
+;;; Pagination
+
+(ert-deftest gascity-test-paged-total-pages ()
+  "Total pages is ceil(entries/size), and never below 1."
+  (with-temp-buffer
+    (setq gascity-tabulated--page-size 10)
+    (setq gascity-tabulated--all-entries nil)
+    (should (= (gascity-tabulated--total-pages) 1))
+    (setq gascity-tabulated--all-entries (number-sequence 1 10))
+    (should (= (gascity-tabulated--total-pages) 1))
+    (setq gascity-tabulated--all-entries (number-sequence 1 11))
+    (should (= (gascity-tabulated--total-pages) 2))
+    (setq gascity-tabulated--all-entries (number-sequence 1 25))
+    (should (= (gascity-tabulated--total-pages) 3))))
+
+(ert-deftest gascity-test-paged-page-slice ()
+  "Each page slices the right window; a page past the end is empty, not an error."
+  (with-temp-buffer
+    (setq gascity-tabulated--page-size 10
+          gascity-tabulated--all-entries (number-sequence 1 25))
+    (setq gascity-tabulated--current-page 1)
+    (should (equal (gascity-tabulated--page-slice) (number-sequence 1 10)))
+    (setq gascity-tabulated--current-page 2)
+    (should (equal (gascity-tabulated--page-slice) (number-sequence 11 20)))
+    (setq gascity-tabulated--current-page 3)
+    (should (equal (gascity-tabulated--page-slice) (number-sequence 21 25)))
+    (setq gascity-tabulated--current-page 4)
+    (should (null (gascity-tabulated--page-slice)))))
+
+(ert-deftest gascity-test-paged-effective-size ()
+  "Effective size honours an explicit page size, else computes a positive one."
+  (with-temp-buffer
+    (setq gascity-tabulated--page-size 7)
+    (should (= (gascity-tabulated--effective-page-size) 7))
+    (setq gascity-tabulated--page-size nil)
+    (should (>= (gascity-tabulated--effective-page-size) 1))))
+
+;;; Filter predicates (client-side)
+
+(ert-deftest gascity-test-rig-filter-match ()
+  "Rig status filter matches the derived status label; nil matches every rig."
+  (let ((run '((name . "a") (running . t)))
+        (susp '((name . "b") (suspended . t)))
+        (stop '((name . "c"))))
+    (should (gascity-rig-list--match-p run nil))
+    (should (gascity-rig-list--match-p run "running"))
+    (should-not (gascity-rig-list--match-p run "suspended"))
+    (should (gascity-rig-list--match-p susp "suspended"))
+    (should (gascity-rig-list--match-p stop "stopped"))
+    (should-not (gascity-rig-list--match-p stop "running"))))
+
+(ert-deftest gascity-test-session-filter-match ()
+  "Session rig filter is a case-insensitive substring; nil/empty match all."
+  (let ((s '((rig . "gascity.el"))))
+    (should (gascity-session-list--match-p s nil))
+    (should (gascity-session-list--match-p s ""))
+    (should (gascity-session-list--match-p s "gascity"))
+    (should (gascity-session-list--match-p s "GASCITY"))
+    (should-not (gascity-session-list--match-p s "guix"))))
+
+(ert-deftest gascity-test-convoy-filter-match ()
+  "Convoy status filter matches the `status' field exactly; nil matches all."
+  (let ((c '((id . "x") (status . "open"))))
+    (should (gascity-convoy-list--match-p c nil))
+    (should (gascity-convoy-list--match-p c "open"))
+    (should-not (gascity-convoy-list--match-p c "closed"))))
+
+(ert-deftest gascity-test-mail-filter-match ()
+  "Mail unread-only filter keeps unread messages; nil keeps all."
+  (let ((unread '((unread . t)))
+        (seen '((read . t))))
+    (should (gascity-mail-inbox--match-p unread nil))
+    (should (gascity-mail-inbox--match-p seen nil))
+    (should (gascity-mail-inbox--match-p unread t))
+    (should-not (gascity-mail-inbox--match-p seen t))))
+
+(ert-deftest gascity-test-order-filter-match ()
+  "Order filter ANDs enabled-only and exact type; nil/empty values match all."
+  (let ((on '((enabled . t) (type . "schedule")))
+        (off '((enabled) (type . "cooldown"))))
+    (should (gascity-order-list--match-p on nil nil))
+    (should (gascity-order-list--match-p on t nil))
+    (should-not (gascity-order-list--match-p off t nil))
+    (should (gascity-order-list--match-p on nil "schedule"))
+    (should (gascity-order-list--match-p on t "schedule"))
+    (should-not (gascity-order-list--match-p on nil "cooldown"))
+    (should (gascity-order-list--match-p off nil ""))))
+
+;;; Filter slots <-> command line
+
+(ert-deftest gascity-test-client-filter-slots-do-not-leak ()
+  "Client-side filter slots never reach the `gc' command line."
+  (should (equal (gascity-command-line (gascity-command-rig-list :status "running"))
+                 '("gc" "rig" "list" "--json")))
+  (should (equal (gascity-command-line (gascity-command-convoy-list :status "open"))
+                 '("gc" "convoy" "list" "--json")))
+  (should (equal (gascity-command-line (gascity-command-mail-inbox :unread t))
+                 '("gc" "mail" "inbox" "--json")))
+  (should (equal (gascity-command-line
+                  (gascity-command-order-list :enabled t :type "schedule"))
+                 '("gc" "order" "list" "--json")))
+  (should (equal (gascity-command-line (gascity-command-session-list :rig "gascity.el"))
+                 '("gc" "session" "list" "--json"))))
+
+(ert-deftest gascity-test-session-state-is-server-side ()
+  "The session `--state' filter IS emitted (`gc session list' supports it)."
+  (let ((line (gascity-command-line (gascity-command-session-list :state "active"))))
+    (should (member "--state" line))
+    (should (member "active" line))
+    (should (member "--json" line)))
+  (should (equal (gascity-command-line (gascity-command-session-list))
+                 '("gc" "session" "list" "--json"))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

@@ -21,13 +21,20 @@
 ;; tmux session.
 ;;
 ;; Columns are derived from the live `gc ... --json' shapes.  Long lists
-;; scroll natively; explicit pagination is a future refinement.
+;; are paged to the window height (`]'/`['/`G'; see
+;; `gascity-tabulated-base-map'), and each list (except Dolt) offers a
+;; `/' filter transient.  `gc' list subcommands expose almost no
+;; server-side filter flags, so filtering is mostly client-side on the
+;; decoded rows — the session `--state' filter is the lone server-side
+;; exception; the filter criteria live as slots on the
+;; `gascity-command-*' classes (see `gascity-types').
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'seq)
 (require 'tabulated-list)
+(require 'transient)
 (require 'view)
 (require 'gascity-custom)
 (require 'gascity-error)
@@ -74,18 +81,16 @@ may vary (e.g. mail, whose live shape could not be captured)."
 
 (defun gascity-tabulated--refresh (base-name fetch-fn)
   "Fetch rows via FETCH-FN and repaint the current tabulated buffer.
-FETCH-FN returns a list of `(ID . [COLUMNS])' entries.  `gc' errors are
-caught and reported, leaving the list empty.  BASE-NAME labels the mode
-line with the row count."
+FETCH-FN returns a list of `(ID . [COLUMNS])' entries.  The full list is
+stored for pagination and one window-sized page is shown; `gc' errors
+are caught and reported, leaving the list empty.  BASE-NAME labels the
+mode line, which shows the current page and total."
   (let ((entries (condition-case err
                      (funcall fetch-fn)
                    (gascity-error
                     (message "gascity: %s" (error-message-string err))
                     nil))))
-    (setq tabulated-list-entries entries)
-    (tabulated-list-print t)
-    (setq mode-name (format "%s [%d]" base-name (length entries)))
-    (force-mode-line-update)))
+    (gascity-tabulated--init-paged base-name entries)))
 
 (defun gascity-tabulated--show (buffer-name mode-sym refresh-fn)
   "Pop to BUFFER-NAME in major mode MODE-SYM and run REFRESH-FN."
@@ -96,19 +101,159 @@ line with the row count."
     (pop-to-buffer buf)))
 
 ;;; ============================================================
+;;; Pagination
+;;; ============================================================
+;;
+;; A window-sized paging layer ported from gastown.el's paged mixin.
+;; `gascity-tabulated--refresh' stores the full entry list in
+;; `gascity-tabulated--all-entries' and shows one window-sized page at a
+;; time; `]'/`['/`G' move between pages (bound on
+;; `gascity-tabulated-base-map', the shared parent of every list's
+;; keymap), and the page size recomputes on window resize.  The mode
+;; line reads "Name [page/total]".
+
+(defvar-local gascity-tabulated--all-entries nil
+  "All tabulated-list entries for this buffer, before paging.")
+
+(defvar-local gascity-tabulated--current-page 1
+  "Current page number (1-indexed).")
+
+(defvar-local gascity-tabulated--page-size nil
+  "Entries per page; nil means compute from the window height on demand.")
+
+(defvar-local gascity-tabulated--base-name ""
+  "Label shown before the page indicator in the mode line.")
+
+(defun gascity-tabulated--compute-page-size ()
+  "Return how many entries fit in the current window.
+Two lines are reserved for the column header and the mode line."
+  (max 1 (- (window-body-height) 2)))
+
+(defun gascity-tabulated--effective-page-size ()
+  "Return the active page size, computing it from the window if unset."
+  (or gascity-tabulated--page-size (gascity-tabulated--compute-page-size)))
+
+(defun gascity-tabulated--total-pages ()
+  "Return the total number of pages for the current entries (at least 1)."
+  (let ((total (length gascity-tabulated--all-entries))
+        (size (gascity-tabulated--effective-page-size)))
+    (max 1 (ceiling (/ (float total) size)))))
+
+(defun gascity-tabulated--page-slice ()
+  "Return the entries on `gascity-tabulated--current-page'."
+  (let* ((all gascity-tabulated--all-entries)
+         (size (gascity-tabulated--effective-page-size))
+         (start (* (1- gascity-tabulated--current-page) size))
+         (end (min (length all) (+ start size))))
+    (if (>= start (length all))
+        nil
+      (seq-subseq all start end))))
+
+(defun gascity-tabulated--update-mode-name ()
+  "Set `mode-name' to \"BASE [page/total]\" and refresh the mode line."
+  (setq mode-name (format "%s [%d/%d]"
+                          gascity-tabulated--base-name
+                          gascity-tabulated--current-page
+                          (gascity-tabulated--total-pages)))
+  (force-mode-line-update))
+
+(defun gascity-tabulated--refresh-display ()
+  "Slice the current page into `tabulated-list-entries' and redraw."
+  (setq tabulated-list-entries (gascity-tabulated--page-slice))
+  (tabulated-list-print t)
+  (gascity-tabulated--update-mode-name))
+
+(defun gascity-tabulated--init-paged (base-name all-entries)
+  "Initialise paging state for the current buffer and display page 1.
+BASE-NAME labels the mode line; ALL-ENTRIES is the full entry list."
+  (setq gascity-tabulated--all-entries all-entries
+        gascity-tabulated--current-page 1
+        gascity-tabulated--page-size (gascity-tabulated--compute-page-size)
+        gascity-tabulated--base-name base-name)
+  (gascity-tabulated--refresh-display))
+
+(defun gascity-tabulated-next-page ()
+  "Advance to the next page."
+  (interactive)
+  (let ((total (gascity-tabulated--total-pages)))
+    (if (>= gascity-tabulated--current-page total)
+        (message "Already on the last page (%d/%d)"
+                 gascity-tabulated--current-page total)
+      (setq gascity-tabulated--current-page (1+ gascity-tabulated--current-page))
+      (gascity-tabulated--refresh-display))))
+
+(defun gascity-tabulated-prev-page ()
+  "Go back to the previous page."
+  (interactive)
+  (if (<= gascity-tabulated--current-page 1)
+      (message "Already on the first page")
+    (setq gascity-tabulated--current-page (1- gascity-tabulated--current-page))
+    (gascity-tabulated--refresh-display)))
+
+(defun gascity-tabulated-goto-page (n)
+  "Jump to page N (1-indexed); prompt when called interactively."
+  (interactive
+   (list (read-number (format "Go to page (1-%d): "
+                              (gascity-tabulated--total-pages)))))
+  (let ((total (gascity-tabulated--total-pages)))
+    (if (or (< n 1) (> n total))
+        (user-error "Page %d out of range (1-%d)" n total)
+      (setq gascity-tabulated--current-page n)
+      (gascity-tabulated--refresh-display))))
+
+(defun gascity-tabulated--frame-resize (frame)
+  "Recompute page size for paged buffers shown in FRAME after a resize."
+  (dolist (win (window-list frame))
+    (let ((buf (window-buffer win)))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (when (local-variable-p 'gascity-tabulated--all-entries)
+            (let ((new-size (with-selected-window win
+                              (gascity-tabulated--compute-page-size))))
+              (unless (eql new-size gascity-tabulated--page-size)
+                (setq gascity-tabulated--page-size new-size)
+                (let ((total (gascity-tabulated--total-pages)))
+                  (when (> gascity-tabulated--current-page total)
+                    (setq gascity-tabulated--current-page total)))
+                (gascity-tabulated--refresh-display)))))))))
+
+(add-hook 'window-size-change-functions #'gascity-tabulated--frame-resize)
+
+(defvar-keymap gascity-tabulated-base-map
+  :doc "Shared parent keymap for gascity tabulated-list buffers.
+Adds window-sized pagination (`]' next, `[' previous, `G' goto) on top
+of `tabulated-list-mode-map'.  Each list's own keymap parents off this
+and adds `g' refresh, `/' filter, and `RET'."
+  :parent tabulated-list-mode-map
+  "]" #'gascity-tabulated-next-page
+  "[" #'gascity-tabulated-prev-page
+  "G" #'gascity-tabulated-goto-page)
+
+;;; ============================================================
 ;;; Rigs
 ;;; ============================================================
 
 (defconst gascity-rig-list-buffer-name "*gascity-rigs*")
 
+(defvar-local gascity-rig-list--filter nil
+  "Active rig-list filter as command initargs (e.g. (:status \"running\")), or nil.")
+
+(defun gascity-rig-list--status-label (rig)
+  "Return RIG's status label: \"suspended\", \"running\", or \"stopped\"."
+  (cond ((alist-get 'suspended rig) "suspended")
+        ((alist-get 'running rig) "running")
+        (t "stopped")))
+
 (defun gascity-rig-list--status (rig)
   "Return a propertized status cell for RIG (an alist)."
-  (let* ((running (alist-get 'running rig))
-         (suspended (alist-get 'suspended rig))
-         (label (cond (suspended "suspended")
-                      (running "running")
-                      (t "stopped"))))
-    (propertize label 'face (gascity-section-state-face running suspended))))
+  (propertize (gascity-rig-list--status-label rig)
+              'face (gascity-section-state-face (alist-get 'running rig)
+                                                (alist-get 'suspended rig))))
+
+(defun gascity-rig-list--match-p (rig status)
+  "Return non-nil when RIG matches STATUS (nil matches every rig)."
+  (or (null status)
+      (string= status (gascity-rig-list--status-label rig))))
 
 (defun gascity-rig-list--entry (rig)
   "Map RIG (an alist) to a tabulated-list entry."
@@ -130,19 +275,46 @@ line with the row count."
       (user-error "No rig directory at point"))))
 
 (defun gascity-rig-list-refresh ()
-  "Refresh the rig list."
+  "Refresh the rig list, applying the current filter."
   (interactive)
   (gascity-tabulated--refresh
    "Rigs"
    (lambda ()
-     (mapcar #'gascity-rig-list--entry
-             (gascity-tabulated--vector->list
-              (alist-get 'rigs (gascity-command-rig-list!)))))))
+     (let* ((cmd (apply #'gascity-command-rig-list gascity-rig-list--filter))
+            (rigs (gascity-tabulated--vector->list
+                   (alist-get 'rigs (oref (gascity-command-execute cmd) result)))))
+       (mapcar #'gascity-rig-list--entry
+               (seq-filter (lambda (r)
+                             (gascity-rig-list--match-p r (oref cmd status)))
+                           rigs))))))
+
+(transient-define-prefix gascity-rig-list-filter ()
+  "Filter the rig list."
+  ["Filter rigs"
+   ("-s" "Status" "--status=" :choices ("running" "suspended" "stopped"))]
+  ["Apply"
+   ("a" "Apply" gascity-rig-list--apply-filter)
+   ("c" "Clear" gascity-rig-list--clear-filter)])
+
+(defun gascity-rig-list--apply-filter (&optional args)
+  "Apply transient ARGS as the rig-list filter and refresh."
+  (interactive (list (transient-args 'gascity-rig-list-filter)))
+  (let ((status (transient-arg-value "--status=" args)))
+    (setq gascity-rig-list--filter
+          (and status (not (string-empty-p status)) (list :status status))))
+  (gascity-rig-list-refresh))
+
+(defun gascity-rig-list--clear-filter ()
+  "Clear the rig-list filter and refresh."
+  (interactive)
+  (setq gascity-rig-list--filter nil)
+  (gascity-rig-list-refresh))
 
 (defvar-keymap gascity-rig-list-mode-map
   :doc "Keymap for `gascity-rig-list-mode'."
-  :parent tabulated-list-mode-map
+  :parent gascity-tabulated-base-map
   "g"   #'gascity-rig-list-refresh
+  "/"   #'gascity-rig-list-filter
   "RET" #'gascity-rig-list-dired)
 
 (define-derived-mode gascity-rig-list-mode tabulated-list-mode "GC-Rigs"
@@ -174,6 +346,10 @@ line with the row count."
 
 (defconst gascity-session-list-buffer-name "*gascity-sessions*")
 
+(defvar-local gascity-session-list--filter nil
+  "Active session-list filter as command initargs, or nil.
+May carry a server-side :state and a client-side :rig substring.")
+
 (defun gascity-session-list--name (session)
   "Return SESSION's qualified agent name.
 Prefers `agent_name' (always qualified) over `name', which degrades to
@@ -204,23 +380,65 @@ The entry id is the agent plist, so `d'/`t'/`RET' act on it."
                   (gascity-tabulated--abbreviate-path
                    (alist-get 'work_dir session))))))
 
+(defun gascity-session-list--match-p (session rig)
+  "Return non-nil when SESSION's rig contains RIG (nil/empty matches all).
+RIG is matched case-insensitively as a substring of the decoded `rig'."
+  (or (null rig) (string-empty-p rig)
+      (let ((case-fold-search t))
+        (string-match-p (regexp-quote rig)
+                        (gascity-tabulated--str (alist-get 'rig session))))))
+
 (defun gascity-session-list-refresh ()
-  "Refresh the session list."
+  "Refresh the session list, applying the current filter.
+The `state' filter is sent to `gc' (`--state'); the `rig' filter is
+applied client-side to the decoded rows."
   (interactive)
   (gascity-tabulated--refresh
    "Sessions"
    (lambda ()
      ;; Resolve the tmux socket once per refresh — it is constant across
      ;; rows, and `gc session list' does not carry the city name.
-     (let ((socket (gascity-resolve-tmux-socket)))
+     (let* ((cmd (apply #'gascity-command-session-list gascity-session-list--filter))
+            (socket (gascity-resolve-tmux-socket))
+            (sessions (gascity-tabulated--vector->list
+                       (alist-get 'sessions
+                                  (oref (gascity-command-execute cmd) result)))))
        (mapcar (lambda (s) (gascity-session-list--entry s socket))
-               (gascity-tabulated--vector->list
-                (alist-get 'sessions (gascity-command-session-list!))))))))
+               (seq-filter (lambda (s)
+                             (gascity-session-list--match-p s (oref cmd rig)))
+                           sessions))))))
+
+(transient-define-prefix gascity-session-list-filter ()
+  "Filter the session list."
+  ["Filter sessions"
+   ("-s" "State" "--state="
+    :choices ("active" "suspended" "closed" "all"))
+   ("-r" "Rig" "--rig=")]
+  ["Apply"
+   ("a" "Apply" gascity-session-list--apply-filter)
+   ("c" "Clear" gascity-session-list--clear-filter)])
+
+(defun gascity-session-list--apply-filter (&optional args)
+  "Apply transient ARGS as the session-list filter and refresh."
+  (interactive (list (transient-args 'gascity-session-list-filter)))
+  (let ((state (transient-arg-value "--state=" args))
+        (rig (transient-arg-value "--rig=" args)))
+    (setq gascity-session-list--filter
+          (append (and state (not (string-empty-p state)) (list :state state))
+                  (and rig (not (string-empty-p rig)) (list :rig rig)))))
+  (gascity-session-list-refresh))
+
+(defun gascity-session-list--clear-filter ()
+  "Clear the session-list filter and refresh."
+  (interactive)
+  (setq gascity-session-list--filter nil)
+  (gascity-session-list-refresh))
 
 (defvar-keymap gascity-session-list-mode-map
   :doc "Keymap for `gascity-session-list-mode'."
-  :parent tabulated-list-mode-map
+  :parent gascity-tabulated-base-map
   "g"   #'gascity-session-list-refresh
+  "/"   #'gascity-session-list-filter
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
   "RET" #'gascity-dired-at-point)
@@ -256,6 +474,14 @@ session.
 
 (defconst gascity-convoy-list-buffer-name "*gascity-convoys*")
 
+(defvar-local gascity-convoy-list--filter nil
+  "Active convoy-list filter as command initargs (e.g. (:status \"open\")), or nil.")
+
+(defun gascity-convoy-list--match-p (convoy status)
+  "Return non-nil when CONVOY matches STATUS (nil matches every convoy)."
+  (or (null status)
+      (string= status (gascity-tabulated--str (alist-get 'status convoy)))))
+
 (defun gascity-convoy-list--entry (convoy)
   "Map CONVOY (an alist) to a tabulated-list entry.
 The entry id is the convoy's bead id, so `RET' can open it in beads.el."
@@ -277,19 +503,47 @@ The entry id is the convoy's bead id, so `RET' can open it in beads.el."
           (t (user-error "beads.el is not available to show %s" id)))))
 
 (defun gascity-convoy-list-refresh ()
-  "Refresh the convoy list."
+  "Refresh the convoy list, applying the current filter."
   (interactive)
   (gascity-tabulated--refresh
    "Convoys"
    (lambda ()
-     (mapcar #'gascity-convoy-list--entry
-             (gascity-tabulated--vector->list
-              (alist-get 'convoys (gascity-command-convoy-list!)))))))
+     (let* ((cmd (apply #'gascity-command-convoy-list gascity-convoy-list--filter))
+            (convoys (gascity-tabulated--vector->list
+                      (alist-get 'convoys
+                                 (oref (gascity-command-execute cmd) result)))))
+       (mapcar #'gascity-convoy-list--entry
+               (seq-filter (lambda (c)
+                             (gascity-convoy-list--match-p c (oref cmd status)))
+                           convoys))))))
+
+(transient-define-prefix gascity-convoy-list-filter ()
+  "Filter the convoy list."
+  ["Filter convoys"
+   ("-s" "Status" "--status=" :choices ("open" "closed"))]
+  ["Apply"
+   ("a" "Apply" gascity-convoy-list--apply-filter)
+   ("c" "Clear" gascity-convoy-list--clear-filter)])
+
+(defun gascity-convoy-list--apply-filter (&optional args)
+  "Apply transient ARGS as the convoy-list filter and refresh."
+  (interactive (list (transient-args 'gascity-convoy-list-filter)))
+  (let ((status (transient-arg-value "--status=" args)))
+    (setq gascity-convoy-list--filter
+          (and status (not (string-empty-p status)) (list :status status))))
+  (gascity-convoy-list-refresh))
+
+(defun gascity-convoy-list--clear-filter ()
+  "Clear the convoy-list filter and refresh."
+  (interactive)
+  (setq gascity-convoy-list--filter nil)
+  (gascity-convoy-list-refresh))
 
 (defvar-keymap gascity-convoy-list-mode-map
   :doc "Keymap for `gascity-convoy-list-mode'."
-  :parent tabulated-list-mode-map
+  :parent gascity-tabulated-base-map
   "g"   #'gascity-convoy-list-refresh
+  "/"   #'gascity-convoy-list-filter
   "RET" #'gascity-convoy-list-visit)
 
 (define-derived-mode gascity-convoy-list-mode tabulated-list-mode "GC-Convoys"
@@ -321,10 +575,18 @@ The entry id is the convoy's bead id, so `RET' can open it in beads.el."
 
 (defconst gascity-mail-inbox-buffer-name "*gascity-mail*")
 
+(defvar-local gascity-mail-inbox--filter nil
+  "Active mail-inbox filter as command initargs (e.g. (:unread t)), or nil.")
+
 (defun gascity-mail-inbox--unread-p (message)
   "Return non-nil when MESSAGE (an alist) is unread."
   (or (alist-get 'unread message)
       (and (assq 'read message) (not (alist-get 'read message)))))
+
+(defun gascity-mail-inbox--match-p (message unread)
+  "Return non-nil when MESSAGE passes the UNREAD-only filter.
+A nil UNREAD keeps every message."
+  (or (not unread) (gascity-mail-inbox--unread-p message)))
 
 (defun gascity-mail-inbox--entry (message)
   "Map MESSAGE (an alist) to a tabulated-list entry.
@@ -359,19 +621,46 @@ Read-only: renders the data already fetched, without contacting `gc'."
       (pop-to-buffer buf))))
 
 (defun gascity-mail-inbox-refresh ()
-  "Refresh the mail inbox."
+  "Refresh the mail inbox, applying the current filter."
   (interactive)
   (gascity-tabulated--refresh
    "Mail"
    (lambda ()
-     (mapcar #'gascity-mail-inbox--entry
-             (gascity-tabulated--vector->list
-              (alist-get 'messages (gascity-command-mail-inbox!)))))))
+     (let* ((cmd (apply #'gascity-command-mail-inbox gascity-mail-inbox--filter))
+            (messages (gascity-tabulated--vector->list
+                       (alist-get 'messages
+                                  (oref (gascity-command-execute cmd) result)))))
+       (mapcar #'gascity-mail-inbox--entry
+               (seq-filter (lambda (m)
+                             (gascity-mail-inbox--match-p m (oref cmd unread)))
+                           messages))))))
+
+(transient-define-prefix gascity-mail-inbox-filter ()
+  "Filter the mail inbox."
+  ["Filter mail"
+   ("-u" "Unread only" "--unread")]
+  ["Apply"
+   ("a" "Apply" gascity-mail-inbox--apply-filter)
+   ("c" "Clear" gascity-mail-inbox--clear-filter)])
+
+(defun gascity-mail-inbox--apply-filter (&optional args)
+  "Apply transient ARGS as the mail-inbox filter and refresh."
+  (interactive (list (transient-args 'gascity-mail-inbox-filter)))
+  (setq gascity-mail-inbox--filter
+        (and (member "--unread" args) (list :unread t)))
+  (gascity-mail-inbox-refresh))
+
+(defun gascity-mail-inbox--clear-filter ()
+  "Clear the mail-inbox filter and refresh."
+  (interactive)
+  (setq gascity-mail-inbox--filter nil)
+  (gascity-mail-inbox-refresh))
 
 (defvar-keymap gascity-mail-inbox-mode-map
   :doc "Keymap for `gascity-mail-inbox-mode'."
-  :parent tabulated-list-mode-map
+  :parent gascity-tabulated-base-map
   "g"   #'gascity-mail-inbox-refresh
+  "/"   #'gascity-mail-inbox-filter
   "RET" #'gascity-mail-inbox-show)
 
 (define-derived-mode gascity-mail-inbox-mode tabulated-list-mode "GC-Mail"
@@ -403,6 +692,19 @@ Read-only: renders the data already fetched, without contacting `gc'."
 
 (defconst gascity-order-list-buffer-name "*gascity-orders*")
 
+(defvar-local gascity-order-list--filter nil
+  "Active order-list filter as command initargs, or nil.
+May carry :enabled (enabled-only) and :type (exact type match).")
+
+(defun gascity-order-list--match-p (order enabled type)
+  "Return non-nil when ORDER passes the ENABLED-only and TYPE filters.
+ENABLED non-nil keeps only enabled orders; TYPE (when non-empty) keeps
+only orders whose `type' matches it exactly.  Nil/empty values match
+every order."
+  (and (or (not enabled) (and (alist-get 'enabled order) t))
+       (or (null type) (string-empty-p type)
+           (string= type (gascity-tabulated--str (alist-get 'type order))))))
+
 (defun gascity-order-list--entry (order)
   "Map ORDER (an alist) to a tabulated-list entry.
 The entry id is the whole order alist, so `RET' can open its source."
@@ -426,19 +728,50 @@ The entry id is the whole order alist, so `RET' can open its source."
       (user-error "No readable source for the order at point"))))
 
 (defun gascity-order-list-refresh ()
-  "Refresh the order list."
+  "Refresh the order list, applying the current filter."
   (interactive)
   (gascity-tabulated--refresh
    "Orders"
    (lambda ()
-     (mapcar #'gascity-order-list--entry
-             (gascity-tabulated--vector->list
-              (alist-get 'orders (gascity-command-order-list!)))))))
+     (let* ((cmd (apply #'gascity-command-order-list gascity-order-list--filter))
+            (orders (gascity-tabulated--vector->list
+                     (alist-get 'orders
+                                (oref (gascity-command-execute cmd) result)))))
+       (mapcar #'gascity-order-list--entry
+               (seq-filter (lambda (o)
+                             (gascity-order-list--match-p
+                              o (oref cmd enabled) (oref cmd type)))
+                           orders))))))
+
+(transient-define-prefix gascity-order-list-filter ()
+  "Filter the order list."
+  ["Filter orders"
+   ("-e" "Enabled only" "--enabled")
+   ("-t" "Type" "--type=")]
+  ["Apply"
+   ("a" "Apply" gascity-order-list--apply-filter)
+   ("c" "Clear" gascity-order-list--clear-filter)])
+
+(defun gascity-order-list--apply-filter (&optional args)
+  "Apply transient ARGS as the order-list filter and refresh."
+  (interactive (list (transient-args 'gascity-order-list-filter)))
+  (let ((type (transient-arg-value "--type=" args)))
+    (setq gascity-order-list--filter
+          (append (and (member "--enabled" args) (list :enabled t))
+                  (and type (not (string-empty-p type)) (list :type type)))))
+  (gascity-order-list-refresh))
+
+(defun gascity-order-list--clear-filter ()
+  "Clear the order-list filter and refresh."
+  (interactive)
+  (setq gascity-order-list--filter nil)
+  (gascity-order-list-refresh))
 
 (defvar-keymap gascity-order-list-mode-map
   :doc "Keymap for `gascity-order-list-mode'."
-  :parent tabulated-list-mode-map
+  :parent gascity-tabulated-base-map
   "g"   #'gascity-order-list-refresh
+  "/"   #'gascity-order-list-filter
   "RET" #'gascity-order-list-visit)
 
 (define-derived-mode gascity-order-list-mode tabulated-list-mode "GC-Orders"
@@ -499,8 +832,10 @@ The entry id is the whole order alist, so `RET' can open its source."
               (alist-get 'databases (gascity-command-dolt-health!)))))))
 
 (defvar-keymap gascity-dolt-list-mode-map
-  :doc "Keymap for `gascity-dolt-list-mode'."
-  :parent tabulated-list-mode-map
+  :doc "Keymap for `gascity-dolt-list-mode'.
+Dolt has no meaningful filter dimension, so no `/'; pagination
+(`]'/`['/`G') comes from the parent map."
+  :parent gascity-tabulated-base-map
   "g"   #'gascity-dolt-list-refresh
   "RET" #'gascity-dolt-list-show)
 
