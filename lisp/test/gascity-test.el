@@ -97,7 +97,7 @@
 ;;; Tabulated helpers
 
 (ert-deftest gascity-test-tabulated-helpers ()
-  "Vector/timestamp/string/field helpers behave."
+  "Vector/timestamp/string helpers behave."
   (should (equal (gascity-tabulated--vector->list [1 2 3]) '(1 2 3)))
   (should (equal (gascity-tabulated--vector->list '(1 2)) '(1 2)))
   (should (equal (gascity-tabulated--format-timestamp "2026-06-01T19:18:18Z")
@@ -106,9 +106,7 @@
   (should (equal (gascity-tabulated--format-timestamp nil) ""))
   (should (equal (gascity-tabulated--str 42) "42"))
   (should (equal (gascity-tabulated--str nil) ""))
-  (should (equal (gascity-tabulated--str t) "yes"))
-  (should (equal (gascity-tabulated--field '((a . "") (b . "hit")) '(a b)) "hit"))
-  (should (equal (gascity-tabulated--field '((a . "x")) '(z)) "")))
+  (should (equal (gascity-tabulated--str t) "yes")))
 
 ;;; Tabulated entry builders
 
@@ -694,13 +692,32 @@ Nils and empty strings are dropped; duplicates collapse."
     (should-not (gascity-convoy-list--match-p c "closed"))))
 
 (ert-deftest gascity-test-mail-filter-match ()
-  "Mail unread-only filter keeps unread messages; nil keeps all."
-  (let ((unread '((unread . t)))
+  "Mail unread-only filter keeps unread messages; nil keeps all.
+Unread is the negation of the v1 `read' boolean (gc decodes `false' to nil)."
+  (let ((unread '((read . nil)))
         (seen '((read . t))))
     (should (gascity-mail-inbox--match-p unread nil))
     (should (gascity-mail-inbox--match-p seen nil))
     (should (gascity-mail-inbox--match-p unread t))
     (should-not (gascity-mail-inbox--match-p seen t))))
+
+(ert-deftest gascity-test-mail-entry ()
+  "A mail entry reads the v1 schema keys and marks unread rows.
+`from'/`subject'/`created_at' (date-only) become the columns, the whole
+message alist is the id, and a non-`read' message shows the ● marker."
+  (let* ((message '((id . "msg-1") (from . "mayor/") (to . "gce/furiosa")
+                    (subject . "Re: status") (body . "...")
+                    (created_at . "2026-06-01T19:18:18Z") (read . nil)))
+         (entry (gascity-mail-inbox--entry message)))
+    (should (eq (car entry) message))
+    (should (equal (gascity-test--plain-cols entry)
+                   '("mayor/" "Re: status" "2026-06-01" "●"))))
+  ;; A read message clears the marker.
+  (should (equal (nth 3 (gascity-test--plain-cols
+                         (gascity-mail-inbox--entry
+                          '((from . "a") (subject . "s")
+                            (created_at . "2026-06-01T00:00:00Z") (read . t)))))
+                 "")))
 
 (ert-deftest gascity-test-order-filter-match ()
   "Order filter ANDs enabled-only and exact type; nil/empty values match all."

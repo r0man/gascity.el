@@ -366,8 +366,10 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    store owning the bead's id prefix, so convoy / rig-dashboard / session `RET`
    delegate against the right store instead of the ambient directory (gce-afq,
    §4.3 / §9.1).
-5. **Mail row shape.** The live inbox was empty, so mail columns use tolerant
-   key-guessing; confirm the real `gc mail inbox` message schema and tighten.
+5. ✅ **Mail row shape.** Confirmed against the `gc mail inbox --json` v1
+   `mail_message` schema (`from` / `subject` / `created_at` / boolean `read`);
+   `gascity-mail-inbox--entry` reads those keys directly and the tolerant
+   key-guesser (`gascity-tabulated--field`) was removed (gce-384).
 6. **tmux socket from gc.** gc does not expose the tmux server socket in
    `--json` (the old `gt` did); we infer it from the city name. Add the field to
    `gc` (or a stable accessor) and read it instead of inferring.

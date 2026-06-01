@@ -81,17 +81,6 @@
   "Return PATH with the home-directory prefix abbreviated to \"~\"."
   (if (and path (stringp path)) (abbreviate-file-name path) (or path "")))
 
-(defun gascity-tabulated--field (item keys)
-  "Return the first non-empty value among KEYS in alist ITEM, or \"\".
-KEYS is a list of symbols tried in order; used where a `gc' field name
-may vary (e.g. mail, whose live shape could not be captured)."
-  (catch 'hit
-    (dolist (k keys)
-      (let ((v (alist-get k item)))
-        (when (and v (or (not (stringp v)) (not (string-empty-p v))))
-          (throw 'hit v))))
-    ""))
-
 (defun gascity-tabulated--str (value)
   "Coerce VALUE to a display string."
   (cond ((null value) "")
@@ -615,9 +604,11 @@ The entry id is the convoy's bead id, so `RET' can open it in beads.el."
   "Active mail-inbox filter as command initargs (e.g. (:unread t)), or nil.")
 
 (defun gascity-mail-inbox--unread-p (message)
-  "Return non-nil when MESSAGE (an alist) is unread."
-  (or (alist-get 'unread message)
-      (and (assq 'read message) (not (alist-get 'read message)))))
+  "Return non-nil when MESSAGE (an alist) is unread.
+`gc mail inbox --json' gives each message a required boolean `read' field
+\(v1 `mail_message' schema); unread is its negation.  JSON `false' decodes
+to nil (see `gascity-reader-parse-json'), so an unread message reads nil."
+  (not (alist-get 'read message)))
 
 (defun gascity-mail-inbox--match-p (message unread)
   "Return non-nil when MESSAGE passes the UNREAD-only filter.
@@ -626,16 +617,14 @@ A nil UNREAD keeps every message."
 
 (defun gascity-mail-inbox--entry (message)
   "Map MESSAGE (an alist) to a tabulated-list entry.
-Mail field names could not be captured live, so several candidate keys
-are tried; the entry id is the whole message alist."
+Columns follow the `gc mail inbox --json' v1 `mail_message' schema —
+`from', `subject', `created_at', and the boolean `read' (for the unread
+marker).  The entry id is the whole message alist, so `RET' can show
+every field."
   (list message
-        (vector (gascity-tabulated--str
-                 (gascity-tabulated--field message '(from sender from_addr)))
-                (gascity-tabulated--str
-                 (gascity-tabulated--field message '(subject subj title)))
-                (gascity-tabulated--format-timestamp
-                 (gascity-tabulated--field
-                  message '(date created_at sent_at timestamp)))
+        (vector (gascity-tabulated--str (alist-get 'from message))
+                (gascity-tabulated--str (alist-get 'subject message))
+                (gascity-tabulated--format-timestamp (alist-get 'created_at message))
                 (if (gascity-mail-inbox--unread-p message) "●" ""))))
 
 (defun gascity-mail-inbox-show ()
