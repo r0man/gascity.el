@@ -128,8 +128,10 @@ SOCKET) so `d'/`t'/RET act on it."
                        running-agents total-agents)
                :face 'gascity-dim))))
 
-(defun gascity-status--content-vnode (status sessions)
-  "Return the dashboard body vnode from STATUS and SESSIONS data."
+(defun gascity-status--content-vnode (status sessions &optional sessions-state sessions-error)
+  "Return the dashboard body vnode from STATUS and SESSIONS data.
+SESSIONS-STATE/SESSIONS-ERROR describe the `gc session list' load so a
+one-line hint can warn that `d'/`t' are disabled when it did not succeed."
   (let* ((session-map (gascity-status--session-map (or sessions [])))
          (socket (gascity-resolve-tmux-socket (alist-get 'city_name status)))
          (agents (alist-get 'agents status))
@@ -138,6 +140,7 @@ SOCKET) so `d'/`t'/RET act on it."
     (vui-vstack
      :spacing 1
      (gascity-status--header-vnode status)
+     (gascity-status--sessions-note-vnode sessions-state sessions-error)
      (when city-agents
        (apply #'vui-vstack
               (vui-text "City" :face 'gascity-header)
@@ -157,6 +160,22 @@ SOCKET) so `d'/`t'/RET act on it."
    (vui-text (format "Could not load Gas City status: %s" (or message "?"))
              :face 'gascity-failed)
    (vui-text "Press g to retry." :face 'gascity-dim)))
+
+(defun gascity-status--sessions-note-vnode (state error)
+  "Return a one-line hint vnode when sessions are unavailable, else nil.
+STATE is the `vui-use-async' status of the `gc session list' load and
+ERROR its message.  The dashboard renders even when that load has not
+succeeded, but without it agent rows carry no `work_dir'/`session_name',
+so `d' (Dired) and `t' (tmux attach) silently no-op.  Surface why instead
+of degrading invisibly; a `ready' load needs no note (returns nil)."
+  (pcase state
+    ('error
+     (vui-text (format "  Sessions unavailable — d/t disabled (%s)"
+                       (or error "load failed"))
+               :face 'gascity-failed))
+    ('pending
+     (vui-text "  Sessions loading — d/t available once ready"
+               :face 'gascity-dim))))
 
 ;;; Components
 
@@ -207,7 +226,9 @@ SOCKET) so `d'/`t'/RET act on it."
       (gascity-status--content-vnode
        (plist-get status-res :data)
        (and (eq sessions-state 'ready)
-            (alist-get 'sessions (plist-get sessions-res :data))))))))
+            (alist-get 'sessions (plist-get sessions-res :data)))
+       sessions-state
+       (plist-get sessions-res :error))))))
 
 ;;; Commands
 

@@ -202,6 +202,15 @@ and joins must use `agent_name'."
     (should (equal (plist-get plist :socket) "sock"))
     (should (eq (plist-get plist :running) t))))
 
+(ert-deftest gascity-test-status-sessions-note ()
+  "A sessions-load hint appears only when that load is not ready.
+Without it, a failed/pending session load degrades silently — agent rows
+lose `work_dir'/`session_name', so `d'/`t' no-op with no explanation."
+  (should (null (gascity-status--sessions-note-vnode 'ready nil)))
+  (should (null (gascity-status--sessions-note-vnode nil nil)))
+  (should (gascity-status--sessions-note-vnode 'error "boom"))
+  (should (gascity-status--sessions-note-vnode 'pending nil)))
+
 ;;; tmux socket resolution
 
 (ert-deftest gascity-test-resolve-tmux-socket ()
