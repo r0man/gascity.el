@@ -26,14 +26,16 @@
 ;; command-dispatch backend, not the primary interface.  Bead UI is
 ;; delegated to beads.el.
 ;;
-;; This entry point loads the read-only MVP: the gc -> JSON bridge
+;; This entry point loads the porcelain: the gc -> JSON bridge
 ;; (`gascity-reader', sync and async), the command layer
 ;; (`gascity-command' + `gascity-types'), context resolution
 ;; (`gascity-context'), the status dashboard (`gascity-status'), the
-;; tabulated lists (`gascity-tabulated'), and the agent actions — Dired
-;; and tmux attach via beads.el's terminal module (`gascity-terminal').
-;; Write/mutate actions and richer detail views arrive in later phases —
-;; see docs/DESIGN.md.
+;; tabulated lists (`gascity-tabulated'), the agent actions — Dired and
+;; tmux attach via beads.el's terminal module (`gascity-terminal') — the
+;; mutating-command dispatch (`gascity-action'), and the vui detail views:
+;; the rig dashboard (`gascity-rig') and the session/polecat detail
+;; (`gascity-session').  Bead-UI delegation and polish arrive in later
+;; phases — see docs/DESIGN.md.
 
 ;;; Code:
 
@@ -50,6 +52,8 @@
 (require 'gascity-tabulated)
 (require 'gascity-status)
 (require 'gascity-action)
+(require 'gascity-rig)
+(require 'gascity-session)
 
 ;;; Debug logging
 
@@ -85,7 +89,8 @@ for their arguments.  The same actions are also available at point in
 the lists and the status dashboard."
   ["Gas City"
    ["Overview"
-    ("s" "Status dashboard" gascity-status)]
+    ("s" "Status dashboard" gascity-status)
+    ("d" "Rig dashboard…" gascity-rig-dashboard)]
    ["Lists"
     ("r" "Rigs" gascity-rig-list)
     ("a" "Sessions" gascity-session-list)

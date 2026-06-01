@@ -121,6 +121,25 @@ Payload: an alist with an `orders' vector and a `summary'.")
 Payload: an alist with `server', a `databases' vector, and more.  Used
 in place of `gc dolt list', which does not support `--json'.")
 
+;;; Session output (read-only)
+
+(gascity-defcommand gascity-command-session-peek (gascity-command-global-options)
+  ((target
+    :initarg :target :type string :initform "" :positional 1
+    :documentation "Session id or alias to peek at.")
+   (lines
+    :initarg :lines :type string :initform "50"
+    :long-option "lines" :option-type :string
+    :documentation "How many trailing output lines `gc' should capture.")
+   (json
+    :initarg :json :type boolean :initform nil
+    :long-option "json" :option-type :boolean
+    :documentation "Off: capture the human-readable text snapshot (not JSONL),
+which the detail view renders verbatim in a read-only buffer."))
+  :documentation "View a session's recent output without attaching.
+Read-only.  The polecat/session detail view's `peek' action runs this
+and shows the captured text in a view buffer.")
+
 ;;; ============================================================
 ;;; Mutating commands (P1 — command dispatch)
 ;;; ============================================================
@@ -180,6 +199,14 @@ in place of `gc dolt list', which does not support `--json'.")
   ((target :initarg :target :type string :initform "" :positional 1
            :documentation "Session id or alias to wake."))
   :documentation "Wake a session and clear holds.")
+
+(gascity-defcommand gascity-command-runtime-drain (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to signal to drain."))
+  :documentation "Signal a session to drain — wind down its work gracefully.
+Sets a drain flag; the agent finishes its current task, then exits.  Cancel
+with `gc runtime undrain'.  Distinct from suspend (stops the runtime now) and
+kill (force-kills the runtime).")
 
 ;;; Dispatch
 
@@ -250,6 +277,14 @@ in place of `gc dolt list', which does not support `--json'.")
 (cl-defmethod gascity-command-validate ((command gascity-command-order-run))
   "Require an order name."
   (and (gascity-command--blank-p command 'name) "an order name is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-peek))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-runtime-drain))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (provide 'gascity-types)
 ;;; gascity-types.el ends here

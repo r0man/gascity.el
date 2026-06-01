@@ -33,6 +33,7 @@
 
 (require 'cl-lib)
 (require 'transient)
+(require 'view)
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'gascity-reader)
@@ -42,6 +43,12 @@
 (require 'gascity-section)   ; gascity-agent-at-point
 (require 'gascity-tabulated) ; list refresh commands + command runners
 (require 'gascity-status)    ; gascity-status-refresh
+
+;; Detail-view refresh commands live in gascity-rig / gascity-session,
+;; which require this module; `gascity--refresh-current-view' calls them
+;; by name after a mutation made from a detail buffer.
+(declare-function gascity-rig-dashboard-refresh "gascity-rig")
+(declare-function gascity-polecat-detail-refresh "gascity-session")
 
 ;;; ============================================================
 ;;; Synchronous action runner
@@ -165,12 +172,14 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
       (user-error "No session at point")))
 
 (defun gascity--refresh-current-view ()
-  "Refresh the current gascity list or dashboard after a mutation."
+  "Refresh the current gascity list, dashboard, or detail view after a mutation."
   (cond
    ((derived-mode-p 'gascity-dashboard-mode) (gascity-status-refresh))
    ((derived-mode-p 'gascity-rig-list-mode) (gascity-rig-list-refresh))
    ((derived-mode-p 'gascity-session-list-mode) (gascity-session-list-refresh))
-   ((derived-mode-p 'gascity-order-list-mode) (gascity-order-list-refresh))))
+   ((derived-mode-p 'gascity-order-list-mode) (gascity-order-list-refresh))
+   ((derived-mode-p 'gascity-rig-dashboard-mode) (gascity-rig-dashboard-refresh))
+   ((derived-mode-p 'gascity-session-detail-mode) (gascity-polecat-detail-refresh))))
 
 ;;; ============================================================
 ;;; Prompted actions — the sub-transient / `M-x' surface
@@ -222,6 +231,12 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
   "Wake session TARGET (prompted) and clear holds."
   (interactive (list (gascity-action--read-session "Wake session: ")))
   (gascity-command-execute-interactive (gascity-command-session-wake :target target)))
+
+;;;###autoload
+(defun gascity-session-drain (target)
+  "Signal session TARGET to drain — wind down gracefully (prompted)."
+  (interactive (list (gascity-action--read-session "Drain session: ")))
+  (gascity-command-execute-interactive (gascity-command-runtime-drain :target target)))
 
 ;;;###autoload
 (defun gascity-sling (target arg)
@@ -324,6 +339,71 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
    (gascity-command-session-wake :target (gascity-action--session-at-point)))
   (gascity--refresh-current-view))
 
+;;;###autoload
+(defun gascity-session-drain-at-point ()
+  "Signal the session/agent at point to drain (wind down gracefully), then refresh."
+  (interactive)
+  (gascity-command-execute-interactive
+   (gascity-command-runtime-drain :target (gascity-action--session-at-point)))
+  (gascity--refresh-current-view))
+
+;;; ============================================================
+;;; Peek — read-only output capture (no mutation, no refresh)
+;;; ============================================================
+;;
+;; `gc session peek' is read-only, so it does not go through the
+;; `gascity-command-action' summary path: instead its captured text
+;; (json off) is shown verbatim in a read-only view buffer.  A gc
+;; failure (e.g. a stopped session) surfaces as a clean `user-error'.
+
+(defconst gascity-session-peek-lines 50
+  "Default number of trailing output lines `gascity-session-peek' captures.")
+
+(defun gascity-session-peek--buffer-name (target)
+  "Return the peek buffer name for session TARGET."
+  (format "*gc-peek: %s*" target))
+
+(defun gascity-session-peek--show (target lines)
+  "Capture TARGET's last LINES of output via `gc session peek' and show it.
+Pops a read-only view buffer with the captured text.  A validation or gc
+error surfaces as a `user-error'."
+  (let* ((cmd (gascity-command-session-peek
+               :target target :lines (number-to-string lines)))
+         (text (condition-case err
+                   (oref (gascity-command-execute cmd) result)
+                 (gascity-validation-error
+                  (user-error "gc session peek: %s" (cadr err)))
+                 (gascity-command-error
+                  (user-error "gc session peek failed: %s"
+                              (gascity-action--error-detail err))))))
+    (let ((buf (get-buffer-create (gascity-session-peek--buffer-name target))))
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (if (and (stringp text) (not (string-empty-p (string-trim text))))
+                      text
+                    "(no output captured)"))
+          (goto-char (point-min)))
+        (view-mode 1))
+      (pop-to-buffer buf))))
+
+;;;###autoload
+(defun gascity-session-peek (target &optional lines)
+  "Show recent output of session TARGET without attaching (prompted).
+With a prefix argument, capture that many trailing LINES instead of the
+`gascity-session-peek-lines' default."
+  (interactive
+   (list (gascity-action--read-session "Peek session: ")
+         (and current-prefix-arg (prefix-numeric-value current-prefix-arg))))
+  (gascity-session-peek--show target (or lines gascity-session-peek-lines)))
+
+;;;###autoload
+(defun gascity-session-peek-at-point ()
+  "Show recent output of the session/agent at point without attaching."
+  (interactive)
+  (gascity-session-peek--show (gascity-action--session-at-point)
+                              gascity-session-peek-lines))
+
 ;;; ============================================================
 ;;; Sub-transients — hand-built command-dispatch backends
 ;;; ============================================================
@@ -341,7 +421,9 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
    ("n" "Nudge…" gascity-session-nudge)
    ("s" "Suspend…" gascity-session-suspend)
    ("k" "Kill runtime…" gascity-session-kill)
-   ("w" "Wake…" gascity-session-wake)])
+   ("w" "Wake…" gascity-session-wake)
+   ("D" "Drain…" gascity-session-drain)
+   ("p" "Peek output…" gascity-session-peek)])
 
 (transient-define-prefix gascity-lifecycle-dispatch ()
   "Dispatch city-lifecycle actions (a hand-built command backend)."

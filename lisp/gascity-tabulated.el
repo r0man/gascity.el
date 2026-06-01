@@ -54,6 +54,13 @@
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
 (declare-function gascity-session-wake-at-point "gascity-action")
+(declare-function gascity-session-drain-at-point "gascity-action")
+(declare-function gascity-session-peek-at-point "gascity-action")
+
+;; Detail-view openers (the `RET' targets) live in gascity-rig /
+;; gascity-session, loaded after this module via gascity.el.
+(declare-function gascity-rig-dashboard-at-point "gascity-rig")
+(declare-function gascity-polecat-detail-at-point "gascity-session")
 
 ;;; Shared helpers
 
@@ -326,15 +333,17 @@ and adds `g' refresh, `/' filter, and `RET'."
   :parent gascity-tabulated-base-map
   "g"   #'gascity-rig-list-refresh
   "/"   #'gascity-rig-list-filter
-  "RET" #'gascity-rig-list-dired
+  "RET" #'gascity-rig-dashboard-at-point
+  "d"   #'gascity-rig-list-dired
   "s"   #'gascity-rig-suspend-at-point
   "r"   #'gascity-rig-resume-at-point
   "R"   #'gascity-rig-restart-at-point)
 
 (define-derived-mode gascity-rig-list-mode tabulated-list-mode "GC-Rigs"
   "Major mode listing the rigs registered in the city.
-`RET' opens the rig's directory in Dired; `s' suspends, `r' resumes,
-and `R' restarts (kills the agent sessions of) the rig at point.
+`RET' opens the rig's dashboard; `d' opens the rig's directory in Dired;
+`s' suspends, `r' resumes, and `R' restarts (kills the agent sessions
+of) the rig at point.
 \\{gascity-rig-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
@@ -457,17 +466,20 @@ applied client-side to the decoded rows."
   "/"   #'gascity-session-list-filter
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
-  "RET" #'gascity-dired-at-point
+  "RET" #'gascity-polecat-detail-at-point
   "N"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
-  "w"   #'gascity-session-wake-at-point)
+  "w"   #'gascity-session-wake-at-point
+  "D"   #'gascity-session-drain-at-point
+  "p"   #'gascity-session-peek-at-point)
 
 (define-derived-mode gascity-session-list-mode tabulated-list-mode "GC-Sessions"
   "Major mode listing the city's agent sessions.
-`d' opens a session's worktree in Dired; `t' attaches to its tmux
-session.  `N' nudges (sends a message), `s' suspends, `K' force-kills
-the runtime of, and `w' wakes the session at point.
+`RET' opens the session/polecat detail view; `d' opens its worktree in
+Dired; `t' attaches to its tmux session.  `N' nudges (sends a message),
+`s' suspends, `K' force-kills the runtime of, `w' wakes, `D' drains, and
+`p' peeks at the output of the session at point.
 \\{gascity-session-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format

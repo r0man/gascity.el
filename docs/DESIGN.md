@@ -3,9 +3,10 @@
 *A Magit-style Emacs porcelain for [Gas City](https://github.com/gastownhall/gascity)
 (`gc`), integrated with [beads.el](https://github.com/r0man/beads.el).*
 
-Status: **read-only MVP + command dispatch implemented** (P0 skeleton + P2
+Status: **MVP + command dispatch + detail views implemented** (P0 skeleton + P2
 tabulated lists + P3 vui status dashboard + agent actions + P1 mutating-command
-dispatch). Approach: **greenfield**, built on beads.el's
+dispatch + P4 rig dashboard & session/polecat detail). Approach: **greenfield**,
+built on beads.el's
 command infrastructure and vui rendering. `gastown.el` (the pre-rename precursor
 that targeted the old `gt` CLI) is a **reference**, not a fork.
 
@@ -246,12 +247,24 @@ data-tick for expensive derivations.
   `gascity-session-dispatch', `gascity-lifecycle-dispatch'), which complete
   arguments over live `gc` data. *(Deferred: richer sling infixes
   (`--formula`/`--merge`/…) and `order run --rig` disambiguation — see §11.)*
-- ⬜ **P4 — vui detail views.** rig dashboard, session/polecat detail.
+- ✅ **P4 — vui detail views.** `gascity-rig` (`gascity-rig-dashboard`): a rig's
+  header, agents table (joined to `gc session list` for `d`/`t`/`RET` actions),
+  ready and in-progress beads (`gc bd ready` / `--status in_progress`, both
+  `--rig` scoped; `RET` → beads.el), rig-scoped orders, and the rig's Dolt stats
+  (matched on the bead prefix). `gascity-session`
+  (`gascity-polecat-detail`): an agent's state, mail count, the bead on its hook,
+  and recent history — beads fetched per assignee key (a polecat's runtime
+  session name, a service agent's qualified name) via server-side `--assignee`
+  (a broad window buries an agent's beads under a town's closed order beads),
+  with inline `p` peek / `N` nudge / `D` drain / `d` dired / `t` tmux actions on
+  the subject. `RET` from the rig list, session list, and status dashboard opens
+  these instead of the former Dired/`beads-show` stand-ins. Adds `peek`
+  (read-only output capture) and `runtime drain` to the command surface.
 - ⬜ **P5 — beads.el bead-UI delegation.** Per-rig scoping done cleanly (§4.3).
 - ⬜ **P6 — Polish.** completion, error surfaces, `whats-new`, Eldev/guix.scm.
 
-The read-only MVP (P0 + P2 + P3 + agent actions) is delivered and verified
-against a live town; it is already a usable porcelain.
+The MVP (P0 + P2 + P3 + agent actions + P1 dispatch + P4 detail views) is
+delivered and verified against a live town; it is already a usable porcelain.
 
 ---
 
@@ -310,8 +323,11 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    — the session `--state` filter is the lone server-side exception; client-side
    slots carry no `:long-option` and never reach the command line. Dolt has no
    meaningful filter dimension, so it keeps pagination only.
-3. **vui detail views (P4).** Rig dashboard and session/polecat detail (`RET`
-   from a list/dashboard currently opens Dired or the convoy bead).
+3. ✅ **vui detail views (P4).** Rig dashboard (`gascity-rig`) and
+   session/polecat detail (`gascity-session`); `RET` from the rig list, session
+   list, and status dashboard now opens them instead of the Dired stand-in
+   (gce-3iq). Added `gc session peek` and `gc runtime drain` to the command
+   surface for the detail action bar.
 4. **beads.el bead-UI delegation (P5).** Open beads.el's list/detail scoped to a
    rig's store; today convoy `RET` calls `beads-show` on the bead id.
 5. **Mail row shape.** The live inbox was empty, so mail columns use tolerant

@@ -348,6 +348,121 @@ JSONL output never mis-reads as a failure."
                            :type 'user-error)))
     (should (string-match-p "order name is required" (error-message-string err)))))
 
+;;; P4 — detail-view command lines (peek / drain)
+
+(ert-deftest gascity-test-peek-command-line ()
+  "Session peek captures plain text (no --json) with target + lines."
+  (should (equal (gascity-command-line (gascity-command-session-peek :target "rig/agent"))
+                 '("gc" "session" "peek" "rig/agent" "--lines" "50")))
+  (should (equal (gascity-command-line
+                  (gascity-command-session-peek :target "a" :lines "20"))
+                 '("gc" "session" "peek" "a" "--lines" "20")))
+  (should-not (member "--json"
+                      (gascity-command-line (gascity-command-session-peek :target "a"))))
+  (should (equal (gascity-command-subcommand (gascity-command-session-peek))
+                 "session peek")))
+
+(ert-deftest gascity-test-drain-command-line ()
+  "Runtime drain is a positional mutation (no --json)."
+  (should (equal (gascity-command-line (gascity-command-runtime-drain :target "rig/agent"))
+                 '("gc" "runtime" "drain" "rig/agent")))
+  (should-not (member "--json"
+                      (gascity-command-line (gascity-command-runtime-drain :target "x"))))
+  (should (equal (gascity-command-subcommand (gascity-command-runtime-drain))
+                 "runtime drain")))
+
+(ert-deftest gascity-test-peek-drain-validation ()
+  "Peek and drain require a session target before gc is invoked."
+  (should (gascity-command-validate (gascity-command-session-peek)))
+  (should-not (gascity-command-validate (gascity-command-session-peek :target "x")))
+  (should (gascity-command-validate (gascity-command-runtime-drain)))
+  (should-not (gascity-command-validate (gascity-command-runtime-drain :target "x"))))
+
+;;; P4 — detail-view data shaping (pure)
+
+(ert-deftest gascity-test-section-beads ()
+  "Bead payloads decode from a bare array or an {issues} wrapper."
+  (should (equal (gascity-section-beads [((id . "a")) ((id . "b"))])
+                 '(((id . "a")) ((id . "b")))))
+  (should (equal (gascity-section-beads '((issues . [((id . "c"))])))
+                 '(((id . "c")))))
+  (should (null (gascity-section-beads []))))
+
+(ert-deftest gascity-test-rig-db-for-prefix ()
+  "The rig's Dolt database is matched on its bead prefix."
+  (let ((dbs [((name . "hq")) ((name . "gce") (commits . 5)) ((name . "beads"))]))
+    (should (equal (alist-get 'commits (gascity-rig--db-for-prefix dbs "gce")) 5))
+    (should (null (gascity-rig--db-for-prefix dbs "nope")))
+    (should (null (gascity-rig--db-for-prefix dbs nil)))
+    (should (null (gascity-rig--db-for-prefix dbs "")))))
+
+(ert-deftest gascity-test-rig-orders-filter ()
+  "Only orders scoped to the rig are kept; city-wide (rig=nil) are dropped."
+  (let ((orders [((name . "a") (rig . "gascity.el"))
+                 ((name . "b") (rig))
+                 ((name . "c") (rig . "other"))]))
+    (should (equal (mapcar (lambda (o) (alist-get 'name o))
+                           (gascity-rig--rig-orders orders "gascity.el"))
+                   '("a")))))
+
+(ert-deftest gascity-test-session-find ()
+  "A session is found by qualified name, volatile name, or alias."
+  (let ((sessions (vector '((agent_name . "gascity.el/gastown.furiosa") (state . "active"))
+                          '((name . "raw-tmux-id") (alias . "rig/other")))))
+    (should (equal (alist-get
+                    'state (gascity-session--find sessions "gascity.el/gastown.furiosa"))
+                   "active"))
+    (should (gascity-session--find sessions "rig/other"))
+    (should (null (gascity-session--find sessions "nobody")))))
+
+(ert-deftest gascity-test-session-assignee-keys ()
+  "Both the qualified name and the runtime session name are candidate keys.
+Nils and empty strings are dropped; duplicates collapse."
+  (should (equal (gascity-session--assignee-keys
+                  '(:name "gascity.el/gastown.furiosa"
+                          :session-name "gastown__polecat-bl-xyz"))
+                 '("gascity.el/gastown.furiosa" "gastown__polecat-bl-xyz")))
+  (should (equal (gascity-session--assignee-keys '(:name "a" :session-name "a")) '("a")))
+  (should (equal (gascity-session--assignee-keys '(:name "a" :session-name "")) '("a")))
+  (should (null (gascity-session--assignee-keys '(:name nil)))))
+
+(ert-deftest gascity-test-session-bead-args ()
+  "Per-key bead args filter server-side by assignee and scope to the rig."
+  (should (equal (gascity-session--bead-args "k" "gascity.el")
+                 '("bd" "list" "--assignee" "k" "--rig" "gascity.el"
+                   "--status" "open,in_progress,blocked,deferred,closed"
+                   "--sort" "updated" "--reverse" "--limit" "50")))
+  ;; A nil rig drops the --rig scope.
+  (should-not (member "--rig" (gascity-session--bead-args "k" nil))))
+
+(ert-deftest gascity-test-session-combined-status ()
+  "Combined bead status: pending if any pending; error only if all errored."
+  (should (eq (gascity-session--combined-status '((:status pending) (:status ready)))
+              'pending))
+  (should (eq (gascity-session--combined-status '((:status error) (:status error)))
+              'error))
+  (should (eq (gascity-session--combined-status '((:status error) (:status ready)))
+              'ready)))
+
+(ert-deftest gascity-test-session-beads-merge-and-partition ()
+  "Per-key bead lists merge (de-duped by id), then split into hook vs history."
+  (let* ((from-runtime (list '((id . "x") (status . "in_progress"))))
+         (from-qualified (list '((id . "y") (status . "closed"))
+                               '((id . "x") (status . "in_progress")))) ; dup id
+         (merged (gascity-session--merge-beads (list from-runtime from-qualified))))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) merged) '("x" "y")))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (gascity-session--hook-beads merged))
+                   '("x")))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (gascity-session--history-beads merged))
+                   '("y")))
+    (should (= (length (gascity-session--history-beads
+                        (list '((status . "open")) '((status . "open"))
+                              '((status . "open")))
+                        2))
+               2))))
+
 ;;; Round-trip integration (acceptance) — needs a live gc + city
 
 (ert-deftest gascity-test-status-round-trip ()

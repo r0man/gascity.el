@@ -34,12 +34,15 @@
 (require 'gascity-command-status)
 (require 'gascity-section)
 
-;; Session actions on the agent at point live in gascity-action (loaded
-;; after this module via gascity.el); the dashboard keymap binds to them.
+;; Session actions on the agent at point live in gascity-action, and the
+;; polecat-detail opener in gascity-session — both loaded after this
+;; module via gascity.el; the dashboard keymap binds to them.
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
 (declare-function gascity-session-wake-at-point "gascity-action")
+(declare-function gascity-session-drain-at-point "gascity-action")
+(declare-function gascity-polecat-detail-at-point "gascity-session")
 
 ;;; Buffer
 
@@ -209,11 +212,13 @@ SOCKET) so `d'/`t'/RET act on it."
 ;;; Commands
 
 (defun gascity-status-activate ()
-  "Activate the widget at point, or open Dired on an agent row."
+  "Activate the thing at point.
+On a rig header (a widget) this toggles its collapse; on an agent row it
+opens the session/polecat detail view."
   (interactive)
   (cond
    ((widget-at (point)) (widget-button-press (point)))
-   ((get-text-property (point) 'gascity-agent) (gascity-dired-at-point))
+   ((get-text-property (point) 'gascity-agent) (gascity-polecat-detail-at-point))
    (t (user-error "Nothing to activate here"))))
 
 (defun gascity-status--refresh-instance (buffer)
@@ -250,6 +255,7 @@ collapse state); nil when BUFFER has no mounted instance."
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
+  "D"   #'gascity-session-drain-at-point
   "n"   #'next-line
   "p"   #'previous-line)
 
@@ -261,8 +267,8 @@ collapse state); nil when BUFFER has no mounted instance."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Gas City  (g refresh · RET toggle · d dired · t tmux"
-                      " · N/s/K/w session · q bury)")))
+              (concat " Gas City  (g refresh · RET detail/toggle · d dired · t tmux"
+                      " · N/s/K/w/D session · q bury)")))
 
 ;;;###autoload
 (defun gascity-status ()

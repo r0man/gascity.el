@@ -11,9 +11,13 @@ buffers — not auto-generated. See [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Status
 
-Read-only MVP: an interactive status dashboard, tabulated list views, and agent
-actions (Dired into a worktree, attach to a tmux session). Write/mutate actions
-and richer detail views are planned (DESIGN.md §7, §11).
+A usable porcelain: an interactive status dashboard; tabulated list views with
+window-sized pagination (`]`/`[`/`G`) and per-list `/` filters; agent actions
+(Dired into a worktree, attach to a tmux session); mutating-command dispatch
+(rig suspend/resume/restart, session nudge/suspend/kill/wake/drain, sling, order
+run, city start/stop); and vui detail views — a rig dashboard and a
+session/polecat detail. Bead-UI delegation and polish are planned (DESIGN.md §7,
+§11).
 
 ## Requirements
 
@@ -40,6 +44,7 @@ With the dependencies on your `load-path`:
 | Command | View |
 |---|---|
 | `M-x gascity-status` | Status dashboard (city → rigs → agents), collapsible |
+| `M-x gascity-rig-dashboard` | Rig dashboard (agents, beads, orders, Dolt) |
 | `M-x gascity-rig-list` | Rigs |
 | `M-x gascity-session-list` | Agent sessions |
 | `M-x gascity-convoy-list` | Convoys |
@@ -49,14 +54,24 @@ With the dependencies on your `load-path`:
 
 ### Keys
 
-Everywhere: `g` refreshes, `q` buries, `RET` drills in.
+Everywhere: `g` refreshes, `q` buries, `RET` drills in. In the tabulated lists,
+`]`/`[`/`G` page and `/` opens a filter.
 
-- **Status dashboard:** `RET` toggles the rig section / activates the row;
-  `d` opens the agent's worktree in Dired; `t` attaches to its tmux session;
-  `n`/`p` move.
-- **Session list:** `d` Dired into the worktree, `t` tmux attach, `RET` Dired.
+- **Status dashboard:** `RET` toggles a rig section / opens the agent's detail;
+  `d` Dired into the worktree; `t` tmux attach; `N`/`s`/`K`/`w`/`D`
+  nudge/suspend/kill/wake/drain the agent; `n`/`p` move.
+- **Rig list:** `RET` opens the rig dashboard; `d` Dired into the rig directory;
+  `s`/`r`/`R` suspend/resume/restart.
+- **Session list:** `RET` opens the session/polecat detail; `d` Dired; `t` tmux
+  attach; `N`/`s`/`K`/`w`/`D` session actions; `p` peeks at recent output.
+- **Rig dashboard:** agents table, ready/in-progress beads (`RET` → beads.el),
+  rig-scoped orders, and Dolt stats; the agent action keys above act on the
+  agent at point.
+- **Session/polecat detail:** state, mail count, the bead on the hook, and
+  recent history (`RET` → beads.el); `p` peek, `N` nudge, `D` drain, `s` suspend,
+  `K` kill, `w` wake, `d` Dired, `t` tmux act on the subject agent.
 - **Convoys:** `RET` opens the convoy bead via beads.el.
-- **Orders:** `RET` opens the order's source file.
+- **Orders:** `RET` opens the order's source file; `x` runs the order manually.
 
 ## Customization
 
