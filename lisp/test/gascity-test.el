@@ -219,6 +219,60 @@ and joins must use `agent_name'."
   (should (null (gascity-terminal--socket-args "")))
   (should (null (gascity-terminal--socket-args nil))))
 
+(ert-deftest gascity-test-terminal-pane-cwd ()
+  "The pane-cwd query returns the trimmed path, passing the socket; nil on miss."
+  (should (null (gascity-terminal-pane-cwd "")))
+  (should (null (gascity-terminal-pane-cwd nil)))
+  ;; Success: trimmed stdout is the path, with `-L SOCKET' in the argv.
+  (let (seen-args)
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_prog _in buf _disp &rest args)
+                 (setq seen-args args)
+                 (when (eq buf t) (insert "/live/wd\n"))
+                 0)))
+      (should (equal (gascity-terminal-pane-cwd "tm" "sock") "/live/wd"))
+      (should (equal seen-args
+                     '("-L" "sock" "display-message" "-t" "tm"
+                       "-p" "#{pane_current_path}")))))
+  ;; A missing session (non-zero exit) yields nil.
+  (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 1)))
+    (should (null (gascity-terminal-pane-cwd "gone"))))
+  ;; An empty pane path yields nil.
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (_prog _in buf _disp &rest _)
+               (when (eq buf t) (insert "   \n"))
+               0)))
+    (should (null (gascity-terminal-pane-cwd "tm")))))
+
+(ert-deftest gascity-test-agent-dired-prefers-recorded-work-dir ()
+  "A recorded `:work-dir' is used directly, without a tmux pane query."
+  (let (opened)
+    (cl-letf (((symbol-function 'dired) (lambda (d) (setq opened d)))
+              ((symbol-function 'file-directory-p) (lambda (_) t))
+              ((symbol-function 'gascity-terminal-pane-cwd)
+               (lambda (&rest _) (error "pane cwd must not be queried"))))
+      (gascity-agent-dired '(:name "a" :work-dir "/wd" :session-name "tm"))
+      (should (equal opened "/wd")))))
+
+(ert-deftest gascity-test-agent-dired-falls-back-to-pane-cwd ()
+  "With no recorded work-dir, dired falls back to the live tmux pane cwd."
+  (let (opened pane-args)
+    (cl-letf (((symbol-function 'dired) (lambda (d) (setq opened d)))
+              ((symbol-function 'file-directory-p) (lambda (_) t))
+              ((symbol-function 'gascity-terminal-pane-cwd)
+               (lambda (session socket)
+                 (setq pane-args (list session socket))
+                 "/live/pane")))
+      (gascity-agent-dired '(:name "a" :work-dir "" :session-name "tm" :socket "sock"))
+      (should (equal opened "/live/pane"))
+      (should (equal pane-args '("tm" "sock"))))))
+
+(ert-deftest gascity-test-agent-dired-errors-when-unresolvable ()
+  "With neither a recorded nor a live working directory, signal a `user-error'."
+  (cl-letf (((symbol-function 'gascity-terminal-pane-cwd) (lambda (&rest _) nil)))
+    (should-error (gascity-agent-dired '(:name "a" :session-name "tm"))
+                  :type 'user-error)))
+
 ;;; ============================================================
 ;;; Mutating commands (P1 — command dispatch)
 ;;; ============================================================

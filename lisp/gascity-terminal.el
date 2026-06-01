@@ -77,6 +77,23 @@ default tmux server\" — no -L flag."
                     (append (gascity-terminal--socket-args socket)
                             (list "has-session" "-t" session))))))
 
+(defun gascity-terminal-pane-cwd (session &optional socket)
+  "Return the working directory of tmux SESSION's active pane, or nil.
+Runs `tmux [-L SOCKET] display-message -t SESSION -p #{pane_current_path}'
+and returns the trimmed path it reports.  Returns nil when SESSION is
+empty, tmux is unavailable, the session is gone, or the pane reports no
+path; the caller validates that the path exists on disk.  This lets
+`gascity-agent-dired' open an agent's live working directory even when its
+session bead recorded no `work_dir' (mirroring gastown)."
+  (when (and session (stringp session) (not (string-empty-p session)))
+    (with-temp-buffer
+      (when (eq 0 (apply #'call-process "tmux" nil t nil
+                         (append (gascity-terminal--socket-args socket)
+                                 (list "display-message" "-t" session
+                                       "-p" "#{pane_current_path}"))))
+        (let ((path (string-trim (buffer-string))))
+          (unless (string-empty-p path) path))))))
+
 (defun gascity-terminal-attach-tmux (session &optional socket dir)
   "Attach to tmux SESSION in a terminal buffer.
 SOCKET selects a non-default tmux server when set.  DIR is the working

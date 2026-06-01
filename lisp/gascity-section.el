@@ -134,10 +134,17 @@ single-agent detail buffer)."
 
 (defun gascity-agent-dired (agent)
   "Open Dired on AGENT's working directory.
-AGENT is a plist with a `:work-dir' key.  Signals a `user-error' when
-the directory is unknown or missing on disk."
-  (let ((dir (plist-get agent :work-dir))
-        (name (or (plist-get agent :name) "agent")))
+AGENT is a plist with a `:work-dir' key.  When no directory was recorded
+on the session bead, fall back to the live working directory of the
+agent's tmux pane (resolved from `:session-name'/`:socket'), mirroring
+gastown.  Signals a `user-error' when no directory can be resolved or the
+resolved directory is missing on disk."
+  (let* ((name (or (plist-get agent :name) "agent"))
+         (recorded (plist-get agent :work-dir))
+         (dir (if (and recorded (stringp recorded) (not (string-empty-p recorded)))
+                  recorded
+                (gascity-terminal-pane-cwd (plist-get agent :session-name)
+                                           (plist-get agent :socket)))))
     (unless (and dir (stringp dir) (not (string-empty-p dir)))
       (user-error "No working directory recorded for %s" name))
     (unless (file-directory-p dir)
