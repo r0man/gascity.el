@@ -4,3 +4,5 @@ dolt.auto-start: true
 export.auto: false
 
 sync.remote: "git+ssh://git@github.com/r0man/gascity.el.git"
+
+dolt.auto-commit: "on"
