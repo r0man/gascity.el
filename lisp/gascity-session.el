@@ -19,13 +19,23 @@
 ;;               row matched by the agent's qualified name).
 ;; - mail        the agent's inbox message count (`gc mail inbox ALIAS').
 ;; - on hook     the bead currently in progress for the agent.
-;; - history     the agent's other recent beads, newest first.
+;; - history     the agent's other recent beads, newest first —
+;;               including work it has already handed off.
 ;;
-;; The beads come from one `gc bd list' read (rig-scoped, newest first)
-;; filtered to the agent: a polecat's beads are assigned to its runtime
-;; session name, a service agent's to its qualified name, so both keys
-;; are tried.  `RET' opens the bead at point in beads.el (DESIGN.md
-;; §4.3).
+;; Beads are gathered two ways and merged (de-duped by id), each read
+;; rig-scoped and newest-first:
+;;
+;; - By assignee.  A polecat's open work is filed under its runtime
+;;   session name, a service agent's under its qualified name, so both
+;;   keys are tried.
+;; - By worktree.  A polecat's *finished* work is reassigned away from it
+;;   — to the refinery, which merges and closes it — so by assignee alone
+;;   a productive polecat shows no history at all.  But each such bead
+;;   still records the `metadata.work_dir' it was built in, nested under
+;;   the agent's worktree; so beads carrying a `work_dir' are fetched and
+;;   kept when that path lies within the agent's own worktree.
+;;
+;; `RET' opens the bead at point in beads.el (DESIGN.md §4.3).
 ;;
 ;; The action keys act on the buffer's subject agent (set buffer-locally
 ;; via `gascity-section--agent', so `gascity-agent-at-point' resolves it
@@ -92,6 +102,33 @@ when non-nil, scopes the query to that rig's bead store."
           (and rig (list "--rig" rig))
           '("--status" "open,in_progress,blocked,deferred,closed"
             "--sort" "updated" "--reverse" "--limit" "50")))
+
+(defun gascity-session--worked-args (rig)
+  "Return `gc bd list' args for recent beads carrying a `work_dir', newest first.
+These are the candidates for an agent's handed-off history: a polecat's
+finished beads are reassigned away from it, so they no longer match its
+assignee, yet each still records the `metadata.work_dir' it was built in.
+Server-side `--has-metadata-key work_dir' keeps the window to beads that
+could match — orders, molecules and the like carry none — leaving the path
+itself to be matched client-side by `gascity-session--worked-here-p'.  RIG,
+when non-nil, scopes the query to that rig's bead store."
+  (append (list "bd" "list" "--has-metadata-key" "work_dir")
+          (and rig (list "--rig" rig))
+          '("--status" "open,in_progress,blocked,deferred,closed"
+            "--sort" "updated" "--reverse" "--limit" "100")))
+
+(defun gascity-session--worked-here-p (bead work-dir)
+  "Return non-nil when BEAD was built within WORK-DIR.
+WORK-DIR is the agent's own worktree; a bead it worked records a
+`metadata.work_dir' equal to it or nested under it (e.g. a polecat's
+`…/<agent>/worktrees/<id>').  Both are compared as directories so a sibling
+agent such as `…/<agent>-2' never matches.  A nil or empty path on either
+side never matches."
+  (let ((bwd (alist-get 'work_dir (alist-get 'metadata bead))))
+    (and (stringp work-dir) (not (string-empty-p work-dir))
+         (stringp bwd) (not (string-empty-p bwd))
+         (string-prefix-p (file-name-as-directory work-dir)
+                          (file-name-as-directory bwd)))))
 
 (defun gascity-session--merge-beads (lists)
   "Concatenate bead LISTS, dropping later duplicates by id.
@@ -196,17 +233,21 @@ when the load succeeded but BEADS is empty."
   "Detail view of one session/polecat AGENT (a plist)."
   :state ((refresh-tick 0))
   :render
-  ;; All async hooks run unconditionally, in order, every render.  Beads
-  ;; are fetched per assignee key (a polecat's runtime session name and a
-  ;; service agent's qualified name), one read each, then merged — see
-  ;; `gascity-session--bead-args' for why server-side `--assignee' beats
-  ;; a broad window.  KEY0/KEY1 may be nil (the thunk then resolves empty
-  ;; without spawning gc), keeping the hook count stable.
+  ;; All async hooks run unconditionally, in order, every render, so the
+  ;; hook count stays stable.  Beads arrive on three reads, then merged:
+  ;; one per assignee key (a polecat's runtime session name and a service
+  ;; agent's qualified name — see `gascity-session--bead-args'), plus one
+  ;; for beads carrying a `work_dir', kept when built within this agent's
+  ;; worktree (`gascity-session--worked-here-p') — that read recovers the
+  ;; finished work a polecat has handed off, which no longer matches its
+  ;; assignee.  Any of KEY0/KEY1/WORK-DIR may be nil, in which case that
+  ;; thunk resolves empty without spawning gc.
   (let* ((name (plist-get agent :name))
          (rig (plist-get agent :rig))
          (keys (gascity-session--assignee-keys agent))
          (key0 (nth 0 keys))
          (key1 (nth 1 keys))
+         (work-dir (plist-get agent :work-dir))
          (sessions-res
           (vui-use-async (list 'sessions refresh-tick name)
                          (lambda (resolve reject)
@@ -226,6 +267,14 @@ when the load succeeded but BEADS is empty."
                                (gascity-reader-read-async
                                 (gascity-session--bead-args key1 rig) resolve reject)
                              (funcall resolve [])))))
+         (beads2-res
+          (vui-use-async (list 'beads2 refresh-tick work-dir rig)
+                         (lambda (resolve reject)
+                           (if (and (stringp work-dir)
+                                    (not (string-empty-p work-dir)))
+                               (gascity-reader-read-async
+                                (gascity-session--worked-args rig) resolve reject)
+                             (funcall resolve [])))))
          (mail-res
           (vui-use-async (list 'mail refresh-tick name)
                          (lambda (resolve reject)
@@ -235,14 +284,20 @@ when the load succeeded but BEADS is empty."
                         (alist-get 'sessions (plist-get sessions-res :data))))
          (session (and sessions (gascity-session--find sessions name)))
          (beads-status (gascity-session--combined-status
-                        (list beads0-res beads1-res)))
+                        (list beads0-res beads1-res beads2-res)))
          (agent-beads (gascity-session--merge-beads
                        (list (and (eq (plist-get beads0-res :status) 'ready)
                                   (gascity-section-beads
                                    (plist-get beads0-res :data)))
                              (and (eq (plist-get beads1-res :status) 'ready)
                                   (gascity-section-beads
-                                   (plist-get beads1-res :data))))))
+                                   (plist-get beads1-res :data)))
+                             (and (eq (plist-get beads2-res :status) 'ready)
+                                  (seq-filter
+                                   (lambda (b)
+                                     (gascity-session--worked-here-p b work-dir))
+                                   (gascity-section-beads
+                                    (plist-get beads2-res :data)))))))
          (hook (gascity-session--hook-beads agent-beads))
          (history (gascity-session--history-beads agent-beads 10)))
     (vui-vstack

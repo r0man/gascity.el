@@ -1040,6 +1040,66 @@ Nils and empty strings are dropped; duplicates collapse."
   ;; A nil rig drops the --rig scope.
   (should-not (member "--rig" (gascity-session--bead-args "k" nil))))
 
+(ert-deftest gascity-test-session-worked-args ()
+  "Worked-history args select beads carrying a `work_dir', newest first.
+This is the read that recovers a polecat's handed-off work, which no longer
+matches its assignee."
+  (should (equal (gascity-session--worked-args "gascity.el")
+                 '("bd" "list" "--has-metadata-key" "work_dir" "--rig" "gascity.el"
+                   "--status" "open,in_progress,blocked,deferred,closed"
+                   "--sort" "updated" "--reverse" "--limit" "100")))
+  ;; A nil rig drops the --rig scope.
+  (should-not (member "--rig" (gascity-session--worked-args nil))))
+
+(ert-deftest gascity-test-session-worked-here-p ()
+  "A bead is the agent's history when its `work_dir' is within the agent's.
+The match is by directory boundary, so a sibling agent sharing a name prefix
+never counts, and a missing or empty path on either side never matches."
+  (let* ((base "/w/.gc/worktrees/r/polecats/gastown.furiosa")
+         (with-wd (lambda (wd) `((metadata . ((work_dir . ,wd)))))))
+    ;; Nested under the agent's worktree — its handed-off work.
+    (should (gascity-session--worked-here-p
+             (funcall with-wd (concat base "/worktrees/gce-cu7")) base))
+    ;; The agent's worktree itself.
+    (should (gascity-session--worked-here-p (funcall with-wd base) base))
+    ;; A sibling agent sharing a name prefix must not match.
+    (should-not (gascity-session--worked-here-p
+                 (funcall with-wd "/w/.gc/worktrees/r/polecats/gastown.furiosa-2/worktrees/z")
+                 base))
+    ;; Unrelated path, missing metadata, empty/nil paths: never a match.
+    (should-not (gascity-session--worked-here-p (funcall with-wd "/elsewhere/x") base))
+    (should-not (gascity-session--worked-here-p '((id . "n")) base))
+    (should-not (gascity-session--worked-here-p (funcall with-wd "") base))
+    (should-not (gascity-session--worked-here-p (funcall with-wd "/a") ""))
+    (should-not (gascity-session--worked-here-p (funcall with-wd "/a") nil))))
+
+(ert-deftest gascity-test-session-handed-off-work-surfaces-in-history ()
+  "A polecat's finished bead lands in history even though it was handed off.
+The closed bead, reassigned to the refinery, matches no assignee key — only
+its `work_dir' nests under the agent's worktree.  By assignee alone history
+would be empty; the worktree read is what surfaces it, while the open hook
+bead (matched by assignee) stays on the hook."
+  (let* ((work-dir "/w/polecats/gastown.furiosa")
+         ;; Open hook bead, found via the runtime-session assignee key.
+         (by-assignee (list '((id . "hook") (status . "in_progress"))))
+         ;; Worktree read returns every bead with a `work_dir'; only the one
+         ;; built under this agent survives the client-side filter.
+         (raw-worked
+          (list `((id . "done") (status . "closed")
+                  (metadata . ((work_dir . ,(concat work-dir "/worktrees/done")))))
+                '((id . "other") (status . "closed")
+                  (metadata . ((work_dir . "/w/polecats/gastown.max/worktrees/o"))))))
+         (worked (seq-filter (lambda (b) (gascity-session--worked-here-p b work-dir))
+                             raw-worked))
+         (merged (gascity-session--merge-beads (list by-assignee nil worked))))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) worked) '("done")))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (gascity-session--hook-beads merged))
+                   '("hook")))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (gascity-session--history-beads merged 10))
+                   '("done")))))
+
 (ert-deftest gascity-test-session-combined-status ()
   "Combined bead status: pending if any pending; error only if all errored."
   (should (eq (gascity-session--combined-status '((:status pending) (:status ready)))
