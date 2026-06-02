@@ -1475,6 +1475,82 @@ issues — this is what lets a city-level convoy open (gce-bhr)."
              (lambda (&rest _) '((rigs . [])))))
     (should-error (gascity-rig-beads "ghost") :type 'user-error)))
 
+;;; gce-3ip — `b' opens the beads board (rig store, or agent worktree)
+
+(ert-deftest gascity-test-agent-beads-scopes-worktree ()
+  "`gascity-agent-beads' opens the board with `default-directory' at the
+agent's recorded worktree, without querying the tmux pane."
+  (let (seen-dir)
+    (cl-letf (((symbol-function 'file-directory-p) (lambda (_) t))
+              ((symbol-function 'gascity-terminal-pane-cwd)
+               (lambda (&rest _) (error "pane cwd must not be queried")))
+              ((symbol-function 'beads-dashboard)
+               (lambda () (setq seen-dir default-directory))))
+      (gascity-agent-beads '(:name "r/a" :work-dir "/wd" :session-name "tm"))
+      (should (equal seen-dir "/wd/")))))
+
+(ert-deftest gascity-test-agent-beads-falls-back-to-pane-cwd ()
+  "With no recorded work-dir, the board scopes to the live tmux pane cwd."
+  (let (seen-dir pane-args)
+    (cl-letf (((symbol-function 'file-directory-p) (lambda (_) t))
+              ((symbol-function 'gascity-terminal-pane-cwd)
+               (lambda (session socket)
+                 (setq pane-args (list session socket))
+                 "/live/pane"))
+              ((symbol-function 'beads-dashboard)
+               (lambda () (setq seen-dir default-directory))))
+      (gascity-agent-beads '(:name "a" :work-dir "" :session-name "tm" :socket "sock"))
+      (should (equal seen-dir "/live/pane/"))
+      (should (equal pane-args '("tm" "sock"))))))
+
+(ert-deftest gascity-test-agent-beads-errors-when-unresolvable ()
+  "With neither a recorded nor a live working directory, signal a `user-error'."
+  (cl-letf (((symbol-function 'gascity-terminal-pane-cwd) (lambda (&rest _) nil))
+            ((symbol-function 'beads-dashboard)
+             (lambda () (error "board must not open"))))
+    (should-error (gascity-agent-beads '(:name "a" :session-name "tm"))
+                  :type 'user-error)))
+
+(ert-deftest gascity-test-beads-at-point-routes-agent-and-rig ()
+  "`b' reuses one action: an agent row opens its worktree's beads, a rig
+header the rig's store; neither at point is a clean `user-error' (gce-3ip)."
+  ;; Agent row -> the agent's worktree (the agent at point wins over its rig).
+  (let (seen-dir)
+    (cl-letf (((symbol-function 'file-directory-p) (lambda (_) t))
+              ((symbol-function 'gascity-terminal-pane-cwd)
+               (lambda (&rest _) (error "pane cwd must not be queried")))
+              ((symbol-function 'beads-dashboard)
+               (lambda () (setq seen-dir default-directory))))
+      (with-temp-buffer
+        (insert (propertize "agent"
+                            'gascity-agent '(:name "rig/a" :rig "rig"
+                                                   :work-dir "/wd" :session-name "tm")))
+        (goto-char (point-min))
+        (gascity-beads-at-point)
+        (should (equal seen-dir "/wd/")))))
+  ;; Rig header -> the rig's store.
+  (let (seen-dir)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "rig") (path . "/rig/store") (prefix . "r"))]))))
+              ((symbol-function 'beads-dashboard)
+               (lambda () (setq seen-dir default-directory))))
+      (with-temp-buffer
+        (insert (propertize "▼ rig" 'gascity-rig "rig"))
+        (goto-char (point-min))
+        (gascity-beads-at-point)
+        (should (equal seen-dir "/rig/store/")))))
+  ;; Neither -> clean error, not a backtrace.
+  (with-temp-buffer
+    (insert "plain")
+    (goto-char (point-min))
+    (should-error (gascity-beads-at-point) :type 'user-error)))
+
+(ert-deftest gascity-test-status-dashboard-binds-b-to-beads ()
+  "`b' in the status dashboard opens the context-sensitive beads board (gce-3ip)."
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "b")
+              #'gascity-beads-at-point)))
+
 (ert-deftest gascity-test-rig-db-for-prefix ()
   "The rig's Dolt database is matched on its bead prefix."
   (let ((dbs [((name . "hq")) ((name . "gce") (commits . 5)) ((name . "beads"))]))

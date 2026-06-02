@@ -153,13 +153,16 @@ single-agent detail buffer)."
 
 ;;; Agent actions
 
-(defun gascity-agent-dired (agent)
-  "Open Dired on AGENT's working directory.
-AGENT is a plist with a `:work-dir' key.  When no directory was recorded
-on the session bead, fall back to the live working directory of the
-agent's tmux pane (resolved from `:session-name'/`:socket'), mirroring
-gastown.  Signals a `user-error' when no directory can be resolved or the
-resolved directory is missing on disk."
+(defun gascity-agent--work-dir (agent)
+  "Return AGENT's working directory as a path string, or signal a `user-error'.
+Prefers the `:work-dir' recorded on the agent's session bead (its git
+worktree); when none was recorded, falls back to the live working
+directory of the agent's tmux pane (resolved from
+`:session-name'/`:socket'), mirroring gastown.  Signals a clean
+`user-error' — never an internal error — when no directory can be
+resolved or the resolved directory is missing on disk.  Shared by
+`gascity-agent-dired' and `gascity-agent-beads' so `d' and `b' resolve an
+agent's worktree identically."
   (let* ((name (or (plist-get agent :name) "agent"))
          (recorded (plist-get agent :work-dir))
          (dir (if (and recorded (stringp recorded) (not (string-empty-p recorded)))
@@ -170,7 +173,14 @@ resolved directory is missing on disk."
       (user-error "No working directory recorded for %s" name))
     (unless (file-directory-p dir)
       (user-error "Directory not found for %s: %s" name dir))
-    (dired dir)))
+    dir))
+
+(defun gascity-agent-dired (agent)
+  "Open Dired on AGENT's working directory.
+AGENT is a plist with a `:work-dir' key; the directory is resolved by
+`gascity-agent--work-dir' (the recorded worktree, else the live tmux pane
+cwd), which signals a clean `user-error' when none can be resolved."
+  (dired (gascity-agent--work-dir agent)))
 
 (defun gascity-agent-attach-tmux (agent)
   "Attach to AGENT's tmux session in a terminal buffer.
@@ -335,7 +345,7 @@ another rig's database (gce-bhr).  Resolves DESIGN §9.1."
   (gascity-bead-show (or (gascity-bead-at-point)
                          (user-error "No bead at point"))))
 
-;;; Rig beads — delegate a rig's whole store to beads.el (DESIGN.md §4.3)
+;;; Beads board — delegate a rig store or agent worktree to beads.el (DESIGN.md §4.3)
 
 ;;;###autoload
 (defun gascity-rig-beads (rig)
@@ -365,12 +375,46 @@ contextual one."
       (user-error "beads.el is not available to show beads for %s"
                   (or name "?")))))
 
+(defun gascity-agent-beads (agent)
+  "Open beads.el's board scoped to AGENT's worktree.
+AGENT is a plist with a `:work-dir' key — the git worktree gc records on
+its session bead.  Resolves the directory via `gascity-agent--work-dir'
+\(the recorded worktree, else the live tmux pane cwd), binds
+`default-directory' to it, and calls beads.el's board so it renders that
+worktree's `.beads/' store.  Mirrors `gascity-rig-beads' for a rig
+\(DESIGN.md §4.3); signals a clean `user-error' when no worktree resolves
+or beads.el is unavailable."
+  (let ((dir (gascity-agent--work-dir agent))
+        (name (or (plist-get agent :name) "agent")))
+    (unless (fboundp 'beads-dashboard)
+      (require 'beads-dashboard nil t))
+    (if (fboundp 'beads-dashboard)
+        (let ((default-directory (file-name-as-directory (expand-file-name dir))))
+          (beads-dashboard))
+      (user-error "beads.el is not available to show beads for %s" name))))
+
 ;;;###autoload
 (defun gascity-rig-beads-at-point ()
   "Open beads.el's board for the rig at point, scoped to its store."
   (interactive)
   (gascity-rig-beads (or (gascity-rig-at-point)
                          (user-error "No rig at point"))))
+
+;;;###autoload
+(defun gascity-beads-at-point ()
+  "Open beads.el's board for the agent worktree or rig at point.
+On an agent row, opens the board scoped to the agent's worktree
+\(`gascity-agent-beads').  On a rig header — or any line resolving to a
+rig but no agent — opens the rig's whole store (`gascity-rig-beads').
+Mirrors `gascity-dired-at-point's agent-before-rig precedence so `b' on
+an agent row opens its worktree's beads, not its rig's store.  Signals a
+clean `user-error' when neither is at point."
+  (interactive)
+  (let ((agent (gascity-agent-at-point)))
+    (cond
+     (agent (gascity-agent-beads agent))
+     ((gascity-rig-at-point) (gascity-rig-beads (gascity-rig-at-point)))
+     (t (user-error "No agent or rig at point")))))
 
 ;;; Rig at point
 

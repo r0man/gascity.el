@@ -21,7 +21,9 @@
 ;; Rig sections are collapsible (component-local `:state', preserved
 ;; across in-place refreshes).  `g' refreshes, `q' buries, `d' opens an
 ;; agent's worktree in Dired, `t' (or RET) attaches to its tmux session,
-;; `i' opens an agent's detail view, and RET toggles a rig header.
+;; `i' opens an agent's detail view, `b' opens the beads board (the rig's
+;; store on a rig header, the agent's worktree on an agent row), and RET
+;; toggles a rig header.
 
 ;;; Code:
 
@@ -356,6 +358,7 @@ collapse state and point); nil when BUFFER has no mounted instance."
   "g"   #'gascity-status-refresh
   "RET" #'gascity-status-activate
   "i"   #'gascity-polecat-detail-at-point
+  "b"   #'gascity-beads-at-point
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
   "N"   #'gascity-session-nudge-at-point
@@ -374,8 +377,8 @@ collapse state and point); nil when BUFFER has no mounted instance."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Gas City  (g refresh · RET tmux/toggle · i detail · d dired"
-                      " · t tmux · N/s/K/w/D session · q bury)")))
+              (concat " Gas City  (g refresh · RET tmux/toggle · i detail · b beads"
+                      " · d dired · t tmux · N/s/K/w/D session · q bury)")))
 
 ;;;###autoload
 (defun gascity-status ()
