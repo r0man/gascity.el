@@ -1029,6 +1029,34 @@ JSONL output never mis-reads as a failure."
                  '(((id . "c")))))
   (should (null (gascity-section-beads []))))
 
+;;; `q' buries in the vui views (gce-0d5)
+
+(ert-deftest gascity-test-vui-q-buries ()
+  "`q' buries in every vui view rather than self-inserting (gce-0d5).
+Regression: the vui keymap chain (`gascity-section-mode-map' ->
+`beads-section-mode-map' -> `vui-mode-map' -> `widget-keymap') bound no
+`q', so pressing it in the status dashboard, rig dashboard, or
+session/polecat detail fell through to the global `self-insert-command'
+and errored \"Text is read-only\" — even though every view's header line
+promises \"q bury\".  `gascity-section-mode' binds `q' to `quit-window'
+and the three derived views inherit it.  Resolving the real key with
+`key-binding' (not peeking the mode map) is what catches the global
+fall-through a future vui change could reintroduce."
+  ;; gascity owns the binding directly: looked up through
+  ;; `gascity-section-mode-map' it resolves to `quit-window', shadowing
+  ;; whatever the vui chain happens to bind `q' to (or leaves unbound).
+  ;; This is what makes the fix independent of the loaded vui build.
+  (should (eq (keymap-lookup gascity-section-mode-map "q") #'quit-window))
+  (dolist (mode '(gascity-section-mode
+                  gascity-dashboard-mode
+                  gascity-rig-dashboard-mode
+                  gascity-session-detail-mode))
+    (with-temp-buffer
+      (funcall mode)
+      (let ((binding (key-binding (kbd "q"))))
+        (should (eq binding #'quit-window))
+        (should-not (eq binding #'self-insert-command))))))
+
 ;;; Bead-UI delegation / store scoping (DESIGN.md §4.3, §9.1)
 
 (ert-deftest gascity-test-beads-id-prefix ()

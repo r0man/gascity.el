@@ -9,9 +9,10 @@
 ;; Foundations shared by gascity's rich (vui) views.
 ;;
 ;; `gascity-section-mode' derives from `beads-section-mode' (which
-;; derives from `vui-mode'), inheriting the vui reconciler, widget
-;; navigation (TAB/S-TAB), and `q'.  gascity's detail/dashboard modes
-;; derive from it.
+;; derives from `vui-mode'), inheriting the vui reconciler and widget
+;; navigation (TAB/S-TAB).  The vui chain binds no `q', so this mode
+;; adds `q' to bury (its keymap); gascity's detail/dashboard modes
+;; derive from it and inherit that binding.
 ;;
 ;; It also provides the state->face helpers and the two agent actions
 ;; the read-only porcelain exposes from both the dashboard and the
@@ -58,13 +59,24 @@ richer notion of activation (the dashboard, for instance)."
   :parent beads-section-mode-map
   ;; Shadow `beads-section-mode's RET (its beads issue visitor) with a
   ;; gascity-appropriate default, honouring \"RET drills in everywhere\".
-  "RET" #'gascity-section-activate)
+  "RET" #'gascity-section-activate
+  ;; Bind `q' to bury here so all three vui views — the status dashboard,
+  ;; the rig dashboard, and the session/polecat detail — inherit it
+  ;; through this parent map.  The vui keymap chain
+  ;; (`beads-section-mode-map' -> `vui-mode-map' -> `widget-keymap')
+  ;; binds no `q'; without this, `q' falls through to the global
+  ;; `self-insert-command' and errors "Text is read-only" — yet every
+  ;; view's header line promises "q bury".  `quit-window' matches the
+  ;; tabulated lists (which inherit it from `tabulated-list-mode-map')
+  ;; and the magit/forge convention (gce-0d5).
+  "q" #'quit-window)
 
 (define-derived-mode gascity-section-mode beads-section-mode "GasCity"
   "Base major mode for gascity vui section buffers.
-Derives from `beads-section-mode' for the vui reconciler, widget
-navigation, and `q' to bury.  Concrete views (the status dashboard,
-detail views) derive from this and add their own keys."
+Derives from `beads-section-mode' for the vui reconciler and widget
+navigation.  The vui keymap chain binds no `q', so this mode binds
+`q' to `quit-window' (bury); concrete views (the status dashboard,
+detail views) derive from this, inherit `q', and add their own keys."
   :interactive nil
   :group 'gascity)
 
