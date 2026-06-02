@@ -206,6 +206,17 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
   "Root component of the gascity status dashboard."
   :state ((refresh-tick 0))
   :render
+  ;; Stale-while-revalidate.  `g' refreshes by bumping `refresh-tick',
+  ;; which changes every `vui-use-async' key and so restarts each load as
+  ;; 'pending with nil data.  Rendering the pending branch (a bare
+  ;; "Loading…" line) replaces the whole tree and unmounts every keyed
+  ;; `gascity-status-rig' child — destroying its component-local collapse
+  ;; `:state' (and blanking the view, losing point) on *every* refresh.
+  ;; Instead, cache the last good payload in a ref and keep rendering it
+  ;; while the refreshed load is in flight, swapping in fresh data only on
+  ;; 'ready.  Keyed children then reconcile in place, so collapse state
+  ;; survives a refresh.  The fallback screens (loading / error) show only
+  ;; on the first, dataless load — never over a snapshot we can still show.
   (let* ((status-res
           (vui-use-async (list 'status refresh-tick)
                          (lambda (resolve reject)
@@ -216,18 +227,30 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
                            (gascity-reader-read-async
                             '("session" "list") resolve reject))))
          (status-state (plist-get status-res :status))
-         (sessions-state (plist-get sessions-res :status)))
+         (sessions-state (plist-get sessions-res :status))
+         (last-status (vui-use-ref nil))
+         (last-sessions (vui-use-ref nil))
+         ;; `setcar' both refreshes the cache and returns the new value, so
+         ;; on 'ready we adopt fresh data; otherwise we reuse the snapshot.
+         (status (if (eq status-state 'ready)
+                     (setcar last-status (plist-get status-res :data))
+                   (car last-status)))
+         (sessions (if (eq sessions-state 'ready)
+                       (setcar last-sessions
+                               (alist-get 'sessions (plist-get sessions-res :data)))
+                     (car last-sessions)))
+         ;; The sessions hint reflects whether usable data is in hand, not
+         ;; the raw load state: a refresh still holding a snapshot keeps
+         ;; `d'/`t' working, so it needs no "loading" note.
+         (sessions-note-state (if sessions 'ready sessions-state)))
     (cond
-     ((eq status-state 'error)
+     ((and (eq status-state 'error) (null status))
       (gascity-status--error-vnode (plist-get status-res :error)))
-     ((eq status-state 'pending)
+     ((and (eq status-state 'pending) (null status))
       (vui-text "Loading Gas City status…" :face 'gascity-dim))
      (t
       (gascity-status--content-vnode
-       (plist-get status-res :data)
-       (and (eq sessions-state 'ready)
-            (alist-get 'sessions (plist-get sessions-res :data)))
-       sessions-state
+       status sessions sessions-note-state
        (plist-get sessions-res :error))))))
 
 ;;; Commands

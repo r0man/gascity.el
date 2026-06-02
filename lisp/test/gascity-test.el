@@ -209,6 +209,117 @@ lose `work_dir'/`session_name', so `d'/`t' no-op with no explanation."
   (should (gascity-status--sessions-note-vnode 'error "boom"))
   (should (gascity-status--sessions-note-vnode 'pending nil)))
 
+;;; Status dashboard refresh — collapse preservation (vui integration, gce-gie)
+
+(defun gascity-test--buffer-contains-p (needle)
+  "Return non-nil when the current buffer's text contains NEEDLE."
+  (save-excursion
+    (goto-char (point-min))
+    (and (search-forward needle nil t) t)))
+
+(defun gascity-test--press-header (name)
+  "Press the collapsible rig header button whose label contains NAME.
+NAME is matched against the buffer's visible text; the rig name appears
+only in its header button, so the first match lands inside that widget."
+  (goto-char (point-min))
+  (unless (search-forward name nil t)
+    (error "rig header %S not found in dashboard" name))
+  (widget-button-press (match-beginning 0)))
+
+(defun gascity-test--status-async-stub (status-box sessions-box)
+  "Return a `gascity-reader-read-async' stub that parks resolve callbacks.
+The `status' load's callback is stored in the car of STATUS-BOX and the
+`session list' load's in SESSIONS-BOX, so a test can fire them on demand
+and drive the dashboard through pending -> ready transitions
+deterministically — no live `gc', no process timing."
+  (lambda (args callback &optional _errback)
+    (cond
+     ((equal args '("status")) (setcar status-box callback))
+     ((equal args '("session" "list")) (setcar sessions-box callback))
+     (t (error "unexpected async args: %S" args)))
+    nil))
+
+(ert-deftest gascity-test-status-refresh-preserves-collapse ()
+  "A `g' refresh preserves a rig section's collapsed state (gce-gie).
+Regression: the refresh bumped `refresh-tick', restarting the status load
+as 'pending, whose bare \"Loading…\" branch replaced the whole tree and
+unmounted every keyed rig component — resetting its component-local
+collapse `:state'.  Stale-while-revalidate keeps the prior snapshot
+mounted, so the collapse survives both the in-flight refresh and the
+arrival of fresh data."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)            ; render synchronously, no timers
+        (status '((ok . t) (city_name . "bright-lights")
+                  (controller . ((running . t)))
+                  (rigs . [((name . "gascity.el")) ((name . "other"))])
+                  (agents . [((name . "furiosa")
+                              (qualified_name . "gascity.el/gastown.furiosa")
+                              (running . t))])))
+        (sessions '((sessions . []))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                ;; Cold load resolves -> dashboard renders, rig expanded (▼).
+                (funcall (car status-box) status)
+                (funcall (car sessions-box) sessions)
+                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
+                ;; Collapse the rig via its header button (▶).
+                (gascity-test--press-header "gascity.el")
+                (should (gascity-test--buffer-contains-p "▶ gascity.el"))
+                (should-not (gascity-test--buffer-contains-p "▼ gascity.el"))
+                ;; Refresh restarts the loads as 'pending.  The stale snapshot
+                ;; keeps the tree mounted -> still collapsed, no blank.
+                (gascity-status--refresh-instance (current-buffer))
+                (should (gascity-test--buffer-contains-p "▶ gascity.el"))
+                (should-not (gascity-test--buffer-contains-p "Loading Gas City status"))
+                ;; Fresh data arrives -> collapse still preserved.
+                (funcall (car status-box) status)
+                (funcall (car sessions-box) sessions)
+                (should (gascity-test--buffer-contains-p "▶ gascity.el"))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
+(ert-deftest gascity-test-status-refresh-stale-while-revalidate ()
+  "The loading line shows only on the first, dataless load (gce-gie).
+Once a snapshot exists, an in-flight refresh keeps the previous content
+visible instead of blanking to \"Loading…\" — the same whole-tree unmount
+that lost collapse state also flickered the view on every refresh."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)
+        (status '((ok . t) (city_name . "bright-lights")
+                  (controller . ((running . t)))
+                  (rigs . [((name . "gascity.el"))])
+                  (agents . [])))
+        (sessions '((sessions . []))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                ;; First load, no data yet -> loading line shown.
+                (should (gascity-test--buffer-contains-p "Loading Gas City status"))
+                ;; Resolve -> content replaces the loading line.
+                (funcall (car status-box) status)
+                (funcall (car sessions-box) sessions)
+                (should (gascity-test--buffer-contains-p "Gas City:"))
+                (should-not (gascity-test--buffer-contains-p "Loading Gas City status"))
+                ;; Refresh, leave the new load pending -> previous content
+                ;; stays put, no flicker back to the loading line.
+                (gascity-status--refresh-instance (current-buffer))
+                (should (gascity-test--buffer-contains-p "Gas City:"))
+                (should (gascity-test--buffer-contains-p "gascity.el"))
+                (should-not (gascity-test--buffer-contains-p "Loading Gas City status"))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
 ;;; tmux socket resolution
 
 (ert-deftest gascity-test-resolve-tmux-socket ()
