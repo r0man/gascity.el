@@ -962,21 +962,23 @@ manually (bypassing its trigger).
 (defconst gascity-dolt-list-buffer-name "*gascity-dolt*")
 
 (defun gascity-dolt-list--entry (db)
-  "Map DB (an alist from dolt health) to a tabulated-list entry."
+  "Map DB (an alist from dolt health) to a tabulated-list entry.
+Carries the Dolt commit count but not `gc dolt health''s `open_beads':
+that metric reads 0 for every database in practice, so the column was a
+row of zeros.  Dropped here (gce-x72) as it was from the rig dashboard
+\(gce-ziz); real open-bead counts come from `bd', not dolt health."
   (list db
         (vector (gascity-tabulated--str (alist-get 'name db))
-                (gascity-tabulated--str (alist-get 'commits db))
-                (gascity-tabulated--str (alist-get 'open_beads db)))))
+                (gascity-tabulated--str (alist-get 'commits db)))))
 
 (defun gascity-dolt-list-show ()
   "Echo the details of the Dolt database at point."
   (interactive)
   (let ((db (tabulated-list-get-id)))
     (unless db (user-error "No database at point"))
-    (message "%s: %s commits, %s open beads"
+    (message "%s: %s commits"
              (gascity-tabulated--str (alist-get 'name db))
-             (gascity-tabulated--str (alist-get 'commits db))
-             (gascity-tabulated--str (alist-get 'open_beads db)))))
+             (gascity-tabulated--str (alist-get 'commits db)))))
 
 (defun gascity-dolt-list-refresh ()
   "Refresh the Dolt database list (from `gc dolt health')."
@@ -1002,8 +1004,7 @@ Dolt has no meaningful filter dimension, so no `/'; pagination
   :group 'gascity
   (setq tabulated-list-format
         `[("Database" 20 t)
-          ("Commits" 10 ,(gascity-tabulated--numeric-sorter 1))
-          ("Open beads" 12 ,(gascity-tabulated--numeric-sorter 2))])
+          ("Commits" 10 ,(gascity-tabulated--numeric-sorter 1))])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Database" nil))
   (tabulated-list-init-header))

@@ -298,11 +298,15 @@ and joins must use `agent_name'."
                    '("bs-0q2z" "x" "open" "1/3")))))
 
 (ert-deftest gascity-test-dolt-entry ()
-  "A Dolt entry lays out name, commits, and open beads."
+  "A Dolt entry lays out name and commits, but not `open_beads' (gce-x72).
+`gc dolt health' reports `open_beads' as 0 for every database, so the
+column was a row of zeros; it was dropped here as it was from the rig
+dashboard (gce-ziz).  The field is dropped regardless of its value, so a
+non-zero `open_beads' in the input must still not surface."
   (should (equal (gascity-test--plain-cols
                   (gascity-dolt-list--entry
                    '((name . "beads") (commits . 42) (open_beads . 7))))
-                 '("beads" "42" "7"))))
+                 '("beads" "42"))))
 
 ;;; Numeric column sorting (gce-94g)
 
@@ -317,32 +321,26 @@ with nothing to do sorts below any with real progress."
   (should (= (gascity-tabulated--progress-fraction "") 0.0)))
 
 (ert-deftest gascity-test-tabulated-numeric-sorter ()
-  "Dolt \"Commits\"/\"Open beads\" columns sort numerically, not lexically.
-Regression for gce-94g: these columns declared the default `t' sorter, so
+  "The Dolt \"Commits\" column sorts numerically, not lexically.
+Regression for gce-94g: the column declared the default `t' sorter, so
 \"110\" sorted before \"8\".  Build entries with the real entry-builder
-and pull the sorters out of the live mode's `tabulated-list-format' — that
+and pull the sorter out of the live mode's `tabulated-list-format' — that
 also guards the backquoted-vector wiring, since a literal list left in the
-sort slot would not be `functionp'."
-  (let* ((dbs '(((name . "a") (commits . 110) (open_beads . 3))
-                ((name . "b") (commits . 161) (open_beads . 30))
-                ((name . "c") (commits . 2351) (open_beads . 8))
-                ((name . "d") (commits . 8) (open_beads . 110))))
+sort slot would not be `functionp'.  (The \"Open beads\" column this test
+also covered was dropped in gce-x72.)"
+  (let* ((dbs '(((name . "a") (commits . 110))
+                ((name . "b") (commits . 161))
+                ((name . "c") (commits . 2351))
+                ((name . "d") (commits . 8))))
          (entries (mapcar #'gascity-dolt-list--entry dbs))
          (commits-sorter (with-temp-buffer
                            (gascity-dolt-list-mode)
-                           (nth 2 (aref tabulated-list-format 1))))
-         (beads-sorter (with-temp-buffer
-                         (gascity-dolt-list-mode)
-                         (nth 2 (aref tabulated-list-format 2)))))
+                           (nth 2 (aref tabulated-list-format 1)))))
     (should (functionp commits-sorter))
-    (should (functionp beads-sorter))
     ;; The exact case from the bug report.
     (should (equal (mapcar (lambda (e) (aref (cadr e) 1))
                            (sort (copy-sequence entries) commits-sorter))
-                   '("8" "110" "161" "2351")))
-    (should (equal (mapcar (lambda (e) (aref (cadr e) 2))
-                           (sort (copy-sequence entries) beads-sorter))
-                   '("3" "8" "30" "110")))))
+                   '("8" "110" "161" "2351")))))
 
 (ert-deftest gascity-test-convoy-progress-sort ()
   "The convoy \"Progress\" column sorts by completion fraction.
