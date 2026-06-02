@@ -17,6 +17,12 @@
 ;; SESSION' in a terminal buffer.  (`env -u TMUX' lets the attach nest
 ;; when Emacs itself runs inside tmux.)  Session and socket names are
 ;; shell-quoted before interpolation.
+;;
+;; Attaching is idempotent: when the agent's terminal buffer is already
+;; open with a live process, `gascity-terminal-run' raises that window
+;; instead of starting a second backend process in it (which would
+;; otherwise error, e.g. ghostel's "already has a running ghostel
+;; process").
 
 ;;; Code:
 
@@ -44,20 +50,42 @@ Maps the user's backend choice to a concrete beads terminal class, or
   (let ((d (or dir default-directory)))
     (if (and d (file-directory-p d)) (file-name-as-directory d) "~/")))
 
+(defun gascity-terminal--live-buffer (buffer-name)
+  "Return the buffer named BUFFER-NAME when it hosts a live process, else nil.
+A terminal buffer whose process has already exited is treated as absent,
+so the caller spawns a fresh one; only a buffer with a running process is
+worth reusing."
+  (when-let* ((buf (get-buffer buffer-name))
+              (proc (get-buffer-process buf)))
+    (and (process-live-p proc) buf)))
+
 (defun gascity-terminal-run (argv buffer-name &optional dir)
-  "Spawn ARGV in a terminal buffer named BUFFER-NAME.
-ARGV is a (PROGRAM . ARGS) list run with no intervening shell via
-beads.el's `beads-terminal-spawn', using the backend from
-`gascity-terminal-backend'.  beads sets the working directory from DIR
-\(its WORKING-DIR contract); nil or a missing DIR falls back to the home
-directory.  Returns the spawned buffer and pops to it."
-  (let* ((default-dir (gascity-terminal--working-dir dir))
-         (terminal (make-instance (gascity-terminal--backend-class)))
-         (buf (beads-terminal-spawn terminal buffer-name argv default-dir
-                                    '(("CLICOLOR_FORCE" . "1")))))
-    (when (and buf (buffer-live-p buf))
-      (pop-to-buffer buf))
-    buf))
+  "Display the terminal buffer named BUFFER-NAME, spawning ARGV if needed.
+If a buffer named BUFFER-NAME already hosts a live process, reuse it: pop
+to it and raise its window without launching a second process.  This is
+what keeps `t' on an agent whose terminal is already open from erroring
+\(e.g. ghostel's \"already has a running ghostel process\").  The check is
+on the Emacs buffer and its process, so it behaves identically across the
+vterm / eat / term / ghostel backends.
+
+Otherwise spawn ARGV in a fresh terminal buffer.  ARGV is a (PROGRAM .
+ARGS) list run with no intervening shell via beads.el's
+`beads-terminal-spawn', using the backend from `gascity-terminal-backend'.
+beads sets the working directory from DIR (its WORKING-DIR contract); nil
+or a missing DIR falls back to the home directory.  Returns the buffer and
+pops to it."
+  (let ((existing (gascity-terminal--live-buffer buffer-name)))
+    (if existing
+        ;; Reuse the live terminal — raise its window, don't re-exec.
+        (progn (pop-to-buffer existing) existing)
+      ;; No live terminal: spawn a fresh one.
+      (let* ((default-dir (gascity-terminal--working-dir dir))
+             (terminal (make-instance (gascity-terminal--backend-class)))
+             (buf (beads-terminal-spawn terminal buffer-name argv default-dir
+                                        '(("CLICOLOR_FORCE" . "1")))))
+        (when (and buf (buffer-live-p buf))
+          (pop-to-buffer buf))
+        buf))))
 
 ;;; tmux
 

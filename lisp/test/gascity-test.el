@@ -593,6 +593,68 @@ tmux server."
                0)))
     (should (null (gascity-terminal-pane-cwd "tm")))))
 
+(ert-deftest gascity-test-terminal-live-buffer ()
+  "`gascity-terminal--live-buffer' returns the buffer only when it hosts a
+live process: nil for a missing buffer, a process-less buffer, or a dead
+process; the buffer itself while the process runs."
+  ;; Missing buffer.
+  (should (null (gascity-terminal--live-buffer "*gc-agent-absent-xyz*")))
+  ;; Buffer with no process.
+  (let ((buf (generate-new-buffer "*gc-agent-noproc*")))
+    (unwind-protect
+        (should (null (gascity-terminal--live-buffer (buffer-name buf))))
+      (kill-buffer buf)))
+  ;; A live process makes the buffer reusable; once it dies, it does not.
+  (let* ((buf (generate-new-buffer "*gc-agent-live*"))
+         (proc (make-pipe-process :name "gc-test-live" :buffer buf :noquery t)))
+    (unwind-protect
+        (progn
+          (should (eq (gascity-terminal--live-buffer (buffer-name buf)) buf))
+          (delete-process proc)
+          (should (null (gascity-terminal--live-buffer (buffer-name buf)))))
+      (when (process-live-p proc) (delete-process proc))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-run-reuses-live-buffer ()
+  "`gascity-terminal-run' reuses a buffer that already hosts a live process:
+it pops to that buffer and does NOT spawn a second terminal (the bug where
+pressing `t' on an already-open agent terminal errored)."
+  (let* ((buf (generate-new-buffer "*gc-agent-reuse*"))
+         (name (buffer-name buf))
+         (proc (make-pipe-process :name "gc-test-reuse" :buffer buf :noquery t))
+         spawned popped)
+    (unwind-protect
+        (cl-letf (((symbol-function 'beads-terminal-spawn)
+                   (lambda (&rest _) (setq spawned t) (error "must not re-spawn")))
+                  ((symbol-function 'pop-to-buffer)
+                   (lambda (b &rest _) (setq popped b) b)))
+          (let ((ret (gascity-terminal-run '("env") name)))
+            (should (eq ret buf))
+            (should (eq popped buf))
+            (should-not spawned)))
+      (when (process-live-p proc) (delete-process proc))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-run-spawns-when-not-live ()
+  "With no existing live-process buffer, `gascity-terminal-run' spawns a
+fresh terminal via `beads-terminal-spawn' and pops to the new buffer."
+  (let ((name "*gc-agent-fresh*")
+        spawn-args popped)
+    (unwind-protect
+        (cl-letf (((symbol-function 'beads-terminal-spawn)
+                   (lambda (_term buffer-name argv dir _env)
+                     (setq spawn-args (list buffer-name argv dir))
+                     (get-buffer-create buffer-name)))
+                  ((symbol-function 'pop-to-buffer)
+                   (lambda (b &rest _) (setq popped b) b)))
+          (let ((ret (gascity-terminal-run '("echo" "hi") name "/tmp")))
+            (should (bufferp ret))
+            (should (equal (nth 0 spawn-args) name))
+            (should (equal (nth 1 spawn-args) '("echo" "hi")))
+            (should (string-prefix-p "/tmp" (nth 2 spawn-args)))
+            (should (eq popped ret))))
+      (when (get-buffer name) (kill-buffer name)))))
+
 (ert-deftest gascity-test-agent-dired-prefers-recorded-work-dir ()
   "A recorded `:work-dir' is used directly, without a tmux pane query."
   (let (opened)
