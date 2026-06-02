@@ -888,6 +888,112 @@ fresh terminal via `beads-terminal-spawn' and pops to the new buffer."
             (should (eq popped ret))))
       (when (get-buffer name) (kill-buffer name)))))
 
+;;; tmux status in the mode line (gce-hjj)
+
+(ert-deftest gascity-test-terminal-window-list ()
+  "`gascity-terminal--window-list' parses tmux output into :active/:label plists."
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (_prog _in buf _disp &rest args)
+               (should (equal (car args) "list-windows"))
+               (when (eq buf t) (insert "0\t0:bash-\n1\t1:claude*\n"))
+               0)))
+    (let ((ws (gascity-terminal--window-list "sess" nil)))
+      (should (= (length ws) 2))
+      (should (equal (plist-get (nth 0 ws) :label) "0:bash-"))
+      (should (null (plist-get (nth 0 ws) :active)))
+      (should (equal (plist-get (nth 1 ws) :label) "1:claude*"))
+      (should (eq (plist-get (nth 1 ws) :active) t))))
+  ;; A missing session (tmux exit non-zero) yields nil — this is the
+  ;; session-existence probe.
+  (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 1)))
+    (should (null (gascity-terminal--window-list "gone" nil)))))
+
+(ert-deftest gascity-test-terminal-status-string ()
+  "`gascity-terminal--status-string' shows the `status-left' name and the
+window list with the current window emphasised; nil when the session is gone."
+  (cl-letf (((symbol-function 'call-process)
+             (lambda (_prog _in buf _disp &rest args)
+               (when (eq buf t)
+                 (cond
+                  ((equal (car args) "list-windows")
+                   (insert "0\t0:bash\n1\t1:claude*\n"))
+                  ((equal (car args) "display-message")
+                   ;; `status-left' value, with trailing space to trim.
+                   (insert "gastown.mayor \n"))))
+               0)))
+    (let ((s (gascity-terminal--status-string "sess" nil)))
+      (should (stringp s))
+      ;; Friendly name (trimmed) faced as the session identity.
+      (should (string-match "gastown.mayor" s))
+      (should (eq (get-text-property (string-match "gastown.mayor" s) 'face s)
+                  'gascity-city))
+      ;; Active window emphasised; inactive window not.
+      (should (string-match "1:claude" s))
+      (should (eq (get-text-property (string-match "1:claude" s) 'face s)
+                  'gascity-header))
+      (should (string-match "0:bash" s))
+      (should (eq (get-text-property (string-match "0:bash" s) 'face s)
+                  'default))))
+  (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 1)))
+    (should (null (gascity-terminal--status-string "gone" nil)))))
+
+(ert-deftest gascity-test-terminal-status-install-teardown ()
+  "Install turns the session's tmux status bar off, adds a mode-line segment
+and a refresh timer; teardown (via `kill-buffer-hook') cancels the timer and
+reverts the override with `set-option -u'.  All tmux ops are session-scoped."
+  (let ((buf (generate-new-buffer "*gc-agent-install-test*"))
+        (cmds nil)
+        (gascity-terminal-status-interval 3600)) ; far enough to never fire
+    (unwind-protect
+        (cl-letf (((symbol-function 'call-process)
+                   (lambda (_prog _in bufarg _disp &rest args)
+                     (push args cmds)
+                     ;; SOCKET is non-nil here, so args start with
+                     ;; ("-L" "sock" …); match the subcommand by membership.
+                     (when (eq bufarg t)
+                       (cond
+                        ((member "list-windows" args)
+                         (insert "1\t1:claude*\n"))
+                        ((member "display-message" args)
+                         (insert "gastown.mayor\n"))))
+                     0)))
+          (gascity-terminal--status-install buf "sess" "sock")
+          (with-current-buffer buf
+            (should (member '("-L" "sock" "set-option" "-t" "sess" "status" "off")
+                            cmds))
+            (should (member gascity-terminal--status-mode-line-segment
+                            mode-line-format))
+            (should (timerp gascity-terminal--status-timer))
+            (should (equal gascity-terminal--status-session "sess"))
+            (should (stringp gascity-terminal--status-string)))
+          ;; Killing the buffer must revert the override, scoped to the session.
+          (setq cmds nil)
+          (kill-buffer buf)
+          (should (member '("-L" "sock" "set-option" "-t" "sess" "-u" "status")
+                          cmds)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-terminal-attach-honours-status-toggle ()
+  "`gascity-terminal-attach-tmux' installs the status mirror only when
+`gascity-terminal-mode-line-status' is non-nil."
+  (let ((buf (generate-new-buffer "*gc-agent-toggle*")) installed)
+    (unwind-protect
+        (cl-letf (((symbol-function 'gascity-terminal-tmux-session-exists-p)
+                   (lambda (&rest _) t))
+                  ((symbol-function 'gascity-terminal-run)
+                   (lambda (&rest _) buf))
+                  ((symbol-function 'gascity-terminal--status-install)
+                   (lambda (&rest _) (setq installed t))))
+          (let ((gascity-terminal-mode-line-status t))
+            (setq installed nil)
+            (gascity-terminal-attach-tmux "sess" "sock" nil)
+            (should installed))
+          (let ((gascity-terminal-mode-line-status nil))
+            (setq installed nil)
+            (gascity-terminal-attach-tmux "sess" "sock" nil)
+            (should-not installed)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
 (ert-deftest gascity-test-agent-dired-prefers-recorded-work-dir ()
   "A recorded `:work-dir' is used directly, without a tmux pane query."
   (let (opened)

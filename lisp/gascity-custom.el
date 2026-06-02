@@ -78,6 +78,33 @@ the default tmux server (no -L flag)."
                  (string :tag "Explicit socket name"))
   :group 'gascity)
 
+;;; Terminal mode-line status
+
+(defcustom gascity-terminal-mode-line-status t
+  "When non-nil, mirror an attached agent's tmux status bar in the mode line.
+On attaching to an agent's tmux session, gascity turns that session's own
+tmux status bar off (`status off', scoped to the session) and renders the
+same information — the friendly session name from `status-left' and the
+window list with the current window emphasised — as a buffer-local
+segment of the Emacs mode line.  The terminal then shows one status line
+instead of two.  The tmux change is reverted when the terminal buffer is
+killed, so an external `tmux attach' still sees its own status bar.
+
+Set to nil to leave tmux's status bar untouched and add no mode-line
+segment."
+  :type 'boolean
+  :group 'gascity)
+
+(defcustom gascity-terminal-status-interval 5
+  "Seconds between refreshes of the tmux status mode-line segment.
+gascity polls the attached session with `tmux list-windows' /
+`display-message' on this interval and updates the mode line, mirroring
+tmux's own `status-interval'.  Only consulted when
+`gascity-terminal-mode-line-status' is non-nil; values at or below zero
+fall back to 5."
+  :type 'number
+  :group 'gascity)
+
 ;;; Faces
 
 (defgroup gascity-faces nil
