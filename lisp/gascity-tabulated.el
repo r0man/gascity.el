@@ -475,8 +475,12 @@ the rig at point.
 \\{gascity-rig-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
+        ;; "Store", not "Beads": the cell renders `gc rig list''s `beads'
+        ;; field, which is the bead store's STATUS string ("initialized")
+        ;; for every rig, not a count.  A "Beads" header implied a count it
+        ;; never showed; "Store" reads the value as the status it is (gce-79f).
         [("Name" 24 t) ("Prefix" 8 t) ("Status" 11 t)
-         ("Branch" 14 t) ("Beads" 12 t)])
+         ("Branch" 14 t) ("Store" 12 t)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Name" nil))
   (tabulated-list-init-header))

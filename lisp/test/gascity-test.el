@@ -337,6 +337,24 @@ The HQ guard must not disturb the normal path: a real rig still routes to
         (gascity-rig-dashboard-at-point)
         (should (equal opened '("gascity.el")))))))
 
+(ert-deftest gascity-test-rig-list-store-column-header ()
+  "The rig list's bead-store column is headed \"Store\", not \"Beads\".
+The cell renders `gc rig list''s `beads' field — a store-STATUS string
+\(\"initialized\") for every rig, never a count — so a \"Beads\" header
+implied a count it never showed.  Pin the status-accurate label, and pin
+the faithful rendering of the underlying value alongside it (gce-79f)."
+  (with-temp-buffer
+    (gascity-rig-list-mode)
+    (let ((headers (mapcar #'car (append tabulated-list-format nil))))
+      (should (member "Store" headers))
+      (should-not (member "Beads" headers)))
+    ;; The fifth column still faithfully shows the store-status value.
+    (should (equal (nth 4 (gascity-test--plain-cols
+                           (gascity-rig-list--entry
+                            '((name . "gascity.el") (prefix . "gce") (running . t)
+                              (default_branch . "main") (beads . "initialized")))))
+                   "initialized"))))
+
 (ert-deftest gascity-test-session-entry-id-is-agent-plist ()
   "A session entry's id is the agent action plist, with the passed socket."
   (let* ((s '((agent_name . "gascity.el/gastown.furiosa") (rig . "gascity.el")
