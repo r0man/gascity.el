@@ -289,6 +289,67 @@ and joins must use `agent_name'."
                    '((name . "beads") (commits . 42) (open_beads . 7))))
                  '("beads" "42" "7"))))
 
+;;; Numeric column sorting (gce-94g)
+
+(ert-deftest gascity-test-tabulated-progress-fraction ()
+  "A \"closed/total\" string parses to a completion fraction.
+Zero or missing totals (and unparseable input) yield 0.0 so a convoy
+with nothing to do sorts below any with real progress."
+  (should (= (gascity-tabulated--progress-fraction "1/4") 0.25))
+  (should (= (gascity-tabulated--progress-fraction "3/3") 1.0))
+  (should (= (gascity-tabulated--progress-fraction "0/0") 0.0))
+  (should (= (gascity-tabulated--progress-fraction "5/0") 0.0))
+  (should (= (gascity-tabulated--progress-fraction "") 0.0)))
+
+(ert-deftest gascity-test-tabulated-numeric-sorter ()
+  "Dolt \"Commits\"/\"Open beads\" columns sort numerically, not lexically.
+Regression for gce-94g: these columns declared the default `t' sorter, so
+\"110\" sorted before \"8\".  Build entries with the real entry-builder
+and pull the sorters out of the live mode's `tabulated-list-format' — that
+also guards the backquoted-vector wiring, since a literal list left in the
+sort slot would not be `functionp'."
+  (let* ((dbs '(((name . "a") (commits . 110) (open_beads . 3))
+                ((name . "b") (commits . 161) (open_beads . 30))
+                ((name . "c") (commits . 2351) (open_beads . 8))
+                ((name . "d") (commits . 8) (open_beads . 110))))
+         (entries (mapcar #'gascity-dolt-list--entry dbs))
+         (commits-sorter (with-temp-buffer
+                           (gascity-dolt-list-mode)
+                           (nth 2 (aref tabulated-list-format 1))))
+         (beads-sorter (with-temp-buffer
+                         (gascity-dolt-list-mode)
+                         (nth 2 (aref tabulated-list-format 2)))))
+    (should (functionp commits-sorter))
+    (should (functionp beads-sorter))
+    ;; The exact case from the bug report.
+    (should (equal (mapcar (lambda (e) (aref (cadr e) 1))
+                           (sort (copy-sequence entries) commits-sorter))
+                   '("8" "110" "161" "2351")))
+    (should (equal (mapcar (lambda (e) (aref (cadr e) 2))
+                           (sort (copy-sequence entries) beads-sorter))
+                   '("3" "8" "30" "110")))))
+
+(ert-deftest gascity-test-convoy-progress-sort ()
+  "The convoy \"Progress\" column sorts by completion fraction.
+\"1/1\" (100%) sorts above \"50/100\" (50%) even though 1 < 50, and a
+zero-total convoy sinks to the bottom (gce-94g)."
+  (let* ((convoys '(((id . "a") (title . "t") (status . "open")
+                     (progress . ((closed . 1) (total . 1))))
+                    ((id . "b") (title . "t") (status . "open")
+                     (progress . ((closed . 50) (total . 100))))
+                    ((id . "c") (title . "t") (status . "open")
+                     (progress . ((closed . 3) (total . 100))))
+                    ((id . "d") (title . "t") (status . "open")
+                     (progress . ((closed . 0) (total . 0))))))
+         (entries (mapcar #'gascity-convoy-list--entry convoys))
+         (sorter (with-temp-buffer
+                   (gascity-convoy-list-mode)
+                   (nth 2 (aref tabulated-list-format 3)))))
+    (should (functionp sorter))
+    (should (equal (mapcar (lambda (e) (aref (cadr e) 3))
+                           (sort (copy-sequence entries) sorter))
+                   '("0/0" "3/100" "50/100" "1/1")))))
+
 ;;; Status tree assembly
 
 (ert-deftest gascity-test-status-tree ()

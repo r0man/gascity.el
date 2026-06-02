@@ -89,6 +89,39 @@
         ((eq value t) "yes")
         (t (format "%s" value))))
 
+(defun gascity-tabulated--cell-string (entry n)
+  "Return the display string of column N in tabulated-list ENTRY.
+ENTRY has the form (ID [DESC...]), like the elements of
+`tabulated-list-entries'; each DESC cell is either a string or a
+\(LABEL . PROPS) cons.  Mirrors how the built-in `t' sorter reads a cell."
+  (let ((cell (aref (cadr entry) n)))
+    (if (stringp cell) cell (car cell))))
+
+(defun gascity-tabulated--numeric-sorter (n &optional key)
+  "Return a `tabulated-list-format' sort predicate for numeric column N.
+The built-in `t' sorter compares cells as strings, so numeric columns
+order lexicographically (\"110\" sorts before \"8\").  This predicate
+instead maps each cell's display string through KEY (default
+`string-to-number') and compares the results with `<', giving true
+numeric order.  KEY lets a column derive its sort number from a richer
+cell, e.g. a \"closed/total\" progress string."
+  (let ((key (or key #'string-to-number)))
+    (lambda (a b)
+      (< (funcall key (gascity-tabulated--cell-string a n))
+         (funcall key (gascity-tabulated--cell-string b n))))))
+
+(defun gascity-tabulated--progress-fraction (cell)
+  "Return the completion fraction of a \"closed/total\" progress CELL.
+Parses the leading \"N/M\" and returns N/M as a float in [0,1]; a zero or
+missing total yields 0.0, so convoys with nothing closed (or nothing to
+do) sort below any with real progress.  Used as the KEY for the convoy
+`Progress' column's numeric sorter."
+  (if (string-match "\\([0-9]+\\)/\\([0-9]+\\)" cell)
+      (let ((closed (string-to-number (match-string 1 cell)))
+            (total (string-to-number (match-string 2 cell))))
+        (if (> total 0) (/ (float closed) total) 0.0))
+    0.0))
+
 (defun gascity-tabulated--truncate (value width)
   "Return VALUE as a display string of at most WIDTH columns.
 A value wider than WIDTH is truncated with a trailing ellipsis and
@@ -628,7 +661,9 @@ The entry id is the convoy's bead id, so `RET' can open it in beads.el."
 \\{gascity-convoy-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
-        [("ID" 12 t) ("Title" 46 t) ("Status" 10 t) ("Progress" 10 t)])
+        `[("ID" 12 t) ("Title" 46 t) ("Status" 10 t)
+          ("Progress" 10 ,(gascity-tabulated--numeric-sorter
+                           3 #'gascity-tabulated--progress-fraction))])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "ID" nil))
   (tabulated-list-init-header))
@@ -922,7 +957,9 @@ Dolt has no meaningful filter dimension, so no `/'; pagination
 \\{gascity-dolt-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
-        [("Database" 20 t) ("Commits" 10 t) ("Open beads" 12 t)])
+        `[("Database" 20 t)
+          ("Commits" 10 ,(gascity-tabulated--numeric-sorter 1))
+          ("Open beads" 12 ,(gascity-tabulated--numeric-sorter 2))])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Database" nil))
   (tabulated-list-init-header))
