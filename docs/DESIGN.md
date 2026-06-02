@@ -290,6 +290,12 @@ data-tick for expensive derivations.
   store owning the bead id's prefix, so convoy / rig-dashboard / session-detail
   references open against the right store instead of the ambient directory.
 - ⬜ **P6 — Polish.** completion, error surfaces, `whats-new`, Eldev/guix.scm.
+- ⬜ **P7 — Write/action commands.** The full mutate surface beyond the P1
+  dispatch slice — bead close/note/update/create + richer sling, session
+  reset/undrain, city reload, and mail read/archive/reply/send — hand-built
+  magit/forge-style off the existing command classes. Designed separately in
+  [`DESIGN-write-actions.md`](DESIGN-write-actions.md); tracked by epic
+  `gce-7rs` (phases `gce-7rs.1`/`.2`/`.3`).
 
 The MVP (P0 + P2 + P3 + agent actions + P1 dispatch + P4 detail views) is
 delivered and verified against a live town; it is already a usable porcelain.
