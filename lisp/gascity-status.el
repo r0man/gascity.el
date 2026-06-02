@@ -20,8 +20,8 @@
 ;;
 ;; Rig sections are collapsible (component-local `:state', preserved
 ;; across in-place refreshes).  `g' refreshes, `q' buries, `d' opens an
-;; agent's worktree in Dired, `t' attaches to its tmux session, RET
-;; toggles/activates the thing at point.
+;; agent's worktree in Dired, `t' (or RET) attaches to its tmux session,
+;; `i' opens an agent's detail view, and RET toggles a rig header.
 
 ;;; Code:
 
@@ -258,11 +258,12 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
 (defun gascity-status-activate ()
   "Activate the thing at point.
 On a rig header (a widget) this toggles its collapse; on an agent row it
-opens the session/polecat detail view."
+attaches the agent's terminal (its tmux session) — the primary action.
+`i' opens the agent's detail/info view instead."
   (interactive)
   (cond
    ((widget-at (point)) (widget-button-press (point)))
-   ((get-text-property (point) 'gascity-agent) (gascity-polecat-detail-at-point))
+   ((get-text-property (point) 'gascity-agent) (gascity-tmux-at-point))
    (t (user-error "Nothing to activate here"))))
 
 (defun gascity-status--refresh-instance (buffer)
@@ -293,6 +294,7 @@ collapse state); nil when BUFFER has no mounted instance."
   :parent gascity-section-mode-map
   "g"   #'gascity-status-refresh
   "RET" #'gascity-status-activate
+  "i"   #'gascity-polecat-detail-at-point
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
   "N"   #'gascity-session-nudge-at-point
@@ -311,8 +313,8 @@ collapse state); nil when BUFFER has no mounted instance."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Gas City  (g refresh · RET detail/toggle · d dired · t tmux"
-                      " · N/s/K/w/D session · q bury)")))
+              (concat " Gas City  (g refresh · RET tmux/toggle · i detail · d dired"
+                      " · t tmux · N/s/K/w/D session · q bury)")))
 
 ;;;###autoload
 (defun gascity-status ()

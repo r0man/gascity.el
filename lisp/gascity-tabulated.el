@@ -638,7 +638,8 @@ applied client-side to the decoded rows."
   "/"   #'gascity-session-list-filter
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
-  "RET" #'gascity-polecat-detail-at-point
+  "RET" #'gascity-tmux-at-point
+  "i"   #'gascity-polecat-detail-at-point
   "N"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
@@ -648,10 +649,11 @@ applied client-side to the decoded rows."
 
 (define-derived-mode gascity-session-list-mode tabulated-list-mode "GC-Sessions"
   "Major mode listing the city's agent sessions.
-`RET' opens the session/polecat detail view; `d' opens its worktree in
-Dired; `t' attaches to its tmux session.  `N' nudges (sends a message),
-`s' suspends, `K' force-kills the runtime of, `w' wakes, `D' drains, and
-`p' peeks at the output of the session at point.
+`RET' (or `t') attaches to the session's tmux session — the primary
+action; `i' opens the session/polecat detail view; `d' opens its
+worktree in Dired.  `N' nudges (sends a message), `s' suspends, `K'
+force-kills the runtime of, `w' wakes, `D' drains, and `p' peeks at the
+output of the session at point.
 \\{gascity-session-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format

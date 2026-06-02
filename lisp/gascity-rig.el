@@ -18,7 +18,7 @@
 ;;                 and the city it belongs to (`gc rig status').
 ;; - agents        the rig's agents (polecat/refinery/witness/…), joined
 ;;                 to `gc session list' for each one's worktree and tmux
-;;                 target so `d'/`t'/`RET' act on the agent at point.
+;;                 target so `d'/`t'/`i'/`RET' act on the agent at point.
 ;; - beads         the rig's ready and in-progress beads (`gc bd ready'
 ;;                 / `gc bd list --status in_progress', both `--rig'
 ;;                 scoped); `RET' opens one in beads.el (DESIGN.md §4.3).
@@ -27,8 +27,9 @@
 ;;                 matched on the rig prefix — the per-rig db is named
 ;;                 after the prefix).
 ;;
-;; `g' refreshes in place (preserving point); `RET' drills into the
-;; agent or bead at point; `b' opens the rig's whole bead store as a
+;; `g' refreshes in place (preserving point); `RET' drills into the bead
+;; at point or attaches the agent at point's terminal, while `i' opens an
+;; agent's detail view; `b' opens the rig's whole bead store as a
 ;; beads.el board (DESIGN.md §4.3); the agent action keys
 ;; (`d'/`t'/`N'/`s'/`K'/`w'/`D'/`p') match the status dashboard and
 ;; session list.
@@ -268,19 +269,21 @@ Open-bead counts belong to those sections, which read live `bd' data."
          (gascity-rig--beads-section "In progress" inprog inprog-res)
          (gascity-rig--orders-vnode orders orders-res)
          (gascity-rig--dolt-vnode db dolt-res)
-         (vui-text (concat "g refresh · RET open · b beads · d dired · t tmux · "
-                           "N/s/K/w/D session · p peek · q bury")
+         (vui-text (concat "g refresh · RET open/tmux · i detail · b beads · "
+                           "d dired · t tmux · N/s/K/w/D session · p peek · q bury")
                    :face 'gascity-dim)))))))
 
 ;;; Commands
 
 (defun gascity-rig-dashboard-activate ()
-  "Drill into the thing at point: a bead opens in beads.el, an agent its detail.
+  "Drill into the thing at point: a bead opens in beads.el, an agent attaches.
+On an agent row, RET attaches the agent's terminal (its tmux session) —
+the primary action; `i' opens the agent's detail/info view instead.
 Falls back to pressing a widget, else reports there is nothing to open."
   (interactive)
   (cond
    ((gascity-bead-at-point) (gascity-bead-visit))
-   ((gascity-agent-at-point) (gascity-polecat-detail-at-point))
+   ((gascity-agent-at-point) (gascity-tmux-at-point))
    ((widget-at (point)) (widget-button-press (point)))
    (t (user-error "Nothing to open here"))))
 
@@ -322,6 +325,7 @@ can never succeed.  Refuse the HQ with a clear message instead; use
   :parent gascity-section-mode-map
   "g"   #'gascity-rig-dashboard-refresh
   "RET" #'gascity-rig-dashboard-activate
+  "i"   #'gascity-polecat-detail-at-point
   "b"   #'gascity-rig-dashboard-beads
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
@@ -340,8 +344,8 @@ can never succeed.  Refuse the HQ with a clear message instead; use
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Rig dashboard  (g refresh · RET open · b beads · d dired"
-                      " · t tmux · N/s/K/w/D/p session · q bury)")))
+              (concat " Rig dashboard  (g refresh · RET open/tmux · i detail · b beads"
+                      " · d dired · t tmux · N/s/K/w/D/p session · q bury)")))
 
 ;;;###autoload
 (defun gascity-rig-dashboard (rig-name)

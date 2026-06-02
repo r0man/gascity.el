@@ -337,6 +337,70 @@ The HQ guard must not disturb the normal path: a real rig still routes to
         (gascity-rig-dashboard-at-point)
         (should (equal opened '("gascity.el")))))))
 
+;;; gce-4hk — RET on an agent attaches its terminal; `i' opens its info view
+
+(defun gascity-test--with-agent-at-point (thunk)
+  "Call THUNK in a temp buffer with an agent plist as the `gascity-agent' prop.
+This stands in for an agent row in the status or rig dashboard, where the
+action keys resolve the subject via `gascity-agent-at-point'."
+  (with-temp-buffer
+    (insert (propertize "agent-row"
+                        'gascity-agent '(:name "rig/agent" :session-name "tm")))
+    (goto-char (point-min))
+    (funcall thunk)))
+
+(ert-deftest gascity-test-status-activate-agent-attaches-terminal ()
+  "RET on an agent in the status dashboard attaches its terminal, not the info view.
+Primary action is the tmux attach (`gascity-tmux-at-point'); the detail/info
+view moves to `i' (`gascity-polecat-detail-at-point') — gce-4hk."
+  (gascity-test--with-agent-at-point
+   (lambda ()
+     (let (tmux info)
+       (cl-letf (((symbol-function 'gascity-tmux-at-point) (lambda () (setq tmux t)))
+                 ((symbol-function 'gascity-polecat-detail-at-point)
+                  (lambda () (setq info t))))
+         (gascity-status-activate)
+         (should tmux)
+         (should-not info)))))
+  ;; `i' opens the info view; RET (via activate) and `t' both attach.
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "i")
+              #'gascity-polecat-detail-at-point))
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "t")
+              #'gascity-tmux-at-point))
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "RET")
+              #'gascity-status-activate)))
+
+(ert-deftest gascity-test-rig-dashboard-activate-agent-attaches-terminal ()
+  "RET on an agent in the rig dashboard attaches its terminal, not the info view.
+A bead at point still opens in beads.el; only the agent branch changes to the
+tmux attach, with the detail/info view on `i' — gce-4hk."
+  (gascity-test--with-agent-at-point
+   (lambda ()
+     (let (tmux info)
+       (cl-letf (((symbol-function 'gascity-tmux-at-point) (lambda () (setq tmux t)))
+                 ((symbol-function 'gascity-polecat-detail-at-point)
+                  (lambda () (setq info t))))
+         (gascity-rig-dashboard-activate)
+         (should tmux)
+         (should-not info)))))
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "i")
+              #'gascity-polecat-detail-at-point))
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "t")
+              #'gascity-tmux-at-point))
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "RET")
+              #'gascity-rig-dashboard-activate)))
+
+(ert-deftest gascity-test-session-list-ret-attaches-terminal ()
+  "In the session list RET attaches the agent's terminal; `i' opens its detail.
+RET is bound directly to the tmux attach (a synonym for `t'), and the
+session/polecat detail view — the old RET target — moves to `i' (gce-4hk)."
+  (should (eq (keymap-lookup gascity-session-list-mode-map "RET")
+              #'gascity-tmux-at-point))
+  (should (eq (keymap-lookup gascity-session-list-mode-map "t")
+              #'gascity-tmux-at-point))
+  (should (eq (keymap-lookup gascity-session-list-mode-map "i")
+              #'gascity-polecat-detail-at-point)))
+
 (ert-deftest gascity-test-rig-list-store-column-header ()
   "The rig list's bead-store column is headed \"Store\", not \"Beads\".
 The cell renders `gc rig list''s `beads' field — a store-STATUS string
