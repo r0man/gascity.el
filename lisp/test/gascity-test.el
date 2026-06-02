@@ -465,6 +465,73 @@ zero-total convoy sinks to the bottom (gce-94g)."
                            (sort (copy-sequence entries) sorter))
                    '("0/0" "3/100" "50/100" "1/1")))))
 
+;;; Paged list sorting spans page boundaries (gce-dzs)
+
+(defun gascity-test--setup-paged-keys (&optional page-size)
+  "Set up the current buffer as a paged list of scrambled single-letter keys.
+Installs a `Key'/`X' format sorted ascending by `Key', loads six rows
+whose gc-return order (f d b a c e) differs from sorted order (a..f) — so
+a per-page sort is distinguishable from a global one — sets PAGE-SIZE (2
+by default, giving three pages), and renders page 1.  Each row's id is its
+own key, so the first/last visible row reads off `tabulated-list-entries'
+directly.  Shared fixture for the gce-dzs paging-sort tests."
+  (tabulated-list-mode)
+  (setq-local tabulated-list-format [("Key" 10 t) ("X" 6 t)]
+              tabulated-list-sort-key (cons "Key" nil)
+              tabulated-list-padding 1)
+  (tabulated-list-init-header)
+  (setq gascity-tabulated--all-entries
+        (mapcar (lambda (k) (list k (vector k "-")))
+                '("f" "d" "b" "a" "c" "e"))
+        gascity-tabulated--current-page 1
+        gascity-tabulated--page-size (or page-size 2)
+        gascity-tabulated--base-name "Keys")
+  (gascity-tabulated--refresh-display))
+
+(ert-deftest gascity-test-tabulated-sort-spans-pages ()
+  "The default sort orders the whole dataset, not each page in isolation.
+Regression for gce-dzs: `gascity-tabulated--refresh-display' sliced
+`gascity-tabulated--all-entries' in gc-return order and let
+`tabulated-list-print' sort only the visible page, so on a >1-page list
+the order was wrong across page boundaries (page 1 ended mid-alphabet and
+later items belonging within it were stranded on page 2).  With the
+scrambled fixture, a per-page sort would surface \"d\" first and \"e\"
+last; the global sort must instead put the dataset minimum on page 1's
+first row and the maximum on the last page's last row."
+  (with-temp-buffer
+    (gascity-test--setup-paged-keys)
+    (should (= (gascity-tabulated--total-pages) 3))
+    ;; Page 1 first row = global minimum.
+    (should (equal (car (car tabulated-list-entries)) "a"))
+    ;; Last page's last row = global maximum.
+    (gascity-tabulated-goto-page 3)
+    (should (equal (car (car (last tabulated-list-entries))) "f"))))
+
+(ert-deftest gascity-test-tabulated-sort-command-spans-pages ()
+  "`gascity-tabulated-sort' (the `S' key) re-sorts every page, then shows page 1.
+Regression for gce-dzs: the inherited `tabulated-list-sort' reordered only
+the visible slice, so toggling the sort changed one page.  The wrapper
+flips `tabulated-list-sort-key', re-sorts `gascity-tabulated--all-entries'
+globally, and returns to page 1 — so a descending toggle puts the global
+maximum on the first row of page 1 and the minimum on the last page."
+  (with-temp-buffer
+    (gascity-test--setup-paged-keys)
+    ;; Move off page 1 so the page-1 reset is observable.
+    (gascity-tabulated-goto-page 2)
+    (should (= gascity-tabulated--current-page 2))
+    ;; Put point on the first row's "Key" cell, past the leading padding
+    ;; (`tabulated-list-print' leaves point on the padding, which carries no
+    ;; column name), so the no-prefix call toggles that column (asc -> desc).
+    (goto-char (point-min))
+    (forward-char tabulated-list-padding)
+    (gascity-tabulated-sort)
+    (should (eq (cdr tabulated-list-sort-key) t))   ; now descending
+    (should (= gascity-tabulated--current-page 1))   ; reset to page 1
+    (should (equal (car (car tabulated-list-entries)) "f")) ; global max first
+    ;; Last page now holds the global minimum.
+    (gascity-tabulated-goto-page 3)
+    (should (equal (car (car (last tabulated-list-entries))) "a"))))
+
 ;;; Status tree assembly
 
 (ert-deftest gascity-test-status-tree ()

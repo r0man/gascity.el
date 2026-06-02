@@ -292,12 +292,30 @@ legitimately need the full width (e.g. a working directory)."
             (aset out i (gascity-tabulated--truncate cell width))))))
     out))
 
+(defun gascity-tabulated--sort-all-entries ()
+  "Sort `gascity-tabulated--all-entries' in place by the active sort key.
+The visible page is a slice of this list, so ordering the whole list here
+— rather than letting `tabulated-list-print' sort only the current slice
+— makes the sort span page boundaries instead of reordering one page at a
+time.  The comparison is the sort column's own `tabulated-list-format'
+predicate, obtained via `tabulated-list--get-sorter', so the numeric
+sorters from gce-94g and the ascending/descending flag both apply; a nil
+sort key (no active sort) leaves the gc-return order untouched."
+  (let ((sorter (tabulated-list--get-sorter)))
+    (when sorter
+      (setq gascity-tabulated--all-entries
+            (sort gascity-tabulated--all-entries sorter)))))
+
 (defun gascity-tabulated--refresh-display ()
   "Slice the current page into `tabulated-list-entries' and redraw.
-Each row's cells are truncated to their column widths via
+The full entry list is first ordered by the active sort key across every
+page (`gascity-tabulated--sort-all-entries'), so the visible slice is a
+window onto the globally-sorted data rather than a per-page sort.  Each
+row's cells are then truncated to their column widths via
 `gascity-tabulated--truncate-row' so long values keep the columns
 aligned; row ids are preserved verbatim, so `RET'/`d'/`t' still act on
 the full data."
+  (gascity-tabulated--sort-all-entries)
   (setq tabulated-list-entries
         (mapcar (lambda (entry)
                   (list (car entry)
@@ -344,6 +362,25 @@ BASE-NAME labels the mode line; ALL-ENTRIES is the full entry list."
       (setq gascity-tabulated--current-page n)
       (gascity-tabulated--refresh-display))))
 
+(defun gascity-tabulated-sort (&optional n)
+  "Sort the whole paged list by a column and return to page 1.
+Like the inherited `tabulated-list-sort' (the `S' binding), but the order
+spans every page instead of only the visible one: it updates
+`tabulated-list-sort-key' through the built-in — reusing its column
+validation and ascending/descending toggle — then re-sorts
+`gascity-tabulated--all-entries' and shows page 1 via
+`gascity-tabulated--refresh-display', whose pre-slice sort makes the order
+global.  Page 1 then holds the new order's global extreme.  N is passed to
+`tabulated-list-sort': a numeric prefix selects a column, and -1 restores
+the original gc-return order across every page."
+  (interactive "P")
+  ;; Let the built-in flip/set the sort key and validate the column (it
+  ;; signals `user-error' for an unsortable column, leaving our state
+  ;; untouched); then re-sort the full dataset and jump back to page 1.
+  (tabulated-list-sort n)
+  (setq gascity-tabulated--current-page 1)
+  (gascity-tabulated--refresh-display))
+
 (defun gascity-tabulated--frame-resize (frame)
   "Recompute page size for paged buffers shown in FRAME after a resize."
   (dolist (win (window-list frame))
@@ -365,12 +402,14 @@ BASE-NAME labels the mode line; ALL-ENTRIES is the full entry list."
 (defvar-keymap gascity-tabulated-base-map
   :doc "Shared parent keymap for gascity tabulated-list buffers.
 Adds window-sized pagination (`]' next, `[' previous, `G' goto) on top
-of `tabulated-list-mode-map'.  Each list's own keymap parents off this
+of `tabulated-list-mode-map', and overrides its `S' sort to span every
+page (`gascity-tabulated-sort').  Each list's own keymap parents off this
 and adds `g' refresh, `/' filter, and `RET'."
   :parent tabulated-list-mode-map
   "]" #'gascity-tabulated-next-page
   "[" #'gascity-tabulated-prev-page
-  "G" #'gascity-tabulated-goto-page)
+  "G" #'gascity-tabulated-goto-page
+  "S" #'gascity-tabulated-sort)
 
 ;;; ============================================================
 ;;; Rigs
