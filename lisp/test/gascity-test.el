@@ -108,6 +108,93 @@
   (should (equal (gascity-tabulated--str nil) ""))
   (should (equal (gascity-tabulated--str t) "yes")))
 
+;;; Tabulated column truncation (keeps rows aligned)
+
+(ert-deftest gascity-test-tabulated-truncate-fits ()
+  "A value at or under the width is returned unchanged (and coerced)."
+  (should (equal (gascity-tabulated--truncate "short" 26) "short"))
+  (should (equal (gascity-tabulated--truncate "" 5) ""))
+  (should (equal (gascity-tabulated--truncate 42 5) "42"))
+  ;; Exactly at the width is not truncated — no ellipsis.
+  (should (equal (gascity-tabulated--truncate "0123456789" 10) "0123456789")))
+
+(ert-deftest gascity-test-tabulated-truncate-overflow ()
+  "An over-wide value is cut to the width with an ellipsis.
+The full value is kept as a `help-echo' so it stays discoverable, and the
+result never exceeds the column width (so later columns stay aligned)."
+  (let* ((full "example-town-cl/gastown.furiosa") ; 31 columns wide
+         (out (gascity-tabulated--truncate full 26)))
+    (should (= (string-width out) 26))
+    (should-not (equal (substring-no-properties out) full))
+    (should (string-prefix-p "example-town-cl/gastown"
+                             (substring-no-properties out)))
+    ;; Ends in an ellipsis, not a hard cut.
+    (should (string-suffix-p (truncate-string-ellipsis)
+                             (substring-no-properties out)))
+    ;; Full value recoverable via help-echo.
+    (should (equal (get-text-property 0 'help-echo out) full))))
+
+(ert-deftest gascity-test-tabulated-truncate-row ()
+  "Over-wide non-last cells are truncated to their column widths.
+Short cells and the last column are left intact (the last column has
+nothing after it to misalign), and the input vector is never mutated.
+Drives the two formats the dogfood pass flagged: sessions (Agent 26) and
+orders (Order 28)."
+  (with-temp-buffer
+    (setq-local tabulated-list-format
+                [("Agent" 26 t) ("Rig" 14 t) ("State" 9 t)
+                 ("Provider" 9 t) ("Working dir" 40 t)])
+    (let* ((cols (vector "example-town-cl/gastown.furiosa" "gascity.el"
+                         "active" "claude"
+                         "/home/roman/some/very/long/working/directory/that/overflows"))
+           (orig (copy-sequence cols))
+           (out (gascity-tabulated--truncate-row cols)))
+      (should (= (string-width (aref out 0)) 26))   ; Agent: truncated to 26
+      (should (equal (aref out 1) "gascity.el"))    ; Rig (fits 14): unchanged
+      (should (equal (aref out 4) (aref orig 4)))    ; Working dir (last): intact
+      (should (equal cols orig))))                   ; input not mutated
+  (with-temp-buffer
+    (setq-local tabulated-list-format
+                [("Order" 28 t) ("Rig" 14 t) ("Type" 8 t)
+                 ("Trigger" 10 t) ("Schedule" 12 t) ("On" 3 nil)])
+    (let ((out (gascity-tabulated--truncate-row
+                (vector "cross-rig-deps:rig:example-town-cl" "rig" "cron"
+                        "schedule" "5m" "●"))))
+      (should (= (string-width (aref out 0)) 28))    ; Order: truncated to 28
+      (should (equal (aref out 5) "●")))))           ; marker (last): intact
+
+(ert-deftest gascity-test-tabulated-refresh-display-aligns ()
+  "Rendering a page lines later columns up regardless of cell length.
+Regression for the dogfood overflow (gce-l5x): a long Agent name must not
+push the Rig column to the right of where a short name leaves it.  Walks
+the real `gascity-tabulated--refresh-display' path into a rendered buffer
+and compares the in-line offset of the Rig value on a long-name row and a
+short-name row."
+  (with-temp-buffer
+    (tabulated-list-mode)
+    (setq-local tabulated-list-format
+                [("Agent" 26 t) ("Rig" 14 t) ("State" 9 t)
+                 ("Provider" 9 t) ("Working dir" 40 t)]
+                tabulated-list-padding 1)
+    (tabulated-list-init-header)
+    (setq gascity-tabulated--all-entries
+          (list (list 'long (vector "example-town-cl/gastown.furiosa"
+                                    "rig-a" "active" "claude" "/wd/a"))
+                (list 'short (vector "x" "rig-b" "active" "claude" "/wd/b")))
+          gascity-tabulated--current-page 1
+          gascity-tabulated--page-size 100
+          gascity-tabulated--base-name "Sessions")
+    (gascity-tabulated--refresh-display)
+    (let ((rig-offset
+           (lambda (rig)
+             (goto-char (point-min))
+             (search-forward rig)
+             (- (match-beginning 0) (line-beginning-position)))))
+      ;; Same column on both rows -> the long name did not shift the layout.
+      (should (= (funcall rig-offset "rig-a") (funcall rig-offset "rig-b"))))
+    ;; Row ids are preserved verbatim, so RET/d/t still act on the full data.
+    (should (equal (mapcar #'car tabulated-list-entries) '(long short)))))
+
 ;;; Tabulated entry builders
 
 (ert-deftest gascity-test-rig-entry ()

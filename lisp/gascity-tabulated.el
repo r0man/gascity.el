@@ -89,6 +89,26 @@
         ((eq value t) "yes")
         (t (format "%s" value))))
 
+(defun gascity-tabulated--truncate (value width)
+  "Return VALUE as a display string of at most WIDTH columns.
+A value wider than WIDTH is truncated with a trailing ellipsis and
+carries the full text as a `help-echo'; shorter values (and any text
+properties they already carry, such as a face) are returned unchanged.
+
+`tabulated-list-mode' elides an over-wide non-last column only with a
+`display' text property, which keeps graphical frames aligned but leaves
+the underlying string in place — so on a terminal (and in batch) the
+extra characters spill over and push every later column out of
+alignment.  Truncating the cell text itself keeps rows aligned on every
+display."
+  (let ((str (gascity-tabulated--str value)))
+    (if (<= (string-width str) width)
+        str
+      ;; START-COLUMN 0, no PADDING, ELLIPSIS t: a real width-bounded
+      ;; truncation (`…'), unlike tabulated-list's display-property elide.
+      (propertize (truncate-string-to-width str width 0 nil t)
+                  'help-echo str))))
+
 (defun gascity-tabulated--refresh (base-name fetch-fn)
   "Fetch rows via FETCH-FN and repaint the current tabulated buffer.
 FETCH-FN returns a list of `(ID . [COLUMNS])' entries.  The full list is
@@ -167,9 +187,35 @@ Two lines are reserved for the column header and the mode line."
                           (gascity-tabulated--total-pages)))
   (force-mode-line-update))
 
+(defun gascity-tabulated--truncate-row (cols)
+  "Return a copy of column vector COLS with over-wide cells truncated.
+Each non-last string cell wider than its `tabulated-list-format' column
+width is truncated to that width with an ellipsis (see
+`gascity-tabulated--truncate'), so a long value never pushes later
+columns out of alignment.  COLS itself is not modified, and the last
+column is left intact — nothing follows it to misalign, and it may
+legitimately need the full width (e.g. a working directory)."
+  (let ((out (copy-sequence cols))
+        (ncols (length cols)))
+    (dotimes (i ncols)
+      (when (< (1+ i) ncols)            ; never truncate the last column
+        (let ((cell (aref out i))
+              (width (nth 1 (aref tabulated-list-format i))))
+          (when (and (stringp cell) (natnump width))
+            (aset out i (gascity-tabulated--truncate cell width))))))
+    out))
+
 (defun gascity-tabulated--refresh-display ()
-  "Slice the current page into `tabulated-list-entries' and redraw."
-  (setq tabulated-list-entries (gascity-tabulated--page-slice))
+  "Slice the current page into `tabulated-list-entries' and redraw.
+Each row's cells are truncated to their column widths via
+`gascity-tabulated--truncate-row' so long values keep the columns
+aligned; row ids are preserved verbatim, so `RET'/`d'/`t' still act on
+the full data."
+  (setq tabulated-list-entries
+        (mapcar (lambda (entry)
+                  (list (car entry)
+                        (gascity-tabulated--truncate-row (cadr entry))))
+                (gascity-tabulated--page-slice)))
   (tabulated-list-print t)
   (gascity-tabulated--update-mode-name))
 
