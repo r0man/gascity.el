@@ -866,6 +866,32 @@ JSONL output never mis-reads as a failure."
   (should-error (gascity-bead-show nil) :type 'user-error)
   (should-error (gascity-bead-show "") :type 'user-error))
 
+(ert-deftest gascity-test-bead-show-passes-directory ()
+  "`gascity-bead-show' makes beads.el resolve the store with `--directory' (-C).
+beads.el's cwd-mode `bd' can be misrouted by the shared Dolt server, so the
+store is passed explicitly on the one `beads-command-show' that `beads-show'
+issues — this is what lets a city-level convoy open (gce-bhr)."
+  (let (exec-call seen-dir)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "example-town-cl") (path . "/r/bs") (prefix . "bs"))]))))
+              ;; Record the command class and args beads.el is asked to run.
+              ((symbol-function 'beads-execute)
+               (lambda (class &rest args) (setq exec-call (cons class args))))
+              ;; Stand in for beads.el's `beads-show': capture the directory it
+              ;; runs in and issue the one `beads-command-show' the real one does.
+              ((symbol-function 'beads-show)
+               (lambda (id)
+                 (setq seen-dir default-directory)
+                 (beads-execute 'beads-command-show :issue-ids (list id)
+                                :include-dependents t))))
+      (gascity-bead-show "bs-0q2z")
+      ;; Buffer stays scoped to the prefix-routed store for naming...
+      (should (equal seen-dir "/r/bs/"))
+      ;; ...and the show carries `:directory' so `bd' uses -C, not cwd-mode.
+      (should (eq (car exec-call) 'beads-command-show))
+      (should (equal (plist-get (cdr exec-call) :directory) "/r/bs/")))))
+
 (ert-deftest gascity-test-rig-beads-scopes-default-directory ()
   "`gascity-rig-beads' opens the board with `default-directory' at the store."
   (let (seen-dir)

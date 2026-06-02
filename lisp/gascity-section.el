@@ -24,6 +24,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)                 ; cl-letf (scope beads.el's `bd' to a store)
 (require 'beads-section)
 (require 'vui)
 (require 'wid-edit)
@@ -38,6 +39,7 @@
 ;; their providing module at call time, and guard with `fboundp'.
 (declare-function beads-show "beads-command-show")
 (declare-function beads-dashboard "beads-dashboard")
+(declare-function beads-execute "beads-command")
 
 ;;; Base mode
 
@@ -241,14 +243,43 @@ Failures degrade to nil so callers fall back to the ambient directory."
                                (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))))
     (gascity-beads--rig-path rig)))
 
+(defun gascity-beads--show-in-store (id store)
+  "Display bead ID with beads.el, resolving its store at STORE.
+STORE is the bead's store directory, or nil for the ambient directory.
+
+beads.el picks which store to act on from `default-directory' — its `bd'
+runs in cwd-mode — but Gas City's shared Dolt server can resolve a given
+working directory to a *different* rig's database than its `.beads'
+config names, so a cross-rig or city-level bead (a convoy listed via `gc
+convoy list', say) errors with \"no issues found\" even though STORE is
+correct (gce-bhr).  `bd --directory' (-C) re-resolves the store locally
+and is not subject to that server state.  So force it: bind
+`default-directory' to STORE (so beads.el still names the buffer for the
+right project) and add `:directory' to the single `beads-command-show'
+`beads-show' issues, leaving every other call untouched.  With no STORE
+there is nothing to scope, so defer to beads.el's own resolution."
+  (let ((default-directory (or store default-directory)))
+    (if (and store (fboundp 'beads-execute))
+        (let ((base (symbol-function 'beads-execute)))
+          (cl-letf (((symbol-function 'beads-execute)
+                     (lambda (class &rest args)
+                       (apply base class
+                              (if (eq class 'beads-command-show)
+                                  (append args (list :directory store))
+                                args)))))
+            (beads-show id)))
+      (beads-show id))))
+
 (defun gascity-bead-show (id &optional directory)
   "Open bead ID in beads.el, scoped to its rig's bead store.
 gascity does not render beads itself; it hands ID to beads.el's detail
-view (DESIGN.md §4.3).  beads.el resolves the store from
-`default-directory', so bind it to DIRECTORY when supplied, else to the
-store of the rig that owns ID's prefix; fall back to the ambient
-directory when neither resolves (a single-rig checkout already sits in
-the right tree).  Resolves DESIGN §9.1 by directory binding."
+view (DESIGN.md §4.3).  The store is DIRECTORY when supplied, else the
+store of the rig that owns ID's prefix; with neither, beads.el falls back
+to the ambient directory (a single-rig checkout already sits in the right
+tree).  `gascity-beads--show-in-store' scopes beads.el to that store via
+`bd --directory' (-C) rather than cwd-mode, so a city-level convoy opens
+even when the shared Dolt server would misroute the working directory to
+another rig's database (gce-bhr).  Resolves DESIGN §9.1."
   (cond
    ((or (null id) (and (stringp id) (string-empty-p id)))
     (user-error "No bead to show"))
@@ -256,12 +287,11 @@ the right tree).  Resolves DESIGN §9.1 by directory binding."
     (unless (fboundp 'beads-show)
       (require 'beads-command-show nil t))
     (if (fboundp 'beads-show)
-        (let ((default-directory
-               (or (and directory (file-name-as-directory
-                                   (expand-file-name directory)))
-                   (gascity-beads--bead-path id)
-                   default-directory)))
-          (beads-show id))
+        (gascity-beads--show-in-store
+         id
+         (or (and directory (file-name-as-directory
+                             (expand-file-name directory)))
+             (gascity-beads--bead-path id)))
       (user-error "beads.el is not available to show %s" id)))))
 
 ;;;###autoload

@@ -643,7 +643,11 @@ The entry id is the convoy's bead id, so `RET' can open it in beads.el."
                   (format "%d/%d" closed total)))))
 
 (defun gascity-convoy-list-visit ()
-  "Open the convoy bead at point in beads.el, scoped to its store."
+  "Open the convoy bead at point in beads.el, scoped to its store.
+Convoys are city-level beads (`rig: null') listed via `gc convoy list';
+`gascity-bead-show' resolves the owning rig store by id prefix and opens
+it with `bd --directory' (-C), which works even when the shared Dolt
+server would misroute the working directory to another database (gce-bhr)."
   (interactive)
   (gascity-bead-show (or (tabulated-list-get-id)
                          (user-error "No convoy at point"))))
