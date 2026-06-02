@@ -353,5 +353,16 @@ agent row in the status dashboard or session list)."
       (let ((agent (gascity-agent-at-point)))
         (and agent (plist-get agent :rig)))))
 
+(defun gascity-rig-at-point-hq-p ()
+  "Return non-nil when the rig at point is the city HQ.
+`gc rig list' includes the city HQ as a row with `hq' set, so it shows up
+in `gascity-rig-list-mode'.  But the HQ is not a `city.toml' rig: `gc rig
+status' rejects it, so it has no rig dashboard.  Only the rig-list entry
+alist carries `hq' — the `gascity-rig' text property and an agent's `:rig'
+are bare names — so this returns nil outside the rig list."
+  (and (derived-mode-p 'tabulated-list-mode)
+       (let ((id (tabulated-list-get-id)))
+         (and (consp id) (alist-get 'hq id) t))))
+
 (provide 'gascity-section)
 ;;; gascity-section.el ends here

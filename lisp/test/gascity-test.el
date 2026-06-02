@@ -279,6 +279,64 @@ still degrade the list to empty rows."
     (should (equal (gascity-test--plain-cols entry)
                    '("gascity.el" "gce" "running" "main" "initialized")))))
 
+(defun gascity-test--rig-list-buffer ()
+  "Render a rig-list buffer with an HQ row and a plain rig row.
+The HQ row (`bright-lights') carries `hq', as `gc rig list' marks the city
+HQ; the plain row (`gascity.el') does not.  Leaves the buffer current."
+  (gascity-rig-list-mode)
+  (setq tabulated-list-entries
+        (list (gascity-rig-list--entry '((name . "bright-lights") (prefix . "bl")
+                                         (hq . t)))
+              (gascity-rig-list--entry '((name . "gascity.el") (prefix . "gce")
+                                         (running . t) (default_branch . "main")))))
+  (tabulated-list-print))
+
+(defun gascity-test--goto-rig-row (name)
+  "Move point onto the rig-list row whose name cell is NAME."
+  (goto-char (point-min))
+  (search-forward name)
+  (beginning-of-line))
+
+(ert-deftest gascity-test-rig-at-point-hq-p ()
+  "The HQ predicate is true only on a rig row that carries `hq'.
+`gc rig list' lists the city HQ (with `hq') even though it is not a
+`city.toml' rig, so the rig dashboard must distinguish it from a real rig."
+  (with-temp-buffer
+    (gascity-test--rig-list-buffer)
+    (gascity-test--goto-rig-row "bright-lights")
+    (should (gascity-rig-at-point-hq-p))
+    (gascity-test--goto-rig-row "gascity.el")
+    (should-not (gascity-rig-at-point-hq-p)))
+  ;; Outside a tabulated list there is no rig alist, hence no `hq' to read.
+  (with-temp-buffer
+    (should-not (gascity-rig-at-point-hq-p))))
+
+(ert-deftest gascity-test-rig-dashboard-at-point-refuses-hq ()
+  "RET on the HQ row signals a user-error and never mounts a dashboard.
+Regression for gce-6bq: the HQ has no rig dashboard (`gc rig status'
+rejects it), so opening one only produced an un-retryable error screen."
+  (with-temp-buffer
+    (gascity-test--rig-list-buffer)
+    (gascity-test--goto-rig-row "bright-lights")
+    (let (opened)
+      (cl-letf (((symbol-function 'gascity-rig-dashboard)
+                 (lambda (rig) (push rig opened))))
+        (should-error (gascity-rig-dashboard-at-point) :type 'user-error)
+        (should (null opened))))))
+
+(ert-deftest gascity-test-rig-dashboard-at-point-opens-plain-rig ()
+  "RET on a non-HQ rig row opens its dashboard with the rig name.
+The HQ guard must not disturb the normal path: a real rig still routes to
+`gascity-rig-dashboard'."
+  (with-temp-buffer
+    (gascity-test--rig-list-buffer)
+    (gascity-test--goto-rig-row "gascity.el")
+    (let (opened)
+      (cl-letf (((symbol-function 'gascity-rig-dashboard)
+                 (lambda (rig) (push rig opened))))
+        (gascity-rig-dashboard-at-point)
+        (should (equal opened '("gascity.el")))))))
+
 (ert-deftest gascity-test-session-entry-id-is-agent-plist ()
   "A session entry's id is the agent action plist, with the passed socket."
   (let* ((s '((agent_name . "gascity.el/gastown.furiosa") (rig . "gascity.el")

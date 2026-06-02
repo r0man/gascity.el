@@ -300,10 +300,19 @@ point — the whole dashboard is one rig."
 
 ;;;###autoload
 (defun gascity-rig-dashboard-at-point ()
-  "Open the rig dashboard for the rig at point."
+  "Open the rig dashboard for the rig at point.
+The city HQ (e.g. bright-lights) is listed by `gc rig list' for its beads,
+but it is not a `city.toml' rig and has no rig dashboard: `gc rig status'
+rejects it, so mounting one only yields an error screen whose `g' retry
+can never succeed.  Refuse the HQ with a clear message instead; use
+\\[gascity-status] for the city, or `b' for the HQ's beads."
   (interactive)
   (let ((rig (gascity-rig-at-point)))
     (unless rig (user-error "No rig at point"))
+    (when (gascity-rig-at-point-hq-p)
+      (user-error
+       "%s is the city HQ, not a rig — no rig dashboard; use M-x gascity-status, or `b' for its beads"
+       rig))
     (gascity-rig-dashboard rig)))
 
 ;;; Mode
