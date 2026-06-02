@@ -65,14 +65,6 @@
     (if (alist-get 'ok result) "ok" "failed"))
    (t "done")))
 
-(defun gascity-action--error-detail (err)
-  "Return gc's stderr (else the message) from a `gascity-command-error' ERR.
-The error data is (MESSAGE . PLIST), so the plist begins at `cddr'."
-  (let ((stderr (plist-get (cddr err) :stderr)))
-    (if (and (stringp stderr) (not (string-empty-p (string-trim stderr))))
-        (string-trim stderr)
-      (or (cadr err) "unknown error"))))
-
 (defun gascity-command-act (command)
   "Execute mutating COMMAND, report the outcome, and return its result.
 Runs COMMAND through `gascity-command-execute' (validated, synchronous).
@@ -89,7 +81,7 @@ message in the echo area rather than a backtrace."
       (gascity-validation-error
        (user-error "gc %s: %s" sub (cadr err)))
       (gascity-command-error
-       (user-error "gc %s failed: %s" sub (gascity-action--error-detail err)))
+       (user-error "gc %s failed: %s" sub (gascity-error-detail err)))
       ;; Defensive catch-all for any other gascity error (e.g. a JSON
       ;; parse error should a subclass re-enable --json).  Listed last so
       ;; the specific handlers above win.
@@ -375,7 +367,7 @@ error surfaces as a `user-error'."
                   (user-error "gc session peek: %s" (cadr err)))
                  (gascity-command-error
                   (user-error "gc session peek failed: %s"
-                              (gascity-action--error-detail err))))))
+                              (gascity-error-detail err))))))
     (let ((buf (get-buffer-create (gascity-session-peek--buffer-name target))))
       (with-current-buffer buf
         (let ((inhibit-read-only t))

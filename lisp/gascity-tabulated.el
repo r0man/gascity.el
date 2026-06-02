@@ -118,7 +118,12 @@ mode line, which shows the current page and total."
   (let ((entries (condition-case err
                      (funcall fetch-fn)
                    (gascity-error
-                    (message "gascity: %s" (error-message-string err))
+                    ;; `error-message-string' on a `gascity-command-error'
+                    ;; renders the whole condition-data plist (:command,
+                    ;; :exit-code, :stdout, :stderr); `gascity-error-detail'
+                    ;; surfaces just gc's stderr (else the message) as one
+                    ;; clean line.  (gce-dfe)
+                    (message "gascity: %s" (gascity-error-detail err))
                     nil))))
     (gascity-tabulated--init-paged base-name entries)))
 

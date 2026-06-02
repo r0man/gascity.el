@@ -195,6 +195,38 @@ short-name row."
     ;; Row ids are preserved verbatim, so RET/d/t still act on the full data.
     (should (equal (mapcar #'car tabulated-list-entries) '(long short)))))
 
+(ert-deftest gascity-test-tabulated-refresh-reports-clean-error ()
+  "A `gc' failure during refresh echoes one clean line, not the condition plist.
+Regression for gce-dfe: the refresh path rendered the caught error with
+`error-message-string', which dumps a `gascity-command-error''s entire
+data plist (:command, :exit-code, :stdout, :stderr) into the echo area.
+It must instead surface just the detail via `gascity-error-detail', and
+still degrade the list to empty rows."
+  (with-temp-buffer
+    (tabulated-list-mode)
+    (setq-local tabulated-list-format [("Col" 10 t)])
+    (tabulated-list-init-header)
+    (let (msgs)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+        (gascity-tabulated--refresh
+         "Things"
+         (lambda ()
+           ;; Mirrors the observed missing-binary failure: empty stderr, so
+           ;; the detail falls back to the (clean) message.
+           (signal 'gascity-command-error
+                   (list "Cannot run gc: No such file or directory"
+                         :command "gc rig list --json"
+                         :exit-code nil :stdout "" :stderr "")))))
+      (let ((reported (seq-find (lambda (m) (string-prefix-p "gascity:" m)) msgs)))
+        (should (equal reported
+                       "gascity: Cannot run gc: No such file or directory"))
+        ;; None of the condition-internal plist keys leak into the message.
+        (should-not (string-match-p ":command\\|:exit-code\\|:stdout\\|:stderr"
+                                    reported))))
+    ;; The list degrades gracefully to no rows.
+    (should (null tabulated-list-entries))))
+
 ;;; Tabulated entry builders
 
 (ert-deftest gascity-test-rig-entry ()
@@ -600,14 +632,21 @@ JSONL output never mis-reads as a failure."
   (should (equal (gascity-action--summarize '((ok))) "failed"))
   (should (equal (gascity-action--summarize nil) "done")))
 
-(ert-deftest gascity-test-action-error-detail ()
+(ert-deftest gascity-test-error-detail ()
   "Error detail prefers gc's stderr, falling back to the message."
-  (should (equal (gascity-action--error-detail
+  (should (equal (gascity-error-detail
                   '(gascity-command-error "msg" :command "c" :stderr "  rig not found  "))
                  "rig not found"))
-  (should (equal (gascity-action--error-detail
+  (should (equal (gascity-error-detail
                   '(gascity-command-error "the message" :command "c" :stderr ""))
-                 "the message")))
+                 "the message"))
+  ;; The refresh path catches the base `gascity-error', so a subclass
+  ;; without a :stderr (e.g. a JSON parse error) must still degrade to its
+  ;; clean message rather than the raw condition plist.
+  (should (equal (gascity-error-detail
+                  '(gascity-json-parse-error "Failed to parse gc JSON output: bad"
+                                             :input "{bad" :parse-error nil))
+                 "Failed to parse gc JSON output: bad")))
 
 (ert-deftest gascity-test-action-routes-through-act ()
   "`execute-interactive' on an action command delegates to `gascity-command-act'."
