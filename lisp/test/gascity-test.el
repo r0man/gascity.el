@@ -596,6 +596,36 @@ maximum on the first row of page 1 and the minimum on the last page."
     (gascity-tabulated-goto-page 3)
     (should (equal (car (car (last tabulated-list-entries))) "a"))))
 
+(ert-deftest gascity-test-tabulated-sort-from-padding-column ()
+  "`S' from column 0 (the leading padding) sorts by the default key, spanning pages.
+Regression for gce-a8d: every gascity list sets `tabulated-list-padding' to
+1, so column 0 of each row is a one-char left margin carrying no
+`tabulated-list-column-name'.  Point rests there right after the list opens
+\(and `n'/`p' keep it there), so the inherited `tabulated-list-sort' signaled
+\"Cannot sort by nil\".  `gascity-tabulated-sort' now falls back to the column
+named in `tabulated-list-sort-key', so `S' from the padding toggles that
+column and re-sorts the whole dataset — the same result as `S' on the
+column's cell (see `gascity-test-tabulated-sort-command-spans-pages') but
+without first moving point off the padding."
+  (with-temp-buffer
+    (gascity-test--setup-paged-keys)
+    ;; Move off page 1 so the page-1 reset is observable.
+    (gascity-tabulated-goto-page 2)
+    (should (= gascity-tabulated--current-page 2))
+    ;; Point on the leading padding (column 0): no column name, the cursor's
+    ;; resting place after the list opens and the exact spot that used to
+    ;; signal "Cannot sort by nil".
+    (goto-char (point-min))
+    (should-not (get-text-property (point) 'tabulated-list-column-name))
+    (gascity-tabulated-sort)
+    (should (equal (car tabulated-list-sort-key) "Key")) ; sorted by the default column
+    (should (eq (cdr tabulated-list-sort-key) t))        ; toggled ascending -> descending
+    (should (= gascity-tabulated--current-page 1))       ; reset to page 1
+    (should (equal (car (car tabulated-list-entries)) "f")) ; global max first
+    ;; Last page now holds the global minimum.
+    (gascity-tabulated-goto-page 3)
+    (should (equal (car (car (last tabulated-list-entries))) "a"))))
+
 ;;; Status tree assembly
 
 (ert-deftest gascity-test-status-tree ()

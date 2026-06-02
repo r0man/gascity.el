@@ -372,8 +372,25 @@ validation and ascending/descending toggle — then re-sorts
 `gascity-tabulated--refresh-display', whose pre-slice sort makes the order
 global.  Page 1 then holds the new order's global extreme.  N is passed to
 `tabulated-list-sort': a numeric prefix selects a column, and -1 restores
-the original gc-return order across every page."
+the original gc-return order across every page.
+
+With no prefix and point on the leading padding — column 0, where the
+cursor rests right after the list opens and which `n'/`p' navigation
+preserves — the built-in would have no column at point and signal \"Cannot
+sort by nil\".  In that case sort by the list's default column, the one
+named in `tabulated-list-sort-key' (set for every list except mail), so
+`S' works from the default cursor position exactly as if point were on
+that column's cell."
   (interactive "P")
+  ;; Point rests on the leading padding (no `tabulated-list-column-name')
+  ;; after the list opens, and `n'/`p' keep it there; with no prefix the
+  ;; built-in would signal "Cannot sort by nil".  Fall back to the default
+  ;; sort column's index so `S' toggles it, as if point were on its cell.
+  (when (and (null n)
+             (null (get-text-property (point) 'tabulated-list-column-name))
+             (car tabulated-list-sort-key))
+    (setq n (cl-position (car tabulated-list-sort-key) tabulated-list-format
+                         :key #'car :test #'equal)))
   ;; Let the built-in flip/set the sort key and validate the column (it
   ;; signals `user-error' for an unsortable column, leaving our state
   ;; untouched); then re-sort the full dataset and jump back to page 1.
