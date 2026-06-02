@@ -72,9 +72,23 @@
   (if (vectorp data) (append data nil) data))
 
 (defun gascity-tabulated--format-timestamp (ts)
-  "Return the YYYY-MM-DD date prefix of ISO timestamp TS, or \"\"."
+  "Return ISO timestamp TS as \"YYYY-MM-DD HH:MM\", or \"\" when empty.
+Keeps the wall-clock time exactly as TS records it, so the displayed
+clock matches the zone `gc' encoded: it emits `last_active' with a local
+UTC offset and `created_at' in UTC, each shown in its own zone — so a
+session's \"last active\" reads in local time.  This is a pure string
+reshape (no parsing/conversion), so it is stable regardless of the
+system clock or time zone.  Falls back to the date alone when TS carries
+no time part, and to the bare \"YYYY-MM-DD\" prefix for any shape this
+does not recognize."
   (if (and ts (stringp ts) (not (string-empty-p ts)))
-      (substring ts 0 (min 10 (length ts)))
+      (if (string-match
+           "\\`\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)\\(?:[T ]\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)\\)?"
+           ts)
+          (let ((date (match-string 1 ts))
+                (time (match-string 2 ts)))
+            (if time (concat date " " time) date))
+        (substring ts 0 (min 10 (length ts))))
     ""))
 
 (defun gascity-tabulated--abbreviate-path (path)
@@ -823,7 +837,7 @@ Read-only: renders the data already fetched, without contacting `gc'."
 \\{gascity-mail-inbox-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
-        [("From" 24 t) ("Subject" 50 t) ("Date" 12 t) ("New" 3 nil)])
+        [("From" 24 t) ("Subject" 50 t) ("Date" 16 t) ("New" 3 nil)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (tabulated-list-init-header))

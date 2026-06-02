@@ -116,12 +116,38 @@ small hand-built vnode renders without mounting it in a buffer."
   (should (equal (gascity-tabulated--vector->list [1 2 3]) '(1 2 3)))
   (should (equal (gascity-tabulated--vector->list '(1 2)) '(1 2)))
   (should (equal (gascity-tabulated--format-timestamp "2026-06-01T19:18:18Z")
-                 "2026-06-01"))
+                 "2026-06-01 19:18"))
   (should (equal (gascity-tabulated--format-timestamp "") ""))
   (should (equal (gascity-tabulated--format-timestamp nil) ""))
   (should (equal (gascity-tabulated--str 42) "42"))
   (should (equal (gascity-tabulated--str nil) ""))
   (should (equal (gascity-tabulated--str t) "yes")))
+
+(ert-deftest gascity-test-tabulated-format-timestamp ()
+  "`--format-timestamp' keeps HH:MM so same-day recency is visible.
+It reshapes the wall-clock as written (no parsing), so output is stable
+regardless of the system clock or time zone."
+  ;; `created_at' shape: UTC `Z' -> date + UTC time.
+  (should (equal (gascity-tabulated--format-timestamp "2026-06-02T15:30:20Z")
+                 "2026-06-02 15:30"))
+  ;; `last_active' shape: a local UTC offset -> date + that local time
+  ;; (the offset's own wall clock, not normalized to UTC).
+  (should (equal (gascity-tabulated--format-timestamp "2026-06-02T17:35:41+02:00")
+                 "2026-06-02 17:35"))
+  ;; The point of the fix: two same-day instants now render distinctly.
+  (should-not (equal (gascity-tabulated--format-timestamp "2026-06-02T09:03:00Z")
+                     (gascity-tabulated--format-timestamp "2026-06-02T16:54:00Z")))
+  ;; A timestamp with no seconds still yields HH:MM.
+  (should (equal (gascity-tabulated--format-timestamp "2026-06-02T17:35")
+                 "2026-06-02 17:35"))
+  ;; A date-only value keeps the date (no spurious " 00:00").
+  (should (equal (gascity-tabulated--format-timestamp "2026-06-02") "2026-06-02"))
+  ;; Empty / nil -> empty string.
+  (should (equal (gascity-tabulated--format-timestamp "") ""))
+  (should (equal (gascity-tabulated--format-timestamp nil) ""))
+  ;; An unrecognized shape falls back to the old bare date-prefix behavior.
+  (should (equal (gascity-tabulated--format-timestamp "not-a-timestamp")
+                 "not-a-time")))
 
 ;;; Tabulated column truncation (keeps rows aligned)
 
@@ -1220,7 +1246,7 @@ Unread is the negation of the v1 `read' boolean (gc decodes `false' to nil)."
 
 (ert-deftest gascity-test-mail-entry ()
   "A mail entry reads the v1 schema keys and marks unread rows.
-`from'/`subject'/`created_at' (date-only) become the columns, the whole
+`from'/`subject'/`created_at' (date + time) become the columns, the whole
 message alist is the id, and a non-`read' message shows the ● marker."
   (let* ((message '((id . "msg-1") (from . "mayor/") (to . "gce/furiosa")
                     (subject . "Re: status") (body . "...")
@@ -1228,7 +1254,7 @@ message alist is the id, and a non-`read' message shows the ● marker."
          (entry (gascity-mail-inbox--entry message)))
     (should (eq (car entry) message))
     (should (equal (gascity-test--plain-cols entry)
-                   '("mayor/" "Re: status" "2026-06-01" "●"))))
+                   '("mayor/" "Re: status" "2026-06-01 19:18" "●"))))
   ;; A read message clears the marker.
   (should (equal (nth 3 (gascity-test--plain-cols
                          (gascity-mail-inbox--entry
