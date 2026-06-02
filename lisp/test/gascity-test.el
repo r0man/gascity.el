@@ -961,8 +961,15 @@ reverts the override with `set-option -u'.  All tmux ops are session-scoped."
           (with-current-buffer buf
             (should (member '("-L" "sock" "set-option" "-t" "sess" "status" "off")
                             cmds))
-            (should (member gascity-terminal--status-mode-line-segment
-                            mode-line-format))
+            ;; Segment present AND before the trailing fill, or it renders
+            ;; off-screen (gce-hjj regression: appending after
+            ;; `mode-line-end-spaces' hid it).
+            (let ((seg (member gascity-terminal--status-mode-line-segment
+                               mode-line-format))
+                  (end (member 'mode-line-end-spaces mode-line-format)))
+              (should seg)
+              (should end)
+              (should (> (length seg) (length end))))
             (should (timerp gascity-terminal--status-timer))
             (should (equal gascity-terminal--status-session "sess"))
             (should (stringp gascity-terminal--status-string)))

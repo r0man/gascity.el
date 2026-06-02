@@ -254,10 +254,10 @@ bar again.  Run from `kill-buffer-hook'."
 (defun gascity-terminal--status-install (buffer session socket)
   "Hide tmux SESSION's status bar and mirror it in BUFFER's mode line.
 Turns the session's tmux status bar off (scoped to the session via
-`set-option -t'), appends a buffer-local mode-line segment showing the
-session's friendly name and window list, starts a refresh timer, and
-arranges teardown on buffer kill.  Idempotent: safe to re-run when
-reattaching to a live terminal."
+`set-option -t'), splices a buffer-local mode-line segment showing the
+session's friendly name and window list into the mode line before its
+trailing fill, starts a refresh timer, and arranges teardown on buffer
+kill.  Idempotent: safe to re-run when reattaching to a live terminal."
   (when (and (buffer-live-p buffer)
              session (stringp session) (not (string-empty-p session)))
     (with-current-buffer buffer
@@ -266,14 +266,21 @@ reattaching to a live terminal."
       ;; Scope: turn this session's tmux status bar off.  Reverted on
       ;; teardown via `set-option -u'.  Best-effort (nil on failure).
       (gascity-terminal--tmux socket "set-option" "-t" session "status" "off")
-      ;; Append our mode-line segment exactly once.
+      ;; Splice our segment into the mode line exactly once, just before
+      ;; the trailing fill (`mode-line-end-spaces') so it stays visible.
+      ;; Appending after the fill (`%-') renders it off-screen; prepend as
+      ;; a fallback when that anchor is absent.
       (let ((mlf (if (listp mode-line-format)
                      mode-line-format
                    (list mode-line-format))))
         (unless (member gascity-terminal--status-mode-line-segment mlf)
-          (setq-local mode-line-format
-                      (append mlf
-                              (list gascity-terminal--status-mode-line-segment)))))
+          (let ((tail (member 'mode-line-end-spaces mlf)))
+            (setq-local mode-line-format
+                        (if tail
+                            (append (butlast mlf (length tail))
+                                    (cons gascity-terminal--status-mode-line-segment
+                                          tail))
+                          (cons gascity-terminal--status-mode-line-segment mlf))))))
       ;; (Re)start the refresh timer; paint once now so the segment is
       ;; populated before the first redisplay.
       (when (timerp gascity-terminal--status-timer)
