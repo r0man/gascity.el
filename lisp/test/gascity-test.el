@@ -329,6 +329,44 @@ that lost collapse state also flickered the view on every refresh."
   (let ((gascity-tmux-socket nil))
     (should (equal (gascity-resolve-tmux-socket "bright-lights") "bright-lights"))))
 
+(ert-deftest gascity-test-resolve-tmux-socket-gc-fallback ()
+  "With no override or arg and outside the city tree, fall back to gc.
+This is the session-list path (gce-rdk): it resolves the socket with no
+city-name in hand, so when directory context fails the gc-backed lookup
+must keep the socket correct instead of silently targeting the default
+tmux server."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (let ((gascity-tmux-socket nil))
+        (cl-letf (((symbol-function 'gascity-context-city-name)
+                   (lambda (&rest _) nil))   ; simulate "outside the city tree"
+                  ((symbol-function 'gascity-reader-read)
+                   (lambda (&rest _) '((city_name . "bright-lights")))))
+          (should (equal (gascity-resolve-tmux-socket) "bright-lights"))))
+    (gascity-context-clear-cache)))
+
+(ert-deftest gascity-test-context-gc-city-name ()
+  "Reads `city_name' from `gc status', caches per dir, and is nil-safe."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (let ((calls 0))
+        (cl-letf (((symbol-function 'gascity-reader-read)
+                   (lambda (&rest _)
+                     (setq calls (1+ calls))
+                     '((city_name . "bright-lights")))))
+          ;; First call queries gc; the second is served from the cache.
+          (should (equal (gascity-context-gc-city-name "/tmp/outside")
+                         "bright-lights"))
+          (should (equal (gascity-context-gc-city-name "/tmp/outside")
+                         "bright-lights"))
+          (should (= calls 1)))
+        ;; A gc failure resolves to nil rather than raising.
+        (cl-letf (((symbol-function 'gascity-reader-read)
+                   (lambda (&rest _)
+                     (signal 'gascity-command-error '("boom")))))
+          (should (null (gascity-context-gc-city-name "/tmp/elsewhere")))))
+    (gascity-context-clear-cache)))
+
 (ert-deftest gascity-test-terminal-socket-args ()
   "A real socket yields -L NAME; nil/empty/\"default\" yield nothing."
   (should (equal (gascity-terminal--socket-args "bright-lights")

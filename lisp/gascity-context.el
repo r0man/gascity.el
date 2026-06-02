@@ -37,11 +37,15 @@
 (defvar gascity-context--rig-cache (make-hash-table :test 'equal)
   "Cache mapping an absolute directory to its resolved rig name.")
 
+(defvar gascity-context--city-cache (make-hash-table :test 'equal)
+  "Cache mapping an absolute directory to its gc-resolved city name.")
+
 (defun gascity-context-clear-cache ()
-  "Forget cached rig resolutions.
+  "Forget cached rig and city resolutions.
 Call after the city's rig set changes, or to force re-resolution."
   (interactive)
-  (clrhash gascity-context--rig-cache))
+  (clrhash gascity-context--rig-cache)
+  (clrhash gascity-context--city-cache))
 
 (defun gascity-context-city-root (&optional dir)
   "Return the Gas City root governing DIR (default `default-directory').
@@ -56,9 +60,32 @@ for `gascity-context-city-file'.  Returns an absolute directory name
 
 (defun gascity-context-city-name (&optional dir)
   "Return the city name governing DIR, or nil.
-Derived from the basename of `gascity-context-city-root'."
+Derived from the basename of `gascity-context-city-root', so it only
+succeeds when DIR is inside the city tree.  For a gc-backed resolution
+that stays robust outside the tree, see `gascity-context-gc-city-name'."
   (when-let ((root (gascity-context-city-root dir)))
     (file-name-nondirectory (directory-file-name root))))
+
+(defun gascity-context-gc-city-name (&optional dir)
+  "Return the city name gc resolves for DIR, or nil.
+Unlike `gascity-context-city-name', which needs DIR inside the city
+tree (it walks up for `gascity-context-city-file'), this asks `gc
+status' — whose payload carries `city_name' regardless of
+`default-directory' — so it stays robust when called from elsewhere.
+This mirrors how the status and rig dashboards keep tmux-socket
+resolution correct by reading `city_name' from a gc payload rather than
+from directory context.  Answers are cached per directory; clear with
+`gascity-context-clear-cache'."
+  (let* ((key (expand-file-name (or dir default-directory)))
+         (cached (gethash key gascity-context--city-cache 'miss)))
+    (if (not (eq cached 'miss))
+        cached
+      (puthash key
+               (condition-case nil
+                   (let ((default-directory key))
+                     (alist-get 'city_name (gascity-reader-read "status")))
+                 (gascity-error nil))
+               gascity-context--city-cache))))
 
 (defun gascity-context-rig-name (&optional dir)
   "Return the current rig name for DIR (default `default-directory'), or nil.
