@@ -142,12 +142,41 @@ display."
       (propertize (truncate-string-to-width str width 0 nil t)
                   'help-echo str))))
 
-(defun gascity-tabulated--refresh (base-name fetch-fn)
+(defvar-local gascity-tabulated--filter-description nil
+  "Rendered description of the active filter, or nil when none is active.
+Set by `gascity-tabulated--refresh' and appended in parentheses after the
+page indicator by `gascity-tabulated--update-mode-name', so a filtered
+list is visibly distinct from a complete one.  Re-derived from the live
+filter plist on every refresh, so it tracks the filter across `g'.")
+
+(defun gascity-tabulated--format-filter (filter)
+  "Render FILTER, a plist of command initargs, as a mode-line description.
+Each key is shown without its leading colon: a boolean t value as the
+bare key (e.g. \"unread\"), any other value as \"key=value\".  Keys whose
+value is nil are skipped.  Returns the joined description (e.g.
+\"state=active rig=gascity\"), or nil when FILTER is empty or has no
+active keys.  Used to surface the active filter in a list's mode line so
+a filtered view is never mistaken for a complete one."
+  (let ((parts (cl-loop for (key value) on filter by #'cddr
+                        when value
+                        collect (let ((name (substring (symbol-name key) 1)))
+                                  (if (eq value t)
+                                      name
+                                    (format "%s=%s" name value))))))
+    (when parts
+      (mapconcat #'identity parts " "))))
+
+(defun gascity-tabulated--refresh (base-name fetch-fn &optional filter)
   "Fetch rows via FETCH-FN and repaint the current tabulated buffer.
 FETCH-FN returns a list of `(ID . [COLUMNS])' entries.  The full list is
 stored for pagination and one window-sized page is shown; `gc' errors
 are caught and reported, leaving the list empty.  BASE-NAME labels the
-mode line, which shows the current page and total."
+mode line, which shows the current page and total.  FILTER, when given,
+is the list's active filter plist; its rendered description (see
+`gascity-tabulated--format-filter') is shown in the mode line, and is
+re-derived here on every refresh so it tracks the filter across `g'."
+  (setq gascity-tabulated--filter-description
+        (gascity-tabulated--format-filter filter))
   (let ((entries (condition-case err
                      (funcall fetch-fn)
                    (gascity-error
@@ -218,11 +247,17 @@ Two lines are reserved for the column header and the mode line."
       (seq-subseq all start end))))
 
 (defun gascity-tabulated--update-mode-name ()
-  "Set `mode-name' to \"BASE [page/total]\" and refresh the mode line."
-  (setq mode-name (format "%s [%d/%d]"
+  "Set `mode-name' to \"BASE [page/total]\" and refresh the mode line.
+When a filter is active, its description is appended in parentheses
+\(e.g. \"Sessions [1/1] (rig=gascity)\"), so a filtered list is never
+mistaken for a complete one."
+  (setq mode-name (format "%s [%d/%d]%s"
                           gascity-tabulated--base-name
                           gascity-tabulated--current-page
-                          (gascity-tabulated--total-pages)))
+                          (gascity-tabulated--total-pages)
+                          (if gascity-tabulated--filter-description
+                              (format " (%s)" gascity-tabulated--filter-description)
+                            "")))
   (force-mode-line-update))
 
 (defun gascity-tabulated--truncate-row (cols)
@@ -380,7 +415,8 @@ and adds `g' refresh, `/' filter, and `RET'."
        (mapcar #'gascity-rig-list--entry
                (seq-filter (lambda (r)
                              (gascity-rig-list--match-p r (oref cmd status)))
-                           rigs))))))
+                           rigs))))
+   gascity-rig-list--filter))
 
 (transient-define-prefix gascity-rig-list-filter ()
   "Filter the rig list."
@@ -509,7 +545,8 @@ applied client-side to the decoded rows."
        (mapcar (lambda (s) (gascity-session-list--entry s socket))
                (seq-filter (lambda (s)
                              (gascity-session-list--match-p s (oref cmd rig)))
-                           sessions))))))
+                           sessions))))
+   gascity-session-list--filter))
 
 (transient-define-prefix gascity-session-list-filter ()
   "Filter the session list."
@@ -624,7 +661,8 @@ The entry id is the convoy's bead id, so `RET' can open it in beads.el."
        (mapcar #'gascity-convoy-list--entry
                (seq-filter (lambda (c)
                              (gascity-convoy-list--match-p c (oref cmd status)))
-                           convoys))))))
+                           convoys))))
+   gascity-convoy-list--filter))
 
 (transient-define-prefix gascity-convoy-list-filter ()
   "Filter the convoy list."
@@ -744,7 +782,8 @@ Read-only: renders the data already fetched, without contacting `gc'."
        (mapcar #'gascity-mail-inbox--entry
                (seq-filter (lambda (m)
                              (gascity-mail-inbox--match-p m (oref cmd unread)))
-                           messages))))))
+                           messages))))
+   gascity-mail-inbox--filter))
 
 (transient-define-prefix gascity-mail-inbox-filter ()
   "Filter the mail inbox."
@@ -852,7 +891,8 @@ The entry id is the whole order alist, so `RET' can open its source."
                (seq-filter (lambda (o)
                              (gascity-order-list--match-p
                               o (oref cmd enabled) (oref cmd type)))
-                           orders))))))
+                           orders))))
+   gascity-order-list--filter))
 
 (transient-define-prefix gascity-order-list-filter ()
   "Filter the order list."

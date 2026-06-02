@@ -1127,5 +1127,51 @@ message alist is the id, and a non-`read' message shows the ● marker."
   (should (equal (gascity-command-line (gascity-command-session-list))
                  '("gc" "session" "list" "--json"))))
 
+;;; Filter mode-line indicator (gce-ey4)
+
+(ert-deftest gascity-test-tabulated-format-filter ()
+  "Filter plists render to a mode-line description (gce-ey4).
+A string value shows as \"key=value\", a boolean t as the bare key, a nil
+value is skipped, and an empty or all-nil plist yields nil (no indicator,
+so an unfiltered list stays clean)."
+  (should (null (gascity-tabulated--format-filter nil)))
+  (should (null (gascity-tabulated--format-filter '(:state nil))))
+  (should (equal (gascity-tabulated--format-filter '(:status "running"))
+                 "status=running"))
+  ;; The session list's combined state + rig filter (the bug's example).
+  (should (equal (gascity-tabulated--format-filter '(:state "active" :rig "gascity"))
+                 "state=active rig=gascity"))
+  ;; Boolean flags (mail :unread, order :enabled) show as the bare key.
+  (should (equal (gascity-tabulated--format-filter '(:unread t)) "unread"))
+  (should (equal (gascity-tabulated--format-filter '(:enabled t :type "schedule"))
+                 "enabled type=schedule"))
+  ;; A nil value among real ones is dropped, not rendered as a bare "key=".
+  (should (equal (gascity-tabulated--format-filter '(:state "active" :rig nil))
+                 "state=active")))
+
+(ert-deftest gascity-test-tabulated-refresh-shows-filter-in-mode-name ()
+  "An active filter is appended to the mode line; none leaves it clean (gce-ey4).
+Regression: a filtered list read identically to a complete one
+\(\"Things [1/1]\"), so a partial view could be mistaken for the whole.
+The active filter plist threads through `gascity-tabulated--refresh', and
+its description is shown after the page indicator and re-derived on every
+refresh — so it tracks the filter across `g' and clears with `/ c'."
+  (with-temp-buffer
+    (tabulated-list-mode)
+    (setq-local tabulated-list-format [("Col" 10 t)])
+    (tabulated-list-init-header)
+    ;; No filter -> just the page indicator, and no stored description.
+    (gascity-tabulated--refresh "Things" (lambda () nil))
+    (should (equal mode-name "Things [1/1]"))
+    (should (null gascity-tabulated--filter-description))
+    ;; A filter -> its description appended in parens, page indicator intact.
+    (gascity-tabulated--refresh "Things" (lambda () nil)
+                                '(:state "active" :rig "gascity"))
+    (should (equal mode-name "Things [1/1] (state=active rig=gascity)"))
+    ;; A later filter-free refresh (mirrors `/ c') drops the suffix again.
+    (gascity-tabulated--refresh "Things" (lambda () nil))
+    (should (equal mode-name "Things [1/1]"))
+    (should (null gascity-tabulated--filter-description))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here
