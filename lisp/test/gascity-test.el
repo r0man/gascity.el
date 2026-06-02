@@ -674,13 +674,16 @@ lose `work_dir'/`session_name', so `d'/`t' no-op with no explanation."
     (and (search-forward needle nil t) t)))
 
 (defun gascity-test--press-header (name)
-  "Press the collapsible rig header button whose label contains NAME.
+  "Toggle the collapsible rig header whose label contains NAME.
 NAME is matched against the buffer's visible text; the rig name appears
-only in its header button, so the first match lands inside that widget."
+only in its header, so the first match lands on that header.  Activating
+there (as RET does, via the `gascity-rig' text property) toggles the rig's
+collapse."
   (goto-char (point-min))
   (unless (search-forward name nil t)
     (error "rig header %S not found in dashboard" name))
-  (widget-button-press (match-beginning 0)))
+  (goto-char (match-beginning 0))
+  (gascity-status-activate))
 
 (defun gascity-test--status-async-stub (status-box sessions-box)
   "Return a `gascity-reader-read-async' stub that parks resolve callbacks.
@@ -773,6 +776,51 @@ that lost collapse state also flickered the view on every refresh."
                 (should (gascity-test--buffer-contains-p "Gas City:"))
                 (should (gascity-test--buffer-contains-p "gascity.el"))
                 (should-not (gascity-test--buffer-contains-p "Loading Gas City status"))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
+;;; gce-x0c — blank line between rig groups; header carries rig path
+
+(defun gascity-test--blank-line-above-p (needle)
+  "Return non-nil when the line above the one holding NEEDLE is blank.
+Used to assert rig sections are visually separated by a blank row."
+  (save-excursion
+    (goto-char (point-min))
+    (and (search-forward needle nil t)
+         (progn (forward-line 0) (forward-line -1)
+                (looking-at-p "[ \t]*$")))))
+
+(ert-deftest gascity-test-status-blank-line-between-rigs ()
+  "A blank line separates rig groups, and each rig header carries its name
+and `path' so `d'/RET act on the rig at point (gce-x0c)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)
+        (status '((ok . t) (city_name . "bright-lights")
+                  (controller . ((running . t)))
+                  (rigs . [((name . "rig-a") (path . "/p/a"))
+                           ((name . "rig-b") (path . "/p/b"))])
+                  (agents . [])))
+        (sessions '((sessions . []))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (funcall (car status-box) status)
+                (funcall (car sessions-box) sessions)
+                ;; Both rigs render, separated by a blank line.
+                (should (gascity-test--buffer-contains-p "▼ rig-a"))
+                (should (gascity-test--buffer-contains-p "▼ rig-b"))
+                (should (gascity-test--blank-line-above-p "▼ rig-b"))
+                ;; The header carries the rig name + path (for `d' and RET).
+                (goto-char (point-min))
+                (search-forward "rig-a")
+                (goto-char (match-beginning 0))
+                (should (equal (get-text-property (point) 'gascity-rig) "rig-a"))
+                (should (equal (get-text-property (point) 'gascity-rig-dir) "/p/a"))))
           (when (get-buffer "*gascity-status-test*")
             (kill-buffer "*gascity-status-test*")))))))
 
@@ -1059,6 +1107,56 @@ reverts the override with `set-option -u'.  All tmux ops are session-scoped."
   (cl-letf (((symbol-function 'gascity-terminal-pane-cwd) (lambda (&rest _) nil)))
     (should-error (gascity-agent-dired '(:name "a" :session-name "tm"))
                   :type 'user-error)))
+
+;;; gce-x0c — `d' on a rig header opens its directory
+
+(ert-deftest gascity-test-rig-dired-opens-path ()
+  "`gascity-rig-dired' opens Dired on an existing rig directory."
+  (let (opened)
+    (cl-letf (((symbol-function 'dired) (lambda (d) (setq opened d)))
+              ((symbol-function 'file-directory-p) (lambda (_) t)))
+      (gascity-rig-dired "gascity.el" "/home/roman/workspace/gascity.el")
+      (should (equal opened "/home/roman/workspace/gascity.el")))))
+
+(ert-deftest gascity-test-rig-dired-errors-without-path ()
+  "A rig with no recorded directory no-ops gracefully with a `user-error'."
+  (cl-letf (((symbol-function 'dired) (lambda (&rest _) (error "dired must not run"))))
+    (should-error (gascity-rig-dired "hq" nil) :type 'user-error)
+    (should-error (gascity-rig-dired "hq" "") :type 'user-error)))
+
+(ert-deftest gascity-test-rig-dired-errors-when-missing ()
+  "A recorded directory that is absent on disk signals a `user-error'."
+  (cl-letf (((symbol-function 'file-directory-p) (lambda (_) nil))
+            ((symbol-function 'dired) (lambda (&rest _) (error "dired must not run"))))
+    (should-error (gascity-rig-dired "r" "/nope") :type 'user-error)))
+
+(ert-deftest gascity-test-dired-at-point-routes-agent-and-rig ()
+  "`d' reuses one action: an agent row opens its worktree, a rig header its
+directory; neither at point is a clean `user-error' (gce-x0c)."
+  ;; Agent row -> agent worktree (the agent at point wins).
+  (let (opened)
+    (cl-letf (((symbol-function 'dired) (lambda (d) (setq opened d)))
+              ((symbol-function 'file-directory-p) (lambda (_) t)))
+      (with-temp-buffer
+        (insert (propertize "agent"
+                            'gascity-agent '(:name "r/a" :work-dir "/wd" :session-name "tm")))
+        (goto-char (point-min))
+        (gascity-dired-at-point)
+        (should (equal opened "/wd")))))
+  ;; Rig header -> rig directory.
+  (let (opened)
+    (cl-letf (((symbol-function 'dired) (lambda (d) (setq opened d)))
+              ((symbol-function 'file-directory-p) (lambda (_) t)))
+      (with-temp-buffer
+        (insert (propertize "▼ rig" 'gascity-rig "rig" 'gascity-rig-dir "/rig/dir"))
+        (goto-char (point-min))
+        (gascity-dired-at-point)
+        (should (equal opened "/rig/dir")))))
+  ;; Neither -> clean error, not a backtrace.
+  (with-temp-buffer
+    (insert "plain")
+    (goto-char (point-min))
+    (should-error (gascity-dired-at-point) :type 'user-error)))
 
 ;;; ============================================================
 ;;; Mutating commands (P1 — command dispatch)

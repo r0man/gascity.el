@@ -128,10 +128,13 @@ SOCKET) so `d'/`t'/RET act on it."
                        running-agents total-agents)
                :face 'gascity-dim))))
 
-(defun gascity-status--content-vnode (status sessions &optional sessions-state sessions-error)
+(defun gascity-status--content-vnode (status sessions &optional sessions-state sessions-error collapsed-rigs)
   "Return the dashboard body vnode from STATUS and SESSIONS data.
 SESSIONS-STATE/SESSIONS-ERROR describe the `gc session list' load so a
-one-line hint can warn that `d'/`t' are disabled when it did not succeed."
+one-line hint can warn that `d'/`t' are disabled when it did not succeed.
+COLLAPSED-RIGS is the app's list of collapsed rig names; each rig section
+is told whether it is collapsed (lifted there so the keymap can toggle the
+rig at point — see `gascity-status--toggle-rig')."
   (let* ((session-map (gascity-status--session-map (or sessions [])))
          (socket (gascity-resolve-tmux-socket (alist-get 'city_name status)))
          (agents (alist-get 'agents status))
@@ -147,12 +150,19 @@ one-line hint can warn that `d'/`t' are disabled when it did not succeed."
               (mapcar (lambda (a)
                         (gascity-status--agent-row a nil session-map socket))
                       city-agents)))
+     ;; `:spacing 1' renders a blank line between rig groups for visual
+     ;; separation; the keyed `vui-list' still reconciles each rig in place,
+     ;; so collapse state and point survive a refresh.
      (vui-list rigs
                (lambda (rig)
                  (vui-component 'gascity-status-rig
                                 :rig rig :agents agents
-                                :session-map session-map :socket socket))
-               (lambda (rig) (alist-get 'name rig))))))
+                                :session-map session-map :socket socket
+                                :collapsed (and (member (alist-get 'name rig)
+                                                        collapsed-rigs)
+                                                t)))
+               (lambda (rig) (alist-get 'name rig))
+               :spacing 1))))
 
 (defun gascity-status--error-vnode (message)
   "Return a vnode reporting MESSAGE and how to retry."
@@ -179,11 +189,29 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
 
 ;;; Components
 
-(vui-defcomponent gascity-status-rig (rig agents session-map socket)
-  "A collapsible section for one RIG and its scoped AGENTS."
-  :state ((collapsed nil))
+;; Rig headers are property-carrying text (the magit/forge idiom this
+;; dashboard follows), not widgets: a `gascity-rig' (name) / `gascity-rig-dir'
+;; (path) text property lets the keymap commands act on the rig at point —
+;; RET toggles collapse, `d' opens its directory.  This keymap restores the
+;; click-to-toggle the old header button gave; only `mouse-1' is bound, so
+;; RET and `n'/`p' fall through to the buffer keymap.  The binding is a
+;; quoted symbol (not #') so the command may be defined later in the file
+;; without a byte-compile forward-reference warning.
+(defvar gascity-status-header-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-1] 'gascity-status-mouse-1)
+    map)
+  "Keymap placed on rig-header text so a left click toggles its collapse.")
+
+(vui-defcomponent gascity-status-rig (rig agents session-map socket collapsed)
+  "A collapsible section for one RIG and its scoped AGENTS.
+COLLAPSED is supplied by the parent from the app's `collapsed-rigs' state
+\(lifted there so the keymap can toggle the rig at point and the state
+survives a refresh).  The header is stamped with `gascity-rig' (the rig
+name, for the toggle) and `gascity-rig-dir' (its `path', for `d')."
   :render
   (let* ((name (alist-get 'name rig))
+         (path (alist-get 'path rig))
          (suspended (alist-get 'suspended rig))
          (rig-agents (gascity-status--rig-agents name agents))
          (header (format "%s %s%s"
@@ -191,10 +219,12 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
                          name
                          (if suspended "  (suspended)" ""))))
     (vui-vstack
-     (vui-button header
-                 :no-decoration t
-                 :face (if suspended 'gascity-suspended 'gascity-rig)
-                 :on-click (lambda () (vui-set-state :collapsed (not collapsed))))
+     (vui-text header
+               :face (if suspended 'gascity-suspended 'gascity-rig)
+               'gascity-rig name
+               'gascity-rig-dir path
+               'mouse-face 'highlight
+               'keymap gascity-status-header-keymap)
      (unless collapsed
        (apply #'vui-vstack
               (or (mapcar (lambda (a)
@@ -204,19 +234,24 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
 
 (vui-defcomponent gascity-status-app ()
   "Root component of the gascity status dashboard."
-  :state ((refresh-tick 0))
+  :state ((refresh-tick 0) (collapsed-rigs nil))
   :render
+  ;; Collapse state (`collapsed-rigs', a list of collapsed rig names) lives
+  ;; here, in the root component, rather than per rig section: a keymap
+  ;; command (`gascity-status--toggle-rig', reached via RET/`mouse-1' on a
+  ;; header) can then flip the rig at point, and the list survives a refresh
+  ;; since `g' only bumps `refresh-tick'.
+  ;;
   ;; Stale-while-revalidate.  `g' refreshes by bumping `refresh-tick',
   ;; which changes every `vui-use-async' key and so restarts each load as
   ;; 'pending with nil data.  Rendering the pending branch (a bare
-  ;; "Loading…" line) replaces the whole tree and unmounts every keyed
-  ;; `gascity-status-rig' child — destroying its component-local collapse
-  ;; `:state' (and blanking the view, losing point) on *every* refresh.
-  ;; Instead, cache the last good payload in a ref and keep rendering it
-  ;; while the refreshed load is in flight, swapping in fresh data only on
-  ;; 'ready.  Keyed children then reconcile in place, so collapse state
-  ;; survives a refresh.  The fallback screens (loading / error) show only
-  ;; on the first, dataless load — never over a snapshot we can still show.
+  ;; "Loading…" line) replaces the whole tree and blanks the view, losing
+  ;; point, on *every* refresh.  Instead, cache the last good payload in a
+  ;; ref and keep rendering it while the refreshed load is in flight,
+  ;; swapping in fresh data only on 'ready.  Keyed children then reconcile
+  ;; in place, so point survives a refresh.  The fallback screens (loading /
+  ;; error) show only on the first, dataless load — never over a snapshot we
+  ;; can still show.
   (let* ((status-res
           (vui-use-async (list 'status refresh-tick)
                          (lambda (resolve reject)
@@ -251,25 +286,51 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
      (t
       (gascity-status--content-vnode
        status sessions sessions-note-state
-       (plist-get sessions-res :error))))))
+       (plist-get sessions-res :error)
+       collapsed-rigs)))))
 
 ;;; Commands
 
 (defun gascity-status-activate ()
   "Activate the thing at point.
-On a rig header (a widget) this toggles its collapse; on an agent row it
-attaches the agent's terminal (its tmux session) — the primary action.
-`i' opens the agent's detail/info view instead."
+On a rig header this toggles its collapse; on an agent row it attaches the
+agent's terminal (its tmux session) — the primary action.  `i' opens the
+agent's detail/info view instead."
   (interactive)
   (cond
-   ((widget-at (point)) (widget-button-press (point)))
+   ((get-text-property (point) 'gascity-rig)
+    (gascity-status--toggle-rig (get-text-property (point) 'gascity-rig)))
    ((get-text-property (point) 'gascity-agent) (gascity-tmux-at-point))
    (t (user-error "Nothing to activate here"))))
+
+(defun gascity-status-mouse-1 (event)
+  "Move point to the rig header clicked by mouse EVENT and activate it.
+Bound on header text via `gascity-status-header-keymap', this restores the
+click-to-toggle the old header button provided."
+  (interactive "e")
+  (mouse-set-point event)
+  (gascity-status-activate))
+
+(defun gascity-status--toggle-rig (name)
+  "Toggle whether rig NAME is collapsed in the status dashboard.
+Flips NAME in the root `gascity-status-app' component's `collapsed-rigs'
+state and re-renders in place via `vui-flush-sync' — no re-fetch, since the
+`vui-use-async' keys are unchanged.  Mirrors `gascity-status--refresh-instance'."
+  (when (and (boundp 'vui--root-instance) vui--root-instance)
+    (let* ((instance vui--root-instance)
+           (state (vui-instance-state instance))
+           (collapsed (plist-get state :collapsed-rigs)))
+      (setf (vui-instance-state instance)
+            (plist-put state :collapsed-rigs
+                       (if (member name collapsed)
+                           (remove name collapsed)
+                         (cons name collapsed))))
+      (vui-flush-sync))))
 
 (defun gascity-status--refresh-instance (buffer)
   "Bump the refresh tick of the dashboard mounted in BUFFER.
 Returns non-nil when a live instance was refreshed in place (preserving
-collapse state); nil when BUFFER has no mounted instance."
+collapse state and point); nil when BUFFER has no mounted instance."
   (and (buffer-live-p buffer)
        (with-current-buffer buffer
          (when (and (boundp 'vui--root-instance) vui--root-instance)

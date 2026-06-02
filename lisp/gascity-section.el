@@ -180,13 +180,35 @@ AGENT is a plist with `:session-name' (and optionally `:socket' and
                                 (plist-get agent :socket)
                                 (plist-get agent :work-dir)))
 
+(defun gascity-rig-dired (name dir)
+  "Open Dired on rig NAME's local directory DIR.
+DIR is the rig's `path' (as `gc rig list'/`gc status' report it).  Like
+`gascity-agent-dired', this signals a clean `user-error' — never an
+internal error — when DIR is absent (the rig has no local checkout) or
+missing on disk, so `d' on such a rig no-ops gracefully."
+  (cond
+   ((or (null dir) (not (stringp dir)) (string-empty-p dir))
+    (user-error "No local directory for rig %s" (or name "?")))
+   ((not (file-directory-p dir))
+    (user-error "Directory not found for rig %s: %s" (or name "?") dir))
+   (t (dired dir))))
+
 ;;;###autoload
 (defun gascity-dired-at-point ()
-  "Open Dired on the working directory of the agent at point."
+  "Open Dired on the agent worktree or rig directory at point.
+On an agent row, opens the agent's worktree (`gascity-agent-dired').  On a
+rig header, opens the rig's local directory — the `path' gc reports for
+it, stamped on the header as the `gascity-rig-dir' text property.  Signals
+a clean `user-error' when neither is at point, or when the rig has no
+recorded directory (it no-ops gracefully)."
   (interactive)
   (let ((agent (gascity-agent-at-point)))
-    (unless agent (user-error "No agent at point"))
-    (gascity-agent-dired agent)))
+    (cond
+     (agent (gascity-agent-dired agent))
+     ((get-text-property (point) 'gascity-rig)
+      (gascity-rig-dired (get-text-property (point) 'gascity-rig)
+                         (get-text-property (point) 'gascity-rig-dir)))
+     (t (user-error "No agent or rig at point")))))
 
 ;;;###autoload
 (defun gascity-tmux-at-point ()
