@@ -22,6 +22,21 @@
   (cl-map 'list (lambda (c) (if (stringp c) (substring-no-properties c) c))
           (cadr entry)))
 
+(defun gascity-test--vnode-text (vnode)
+  "Concatenate the text content of VNODE's subtree, depth-first.
+Containers join their children with a space — enough to assert what a
+small hand-built vnode renders without mounting it in a buffer."
+  (cond
+   ((null vnode) "")
+   ((vui-vnode-text-p vnode) (or (vui-vnode-text-content vnode) ""))
+   ((vui-vnode-vstack-p vnode)
+    (mapconcat #'gascity-test--vnode-text (vui-vnode-vstack-children vnode) " "))
+   ((vui-vnode-hstack-p vnode)
+    (mapconcat #'gascity-test--vnode-text (vui-vnode-hstack-children vnode) " "))
+   ((vui-vnode-fragment-p vnode)
+    (mapconcat #'gascity-test--vnode-text (vui-vnode-fragment-children vnode) " "))
+   (t "")))
+
 ;;; gascity-reader-parse-json
 
 (ert-deftest gascity-test-parse-json-object ()
@@ -879,6 +894,26 @@ JSONL output never mis-reads as a failure."
     (should (null (gascity-rig--db-for-prefix dbs "nope")))
     (should (null (gascity-rig--db-for-prefix dbs nil)))
     (should (null (gascity-rig--db-for-prefix dbs "")))))
+
+(ert-deftest gascity-test-rig-dolt-vnode ()
+  "The rig dashboard Dolt line shows commits but not `open_beads' (gce-ziz).
+`gc dolt health' reports `open_beads' as 0 for every database, so showing
+it here contradicted the Ready/In-progress sections rendered just above.
+The Dolt commit count stays; open-bead counts live in the bead sections,
+which read live `bd' data.  The field is dropped regardless of its value,
+so a non-zero `open_beads' here must still not surface."
+  (let ((text (gascity-test--vnode-text
+               (gascity-rig--dolt-vnode
+                '((name . "gce") (commits . 225) (open_beads . 7))
+                '(:status ready)))))
+    (should (string-match-p "gce: 225 commits" text))
+    (should-not (string-match-p "open beads" text))
+    (should-not (string-match-p "\\b7\\b" text)))
+  ;; No database for the rig → dim placeholder, still no bead count.
+  (let ((text (gascity-test--vnode-text
+               (gascity-rig--dolt-vnode nil '(:status ready)))))
+    (should (string-match-p "no database" text))
+    (should-not (string-match-p "open beads" text))))
 
 (ert-deftest gascity-test-rig-orders-filter ()
   "Only orders scoped to the rig are kept; city-wide (rig=nil) are dropped."

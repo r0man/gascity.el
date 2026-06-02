@@ -172,17 +172,20 @@ degrades to a dim placeholder rather than blanking the dashboard."
                   (list (vui-text "  (none)" :face 'gascity-dim)))))))
 
 (defun gascity-rig--dolt-vnode (db res)
-  "Return the Dolt-health vnode for database DB, guarded by async RES."
+  "Return the Dolt-health vnode for database DB, guarded by async RES.
+Shows only the Dolt commit count, not `gc dolt health''s `open_beads':
+that metric reads 0 for every database in practice, so rendering it here
+contradicted the Ready/In-progress bead sections shown just above (gce-ziz).
+Open-bead counts belong to those sections, which read live `bd' data."
   (vui-vstack
    (vui-text "Dolt" :face 'gascity-header)
    (pcase (plist-get res :status)
      ('pending (vui-text "  loading…" :face 'gascity-dim))
      ('error   (vui-text "  (unavailable)" :face 'gascity-dim))
      (_ (if db
-            (vui-text (format "  %s: %s commits · %s open beads"
+            (vui-text (format "  %s: %s commits"
                               (gascity-tabulated--str (alist-get 'name db))
-                              (gascity-tabulated--str (alist-get 'commits db))
-                              (gascity-tabulated--str (alist-get 'open_beads db))))
+                              (gascity-tabulated--str (alist-get 'commits db))))
           (vui-text "  (no database for this rig)" :face 'gascity-dim))))))
 
 (defun gascity-rig--error-vnode (message)
