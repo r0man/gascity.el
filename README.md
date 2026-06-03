@@ -57,10 +57,11 @@ With the dependencies on your `load-path`:
 Everywhere: `g` refreshes, `q` buries, `RET` drills in. In the tabulated lists,
 `]`/`[`/`G` page and `/` opens a filter.
 
-- **Status dashboard:** `RET` toggles a rig section / opens the agent's detail;
-  `d` Dired into the worktree; `t` tmux attach; `M`/`s`/`K`/`w`/`D`
-  nudge/suspend/kill/wake/drain the agent; `n`/`p` move by line, `N`/`P` jump
-  between sections (city/rig/…).
+- **Status dashboard:** `TAB` toggles a rig section (the magit convention);
+  `RET` toggles the rig at point too, or attaches the agent's terminal (`i`
+  opens its detail); `d` Dired into the worktree; `t` tmux attach;
+  `M`/`s`/`K`/`w`/`D` nudge/suspend/kill/wake/drain the agent; `n`/`p` move by
+  line, `N`/`P` jump between sections (city/rig/…).
 - **Rig list:** `RET` opens the rig dashboard; `d` Dired into the rig directory;
   `s`/`r`/`R` suspend/resume/restart.
 - **Session list:** `RET` opens the session/polecat detail; `d` Dired; `t` tmux

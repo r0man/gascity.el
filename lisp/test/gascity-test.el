@@ -673,17 +673,18 @@ lose `work_dir'/`session_name', so `d'/`t' no-op with no explanation."
     (goto-char (point-min))
     (and (search-forward needle nil t) t)))
 
-(defun gascity-test--press-header (name)
-  "Toggle the collapsible rig header whose label contains NAME.
+(defun gascity-test--press-header (name &optional command)
+  "Run COMMAND on the collapsible rig header whose label contains NAME.
 NAME is matched against the buffer's visible text; the rig name appears
-only in its header, so the first match lands on that header.  Activating
-there (as RET does, via the `gascity-rig' text property) toggles the rig's
-collapse."
+only in its header, so the first match lands on that header.  COMMAND
+defaults to `gascity-status-activate' (what `RET' runs); pass
+`gascity-status-toggle-section' to exercise the `TAB' toggle instead.  Both
+flip the rig's collapse via the `gascity-rig' text property on the header."
   (goto-char (point-min))
   (unless (search-forward name nil t)
     (error "rig header %S not found in dashboard" name))
   (goto-char (match-beginning 0))
-  (gascity-status-activate))
+  (funcall (or command #'gascity-status-activate)))
 
 (defun gascity-test--status-async-stub (status-box sessions-box)
   "Return a `gascity-reader-read-async' stub that parks resolve callbacks.
@@ -821,6 +822,60 @@ and `path' so `d'/RET act on the rig at point (gce-x0c)."
                 (goto-char (match-beginning 0))
                 (should (equal (get-text-property (point) 'gascity-rig) "rig-a"))
                 (should (equal (get-text-property (point) 'gascity-rig-dir) "/p/a"))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
+;;; gce-ed4 — TAB toggles a rig section's collapse (magit convention)
+
+(ert-deftest gascity-test-status-tab-toggles-section ()
+  "TAB toggles a rig section's collapse in the status dashboard (gce-ed4).
+The magit-section convention binds TAB to \"toggle the visibility of the
+section at point\".  The status board is the only dashboard with
+collapsible sections, so the binding lives in its map (not the shared
+`gascity-section-mode-map'); pressing TAB on a rig header flips its
+collapse (▼ <-> ▶) exactly as RET does, while RET keeps its prior job —
+toggle on a header, attach a terminal on a row.  Off a rig header there is
+nothing collapsible, so TAB signals a clean `user-error' rather than
+toggling or attaching something unrelated."
+  ;; Bindings: TAB -> the section toggle; RET unchanged.
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "TAB")
+              #'gascity-status-toggle-section))
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "RET")
+              #'gascity-status-activate))
+  ;; Off a rig header (an agent row, say): a clean user-error, no toggle.
+  (with-temp-buffer
+    (insert "  ● furiosa")
+    (goto-char (point-min))
+    (should-error (gascity-status-toggle-section) :type 'user-error))
+  ;; End-to-end: TAB on the header collapses (▼ -> ▶), TAB again expands.
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)            ; render synchronously, no timers
+        (status '((ok . t) (city_name . "bright-lights")
+                  (controller . ((running . t)))
+                  (rigs . [((name . "gascity.el"))])
+                  (agents . [])))
+        (sessions '((sessions . []))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (funcall (car status-box) status)
+                (funcall (car sessions-box) sessions)
+                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
+                ;; TAB collapses the rig.
+                (gascity-test--press-header
+                 "gascity.el" #'gascity-status-toggle-section)
+                (should (gascity-test--buffer-contains-p "▶ gascity.el"))
+                (should-not (gascity-test--buffer-contains-p "▼ gascity.el"))
+                ;; TAB again expands it.
+                (gascity-test--press-header
+                 "gascity.el" #'gascity-status-toggle-section)
+                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
+                (should-not (gascity-test--buffer-contains-p "▶ gascity.el"))))
           (when (get-buffer "*gascity-status-test*")
             (kill-buffer "*gascity-status-test*")))))))
 

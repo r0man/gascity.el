@@ -314,6 +314,22 @@ click-to-toggle the old header button provided."
   (mouse-set-point event)
   (gascity-status-activate))
 
+(defun gascity-status-toggle-section ()
+  "Toggle collapse of the rig section at point.
+The magit-section convention binds `TAB' to \"toggle the visibility of the
+section at point\"; this is the dashboard's `TAB'.  The status board's only
+collapsible sections are its rig headers (stamped with a `gascity-rig' text
+property); on one, this flips its collapse via `gascity-status--toggle-rig'
+— the same toggle `RET' performs on a header (`gascity-status-activate').
+Off a rig header (an agent row, the city block) there is nothing
+collapsible, so it signals a clean `user-error' rather than acting on
+something unrelated — `TAB' toggles, never attaches."
+  (interactive)
+  (let ((rig (get-text-property (point) 'gascity-rig)))
+    (if rig
+        (gascity-status--toggle-rig rig)
+      (user-error "No section to toggle here"))))
+
 (defun gascity-status--toggle-rig (name)
   "Toggle whether rig NAME is collapsed in the status dashboard.
 Flips NAME in the root `gascity-status-app' component's `collapsed-rigs'
@@ -357,6 +373,13 @@ collapse state and point); nil when BUFFER has no mounted instance."
   :doc "Keymap for `gascity-dashboard-mode'."
   :parent gascity-section-mode-map
   "g"   #'gascity-status-refresh
+  ;; `TAB' toggles the rig section at point — the magit-section convention
+  ;; (TAB = toggle visibility).  It shadows the vui chain's `widget-forward'
+  ;; (harmless: this view renders no widgets) and is bound here, not in the
+  ;; shared `gascity-section-mode-map', because the status board is the only
+  ;; dashboard with collapsible sections.  `RET' still toggles too (on a
+  ;; header) and attaches the agent's terminal (on a row).
+  "TAB" #'gascity-status-toggle-section
   "RET" #'gascity-status-activate
   "i"   #'gascity-polecat-detail-at-point
   "b"   #'gascity-beads-at-point
@@ -381,8 +404,9 @@ collapse state and point); nil when BUFFER has no mounted instance."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Gas City  (g refresh · RET tmux/toggle · i detail · b beads"
-                      " · d dired · t tmux · M/s/K/w/D session · N/P section · q bury)")))
+              (concat " Gas City  (g refresh · TAB toggle · RET tmux/toggle · i detail"
+                      " · b beads · d dired · t tmux · M/s/K/w/D session · N/P section"
+                      " · q bury)")))
 
 ;;;###autoload
 (defun gascity-status ()
