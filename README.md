@@ -65,14 +65,15 @@ Everywhere: `g` refreshes, `q` buries, `RET` drills in. In the tabulated lists,
 - **Rig list:** `RET` opens the rig dashboard; `d` Dired into the rig directory;
   `s`/`r`/`R` suspend/resume/restart.
 - **Session list:** `RET` opens the session/polecat detail; `d` Dired; `t` tmux
-  attach; `M`/`s`/`K`/`w`/`D` session actions; `p` peeks at recent output.
+  attach; `M`/`s`/`K`/`w`/`D` session actions; `v` peeks at recent output;
+  `n`/`p` move by line.
 - **Rig dashboard:** agents table, ready/in-progress beads (`RET` → beads.el),
   rig-scoped orders, and Dolt stats; the agent action keys above act on the
   agent at point, and `N`/`P` jump between sections.
 - **Session/polecat detail:** state, mail count, the bead on the hook, and
-  recent history (`RET` → beads.el); `p` peek, `M` nudge, `D` drain, `s` suspend,
-  `K` kill, `w` wake, `d` Dired, `t` tmux act on the subject agent; `N`/`P` jump
-  between sections.
+  recent history (`RET` → beads.el); `v` peek, `M` nudge, `D` drain, `s` suspend,
+  `K` kill, `w` wake, `d` Dired, `t` tmux act on the subject agent; `n`/`p` move
+  by line, `N`/`P` jump between sections.
 - **Convoys:** `RET` opens the convoy bead via beads.el.
 - **Orders:** `RET` opens the order's source file; `x` runs the order manually.
 

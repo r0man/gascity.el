@@ -665,15 +665,20 @@ applied client-side to the decoded rows."
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
-  "p"   #'gascity-session-peek-at-point)
+  ;; This flat list has no sections, so unlike the vui dashboards (which
+  ;; inherit `n'/`p' from `gascity-section-mode-map') it binds line movement
+  ;; locally.  Peek moves off `p' to `v' so `p' can mean previous-line.
+  "n"   #'next-line
+  "p"   #'previous-line
+  "v"   #'gascity-session-peek-at-point)
 
 (define-derived-mode gascity-session-list-mode tabulated-list-mode "GC-Sessions"
   "Major mode listing the city's agent sessions.
 `RET' (or `t') attaches to the session's tmux session — the primary
 action; `i' opens the session/polecat detail view; `d' opens its
 worktree in Dired.  `M' nudges (sends a message), `s' suspends, `K'
-force-kills the runtime of, `w' wakes, `D' drains, and `p' peeks at the
-output of the session at point.
+force-kills the runtime of, `w' wakes, `D' drains, and `v' peeks at the
+output of the session at point.  `n'/`p' move by line.
 \\{gascity-session-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format

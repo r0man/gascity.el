@@ -2065,5 +2065,40 @@ so it only relocates nudge to `M' (it does not inherit the shared map)."
   (should-not (eq (keymap-lookup gascity-session-list-mode-map "N")
                   #'gascity-session-nudge-at-point)))
 
+
+;;; gce-3n8 — `n'/`p' are next/previous line/item uniformly; peek off `p'
+
+(ert-deftest gascity-test-np-line-movement-uniform ()
+  "`n'/`p' move next/previous line/item in every dashboard mode (gce-3n8).
+The three vui dashboards inherit `n'/`p' from the shared
+`gascity-section-mode-map' — the fine-grained counterpart to the `N'/`P'
+section jumps bound beside them — while the flat session list binds them
+locally (it does not inherit that map).  No dashboard mode leaves `n'/`p'
+meaning anything other than line/item movement."
+  ;; The shared parent binds line movement directly, beside `N'/`P'.
+  (should (eq (keymap-lookup gascity-section-mode-map "n") #'next-line))
+  (should (eq (keymap-lookup gascity-section-mode-map "p") #'previous-line))
+  ;; Every dashboard map resolves `n'/`p' to line movement — inherited for
+  ;; the vui dashboards, bound locally for the flat session list.
+  (dolist (map (list gascity-dashboard-mode-map
+                     gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map
+                     gascity-session-list-mode-map))
+    (should (eq (keymap-lookup map "n") #'next-line))
+    (should (eq (keymap-lookup map "p") #'previous-line))))
+
+(ert-deftest gascity-test-peek-relocated-off-p ()
+  "Peek moves off `p' to `v' wherever `p' used to shadow line movement.
+The rig dashboard, session-detail, and session-list maps bound
+`gascity-session-peek-at-point' on `p'; that conflicted with the
+`p' = previous-line convention, so peek relocates to `v' (gce-3n8).
+`p' in those maps no longer peeks."
+  (dolist (map (list gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map
+                     gascity-session-list-mode-map))
+    (should (eq (keymap-lookup map "v") #'gascity-session-peek-at-point))
+    (should-not (eq (keymap-lookup map "p")
+                    #'gascity-session-peek-at-point))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

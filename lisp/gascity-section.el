@@ -116,10 +116,14 @@ first section — signalling a `user-error' rather than wrapping."
   "RET" #'gascity-section-activate
   ;; Section navigation, bound here so every vui dashboard inherits it:
   ;; `N'/`P' jump between top-level sections (city/rig/…), the coarse
-  ;; counterpart to `n'/`p' line movement.  (The at-point nudge that used
-  ;; to live on `N' moves to `M' in the dashboards that bind it.)
+  ;; counterpart to `n'/`p' line movement — which are bound here too so
+  ;; every vui dashboard moves by line uniformly (the status board used
+  ;; to bind these locally).  (The at-point nudge that used to live on
+  ;; `N' moves to `M' in the dashboards that bind it.)
   "N" #'gascity-section-next
   "P" #'gascity-section-previous
+  "n" #'next-line
+  "p" #'previous-line
   ;; Bind `q' to bury here so all three vui views — the status dashboard,
   ;; the rig dashboard, and the session/polecat detail — inherit it
   ;; through this parent map.  The vui keymap chain

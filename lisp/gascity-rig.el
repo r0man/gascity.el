@@ -334,13 +334,14 @@ can never succeed.  Refuse the HQ with a clear message instead; use
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
   ;; Nudge moves off `N' (now next-section, inherited from
-  ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections.
+  ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections
+  ;; and `n'/`p' move by line (all inherited).  Peek moves off `p' to `v'.
   "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
-  "p"   #'gascity-session-peek-at-point)
+  "v"   #'gascity-session-peek-at-point)
 
 (define-derived-mode gascity-rig-dashboard-mode gascity-section-mode "GC-Rig"
   "Major mode for the gascity rig dashboard.
@@ -351,7 +352,7 @@ can never succeed.  Refuse the HQ with a clear message instead; use
   (setq truncate-lines t)
   (setq-local header-line-format
               (concat " Rig dashboard  (g refresh · RET open/tmux · i detail · b beads"
-                      " · d dired · t tmux · M/s/K/w/D/p session · N/P section · q bury)")))
+                      " · d dired · t tmux · M/s/K/w/D/v session · N/P section · q bury)")))
 
 ;;;###autoload
 (defun gascity-rig-dashboard (rig-name)

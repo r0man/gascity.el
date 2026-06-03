@@ -368,9 +368,10 @@ dashboard agent row, or a rig dashboard agent row."
   :parent gascity-section-mode-map
   "g"   #'gascity-polecat-detail-refresh
   "RET" #'gascity-session-detail-activate
-  "p"   #'gascity-session-peek-at-point
   ;; Nudge moves off `N' (now next-section, inherited from
-  ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections.
+  ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections
+  ;; and `n'/`p' move by line (all inherited).  Peek moves off `p' to `v'.
+  "v"   #'gascity-session-peek-at-point
   "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
@@ -387,7 +388,7 @@ dashboard agent row, or a rig dashboard agent row."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Agent detail  (g refresh · RET open bead · p peek"
+              (concat " Agent detail  (g refresh · RET open bead · v peek"
                       " · M nudge · D drain · d dired · t tmux · N/P section · q bury)")))
 
 (provide 'gascity-session)

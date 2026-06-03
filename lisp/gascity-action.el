@@ -415,7 +415,7 @@ With a prefix argument, capture that many trailing LINES instead of the
    ("k" "Kill runtime…" gascity-session-kill)
    ("w" "Wake…" gascity-session-wake)
    ("D" "Drain…" gascity-session-drain)
-   ("p" "Peek output…" gascity-session-peek)])
+   ("v" "Peek output…" gascity-session-peek)])
 
 (transient-define-prefix gascity-lifecycle-dispatch ()
   "Dispatch city-lifecycle actions (a hand-built command backend)."

@@ -386,15 +386,13 @@ collapse state and point); nil when BUFFER has no mounted instance."
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
   ;; Nudge moves off `N' (now next-section, inherited from
-  ;; `gascity-section-mode-map') to `M' (Message); `n'/`p' keep line
-  ;; movement, `N'/`P' jump between sections.
+  ;; `gascity-section-mode-map') to `M' (Message).  Line movement (`n'/`p')
+  ;; and section jumps (`N'/`P') are both inherited from the shared map.
   "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
-  "D"   #'gascity-session-drain-at-point
-  "n"   #'next-line
-  "p"   #'previous-line)
+  "D"   #'gascity-session-drain-at-point)
 
 (define-derived-mode gascity-dashboard-mode gascity-section-mode "GC-Status"
   "Major mode for the gascity status dashboard.
