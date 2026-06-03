@@ -68,44 +68,33 @@ Custom keyword options (stripped before reaching `defclass'):
                       the short docstring is the first sentence of
                       :documentation.
 
-This reuses beads.el's `beads-meta-extract-option',
-`beads-meta-derive-transient-name', `beads-meta-first-sentence',
-`beads-meta-current-feature-name' and `beads-meta-define-transient'."
+This is a thin wrapper over beads.el's reusable `beads-meta-defcommand'
+engine, which performs the shared class/CLI/transient codegen (the same
+engine `beads-defcommand' wraps).  gascity supplies only its
+library-specific pieces: it forwards the caller's :global-section and
+adds the NAME! bang function via :extra-forms.
+
+When no :global-section (and no explicit :transient) is given it passes
+:transient nil, so a plain command expands to just its class and NAME!
+function — as before.  The engine would otherwise auto-generate a
+transient whose derived prefix (NAME minus \"-command-\") would clobber
+gascity's hand-written view commands such as `gascity-status' and
+`gascity-rig-list'."
   (declare (indent 2))
   (let* ((gs-result (beads-meta-extract-option :global-section options))
          (global-section (car gs-result))
-         (options-1 (cdr gs-result))
-         (cli-result (beads-meta-extract-option :cli-command options-1))
-         (cli-command (car cli-result))
-         (defclass-options (cdr cli-result))
-         (final-slots (if cli-command
-                          (append slots
-                                  `((cli-command
-                                     :initform ,cli-command
-                                     :allocation :class
-                                     :documentation "CLI subcommand name.")))
-                        slots))
-         (bang-fn (intern (concat (symbol-name name) "!")))
-         (transient-name (when global-section
-                           (beads-meta-derive-transient-name name)))
-         (transient-prefix (when transient-name (symbol-name transient-name)))
-         (doc-pos (cl-position :documentation defclass-options))
-         (docstring (when doc-pos (nth (1+ doc-pos) defclass-options)))
-         (short-doc (when global-section
-                      (beads-meta-first-sentence docstring)))
-         (autoload-file (when transient-name (beads-meta-current-feature-name))))
-    `(progn
-       ,@(when (and transient-name autoload-file)
-           `((autoload ',transient-name ,autoload-file nil t)))
-       (eval-and-compile
-         (defclass ,name ,superclasses ,final-slots ,@defclass-options))
-       (defun ,bang-fn (&rest args)
-         ,(format "Execute `%s' and return its parsed result.\n\nARGS are passed to the class constructor."
-                  name)
-         (oref (gascity-command-execute (apply #',name args)) result))
-       ,@(when global-section
-           `((beads-meta-define-transient ,name ,transient-prefix
-               ,short-doc ,global-section))))))
+         (rest-options (cdr gs-result))
+         (bang-fn (intern (concat (symbol-name name) "!"))))
+    `(beads-meta-defcommand ,name ,superclasses ,slots
+       :global-section ,global-section
+       ,@(when (and (not global-section)
+                    (not (plist-member rest-options :transient)))
+           '(:transient nil))
+       :extra-forms ((defun ,bang-fn (&rest args)
+                       ,(format "Execute `%s' and return its parsed result.\n\nARGS are passed to the class constructor."
+                                name)
+                       (oref (gascity-command-execute (apply #',name args)) result)))
+       ,@rest-options)))
 
 ;;; ============================================================
 ;;; Base classes
@@ -211,10 +200,10 @@ The list starts with the executable.")
 ;;; Bridge methods for beads-meta-generated transients
 ;;; ============================================================
 ;;
-;; beads-meta-define-transient (used by gascity-defcommand's
-;; :global-section branch) generates suffixes that call the
-;; beads-command-* generics.  Delegate those to the gascity-command-*
-;; methods so generated menus drive gascity commands.
+;; beads-meta-define-transient (emitted by `beads-meta-defcommand' when
+;; gascity-defcommand forwards a :global-section) generates suffixes that
+;; call the beads-command-* generics.  Delegate those to the
+;; gascity-command-* methods so generated menus drive gascity commands.
 
 (declare-function beads-command-validate "beads-command")
 (declare-function beads-command-execute-interactive "beads-command")
