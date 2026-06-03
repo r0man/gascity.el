@@ -19,9 +19,9 @@
 ;; session list: open the agent's worktree in Dired, and attach to its
 ;; tmux session.  Both act on the "agent at point", which is resolved
 ;; from a `gascity-agent' text property (vui buffers) or the
-;; tabulated-list entry id (list buffers).  An agent is a plist:
-;;
-;;   (:name NAME :work-dir DIR :session-name TMUX :running BOOL [:socket S])
+;; tabulated-list entry id (list buffers).  An agent is a `gascity-agent'
+;; object (gascity-domain.el): name/work-dir/session-name/socket/running,
+;; read through accessors rather than `plist-get'.
 
 ;;; Code:
 
@@ -31,6 +31,7 @@
 (require 'wid-edit)
 (require 'gascity-custom)
 (require 'gascity-context)
+(require 'gascity-domain)        ; typed rig/agent objects + at-point generic
 (require 'gascity-types)         ; gascity-command-rig-list! (rig-store lookup)
 (require 'gascity-terminal)
 
@@ -191,46 +192,72 @@ socket field, read it here in preference to the inference (see gce-je4)."
         (running 'gascity-running)
         (t 'gascity-stopped)))
 
-;;; Agent at point
+;;; Object at point — one resolver, polymorphic visit (gce-fjt)
+;;
+;; Every view stamps the typed domain object it renders: vui rows carry it
+;; on a text property, tabulated lists carry it as the entry id, and a detail
+;; buffer carries its subject buffer-locally.  `gascity-object-at-point' is
+;; the single precedence ladder that recovers it; `gascity-at-point-visit'
+;; (gascity-domain.el) dispatches the default drill-in action by the object's
+;; class, replacing the per-payload-kind `cond' the activate commands carried.
+;; The per-kind resolvers below (`gascity-agent-at-point' etc.) narrow the
+;; result to one type for the action keys that act on a specific kind.
 
 (defvar-local gascity-section--agent nil
-  "The subject agent plist of a single-agent detail buffer, or nil.
+  "The subject `gascity-agent' of a single-agent detail buffer, or nil.
 The session/polecat detail view renders one agent and sets this so the
 agent actions act on the buffer's subject regardless of point.  List and
 dashboard buffers leave it nil and resolve the agent per row instead.")
 
-(defun gascity-agent-at-point ()
-  "Return the agent plist at point, or nil.
-Resolves, in order, from a `gascity-agent' text property (vui dashboard
-rows), a plist entry id in a `tabulated-list-mode' buffer (the session
-list), or the buffer-local `gascity-section--agent' subject (a
-single-agent detail buffer)."
+(defun gascity-object-at-point ()
+  "Return the typed domain object at point, or nil.
+Resolves, in order, from a `gascity-agent' text property (vui agent rows),
+a `gascity-bead' text property (vui bead rows — a bead-id string), the entry
+id of a `tabulated-list-mode' buffer (a `gascity-rig'/`gascity-agent'/
+`gascity-convoy'/`gascity-mail'/`gascity-order' for the typed lists), or the
+buffer-local `gascity-section--agent' subject (a single-agent detail buffer).
+The result is what `gascity-at-point-visit' dispatches on; the per-kind
+resolvers below narrow it to a single type."
   (or (get-text-property (point) 'gascity-agent)
-      (and (derived-mode-p 'tabulated-list-mode)
-           (let ((id (tabulated-list-get-id)))
-             (and (consp id) (keywordp (car id))
-                  (plist-member id :session-name)
-                  id)))
+      (get-text-property (point) 'gascity-bead)
+      (and (derived-mode-p 'tabulated-list-mode) (tabulated-list-get-id))
       gascity-section--agent))
+
+(cl-defmethod gascity-at-point-visit ((agent gascity-agent))
+  "Visit an agent: attach its tmux terminal (the porcelain's primary action)."
+  (gascity-agent-attach-tmux agent))
+
+(cl-defmethod gascity-at-point-visit ((id string))
+  "Visit a bead id: open it in beads.el, scoped to its store."
+  (gascity-bead-show id))
+
+;;; Agent at point
+
+(defun gascity-agent-at-point ()
+  "Return the `gascity-agent' at point, or nil.
+Narrows `gascity-object-at-point' to an agent: a `gascity-agent' text
+property (vui rows), a session-list entry id, or a detail buffer's subject.
+Rows whose object is a different type (a rig, convoy, …) yield nil."
+  (let ((obj (gascity-object-at-point)))
+    (and (gascity-agent-p obj) obj)))
 
 ;;; Agent actions
 
 (defun gascity-agent--work-dir (agent)
   "Return AGENT's working directory as a path string, or signal a `user-error'.
-Prefers the `:work-dir' recorded on the agent's session bead (its git
-worktree); when none was recorded, falls back to the live working
-directory of the agent's tmux pane (resolved from
-`:session-name'/`:socket'), mirroring gastown.  Signals a clean
-`user-error' — never an internal error — when no directory can be
-resolved or the resolved directory is missing on disk.  Shared by
-`gascity-agent-dired' and `gascity-agent-beads' so `d' and `b' resolve an
-agent's worktree identically."
-  (let* ((name (or (plist-get agent :name) "agent"))
-         (recorded (plist-get agent :work-dir))
+AGENT is a `gascity-agent'.  Prefers the `work-dir' recorded on the agent's
+session bead (its git worktree); when none was recorded, falls back to the
+live working directory of the agent's tmux pane (resolved from its
+`session-name'/`socket'), mirroring gastown.  Signals a clean `user-error'
+— never an internal error — when no directory can be resolved or the
+resolved directory is missing on disk.  Shared by `gascity-agent-dired' and
+`gascity-agent-beads' so `d' and `b' resolve an agent's worktree identically."
+  (let* ((name (or (gascity-agent-name agent) "agent"))
+         (recorded (gascity-agent-work-dir agent))
          (dir (if (and recorded (stringp recorded) (not (string-empty-p recorded)))
                   recorded
-                (gascity-terminal-pane-cwd (plist-get agent :session-name)
-                                           (plist-get agent :socket)))))
+                (gascity-terminal-pane-cwd (gascity-agent-session-name agent)
+                                           (gascity-agent-socket agent)))))
     (unless (and dir (stringp dir) (not (string-empty-p dir)))
       (user-error "No working directory recorded for %s" name))
     (unless (file-directory-p dir)
@@ -239,18 +266,18 @@ agent's worktree identically."
 
 (defun gascity-agent-dired (agent)
   "Open Dired on AGENT's working directory.
-AGENT is a plist with a `:work-dir' key; the directory is resolved by
+AGENT is a `gascity-agent'; the directory is resolved by
 `gascity-agent--work-dir' (the recorded worktree, else the live tmux pane
 cwd), which signals a clean `user-error' when none can be resolved."
   (dired (gascity-agent--work-dir agent)))
 
 (defun gascity-agent-attach-tmux (agent)
   "Attach to AGENT's tmux session in a terminal buffer.
-AGENT is a plist with `:session-name' (and optionally `:socket' and
-`:work-dir').  Delegates to `gascity-terminal-attach-tmux'."
-  (gascity-terminal-attach-tmux (plist-get agent :session-name)
-                                (plist-get agent :socket)
-                                (plist-get agent :work-dir)))
+AGENT is a `gascity-agent'; its `session-name' (and optional `socket' and
+`work-dir') drive `gascity-terminal-attach-tmux'."
+  (gascity-terminal-attach-tmux (gascity-agent-session-name agent)
+                                (gascity-agent-socket agent)
+                                (gascity-agent-work-dir agent)))
 
 (defun gascity-rig-dired (name dir)
   "Open Dired on rig NAME's local directory DIR.
@@ -293,14 +320,11 @@ recorded directory (it no-ops gracefully)."
 ;;; Bead at point — delegate display to beads.el (DESIGN.md §4.3)
 
 (defun gascity-bead-at-point ()
-  "Return the bead id at point, or nil.
-Resolves from a `gascity-bead' text property (vui detail/dashboard rows,
-stamped with the bead id string) or, in a `tabulated-list-mode' buffer
-whose entry id is a bead id string, from `tabulated-list-get-id'."
-  (or (get-text-property (point) 'gascity-bead)
-      (and (derived-mode-p 'tabulated-list-mode)
-           (let ((id (tabulated-list-get-id)))
-             (and (stringp id) (not (string-empty-p id)) id)))))
+  "Return the bead id (a string) at point, or nil.
+Narrows `gascity-object-at-point' to a `gascity-bead' text-property string
+\(vui detail/dashboard rows, stamped with the bead id)."
+  (let ((obj (gascity-object-at-point)))
+    (and (stringp obj) (not (string-empty-p obj)) obj)))
 
 (defun gascity-section-beads (data)
   "Return the bead list from a `gc bd …' JSON payload DATA.
@@ -317,18 +341,25 @@ gc emits either a bare array of beads or an object wrapping them under
 ;; view by binding `default-directory' to the rig's repo path — the
 ;; directory holding its `.beads/', which gc reports as `path'.
 
+(defun gascity-rigs ()
+  "Return the city's rigs as a list of `gascity-rig' objects.
+Decodes `gc rig list''s `rigs' vector via `beads-from-json' (the single
+decode site for rig payloads).  Signals like `gascity-command-rig-list!' on
+failure; callers that tolerate absence wrap the call in `ignore-errors'."
+  (gascity-domain-decode-list 'gascity-rig
+                              (alist-get 'rigs (gascity-command-rig-list!))))
+
 (defun gascity-beads--rig-path (rig)
   "Return the absolute store directory for RIG, or nil.
-RIG is a rig name (string) or a rig alist as returned by `gc rig
-list'/`gc rig status'.  The store directory is the rig's repo `path' (the
-directory that holds its `.beads/').  A name is resolved against
-`gascity-command-rig-list!'; any failure degrades to nil."
-  (let ((alist (cond ((and (consp rig) (not (stringp rig))) rig)
-                     ((stringp rig)
-                      (ignore-errors
-                        (seq-find (lambda (r) (equal (alist-get 'name r) rig))
-                                  (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))))))
-    (when-let* ((path (alist-get 'path alist))
+RIG is a rig name (string) or a `gascity-rig'.  The store directory is the
+rig's repo `path' (the directory that holds its `.beads/').  A name is
+resolved against `gascity-rigs'; any failure degrades to nil."
+  (let ((rig (cond ((gascity-rig-p rig) rig)
+                   ((stringp rig)
+                    (ignore-errors
+                      (seq-find (lambda (r) (equal (gascity-rig-name r) rig))
+                                (gascity-rigs)))))))
+    (when-let* ((path (and rig (gascity-rig-path rig)))
                 ((stringp path))
                 ((not (string-empty-p path))))
       (file-name-as-directory (expand-file-name path)))))
@@ -345,8 +376,8 @@ maps ID's prefix to the owning rig's store via `gascity-command-rig-list!'.
 Failures degrade to nil so callers fall back to the ambient directory."
   (when-let* ((prefix (gascity-beads--id-prefix id))
               (rig (ignore-errors
-                     (seq-find (lambda (r) (equal (alist-get 'prefix r) prefix))
-                               (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))))
+                     (seq-find (lambda (r) (equal (gascity-rig-prefix r) prefix))
+                               (gascity-rigs)))))
     (gascity-beads--rig-path rig)))
 
 (defun gascity-beads--show-in-store (id store)
@@ -405,7 +436,7 @@ another rig's database (gce-bhr).  Resolves DESIGN §9.1."
 ;;;###autoload
 (defun gascity-rig-beads (rig)
   "Open beads.el's board for RIG, scoped to that rig's bead store.
-RIG is a rig name (string) or a rig alist.  Delegates to beads.el's
+RIG is a rig name (string) or a `gascity-rig'.  Delegates to beads.el's
 project board (`beads-dashboard'), scoping it to RIG's store directory
 via its `:directory' keyword, so beads.el renders that rig's beads
 \(DESIGN.md §4.3).  Called interactively, prompts for the rig, defaulting
@@ -414,11 +445,10 @@ to the contextual one."
    (list (completing-read
           "Beads for rig: "
           (condition-case nil
-              (delq nil (mapcar (lambda (r) (alist-get 'name r))
-                                (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))
+              (delq nil (mapcar #'gascity-rig-name (gascity-rigs)))
             (gascity-error nil))
           nil nil nil nil (gascity-context-rig-name))))
-  (let ((name (if (stringp rig) rig (alist-get 'name rig)))
+  (let ((name (if (stringp rig) rig (gascity-rig-name rig)))
         (dir (gascity-beads--rig-path rig)))
     (unless dir
       (user-error "Could not resolve the bead store for rig %s" (or name "?")))
@@ -431,15 +461,15 @@ to the contextual one."
 
 (defun gascity-agent-beads (agent)
   "Open beads.el's board scoped to AGENT's worktree.
-AGENT is a plist with a `:work-dir' key — the git worktree gc records on
-its session bead.  Resolves the directory via `gascity-agent--work-dir'
+AGENT is a `gascity-agent' — its `work-dir' is the git worktree gc records
+on its session bead.  Resolves the directory via `gascity-agent--work-dir'
 \(the recorded worktree, else the live tmux pane cwd) and passes it to
 beads.el's board via its `:directory' keyword so it renders that
 worktree's `.beads/' store.  Mirrors `gascity-rig-beads' for a rig
 \(DESIGN.md §4.3); signals a clean `user-error' when no worktree resolves
 or beads.el is unavailable."
   (let ((dir (gascity-agent--work-dir agent))
-        (name (or (plist-get agent :name) "agent")))
+        (name (or (gascity-agent-name agent) "agent")))
     (unless (fboundp 'beads-dashboard)
       (require 'beads-dashboard nil t))
     (if (fboundp 'beads-dashboard)
@@ -473,27 +503,25 @@ clean `user-error' when neither is at point."
 
 (defun gascity-rig-at-point ()
   "Return the rig name at point, or nil.
-Resolves, in order, from a `gascity-rig' text property (vui buffers), the
-`name' of the rig alist that is a `gascity-rig-list-mode' entry id, or
-the `:rig' of the agent at point (so the rig dashboard opens from an
-agent row in the status dashboard or session list)."
-  (or (get-text-property (point) 'gascity-rig)
-      (and (derived-mode-p 'tabulated-list-mode)
-           (let ((id (tabulated-list-get-id)))
-             (and (consp id) (alist-get 'name id))))
-      (let ((agent (gascity-agent-at-point)))
-        (and agent (plist-get agent :rig)))))
+Narrows `gascity-object-at-point': the name of a `gascity-rig' (the rig
+list), or the rig of the agent at point (so the rig dashboard opens from an
+agent row in the status dashboard or session list).  Falls back to a
+`gascity-rig' text property — the name string a status-dashboard rig header
+carries for its keymap — when no typed object is at point."
+  (let ((obj (gascity-object-at-point)))
+    (cond ((gascity-rig-p obj) (gascity-rig-name obj))
+          ((gascity-agent-p obj) (gascity-agent-rig obj))
+          ((get-text-property (point) 'gascity-rig)))))
 
 (defun gascity-rig-at-point-hq-p ()
   "Return non-nil when the rig at point is the city HQ.
 `gc rig list' includes the city HQ as a row with `hq' set, so it shows up
 in `gascity-rig-list-mode'.  But the HQ is not a `city.toml' rig: `gc rig
-status' rejects it, so it has no rig dashboard.  Only the rig-list entry
-alist carries `hq' — the `gascity-rig' text property and an agent's `:rig'
-are bare names — so this returns nil outside the rig list."
-  (and (derived-mode-p 'tabulated-list-mode)
-       (let ((id (tabulated-list-get-id)))
-         (and (consp id) (alist-get 'hq id) t))))
+status' rejects it, so it has no rig dashboard.  Only a rig-list entry
+\(a `gascity-rig') carries `hq' — an agent's rig is a bare name — so this
+returns nil outside the rig list."
+  (let ((obj (gascity-object-at-point)))
+    (and (gascity-rig-p obj) (gascity-rig-hq obj) t)))
 
 (provide 'gascity-section)
 ;;; gascity-section.el ends here

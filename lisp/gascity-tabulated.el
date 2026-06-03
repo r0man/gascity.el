@@ -39,6 +39,7 @@
 (require 'beads-pager)            ; pure pagination arithmetic (window size / count / slice)
 (require 'gascity-custom)
 (require 'gascity-error)
+(require 'gascity-domain)             ; typed row objects (rig/session/agent/convoy/mail/order)
 (require 'gascity-section)
 (require 'gascity-command)
 (require 'gascity-types)
@@ -437,38 +438,33 @@ and adds `g' refresh, `/' filter, and `RET'."
 (defvar-local gascity-rig-list--filter nil
   "Active rig-list filter as command initargs (e.g. (:status \"running\")), or nil.")
 
-(defun gascity-rig-list--status-label (rig)
-  "Return RIG's status label: \"suspended\", \"running\", or \"stopped\"."
-  (cond ((alist-get 'suspended rig) "suspended")
-        ((alist-get 'running rig) "running")
-        (t "stopped")))
-
 (defun gascity-rig-list--status (rig)
-  "Return a propertized status cell for RIG (an alist)."
-  (propertize (gascity-rig-list--status-label rig)
-              'face (gascity-section-state-face (alist-get 'running rig)
-                                                (alist-get 'suspended rig))))
+  "Return a propertized status cell for RIG (a `gascity-rig')."
+  (propertize (gascity-rig-status-label rig)
+              'face (gascity-section-state-face (gascity-rig-running rig)
+                                                (gascity-rig-suspended rig))))
 
 (defun gascity-rig-list--match-p (rig status)
-  "Return non-nil when RIG matches STATUS (nil matches every rig)."
+  "Return non-nil when RIG (a `gascity-rig') matches STATUS (nil matches all)."
   (or (null status)
-      (string= status (gascity-rig-list--status-label rig))))
+      (string= status (gascity-rig-status-label rig))))
 
 (defun gascity-rig-list--entry (rig)
-  "Map RIG (an alist) to a tabulated-list entry."
+  "Map RIG (a `gascity-rig') to a tabulated-list entry.
+The entry id is the typed rig, so `RET'/`d'/`b' act on it."
   (list rig
-        (vector (gascity-tabulated--str (alist-get 'name rig))
-                (gascity-tabulated--str (alist-get 'prefix rig))
+        (vector (gascity-tabulated--str (gascity-rig-name rig))
+                (gascity-tabulated--str (gascity-rig-prefix rig))
                 (gascity-rig-list--status rig)
-                (gascity-tabulated--str (or (alist-get 'default_branch rig)
-                                            (and (alist-get 'hq rig) "—")))
-                (gascity-tabulated--str (alist-get 'beads rig)))))
+                (gascity-tabulated--str (or (gascity-rig-default-branch rig)
+                                            (and (gascity-rig-hq rig) "—")))
+                (gascity-tabulated--str (gascity-rig-store rig)))))
 
 (defun gascity-rig-list-dired ()
   "Open Dired on the path of the rig at point."
   (interactive)
   (let* ((rig (tabulated-list-get-id))
-         (path (and rig (alist-get 'path rig))))
+         (path (and (gascity-rig-p rig) (gascity-rig-path rig))))
     (if (and path (file-directory-p path))
         (dired path)
       (user-error "No rig directory at point"))))
@@ -480,7 +476,8 @@ and adds `g' refresh, `/' filter, and `RET'."
    "Rigs"
    (lambda ()
      (let* ((cmd (apply #'gascity-command-rig-list gascity-rig-list--filter))
-            (rigs (gascity-tabulated--vector->list
+            (rigs (gascity-domain-decode-list
+                   'gascity-rig
                    (alist-get 'rigs (oref (gascity-command-execute cmd) result)))))
        (mapcar #'gascity-rig-list--entry
                (seq-filter (lambda (r)
@@ -563,43 +560,29 @@ the rig at point.
   "Active session-list filter as command initargs, or nil.
 May carry a server-side :state and a client-side :rig substring.")
 
-(defun gascity-session-list--name (session)
-  "Return SESSION's qualified agent name.
-Prefers `agent_name' (always qualified) over `name', which degrades to
-the raw tmux id for non-active sessions."
-  (or (alist-get 'agent_name session) (alist-get 'name session)))
-
-(defun gascity-session-list--agent (session socket)
-  "Return the agent plist for SESSION (an alist) on tmux SOCKET."
-  (list :name (gascity-session-list--name session)
-        :rig (alist-get 'rig session)
-        :work-dir (alist-get 'work_dir session)
-        :session-name (alist-get 'session_name session)
-        :socket socket
-        :running (string= (gascity-tabulated--str (alist-get 'state session))
-                          "active")))
-
 (defun gascity-session-list--entry (session socket)
-  "Map SESSION (an alist) to a tabulated-list entry on tmux SOCKET.
-The entry id is the agent plist, so `d'/`t'/`RET' act on it."
-  (let* ((state (gascity-tabulated--str (alist-get 'state session)))
-         (running (string= state "active")))
-    (list (gascity-session-list--agent session socket)
-          (vector (gascity-tabulated--str (gascity-session-list--name session))
-                  (gascity-tabulated--str (alist-get 'rig session))
+  "Map SESSION (a `gascity-session') to a tabulated-list entry on tmux SOCKET.
+The entry id is the agent action object (`gascity-agent', built by
+`gascity-agent-from-session'), so `d'/`t'/`RET' act on it."
+  (let* ((state (gascity-tabulated--str (gascity-session-state session)))
+         (running (gascity-session-running-p session)))
+    (list (gascity-agent-from-session session socket)
+          (vector (gascity-tabulated--str (gascity-session-qualified-name session))
+                  (gascity-tabulated--str (gascity-session-rig session))
                   (propertize state 'face
                               (gascity-section-state-face running nil))
-                  (gascity-tabulated--str (alist-get 'provider session))
+                  (gascity-tabulated--str (gascity-session-provider session))
                   (gascity-tabulated--abbreviate-path
-                   (alist-get 'work_dir session))))))
+                   (gascity-session-work-dir session))))))
 
 (defun gascity-session-list--match-p (session rig)
   "Return non-nil when SESSION's rig contains RIG (nil/empty matches all).
-RIG is matched case-insensitively as a substring of the decoded `rig'."
+SESSION is a `gascity-session'; RIG is matched case-insensitively as a
+substring of its `rig'."
   (or (null rig) (string-empty-p rig)
       (let ((case-fold-search t))
         (string-match-p (regexp-quote rig)
-                        (gascity-tabulated--str (alist-get 'rig session))))))
+                        (gascity-tabulated--str (gascity-session-rig session))))))
 
 (defun gascity-session-list-refresh ()
   "Refresh the session list, applying the current filter.
@@ -613,7 +596,8 @@ applied client-side to the decoded rows."
      ;; rows, and `gc session list' does not carry the city name.
      (let* ((cmd (apply #'gascity-command-session-list gascity-session-list--filter))
             (socket (gascity-resolve-tmux-socket))
-            (sessions (gascity-tabulated--vector->list
+            (sessions (gascity-domain-decode-list
+                       'gascity-session
                        (alist-get 'sessions
                                   (oref (gascity-command-execute cmd) result)))))
        (mapcar (lambda (s) (gascity-session-list--entry s socket))
@@ -710,31 +694,39 @@ output of the session at point.  `n'/`p' move by line.
   "Active convoy-list filter as command initargs (e.g. (:status \"open\")), or nil.")
 
 (defun gascity-convoy-list--match-p (convoy status)
-  "Return non-nil when CONVOY matches STATUS (nil matches every convoy)."
+  "Return non-nil when CONVOY (a `gascity-convoy') matches STATUS.
+A nil STATUS matches every convoy."
   (or (null status)
-      (string= status (gascity-tabulated--str (alist-get 'status convoy)))))
+      (string= status (gascity-tabulated--str (gascity-convoy-status convoy)))))
 
 (defun gascity-convoy-list--entry (convoy)
-  "Map CONVOY (an alist) to a tabulated-list entry.
-The entry id is the convoy's bead id, so `RET' can open it in beads.el."
-  (let* ((progress (alist-get 'progress convoy))
-         (closed (or (alist-get 'closed progress) 0))
-         (total (or (alist-get 'total progress) 0)))
-    (list (gascity-tabulated--str (alist-get 'id convoy))
-          (vector (gascity-tabulated--str (alist-get 'id convoy))
-                  (gascity-tabulated--str (alist-get 'title convoy))
-                  (gascity-tabulated--str (alist-get 'status convoy))
+  "Map CONVOY (a `gascity-convoy') to a tabulated-list entry.
+The entry id is the typed convoy, so `RET' can open it (by bead id) in
+beads.el."
+  (let* ((progress (gascity-convoy-progress convoy))
+         (closed (or (and progress (gascity-progress-closed progress)) 0))
+         (total (or (and progress (gascity-progress-total progress)) 0)))
+    (list convoy
+          (vector (gascity-tabulated--str (gascity-convoy-id convoy))
+                  (gascity-tabulated--str (gascity-convoy-title convoy))
+                  (gascity-tabulated--str (gascity-convoy-status convoy))
                   (format "%d/%d" closed total)))))
 
-(defun gascity-convoy-list-visit ()
-  "Open the convoy bead at point in beads.el, scoped to its store.
+(cl-defmethod gascity-at-point-visit ((convoy gascity-convoy))
+  "Visit a convoy: open its bead in beads.el, scoped to its store.
 Convoys are city-level beads (`rig: null') listed via `gc convoy list';
-`gascity-bead-show' resolves the owning rig store by id prefix and opens
-it with `bd --directory' (-C), which works even when the shared Dolt
-server would misroute the working directory to another database (gce-bhr)."
+`gascity-bead-show' resolves the owning rig store by id prefix and opens it
+with `bd --directory' (-C), which works even when the shared Dolt server
+would misroute the working directory to another database (gce-bhr)."
+  (gascity-bead-show (gascity-convoy-id convoy)))
+
+(defun gascity-convoy-list-visit ()
+  "Open the convoy bead at point in beads.el, scoped to its store."
   (interactive)
-  (gascity-bead-show (or (tabulated-list-get-id)
-                         (user-error "No convoy at point"))))
+  (let ((convoy (tabulated-list-get-id)))
+    (if (gascity-convoy-p convoy)
+        (gascity-at-point-visit convoy)
+      (user-error "No convoy at point"))))
 
 (defun gascity-convoy-list-refresh ()
   "Refresh the convoy list, applying the current filter."
@@ -743,7 +735,8 @@ server would misroute the working directory to another database (gce-bhr)."
    "Convoys"
    (lambda ()
      (let* ((cmd (apply #'gascity-command-convoy-list gascity-convoy-list--filter))
-            (convoys (gascity-tabulated--vector->list
+            (convoys (gascity-domain-decode-list
+                      'gascity-convoy
                       (alist-get 'convoys
                                  (oref (gascity-command-execute cmd) result)))))
        (mapcar #'gascity-convoy-list--entry
@@ -816,46 +809,51 @@ server would misroute the working directory to another database (gce-bhr)."
   "Active mail-inbox filter as command initargs (e.g. (:unread t)), or nil.")
 
 (defun gascity-mail-inbox--unread-p (message)
-  "Return non-nil when MESSAGE (an alist) is unread.
+  "Return non-nil when MESSAGE (a `gascity-mail') is unread.
 `gc mail inbox --json' gives each message a required boolean `read' field
 \(v1 `mail_message' schema); unread is its negation.  JSON `false' decodes
 to nil (see `gascity-reader-parse-json'), so an unread message reads nil."
-  (not (alist-get 'read message)))
+  (not (gascity-mail-read message)))
 
 (defun gascity-mail-inbox--match-p (message unread)
-  "Return non-nil when MESSAGE passes the UNREAD-only filter.
+  "Return non-nil when MESSAGE (a `gascity-mail') passes the UNREAD-only filter.
 A nil UNREAD keeps every message."
   (or (not unread) (gascity-mail-inbox--unread-p message)))
 
 (defun gascity-mail-inbox--entry (message)
-  "Map MESSAGE (an alist) to a tabulated-list entry.
+  "Map MESSAGE (a `gascity-mail') to a tabulated-list entry.
 Columns follow the `gc mail inbox --json' v1 `mail_message' schema —
 `from', `subject', `created_at', and the boolean `read' (for the unread
-marker).  The entry id is the whole message alist, so `RET' can show
-every field."
+marker).  The entry id is the typed message, so `RET' can show every field."
   (list message
-        (vector (gascity-tabulated--str (alist-get 'from message))
-                (gascity-tabulated--str (alist-get 'subject message))
-                (gascity-tabulated--format-timestamp (alist-get 'created_at message))
+        (vector (gascity-tabulated--str (gascity-mail-from message))
+                (gascity-tabulated--str (gascity-mail-subject message))
+                (gascity-tabulated--format-timestamp (gascity-mail-created-at message))
                 (if (gascity-mail-inbox--unread-p message) "●" ""))))
 
+(cl-defmethod gascity-at-point-visit ((message gascity-mail))
+  "Visit a mail message: show its typed fields in a read-only view buffer.
+Renders the data already fetched, without contacting `gc'; each slot of the
+`gascity-mail' is shown as \"slot: value\"."
+  (let ((buf (get-buffer-create "*gascity-mail-message*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (dolist (slot (beads-meta-command-slots 'gascity-mail))
+          (insert (format "%-14s %s\n"
+                          (concat (symbol-name slot) ":")
+                          (gascity-tabulated--str (slot-value message slot)))))
+        (goto-char (point-min)))
+      (view-mode 1))
+    (pop-to-buffer buf)))
+
 (defun gascity-mail-inbox-show ()
-  "Show the fields of the mail message at point in a view buffer.
-Read-only: renders the data already fetched, without contacting `gc'."
+  "Show the fields of the mail message at point in a view buffer."
   (interactive)
   (let ((message (tabulated-list-get-id)))
-    (unless message (user-error "No message at point"))
-    (let ((buf (get-buffer-create "*gascity-mail-message*")))
-      (with-current-buffer buf
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (dolist (cell message)
-            (insert (format "%-14s %s\n"
-                            (concat (symbol-name (car cell)) ":")
-                            (gascity-tabulated--str (cdr cell)))))
-          (goto-char (point-min)))
-        (view-mode 1))
-      (pop-to-buffer buf))))
+    (if (gascity-mail-p message)
+        (gascity-at-point-visit message)
+      (user-error "No message at point"))))
 
 (defun gascity-mail-inbox-refresh ()
   "Refresh the mail inbox, applying the current filter."
@@ -864,7 +862,8 @@ Read-only: renders the data already fetched, without contacting `gc'."
    "Mail"
    (lambda ()
      (let* ((cmd (apply #'gascity-command-mail-inbox gascity-mail-inbox--filter))
-            (messages (gascity-tabulated--vector->list
+            (messages (gascity-domain-decode-list
+                       'gascity-mail
                        (alist-get 'messages
                                   (oref (gascity-command-execute cmd) result)))))
        (mapcar #'gascity-mail-inbox--entry
@@ -935,35 +934,39 @@ Read-only: renders the data already fetched, without contacting `gc'."
 May carry :enabled (enabled-only) and :type (exact type match).")
 
 (defun gascity-order-list--match-p (order enabled type)
-  "Return non-nil when ORDER passes the ENABLED-only and TYPE filters.
-ENABLED non-nil keeps only enabled orders; TYPE (when non-empty) keeps
-only orders whose `type' matches it exactly.  Nil/empty values match
-every order."
-  (and (or (not enabled) (and (alist-get 'enabled order) t))
+  "Return non-nil when ORDER (a `gascity-order') passes the ENABLED-only and
+TYPE filters.  ENABLED non-nil keeps only enabled orders; TYPE (when
+non-empty) keeps only orders whose `type' matches it exactly.  Nil/empty
+values match every order."
+  (and (or (not enabled) (and (gascity-order-enabled order) t))
        (or (null type) (string-empty-p type)
-           (string= type (gascity-tabulated--str (alist-get 'type order))))))
+           (string= type (gascity-tabulated--str (gascity-order-type order))))))
 
 (defun gascity-order-list--entry (order)
-  "Map ORDER (an alist) to a tabulated-list entry.
-The entry id is the whole order alist, so `RET' can open its source."
+  "Map ORDER (a `gascity-order') to a tabulated-list entry.
+The entry id is the typed order, so `RET' can open its source."
   (list order
-        (vector (gascity-tabulated--str (or (alist-get 'scoped_name order)
-                                            (alist-get 'name order)))
-                (gascity-tabulated--str (alist-get 'rig order))
-                (gascity-tabulated--str (alist-get 'type order))
-                (gascity-tabulated--str (alist-get 'trigger order))
-                (gascity-tabulated--str (or (alist-get 'interval order)
-                                            (alist-get 'schedule order)))
-                (if (alist-get 'enabled order) "●" ""))))
+        (vector (gascity-tabulated--str (gascity-order-display-name order))
+                (gascity-tabulated--str (gascity-order-rig order))
+                (gascity-tabulated--str (gascity-order-type order))
+                (gascity-tabulated--str (gascity-order-trigger order))
+                (gascity-tabulated--str (gascity-order-cadence order))
+                (if (gascity-order-enabled order) "●" ""))))
+
+(cl-defmethod gascity-at-point-visit ((order gascity-order))
+  "Visit an order: open its source file."
+  (let ((source (gascity-order-source order)))
+    (if (and source (file-readable-p source))
+        (find-file source)
+      (user-error "No readable source for the order at point"))))
 
 (defun gascity-order-list-visit ()
   "Open the source file of the order at point."
   (interactive)
-  (let* ((order (tabulated-list-get-id))
-         (source (and order (alist-get 'source order))))
-    (if (and source (file-readable-p source))
-        (find-file source)
-      (user-error "No readable source for the order at point"))))
+  (let ((order (tabulated-list-get-id)))
+    (if (gascity-order-p order)
+        (gascity-at-point-visit order)
+      (user-error "No order at point"))))
 
 (defun gascity-order-list-refresh ()
   "Refresh the order list, applying the current filter."
@@ -972,7 +975,8 @@ The entry id is the whole order alist, so `RET' can open its source."
    "Orders"
    (lambda ()
      (let* ((cmd (apply #'gascity-command-order-list gascity-order-list--filter))
-            (orders (gascity-tabulated--vector->list
+            (orders (gascity-domain-decode-list
+                     'gascity-order
                      (alist-get 'orders
                                 (oref (gascity-command-execute cmd) result)))))
        (mapcar #'gascity-order-list--entry

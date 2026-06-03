@@ -31,6 +31,7 @@
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
+(require 'gascity-domain)             ; typed session/agent objects
 (require 'gascity-reader)
 (require 'gascity-command)
 (require 'gascity-command-status)
@@ -69,46 +70,49 @@
                 agents)))
 
 (defun gascity-status--session-map (sessions)
-  "Return a hash table mapping a session's qualified agent name to its alist.
-SESSIONS is the vector (or list) from `gc session list'.  Keyed on
-`agent_name' — always the qualified name — with `name' as a fallback.
-`name' degrades to the raw tmux session id for non-active (e.g.
-draining) sessions, so it is not a reliable join key against a status
-agent's `qualified_name'."
+  "Return a hash table mapping a session's qualified agent name to its object.
+SESSIONS is the vector (or list) from `gc session list'; each row is decoded
+into a `gascity-session' and keyed on its qualified name
+\(`gascity-session-qualified-name', which prefers `agent_name' — always the
+qualified name — over the volatile `name').  The qualified name is the
+reliable join key against a status agent's `qualified_name'."
   (let ((map (make-hash-table :test 'equal)))
     (seq-do (lambda (s)
-              (let ((key (or (alist-get 'agent_name s) (alist-get 'name s))))
+              (let ((key (gascity-session-qualified-name s)))
                 (when key (puthash key s map))))
-            sessions)
+            (gascity-domain-decode-list 'gascity-session sessions))
     map))
 
-(defun gascity-status--agent-plist (agent rig-name session-map socket)
-  "Build the agent action plist for AGENT under RIG-NAME.
-Enriches AGENT with `work_dir'/`session_name' from SESSION-MAP, keyed on
-the agent's qualified name, and records the tmux SOCKET for attach."
+(defun gascity-status--agent (agent rig-name session-map socket)
+  "Build the action `gascity-agent' for AGENT under RIG-NAME.
+AGENT is a raw `gc status' agent entry; this bridges it to the typed action
+object, enriching it with the worktree and tmux name from the matching
+`gascity-session' in SESSION-MAP (keyed on the agent's qualified name) and
+recording the tmux SOCKET for attach."
   (let* ((qname (alist-get 'qualified_name agent))
          (session (and qname (gethash qname session-map))))
-    (list :name qname
-          :rig rig-name
-          :work-dir (and session (alist-get 'work_dir session))
-          :session-name (and session (alist-get 'session_name session))
-          :socket socket
-          :running (alist-get 'running agent))))
+    (make-instance 'gascity-agent
+                   :name qname
+                   :rig rig-name
+                   :work-dir (and session (gascity-session-work-dir session))
+                   :session-name (and session (gascity-session-session-name session))
+                   :socket socket
+                   :running (and (alist-get 'running agent) t))))
 
 ;;; Rendering (vnodes)
 
 (defun gascity-status--agent-row (agent rig-name session-map socket)
-  "Return a vnode for AGENT (an alist) under RIG-NAME.
-Stamps the row with a `gascity-agent' text property (carrying the tmux
-SOCKET) so `d'/`t'/RET act on it."
+  "Return a vnode for AGENT (a raw `gc status' agent entry) under RIG-NAME.
+Stamps the row with the action `gascity-agent' (carrying the tmux SOCKET) as
+a text property so `d'/`t'/RET act on it."
   (let* ((qname (alist-get 'qualified_name agent))
          (name (or (alist-get 'name agent) qname "?"))
          (running (alist-get 'running agent))
          (suspended (alist-get 'suspended agent))
-         (plist (gascity-status--agent-plist agent rig-name session-map socket)))
+         (obj (gascity-status--agent agent rig-name session-map socket)))
     (vui-text (format "  %s %s" (if running "●" "○") name)
               :face (gascity-section-state-face running suspended)
-              'gascity-agent plist)))
+              'gascity-agent obj)))
 
 (defun gascity-status--header-vnode (status)
   "Return the dashboard header vnode for the STATUS alist."
@@ -140,7 +144,7 @@ rig at point — see `gascity-status--toggle-rig')."
   (let* ((session-map (gascity-status--session-map (or sessions [])))
          (socket (gascity-resolve-tmux-socket (alist-get 'city_name status)))
          (agents (alist-get 'agents status))
-         (rigs (append (alist-get 'rigs status) nil))
+         (rigs (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status)))
          (city-agents (seq-filter #'gascity-status--city-agent-p agents)))
     (vui-vstack
      :spacing 1
@@ -160,10 +164,10 @@ rig at point — see `gascity-status--toggle-rig')."
                  (vui-component 'gascity-status-rig
                                 :rig rig :agents agents
                                 :session-map session-map :socket socket
-                                :collapsed (and (member (alist-get 'name rig)
+                                :collapsed (and (member (gascity-rig-name rig)
                                                         collapsed-rigs)
                                                 t)))
-               (lambda (rig) (alist-get 'name rig))
+               (lambda (rig) (gascity-rig-name rig))
                :spacing 1))))
 
 (defun gascity-status--error-vnode (message)
@@ -206,15 +210,15 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
   "Keymap placed on rig-header text so a left click toggles its collapse.")
 
 (vui-defcomponent gascity-status-rig (rig agents session-map socket collapsed)
-  "A collapsible section for one RIG and its scoped AGENTS.
+  "A collapsible section for one RIG (a `gascity-rig') and its scoped AGENTS.
 COLLAPSED is supplied by the parent from the app's `collapsed-rigs' state
 \(lifted there so the keymap can toggle the rig at point and the state
 survives a refresh).  The header is stamped with `gascity-rig' (the rig
 name, for the toggle) and `gascity-rig-dir' (its `path', for `d')."
   :render
-  (let* ((name (alist-get 'name rig))
-         (path (alist-get 'path rig))
-         (suspended (alist-get 'suspended rig))
+  (let* ((name (gascity-rig-name rig))
+         (path (gascity-rig-path rig))
+         (suspended (gascity-rig-suspended rig))
          (rig-agents (gascity-status--rig-agents name agents))
          (header (format "%s %s%s"
                          (if collapsed "▶" "▼")
@@ -296,15 +300,16 @@ name, for the toggle) and `gascity-rig-dir' (its `path', for `d')."
 
 (defun gascity-status-activate ()
   "Activate the thing at point.
-On a rig header this toggles its collapse; on an agent row it attaches the
-agent's terminal (its tmux session) — the primary action.  `i' opens the
-agent's detail/info view instead."
+On a rig header this toggles its collapse; on an agent row it visits the
+agent via `gascity-at-point-visit' — attaching its tmux terminal, the
+primary action.  `i' opens the agent's detail/info view instead."
   (interactive)
-  (cond
-   ((get-text-property (point) 'gascity-rig)
-    (gascity-status--toggle-rig (get-text-property (point) 'gascity-rig)))
-   ((get-text-property (point) 'gascity-agent) (gascity-tmux-at-point))
-   (t (user-error "Nothing to activate here"))))
+  (let ((obj (gascity-object-at-point)))
+    (cond
+     ((get-text-property (point) 'gascity-rig)
+      (gascity-status--toggle-rig (get-text-property (point) 'gascity-rig)))
+     (obj (gascity-at-point-visit obj))
+     (t (user-error "Nothing to activate here")))))
 
 (defun gascity-status-mouse-1 (event)
   "Move point to the rig header clicked by mouse EVENT and activate it.

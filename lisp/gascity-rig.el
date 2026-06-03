@@ -40,18 +40,18 @@
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
+(require 'gascity-domain)             ; typed agent + at-point visit generic
 (require 'gascity-reader)             ; gascity-reader-read-async (per-section loads)
 (require 'gascity-types)             ; gascity-command-rig-list! (rig-name completion)
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters (--str, --vector->list)
-(require 'gascity-status)            ; session-map + agent-plist join helpers
+(require 'gascity-status)            ; session-map + agent join helpers
 
 ;; Detail/list openers and agent actions live in sibling modules loaded
 ;; alongside this one; reference them by name (resolved at call time).
 (declare-function gascity-polecat-detail-at-point "gascity-session")
 (declare-function gascity-dired-at-point "gascity-section")
 (declare-function gascity-tmux-at-point "gascity-section")
-(declare-function gascity-bead-visit "gascity-section")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -109,9 +109,9 @@ City-wide orders carry a nil `rig' and are excluded."
                :face 'gascity-dim))))
 
 (defun gascity-rig--agent-row (agent rig-name session-map socket)
-  "Return a vnode for AGENT (an alist) under RIG-NAME.
-Reuses the status dashboard's session join so the row carries a
-`gascity-agent' plist (with the tmux SOCKET) for `d'/`t'/`RET'."
+  "Return a vnode for AGENT (a raw `gc status' agent entry) under RIG-NAME.
+Reuses the status dashboard's session join so the row carries the action
+`gascity-agent' (with the tmux SOCKET) for `d'/`t'/`RET'."
   (let* ((qname (alist-get 'qualified_name agent))
          (short (or (alist-get 'name agent) qname "?"))
          (running (alist-get 'running agent))
@@ -119,11 +119,11 @@ Reuses the status dashboard's session join so the row carries a
          (draining (alist-get 'draining agent))
          (state (cond (suspended "suspended") (draining "draining")
                       (running "running") (t "stopped")))
-         (plist (gascity-status--agent-plist agent rig-name session-map socket)))
+         (obj (gascity-status--agent agent rig-name session-map socket)))
     (vui-text (format "  %s %-30s %-9s %s"
                       (if running "●" "○") (or qname short) state short)
               :face (gascity-section-state-face running suspended)
-              'gascity-agent plist)))
+              'gascity-agent obj)))
 
 (defun gascity-rig--agents-vnode (agents rig-name session-map socket)
   "Return the agents-table vnode for AGENTS under RIG-NAME."
@@ -281,15 +281,16 @@ Open-bead counts belong to those sections, which read live `bd' data."
 
 (defun gascity-rig-dashboard-activate ()
   "Drill into the thing at point: a bead opens in beads.el, an agent attaches.
-On an agent row, RET attaches the agent's terminal (its tmux session) —
-the primary action; `i' opens the agent's detail/info view instead.
-Falls back to pressing a widget, else reports there is nothing to open."
+Dispatches via `gascity-at-point-visit' on the object at point — a bead id
+opens in beads.el, an agent attaches its terminal (the primary action; `i'
+opens its detail view).  Falls back to pressing a widget, else reports there
+is nothing to open."
   (interactive)
-  (cond
-   ((gascity-bead-at-point) (gascity-bead-visit))
-   ((gascity-agent-at-point) (gascity-tmux-at-point))
-   ((widget-at (point)) (widget-button-press (point)))
-   (t (user-error "Nothing to open here"))))
+  (let ((obj (gascity-object-at-point)))
+    (cond
+     (obj (gascity-at-point-visit obj))
+     ((widget-at (point)) (widget-button-press (point)))
+     (t (user-error "Nothing to open here")))))
 
 (defun gascity-rig-dashboard-refresh ()
   "Reload the rig dashboard's data, preserving point."
@@ -305,22 +306,28 @@ point — the whole dashboard is one rig."
   (gascity-rig-beads (or gascity-rig-dashboard--rig-name
                          (user-error "No rig dashboard here"))))
 
+(cl-defmethod gascity-at-point-visit ((rig gascity-rig))
+  "Visit a rig: open its dashboard.
+Refuses the city HQ (e.g. bright-lights): `gc rig list' lists it for its
+beads, but it is not a `city.toml' rig and has no rig dashboard (`gc rig
+status' rejects it, so mounting one only yields an un-retryable error
+screen).  Directs to \\[gascity-status] for the city, or `b' for its beads."
+  (when (gascity-rig-hq rig)
+    (user-error
+     "%s is the city HQ, not a rig — no rig dashboard; use M-x gascity-status, or `b' for its beads"
+     (gascity-rig-name rig)))
+  (gascity-rig-dashboard (gascity-rig-name rig)))
+
 ;;;###autoload
 (defun gascity-rig-dashboard-at-point ()
   "Open the rig dashboard for the rig at point.
-The city HQ (e.g. bright-lights) is listed by `gc rig list' for its beads,
-but it is not a `city.toml' rig and has no rig dashboard: `gc rig status'
-rejects it, so mounting one only yields an error screen whose `g' retry
-can never succeed.  Refuse the HQ with a clear message instead; use
-\\[gascity-status] for the city, or `b' for the HQ's beads."
+Dispatches through `gascity-at-point-visit', whose `gascity-rig' method
+refuses the city HQ (which has no rig dashboard) with a clear message."
   (interactive)
-  (let ((rig (gascity-rig-at-point)))
-    (unless rig (user-error "No rig at point"))
-    (when (gascity-rig-at-point-hq-p)
-      (user-error
-       "%s is the city HQ, not a rig — no rig dashboard; use M-x gascity-status, or `b' for its beads"
-       rig))
-    (gascity-rig-dashboard rig)))
+  (let ((rig (gascity-object-at-point)))
+    (if (gascity-rig-p rig)
+        (gascity-at-point-visit rig)
+      (user-error "No rig at point"))))
 
 ;;; Mode
 

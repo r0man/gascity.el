@@ -29,7 +29,9 @@
 ;; This entry point loads the porcelain: the gc -> JSON bridge
 ;; (`gascity-reader', sync and async), the command layer
 ;; (`gascity-command' + `gascity-types'), context resolution
-;; (`gascity-context'), the status dashboard (`gascity-status'), the
+;; (`gascity-context'), the typed read-payload domain objects
+;; (`gascity-domain', decoded via beads.el's `beads-from-json'), the
+;; status dashboard (`gascity-status'), the
 ;; tabulated lists (`gascity-tabulated'), the agent actions — Dired and
 ;; tmux attach via beads.el's terminal module (`gascity-terminal') — the
 ;; mutating-command dispatch (`gascity-action'), and the vui detail views:
@@ -48,6 +50,7 @@
 (require 'gascity-command)
 (require 'gascity-context)
 (require 'gascity-types)
+(require 'gascity-domain)
 (require 'gascity-command-status)
 (require 'gascity-terminal)
 (require 'gascity-section)

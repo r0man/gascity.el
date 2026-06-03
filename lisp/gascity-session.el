@@ -50,6 +50,7 @@
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
+(require 'gascity-domain)             ; typed agent (the detail view's subject)
 (require 'gascity-reader)
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters
@@ -86,12 +87,12 @@ and the `alias'."
 
 (defun gascity-session--assignee-keys (agent)
   "Return the distinct assignee strings AGENT's beads may be filed under.
-A polecat's beads are assigned to its runtime session name
-\(`:session-name'); a service agent's to its qualified name (`:name').
-Both are tried so the lookup works for either."
+AGENT is a `gascity-agent'.  A polecat's beads are assigned to its runtime
+session name (`session-name'); a service agent's to its qualified name
+\(`name').  Both are tried so the lookup works for either."
   (seq-uniq (seq-remove #'string-empty-p
-                        (delq nil (list (plist-get agent :name)
-                                        (plist-get agent :session-name))))))
+                        (delq nil (list (gascity-agent-name agent)
+                                        (gascity-agent-session-name agent))))))
 
 (defun gascity-session--bead-args (key rig)
   "Return `gc bd list' args for the beads assigned to KEY, newest first.
@@ -169,10 +170,11 @@ the merge defensive."
 ;;; Rendering (vnodes)
 
 (defun gascity-session--state-vnode (agent session)
-  "Return the state-block vnode for AGENT, enriched by its SESSION alist."
-  (let* ((name (plist-get agent :name))
+  "Return the state-block vnode for AGENT (a `gascity-agent'), enriched by
+its SESSION (a raw `gc session list' alist, or nil)."
+  (let* ((name (gascity-agent-name agent))
          (state (and session (gascity-tabulated--str (alist-get 'state session))))
-         (running (if session (equal state "active") (plist-get agent :running)))
+         (running (if session (equal state "active") (gascity-agent-running agent)))
          (suspended (and state (equal state "suspended"))))
     (vui-vstack
      (vui-hstack :spacing 1
@@ -190,12 +192,12 @@ the merge defensive."
      (vui-text (format "  worktree %s"
                        (gascity-tabulated--abbreviate-path
                         (or (and session (alist-get 'work_dir session))
-                            (plist-get agent :work-dir))))
+                            (gascity-agent-work-dir agent))))
                :face 'gascity-dim)
      (vui-text (format "  tmux %s"
                        (gascity-tabulated--str
                         (or (and session (alist-get 'session_name session))
-                            (plist-get agent :session-name))))
+                            (gascity-agent-session-name agent))))
                :face 'gascity-dim))))
 
 (defun gascity-session--mail-vnode (mail-res)
@@ -232,7 +234,7 @@ when the load succeeded but BEADS is empty."
 ;;; Component
 
 (vui-defcomponent gascity-session-detail-app (agent)
-  "Detail view of one session/polecat AGENT (a plist)."
+  "Detail view of one session/polecat AGENT (a `gascity-agent')."
   :state ((refresh-tick 0))
   :render
   ;; All async hooks run unconditionally, in order, every render, so the
@@ -244,12 +246,12 @@ when the load succeeded but BEADS is empty."
   ;; finished work a polecat has handed off, which no longer matches its
   ;; assignee.  Any of KEY0/KEY1/WORK-DIR may be nil, in which case that
   ;; thunk resolves empty without spawning gc.
-  (let* ((name (plist-get agent :name))
-         (rig (plist-get agent :rig))
+  (let* ((name (gascity-agent-name agent))
+         (rig (gascity-agent-rig agent))
          (keys (gascity-session--assignee-keys agent))
          (key0 (nth 0 keys))
          (key1 (nth 1 keys))
-         (work-dir (plist-get agent :work-dir))
+         (work-dir (gascity-agent-work-dir agent))
          (sessions-res
           (vui-use-async (list 'sessions refresh-tick name)
                          (lambda (resolve reject)
@@ -332,10 +334,10 @@ when the load succeeded but BEADS is empty."
 
 ;;;###autoload
 (defun gascity-polecat-detail (agent)
-  "Show the detail view for AGENT, a plist with at least a `:name'.
-AGENT is the action plist carried by a session-list row, a status
+  "Show the detail view for AGENT, a `gascity-agent' with at least a name.
+AGENT is the action object carried by a session-list row, a status
 dashboard agent row, or a rig dashboard agent row."
-  (let* ((name (or (plist-get agent :name) (user-error "Agent has no name")))
+  (let* ((name (or (gascity-agent-name agent) (user-error "Agent has no name")))
          (buffer-name (gascity-session-detail--buffer-name name))
          (buf (get-buffer-create buffer-name)))
     (with-current-buffer buf

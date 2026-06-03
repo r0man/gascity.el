@@ -40,6 +40,7 @@
 (require 'gascity-context)
 (require 'gascity-command)
 (require 'gascity-types)
+(require 'gascity-domain)    ; typed at-point objects (agent/rig/order)
 (require 'gascity-section)   ; gascity-agent-at-point
 (require 'gascity-tabulated) ; list refresh commands + command runners
 (require 'gascity-status)    ; gascity-status-refresh
@@ -129,7 +130,7 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
 (defun gascity-action--agent-at-point-name ()
   "Return the qualified name of the session/agent at point, or nil."
   (let ((agent (gascity-agent-at-point)))
-    (and agent (plist-get agent :name))))
+    (and agent (gascity-agent-name agent))))
 
 (defun gascity-action--read-rig (prompt)
   "Read a rig name with PROMPT, defaulting to the contextual rig."
@@ -148,14 +149,16 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
 (defun gascity-action--rig-at-point ()
   "Return the name of the rig at point, or signal a `user-error'."
   (let* ((rig (and (derived-mode-p 'tabulated-list-mode) (tabulated-list-get-id)))
-         (name (and (consp rig) (alist-get 'name rig))))
+         (name (and (gascity-rig-p rig) (gascity-rig-name rig))))
     (or name (user-error "No rig at point"))))
 
 (defun gascity-action--order-at-point ()
-  "Return the name of the order at point, or signal a `user-error'."
+  "Return the name of the order at point, or signal a `user-error'.
+Prefers the plain `name' (what `gc order run' expects) over the
+display-oriented `scoped-name'."
   (let* ((order (and (derived-mode-p 'tabulated-list-mode) (tabulated-list-get-id)))
-         (name (and (consp order) (or (alist-get 'name order)
-                                      (alist-get 'scoped_name order)))))
+         (name (and (gascity-order-p order)
+                    (or (gascity-order-name order) (gascity-order-scoped-name order)))))
     (or name (user-error "No order at point"))))
 
 (defun gascity-action--session-at-point ()

@@ -37,6 +37,11 @@ small hand-built vnode renders without mounting it in a buffer."
     (mapconcat #'gascity-test--vnode-text (vui-vnode-fragment-children vnode) " "))
    (t "")))
 
+(defun gascity-test--agent (&rest initargs)
+  "Build a `gascity-agent' from INITARGS (e.g. :name, :session-name, :socket).
+A concise stand-in for the action object a real view builds and stamps."
+  (apply #'make-instance 'gascity-agent initargs))
+
 ;;; gascity-reader-parse-json
 
 (ert-deftest gascity-test-parse-json-object ()
@@ -271,11 +276,14 @@ still degrade the list to empty rows."
 ;;; Tabulated entry builders
 
 (ert-deftest gascity-test-rig-entry ()
-  "A rig entry keeps the alist as its id and lays out columns."
-  (let* ((rig '((name . "gascity.el") (prefix . "gce") (running . t) (suspended)
-                (default_branch . "main") (beads . "initialized")))
+  "A rig entry carries the typed `gascity-rig' as its id and lays out columns."
+  (let* ((rig (gascity-domain-decode
+               'gascity-rig
+               '((name . "gascity.el") (prefix . "gce") (running . t) (suspended)
+                 (default_branch . "main") (beads . "initialized"))))
          (entry (gascity-rig-list--entry rig)))
     (should (eq (car entry) rig))
+    (should (gascity-rig-p (car entry)))
     (should (equal (gascity-test--plain-cols entry)
                    '("gascity.el" "gce" "running" "main" "initialized")))))
 
@@ -285,10 +293,14 @@ The HQ row (`bright-lights') carries `hq', as `gc rig list' marks the city
 HQ; the plain row (`gascity.el') does not.  Leaves the buffer current."
   (gascity-rig-list-mode)
   (setq tabulated-list-entries
-        (list (gascity-rig-list--entry '((name . "bright-lights") (prefix . "bl")
-                                         (hq . t)))
-              (gascity-rig-list--entry '((name . "gascity.el") (prefix . "gce")
-                                         (running . t) (default_branch . "main")))))
+        (list (gascity-rig-list--entry
+               (gascity-domain-decode 'gascity-rig
+                                      '((name . "bright-lights") (prefix . "bl")
+                                        (hq . t))))
+              (gascity-rig-list--entry
+               (gascity-domain-decode 'gascity-rig
+                                      '((name . "gascity.el") (prefix . "gce")
+                                        (running . t) (default_branch . "main"))))))
   (tabulated-list-print))
 
 (defun gascity-test--goto-rig-row (name)
@@ -345,7 +357,8 @@ This stands in for an agent row in the status or rig dashboard, where the
 action keys resolve the subject via `gascity-agent-at-point'."
   (with-temp-buffer
     (insert (propertize "agent-row"
-                        'gascity-agent '(:name "rig/agent" :session-name "tm")))
+                        'gascity-agent
+                        (gascity-test--agent :name "rig/agent" :session-name "tm")))
     (goto-char (point-min))
     (funcall thunk)))
 
@@ -356,7 +369,7 @@ view moves to `i' (`gascity-polecat-detail-at-point') — gce-4hk."
   (gascity-test--with-agent-at-point
    (lambda ()
      (let (tmux info)
-       (cl-letf (((symbol-function 'gascity-tmux-at-point) (lambda () (setq tmux t)))
+       (cl-letf (((symbol-function 'gascity-agent-attach-tmux) (lambda (_a) (setq tmux t)))
                  ((symbol-function 'gascity-polecat-detail-at-point)
                   (lambda () (setq info t))))
          (gascity-status-activate)
@@ -377,7 +390,7 @@ tmux attach, with the detail/info view on `i' — gce-4hk."
   (gascity-test--with-agent-at-point
    (lambda ()
      (let (tmux info)
-       (cl-letf (((symbol-function 'gascity-tmux-at-point) (lambda () (setq tmux t)))
+       (cl-letf (((symbol-function 'gascity-agent-attach-tmux) (lambda (_a) (setq tmux t)))
                  ((symbol-function 'gascity-polecat-detail-at-point)
                   (lambda () (setq info t))))
          (gascity-rig-dashboard-activate)
@@ -415,31 +428,39 @@ the faithful rendering of the underlying value alongside it (gce-79f)."
     ;; The fifth column still faithfully shows the store-status value.
     (should (equal (nth 4 (gascity-test--plain-cols
                            (gascity-rig-list--entry
-                            '((name . "gascity.el") (prefix . "gce") (running . t)
-                              (default_branch . "main") (beads . "initialized")))))
+                            (gascity-domain-decode
+                             'gascity-rig
+                             '((name . "gascity.el") (prefix . "gce") (running . t)
+                               (default_branch . "main") (beads . "initialized"))))))
                    "initialized"))))
 
-(ert-deftest gascity-test-session-entry-id-is-agent-plist ()
-  "A session entry's id is the agent action plist, with the passed socket."
-  (let* ((s '((agent_name . "gascity.el/gastown.furiosa") (rig . "gascity.el")
-              (state . "active") (provider . "claude")
-              (work_dir . "/wd") (session_name . "tm")))
+(ert-deftest gascity-test-session-entry-id-is-agent ()
+  "A session entry's id is the typed agent action object, with the socket."
+  (let* ((s (gascity-domain-decode
+             'gascity-session
+             '((agent_name . "gascity.el/gastown.furiosa") (rig . "gascity.el")
+               (state . "active") (provider . "claude")
+               (work_dir . "/wd") (session_name . "tm"))))
          (id (car (gascity-session-list--entry s "sock"))))
-    (should (equal (plist-get id :name) "gascity.el/gastown.furiosa"))
-    (should (equal (plist-get id :session-name) "tm"))
-    (should (equal (plist-get id :work-dir) "/wd"))
-    (should (equal (plist-get id :socket) "sock"))
-    (should (eq (plist-get id :running) t))))
+    (should (gascity-agent-p id))
+    (should (equal (gascity-agent-name id) "gascity.el/gastown.furiosa"))
+    (should (equal (gascity-agent-session-name id) "tm"))
+    (should (equal (gascity-agent-work-dir id) "/wd"))
+    (should (equal (gascity-agent-socket id) "sock"))
+    (should (eq (gascity-agent-running id) t))))
 
 (ert-deftest gascity-test-session-name-prefers-agent-name ()
   "The qualified `agent_name' is preferred over the volatile `name'.
 For non-active sessions gc sets `name' to the raw tmux id, so display
 and joins must use `agent_name'."
-  (should (equal (gascity-session-list--name
-                  '((name . "gastown__polecat-bl-xyz")
-                    (agent_name . "gascity.el/gastown.nux")))
+  (should (equal (gascity-session-qualified-name
+                  (gascity-domain-decode
+                   'gascity-session
+                   '((name . "gastown__polecat-bl-xyz")
+                     (agent_name . "gascity.el/gastown.nux"))))
                  "gascity.el/gastown.nux"))
-  (should (equal (gascity-session-list--name '((name . "rig/agent")))
+  (should (equal (gascity-session-qualified-name
+                  (gascity-domain-decode 'gascity-session '((name . "rig/agent"))))
                  "rig/agent")))
 
 (ert-deftest gascity-test-session-map-joins-on-agent-name ()
@@ -449,17 +470,21 @@ and joins must use `agent_name'."
                          (agent_name . "gascity.el/gastown.nux")
                          (work_dir . "/wd/nux") (session_name . "tm-nux"))))))
     ;; Join on the qualified name (what a status agent's qualified_name is),
-    ;; not the raw tmux id in `name'.
-    (should (equal (alist-get 'work_dir (gethash "gascity.el/gastown.nux" smap))
+    ;; not the raw tmux id in `name'.  The map stores typed `gascity-session's.
+    (should (equal (gascity-session-work-dir (gethash "gascity.el/gastown.nux" smap))
                    "/wd/nux"))
     (should (null (gethash "gastown__polecat-bl-xyz" smap)))))
 
 (ert-deftest gascity-test-convoy-entry ()
-  "A convoy entry renders progress as closed/total and ids by bead id."
-  (let* ((c '((id . "bs-0q2z") (title . "x") (status . "open")
-              (progress . ((closed . 1) (total . 3)))))
+  "A convoy entry renders progress as closed/total and carries the typed convoy.
+The nested `progress' object decodes into a `gascity-progress'."
+  (let* ((c (gascity-domain-decode
+             'gascity-convoy
+             '((id . "bs-0q2z") (title . "x") (status . "open")
+               (progress . ((closed . 1) (total . 3))))))
          (entry (gascity-convoy-list--entry c)))
-    (should (equal (car entry) "bs-0q2z"))
+    (should (gascity-convoy-p (car entry)))
+    (should (equal (gascity-convoy-id (car entry)) "bs-0q2z"))
     (should (equal (gascity-test--plain-cols entry)
                    '("bs-0q2z" "x" "open" "1/3")))))
 
@@ -473,6 +498,130 @@ non-zero `open_beads' in the input must still not surface."
                   (gascity-dolt-list--entry
                    '((name . "beads") (commits . 42) (open_beads . 7))))
                  '("beads" "42"))))
+
+;;; Typed domain objects + at-point dispatch (gce-fjt)
+
+(ert-deftest gascity-test-domain-decode-rig ()
+  "A rig payload decodes into a typed `gascity-rig'; a `false' stays nil.
+Pins the `beads'->`store' slot rename and the `(or null boolean)' coercion
+that keeps a decoded `false' (which gascity reads as nil) from becoming t."
+  (let ((r (gascity-domain-decode
+            'gascity-rig
+            '((name . "gascity.el") (prefix . "gce") (path . "/p")
+              (default_branch . "main") (beads . "initialized")
+              (running . t) (suspended . nil) (hq . nil)))))
+    (should (gascity-rig-p r))
+    (should (equal (gascity-rig-name r) "gascity.el"))
+    (should (equal (gascity-rig-prefix r) "gce"))
+    (should (equal (gascity-rig-path r) "/p"))
+    (should (equal (gascity-rig-default-branch r) "main"))
+    (should (equal (gascity-rig-store r) "initialized"))
+    (should (eq (gascity-rig-running r) t))
+    (should (null (gascity-rig-suspended r)))
+    (should (null (gascity-rig-hq r)))
+    (should (equal (gascity-rig-status-label r) "running"))))
+
+(ert-deftest gascity-test-domain-decode-session-and-agent ()
+  "A session decodes; the action agent is built from it with the tmux socket."
+  (let* ((s (gascity-domain-decode
+             'gascity-session
+             '((agent_name . "gascity.el/gastown.nux") (name . "raw-tmux")
+               (rig . "gascity.el") (state . "active")
+               (work_dir . "/wd") (session_name . "tm") (provider . "claude"))))
+         (a (gascity-agent-from-session s "sock")))
+    (should (equal (gascity-session-qualified-name s) "gascity.el/gastown.nux"))
+    (should (gascity-session-running-p s))
+    (should (gascity-agent-p a))
+    (should (equal (gascity-agent-name a) "gascity.el/gastown.nux"))
+    (should (equal (gascity-agent-rig a) "gascity.el"))
+    (should (equal (gascity-agent-work-dir a) "/wd"))
+    (should (equal (gascity-agent-session-name a) "tm"))
+    (should (equal (gascity-agent-socket a) "sock"))
+    (should (eq (gascity-agent-running a) t))))
+
+(ert-deftest gascity-test-domain-decode-convoy-nested-progress ()
+  "A convoy's nested `progress' object decodes into a `gascity-progress'.
+Exercises `beads-from-json''s recursion into a nested EIEIO class."
+  (let ((c (gascity-domain-decode
+            'gascity-convoy
+            '((id . "bs-1") (title . "t") (status . "open")
+              (progress . ((closed . 2) (total . 5)))))))
+    (should (gascity-progress-p (gascity-convoy-progress c)))
+    (should (= (gascity-progress-closed (gascity-convoy-progress c)) 2))
+    (should (= (gascity-progress-total (gascity-convoy-progress c)) 5))))
+
+(ert-deftest gascity-test-domain-decode-list ()
+  "`gascity-domain-decode-list' maps a vector to typed objects; nil/empty -> nil."
+  (let ((rigs (gascity-domain-decode-list
+               'gascity-rig (vector '((name . "a")) '((name . "b"))))))
+    (should (= (length rigs) 2))
+    (should (seq-every-p #'gascity-rig-p rigs))
+    (should (equal (mapcar #'gascity-rig-name rigs) '("a" "b"))))
+  (should (null (gascity-domain-decode-list 'gascity-rig nil)))
+  (should (null (gascity-domain-decode-list 'gascity-rig []))))
+
+(ert-deftest gascity-test-at-point-visit-dispatch ()
+  "`gascity-at-point-visit' dispatches the right action per object class."
+  ;; agent -> attach its tmux terminal
+  (let (attached)
+    (cl-letf (((symbol-function 'gascity-agent-attach-tmux)
+               (lambda (a) (setq attached (gascity-agent-name a)))))
+      (gascity-at-point-visit (gascity-test--agent :name "rig/a" :session-name "tm"))
+      (should (equal attached "rig/a"))))
+  ;; a bare bead-id string -> open in beads.el
+  (let (shown)
+    (cl-letf (((symbol-function 'gascity-bead-show) (lambda (id) (setq shown id))))
+      (gascity-at-point-visit "gce-abc")
+      (should (equal shown "gce-abc"))))
+  ;; convoy -> open its bead in beads.el
+  (let (shown)
+    (cl-letf (((symbol-function 'gascity-bead-show) (lambda (id) (setq shown id))))
+      (gascity-at-point-visit (gascity-domain-decode 'gascity-convoy '((id . "bs-9"))))
+      (should (equal shown "bs-9"))))
+  ;; rig -> open its dashboard by name; the HQ is refused
+  (let (opened)
+    (cl-letf (((symbol-function 'gascity-rig-dashboard) (lambda (n) (setq opened n))))
+      (gascity-at-point-visit
+       (gascity-domain-decode 'gascity-rig '((name . "gascity.el"))))
+      (should (equal opened "gascity.el"))
+      (should-error (gascity-at-point-visit
+                     (gascity-domain-decode 'gascity-rig '((name . "bl") (hq . t))))
+                    :type 'user-error)))
+  ;; order -> open its source file
+  (let (visited)
+    (cl-letf (((symbol-function 'find-file) (lambda (f) (setq visited f)))
+              ((symbol-function 'file-readable-p) (lambda (_) t)))
+      (gascity-at-point-visit (gascity-domain-decode 'gascity-order '((source . "/s.el"))))
+      (should (equal visited "/s.el"))))
+  ;; an object no method knows how to visit signals a `user-error'
+  (should-error (gascity-at-point-visit 42) :type 'user-error))
+
+(ert-deftest gascity-test-object-at-point ()
+  "`gascity-object-at-point' returns the typed object at point.
+It is the single ladder the per-kind resolvers narrow."
+  ;; vui agent row: a `gascity-agent' text property
+  (with-temp-buffer
+    (insert (propertize "x" 'gascity-agent (gascity-test--agent :name "rig/a")))
+    (goto-char (point-min))
+    (should (gascity-agent-p (gascity-object-at-point)))
+    (should (equal (gascity-agent-name (gascity-agent-at-point)) "rig/a")))
+  ;; vui bead row: a `gascity-bead' text-property string
+  (with-temp-buffer
+    (insert (propertize "x" 'gascity-bead "gce-1"))
+    (goto-char (point-min))
+    (should (equal (gascity-object-at-point) "gce-1"))
+    (should (equal (gascity-bead-at-point) "gce-1")))
+  ;; tabulated rig list: the entry id is the typed rig
+  (with-temp-buffer
+    (gascity-rig-list-mode)
+    (setq tabulated-list-entries
+          (list (gascity-rig-list--entry
+                 (gascity-domain-decode 'gascity-rig
+                                        '((name . "gascity.el") (prefix . "gce"))))))
+    (tabulated-list-print)
+    (goto-char (point-min))
+    (should (gascity-rig-p (gascity-object-at-point)))
+    (should (equal (gascity-rig-at-point) "gascity.el"))))
 
 ;;; Numeric column sorting (gce-94g)
 
@@ -520,7 +669,8 @@ zero-total convoy sinks to the bottom (gce-94g)."
                      (progress . ((closed . 3) (total . 100))))
                     ((id . "d") (title . "t") (status . "open")
                      (progress . ((closed . 0) (total . 0))))))
-         (entries (mapcar #'gascity-convoy-list--entry convoys))
+         (entries (mapcar #'gascity-convoy-list--entry
+                          (gascity-domain-decode-list 'gascity-convoy convoys)))
          (sorter (with-temp-buffer
                    (gascity-convoy-list-mode)
                    (nth 2 (aref tabulated-list-format 3)))))
@@ -642,19 +792,21 @@ without first moving point off the padding."
                             "gascity.el" (vector mayor furiosa)))
                    '("furiosa")))))
 
-(ert-deftest gascity-test-status-agent-plist-join ()
-  "An agent is joined to its session for work-dir, tmux name, and socket."
+(ert-deftest gascity-test-status-agent-join ()
+  "An agent is joined to its session for work-dir, tmux name, and socket.
+The join yields a typed `gascity-agent'."
   (let* ((furiosa '((name . "furiosa")
                     (qualified_name . "gascity.el/gastown.furiosa")
                     (running . t)))
          (smap (gascity-status--session-map
-                (vector '((name . "gascity.el/gastown.furiosa")
+                (vector '((agent_name . "gascity.el/gastown.furiosa")
                           (work_dir . "/wd") (session_name . "tm")))))
-         (plist (gascity-status--agent-plist furiosa "gascity.el" smap "sock")))
-    (should (equal (plist-get plist :work-dir) "/wd"))
-    (should (equal (plist-get plist :session-name) "tm"))
-    (should (equal (plist-get plist :socket) "sock"))
-    (should (eq (plist-get plist :running) t))))
+         (obj (gascity-status--agent furiosa "gascity.el" smap "sock")))
+    (should (gascity-agent-p obj))
+    (should (equal (gascity-agent-work-dir obj) "/wd"))
+    (should (equal (gascity-agent-session-name obj) "tm"))
+    (should (equal (gascity-agent-socket obj) "sock"))
+    (should (eq (gascity-agent-running obj) t))))
 
 (ert-deftest gascity-test-status-sessions-note ()
   "A sessions-load hint appears only when that load is not ready.
@@ -1141,7 +1293,7 @@ reverts the override with `set-option -u'.  All tmux ops are session-scoped."
               ((symbol-function 'file-directory-p) (lambda (_) t))
               ((symbol-function 'gascity-terminal-pane-cwd)
                (lambda (&rest _) (error "pane cwd must not be queried"))))
-      (gascity-agent-dired '(:name "a" :work-dir "/wd" :session-name "tm"))
+      (gascity-agent-dired (gascity-test--agent :name "a" :work-dir "/wd" :session-name "tm"))
       (should (equal opened "/wd")))))
 
 (ert-deftest gascity-test-agent-dired-falls-back-to-pane-cwd ()
@@ -1153,14 +1305,15 @@ reverts the override with `set-option -u'.  All tmux ops are session-scoped."
                (lambda (session socket)
                  (setq pane-args (list session socket))
                  "/live/pane")))
-      (gascity-agent-dired '(:name "a" :work-dir "" :session-name "tm" :socket "sock"))
+      (gascity-agent-dired (gascity-test--agent :name "a" :work-dir "" :session-name "tm"
+                                                :socket "sock"))
       (should (equal opened "/live/pane"))
       (should (equal pane-args '("tm" "sock"))))))
 
 (ert-deftest gascity-test-agent-dired-errors-when-unresolvable ()
   "With neither a recorded nor a live working directory, signal a `user-error'."
   (cl-letf (((symbol-function 'gascity-terminal-pane-cwd) (lambda (&rest _) nil)))
-    (should-error (gascity-agent-dired '(:name "a" :session-name "tm"))
+    (should-error (gascity-agent-dired (gascity-test--agent :name "a" :session-name "tm"))
                   :type 'user-error)))
 
 ;;; gce-x0c — `d' on a rig header opens its directory
@@ -1194,7 +1347,7 @@ directory; neither at point is a clean `user-error' (gce-x0c)."
               ((symbol-function 'file-directory-p) (lambda (_) t)))
       (with-temp-buffer
         (insert (propertize "agent"
-                            'gascity-agent '(:name "r/a" :work-dir "/wd" :session-name "tm")))
+                            'gascity-agent (gascity-test--agent :name "r/a" :work-dir "/wd" :session-name "tm")))
         (goto-char (point-min))
         (gascity-dired-at-point)
         (should (equal opened "/wd")))))
@@ -1428,14 +1581,18 @@ fall-through a future vui change could reintroduce."
   (should (null (gascity-beads--id-prefix "")))
   (should (null (gascity-beads--id-prefix nil))))
 
-(ert-deftest gascity-test-beads-rig-path-from-alist ()
-  "A rig alist's store directory is its `path', a directory name."
-  (should (equal (gascity-beads--rig-path '((name . "gascity.el")
-                                            (path . "/home/x/gascity.el")
-                                            (prefix . "gce")))
+(ert-deftest gascity-test-beads-rig-path-from-object ()
+  "A `gascity-rig''s store directory is its `path', a directory name."
+  (should (equal (gascity-beads--rig-path
+                  (gascity-domain-decode 'gascity-rig
+                                         '((name . "gascity.el")
+                                           (path . "/home/x/gascity.el")
+                                           (prefix . "gce"))))
                  "/home/x/gascity.el/"))
-  (should (null (gascity-beads--rig-path '((name . "x") (path)))))
-  (should (null (gascity-beads--rig-path '((name . "x") (path . ""))))))
+  (should (null (gascity-beads--rig-path
+                 (gascity-domain-decode 'gascity-rig '((name . "x") (path))))))
+  (should (null (gascity-beads--rig-path
+                 (gascity-domain-decode 'gascity-rig '((name . "x") (path . "")))))))
 
 (ert-deftest gascity-test-beads-rig-path-from-name ()
   "A rig name resolves to its `path' via the rig list."
@@ -1515,9 +1672,10 @@ it to `bd' as -C — this is what lets a city-level convoy open (gce-bhr)."
                  (setq seen-dir (or (plist-get args :directory) default-directory)))))
       (gascity-rig-beads "gascity.el")
       (should (equal seen-dir "/r/gce/"))
-      ;; A rig alist works directly, no rig-list lookup needed.
+      ;; A `gascity-rig' works directly, no rig-list lookup needed.
       (setq seen-dir nil)
-      (gascity-rig-beads '((name . "x") (path . "/r/x") (prefix . "x")))
+      (gascity-rig-beads (gascity-domain-decode
+                          'gascity-rig '((name . "x") (path . "/r/x") (prefix . "x"))))
       (should (equal seen-dir "/r/x/")))))
 
 (ert-deftest gascity-test-rig-beads-unresolved-errors ()
@@ -1538,7 +1696,7 @@ agent's recorded worktree, without querying the tmux pane."
               ((symbol-function 'beads-dashboard)
                (lambda (&rest args)
                  (setq seen-dir (or (plist-get args :directory) default-directory)))))
-      (gascity-agent-beads '(:name "r/a" :work-dir "/wd" :session-name "tm"))
+      (gascity-agent-beads (gascity-test--agent :name "r/a" :work-dir "/wd" :session-name "tm"))
       (should (equal seen-dir "/wd/")))))
 
 (ert-deftest gascity-test-agent-beads-falls-back-to-pane-cwd ()
@@ -1552,7 +1710,7 @@ agent's recorded worktree, without querying the tmux pane."
               ((symbol-function 'beads-dashboard)
                (lambda (&rest args)
                  (setq seen-dir (or (plist-get args :directory) default-directory)))))
-      (gascity-agent-beads '(:name "a" :work-dir "" :session-name "tm" :socket "sock"))
+      (gascity-agent-beads (gascity-test--agent :name "a" :work-dir "" :session-name "tm" :socket "sock"))
       (should (equal seen-dir "/live/pane/"))
       (should (equal pane-args '("tm" "sock"))))))
 
@@ -1561,7 +1719,7 @@ agent's recorded worktree, without querying the tmux pane."
   (cl-letf (((symbol-function 'gascity-terminal-pane-cwd) (lambda (&rest _) nil))
             ((symbol-function 'beads-dashboard)
              (lambda () (error "board must not open"))))
-    (should-error (gascity-agent-beads '(:name "a" :session-name "tm"))
+    (should-error (gascity-agent-beads (gascity-test--agent :name "a" :session-name "tm"))
                   :type 'user-error)))
 
 (ert-deftest gascity-test-beads-at-point-routes-agent-and-rig ()
@@ -1577,8 +1735,9 @@ header the rig's store; neither at point is a clean `user-error' (gce-3ip)."
                  (setq seen-dir (or (plist-get args :directory) default-directory)))))
       (with-temp-buffer
         (insert (propertize "agent"
-                            'gascity-agent '(:name "rig/a" :rig "rig"
-                                                   :work-dir "/wd" :session-name "tm")))
+                            'gascity-agent (gascity-test--agent
+                                            :name "rig/a" :rig "rig"
+                                            :work-dir "/wd" :session-name "tm")))
         (goto-char (point-min))
         (gascity-beads-at-point)
         (should (equal seen-dir "/wd/")))))
@@ -1657,12 +1816,14 @@ so a non-zero `open_beads' here must still not surface."
   "Both the qualified name and the runtime session name are candidate keys.
 Nils and empty strings are dropped; duplicates collapse."
   (should (equal (gascity-session--assignee-keys
-                  '(:name "gascity.el/gastown.furiosa"
-                          :session-name "gastown__polecat-bl-xyz"))
+                  (gascity-test--agent :name "gascity.el/gastown.furiosa"
+                                       :session-name "gastown__polecat-bl-xyz"))
                  '("gascity.el/gastown.furiosa" "gastown__polecat-bl-xyz")))
-  (should (equal (gascity-session--assignee-keys '(:name "a" :session-name "a")) '("a")))
-  (should (equal (gascity-session--assignee-keys '(:name "a" :session-name "")) '("a")))
-  (should (null (gascity-session--assignee-keys '(:name nil)))))
+  (should (equal (gascity-session--assignee-keys
+                  (gascity-test--agent :name "a" :session-name "a")) '("a")))
+  (should (equal (gascity-session--assignee-keys
+                  (gascity-test--agent :name "a" :session-name "")) '("a")))
+  (should (null (gascity-session--assignee-keys (gascity-test--agent :name nil)))))
 
 (ert-deftest gascity-test-session-bead-args ()
   "Per-key bead args filter server-side by assignee and scope to the rig."
@@ -1815,9 +1976,9 @@ bead (matched by assignee) stays on the hook."
 
 (ert-deftest gascity-test-rig-filter-match ()
   "Rig status filter matches the derived status label; nil matches every rig."
-  (let ((run '((name . "a") (running . t)))
-        (susp '((name . "b") (suspended . t)))
-        (stop '((name . "c"))))
+  (let ((run (gascity-domain-decode 'gascity-rig '((name . "a") (running . t))))
+        (susp (gascity-domain-decode 'gascity-rig '((name . "b") (suspended . t))))
+        (stop (gascity-domain-decode 'gascity-rig '((name . "c")))))
     (should (gascity-rig-list--match-p run nil))
     (should (gascity-rig-list--match-p run "running"))
     (should-not (gascity-rig-list--match-p run "suspended"))
@@ -1827,7 +1988,7 @@ bead (matched by assignee) stays on the hook."
 
 (ert-deftest gascity-test-session-filter-match ()
   "Session rig filter is a case-insensitive substring; nil/empty match all."
-  (let ((s '((rig . "gascity.el"))))
+  (let ((s (gascity-domain-decode 'gascity-session '((rig . "gascity.el")))))
     (should (gascity-session-list--match-p s nil))
     (should (gascity-session-list--match-p s ""))
     (should (gascity-session-list--match-p s "gascity"))
@@ -1836,7 +1997,7 @@ bead (matched by assignee) stays on the hook."
 
 (ert-deftest gascity-test-convoy-filter-match ()
   "Convoy status filter matches the `status' field exactly; nil matches all."
-  (let ((c '((id . "x") (status . "open"))))
+  (let ((c (gascity-domain-decode 'gascity-convoy '((id . "x") (status . "open")))))
     (should (gascity-convoy-list--match-p c nil))
     (should (gascity-convoy-list--match-p c "open"))
     (should-not (gascity-convoy-list--match-p c "closed"))))
@@ -1844,8 +2005,8 @@ bead (matched by assignee) stays on the hook."
 (ert-deftest gascity-test-mail-filter-match ()
   "Mail unread-only filter keeps unread messages; nil keeps all.
 Unread is the negation of the v1 `read' boolean (gc decodes `false' to nil)."
-  (let ((unread '((read . nil)))
-        (seen '((read . t))))
+  (let ((unread (gascity-domain-decode 'gascity-mail '((read . nil))))
+        (seen (gascity-domain-decode 'gascity-mail '((read . t)))))
     (should (gascity-mail-inbox--match-p unread nil))
     (should (gascity-mail-inbox--match-p seen nil))
     (should (gascity-mail-inbox--match-p unread t))
@@ -1853,26 +2014,31 @@ Unread is the negation of the v1 `read' boolean (gc decodes `false' to nil)."
 
 (ert-deftest gascity-test-mail-entry ()
   "A mail entry reads the v1 schema keys and marks unread rows.
-`from'/`subject'/`created_at' (date + time) become the columns, the whole
-message alist is the id, and a non-`read' message shows the ● marker."
-  (let* ((message '((id . "msg-1") (from . "mayor/") (to . "gce/furiosa")
-                    (subject . "Re: status") (body . "...")
-                    (created_at . "2026-06-01T19:18:18Z") (read . nil)))
+`from'/`subject'/`created_at' (date + time) become the columns, the typed
+message is the id, and a non-`read' message shows the ● marker."
+  (let* ((message (gascity-domain-decode
+                   'gascity-mail
+                   '((id . "msg-1") (from . "mayor/") (to . "gce/furiosa")
+                     (subject . "Re: status") (body . "...")
+                     (created_at . "2026-06-01T19:18:18Z") (read . nil))))
          (entry (gascity-mail-inbox--entry message)))
     (should (eq (car entry) message))
+    (should (gascity-mail-p (car entry)))
     (should (equal (gascity-test--plain-cols entry)
                    '("mayor/" "Re: status" "2026-06-01 19:18" "●"))))
   ;; A read message clears the marker.
   (should (equal (nth 3 (gascity-test--plain-cols
                          (gascity-mail-inbox--entry
-                          '((from . "a") (subject . "s")
-                            (created_at . "2026-06-01T00:00:00Z") (read . t)))))
+                          (gascity-domain-decode
+                           'gascity-mail
+                           '((from . "a") (subject . "s")
+                             (created_at . "2026-06-01T00:00:00Z") (read . t))))))
                  "")))
 
 (ert-deftest gascity-test-order-filter-match ()
   "Order filter ANDs enabled-only and exact type; nil/empty values match all."
-  (let ((on '((enabled . t) (type . "schedule")))
-        (off '((enabled) (type . "cooldown"))))
+  (let ((on (gascity-domain-decode 'gascity-order '((enabled . t) (type . "schedule"))))
+        (off (gascity-domain-decode 'gascity-order '((enabled) (type . "cooldown")))))
     (should (gascity-order-list--match-p on nil nil))
     (should (gascity-order-list--match-p on t nil))
     (should-not (gascity-order-list--match-p off t nil))
@@ -2032,7 +2198,7 @@ silently drops a section from N/P navigation."
                  '("Dolt")))
   ;; Session/polecat detail: state header + the two bead sections.
   (should (equal (gascity-test--section-labels
-                  (gascity-session--state-vnode '(:name "rig/agent") nil))
+                  (gascity-session--state-vnode (gascity-test--agent :name "rig/agent") nil))
                  '("Agent:")))
   (should (equal (gascity-test--section-labels
                   (gascity-session--beads-section "On hook" nil 'ready ""))
