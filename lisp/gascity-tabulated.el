@@ -36,6 +36,7 @@
 (require 'tabulated-list)
 (require 'transient)
 (require 'view)
+(require 'beads-pager)            ; pure pagination arithmetic (window size / count / slice)
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'gascity-section)
@@ -235,30 +236,29 @@ re-derived here on every refresh so it tracks the filter across `g'."
 (defvar-local gascity-tabulated--base-name ""
   "Label shown before the page indicator in the mode line.")
 
-(defun gascity-tabulated--compute-page-size ()
-  "Return how many entries fit in the current window.
-Two lines are reserved for the column header and the mode line."
-  (max 1 (- (window-body-height) 2)))
+;; Pagination arithmetic is single-sourced from beads.el's `beads-pager'
+;; pure core (gce-9aw); the helpers below only thread this buffer's local
+;; state (entry list, current page, explicit page size) into those public
+;; buffer-agnostic functions.
 
 (defun gascity-tabulated--effective-page-size ()
-  "Return the active page size, computing it from the window if unset."
-  (or gascity-tabulated--page-size (gascity-tabulated--compute-page-size)))
+  "Return the active page size, computing it from the window if unset.
+The window computation is `beads-pager-window-page-size', the single
+source of truth shared with beads.el's own list buffers."
+  (or gascity-tabulated--page-size (beads-pager-window-page-size)))
 
 (defun gascity-tabulated--total-pages ()
-  "Return the total number of pages for the current entries (at least 1)."
-  (let ((total (length gascity-tabulated--all-entries))
-        (size (gascity-tabulated--effective-page-size)))
-    (max 1 (ceiling (/ (float total) size)))))
+  "Return the total number of pages for the current entries (at least 1).
+Delegates the arithmetic to `beads-pager-page-count'."
+  (beads-pager-page-count (length gascity-tabulated--all-entries)
+                          (gascity-tabulated--effective-page-size)))
 
 (defun gascity-tabulated--page-slice ()
-  "Return the entries on `gascity-tabulated--current-page'."
-  (let* ((all gascity-tabulated--all-entries)
-         (size (gascity-tabulated--effective-page-size))
-         (start (* (1- gascity-tabulated--current-page) size))
-         (end (min (length all) (+ start size))))
-    (if (>= start (length all))
-        nil
-      (seq-subseq all start end))))
+  "Return the entries on `gascity-tabulated--current-page'.
+Delegates the slice arithmetic to `beads-pager-slice'."
+  (beads-pager-slice gascity-tabulated--all-entries
+                     gascity-tabulated--current-page
+                     (gascity-tabulated--effective-page-size)))
 
 (defun gascity-tabulated--update-mode-name ()
   "Set `mode-name' to \"BASE [page/total]\" and refresh the mode line.
@@ -329,7 +329,7 @@ the full data."
 BASE-NAME labels the mode line; ALL-ENTRIES is the full entry list."
   (setq gascity-tabulated--all-entries all-entries
         gascity-tabulated--current-page 1
-        gascity-tabulated--page-size (gascity-tabulated--compute-page-size)
+        gascity-tabulated--page-size (beads-pager-window-page-size)
         gascity-tabulated--base-name base-name)
   (gascity-tabulated--refresh-display))
 
@@ -406,7 +406,7 @@ that column's cell."
         (with-current-buffer buf
           (when (local-variable-p 'gascity-tabulated--all-entries)
             (let ((new-size (with-selected-window win
-                              (gascity-tabulated--compute-page-size))))
+                              (beads-pager-window-page-size))))
               (unless (eql new-size gascity-tabulated--page-size)
                 (setq gascity-tabulated--page-size new-size)
                 (let ((total (gascity-tabulated--total-pages)))

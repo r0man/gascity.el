@@ -36,7 +36,7 @@
 (require 'eieio)
 (require 'cl-lib)
 (require 'beads-meta)    ; slot-metadata engine + command-line builder
-(require 'beads-command) ; beads--extract-option / beads--derive-transient-name / bridge generics
+(require 'beads-command) ; bridge generics (beads-command-validate / -execute-interactive / -preview)
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'gascity-reader)
@@ -68,14 +68,14 @@ Custom keyword options (stripped before reaching `defclass'):
                       the short docstring is the first sentence of
                       :documentation.
 
-This reuses beads.el's `beads--extract-option',
-`beads--derive-transient-name', `beads--extract-first-sentence',
-`beads--current-feature-name' and `beads-meta-define-transient'."
+This reuses beads.el's `beads-meta-extract-option',
+`beads-meta-derive-transient-name', `beads-meta-first-sentence',
+`beads-meta-current-feature-name' and `beads-meta-define-transient'."
   (declare (indent 2))
-  (let* ((gs-result (beads--extract-option :global-section options))
+  (let* ((gs-result (beads-meta-extract-option :global-section options))
          (global-section (car gs-result))
          (options-1 (cdr gs-result))
-         (cli-result (beads--extract-option :cli-command options-1))
+         (cli-result (beads-meta-extract-option :cli-command options-1))
          (cli-command (car cli-result))
          (defclass-options (cdr cli-result))
          (final-slots (if cli-command
@@ -87,13 +87,13 @@ This reuses beads.el's `beads--extract-option',
                         slots))
          (bang-fn (intern (concat (symbol-name name) "!")))
          (transient-name (when global-section
-                           (beads--derive-transient-name name)))
+                           (beads-meta-derive-transient-name name)))
          (transient-prefix (when transient-name (symbol-name transient-name)))
          (doc-pos (cl-position :documentation defclass-options))
          (docstring (when doc-pos (nth (1+ doc-pos) defclass-options)))
          (short-doc (when global-section
-                      (beads--extract-first-sentence docstring)))
-         (autoload-file (when transient-name (beads--current-feature-name))))
+                      (beads-meta-first-sentence docstring)))
+         (autoload-file (when transient-name (beads-meta-current-feature-name))))
     `(progn
        ,@(when (and transient-name autoload-file)
            `((autoload ',transient-name ,autoload-file nil t)))

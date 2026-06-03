@@ -25,7 +25,6 @@
 
 ;;; Code:
 
-(require 'cl-lib)                 ; cl-letf (scope beads.el's `bd' to a store)
 (require 'seq)                    ; seq-find (section-header scan)
 (require 'beads-section)
 (require 'vui)
@@ -41,7 +40,6 @@
 ;; their providing module at call time, and guard with `fboundp'.
 (declare-function beads-show "beads-command-show")
 (declare-function beads-dashboard "beads-dashboard")
-(declare-function beads-execute "beads-command")
 
 ;;; Base mode
 
@@ -361,22 +359,15 @@ working directory to a *different* rig's database than its `.beads'
 config names, so a cross-rig or city-level bead (a convoy listed via `gc
 convoy list', say) errors with \"no issues found\" even though STORE is
 correct (gce-bhr).  `bd --directory' (-C) re-resolves the store locally
-and is not subject to that server state.  So force it: bind
-`default-directory' to STORE (so beads.el still names the buffer for the
-right project) and add `:directory' to the single `beads-command-show'
-`beads-show' issues, leaving every other call untouched.  With no STORE
-there is nothing to scope, so defer to beads.el's own resolution."
-  (let ((default-directory (or store default-directory)))
-    (if (and store (fboundp 'beads-execute))
-        (let ((base (symbol-function 'beads-execute)))
-          (cl-letf (((symbol-function 'beads-execute)
-                     (lambda (class &rest args)
-                       (apply base class
-                              (if (eq class 'beads-command-show)
-                                  (append args (list :directory store))
-                                args)))))
-            (beads-show id)))
-      (beads-show id))))
+and is not subject to that server state, so pass STORE through
+`beads-show''s `:directory' keyword to force it.  `default-directory' is
+still bound to STORE so beads.el names the detail buffer for the right
+project.  With no STORE there is nothing to scope, so defer to beads.el's
+own resolution."
+  (if store
+      (let ((default-directory store))
+        (beads-show id :directory store))
+    (beads-show id)))
 
 (defun gascity-bead-show (id &optional directory)
   "Open bead ID in beads.el, scoped to its rig's bead store.
@@ -415,10 +406,10 @@ another rig's database (gce-bhr).  Resolves DESIGN §9.1."
 (defun gascity-rig-beads (rig)
   "Open beads.el's board for RIG, scoped to that rig's bead store.
 RIG is a rig name (string) or a rig alist.  Delegates to beads.el's
-project board (`beads-dashboard') with `default-directory' bound to
-RIG's store directory, so beads.el renders that rig's beads (DESIGN.md
-§4.3).  Called interactively, prompts for the rig, defaulting to the
-contextual one."
+project board (`beads-dashboard'), scoping it to RIG's store directory
+via its `:directory' keyword, so beads.el renders that rig's beads
+\(DESIGN.md §4.3).  Called interactively, prompts for the rig, defaulting
+to the contextual one."
   (interactive
    (list (completing-read
           "Beads for rig: "
@@ -434,8 +425,7 @@ contextual one."
     (unless (fboundp 'beads-dashboard)
       (require 'beads-dashboard nil t))
     (if (fboundp 'beads-dashboard)
-        (let ((default-directory dir))
-          (beads-dashboard))
+        (beads-dashboard :directory dir)
       (user-error "beads.el is not available to show beads for %s"
                   (or name "?")))))
 
@@ -443,8 +433,8 @@ contextual one."
   "Open beads.el's board scoped to AGENT's worktree.
 AGENT is a plist with a `:work-dir' key — the git worktree gc records on
 its session bead.  Resolves the directory via `gascity-agent--work-dir'
-\(the recorded worktree, else the live tmux pane cwd), binds
-`default-directory' to it, and calls beads.el's board so it renders that
+\(the recorded worktree, else the live tmux pane cwd) and passes it to
+beads.el's board via its `:directory' keyword so it renders that
 worktree's `.beads/' store.  Mirrors `gascity-rig-beads' for a rig
 \(DESIGN.md §4.3); signals a clean `user-error' when no worktree resolves
 or beads.el is unavailable."
@@ -453,8 +443,7 @@ or beads.el is unavailable."
     (unless (fboundp 'beads-dashboard)
       (require 'beads-dashboard nil t))
     (if (fboundp 'beads-dashboard)
-        (let ((default-directory (file-name-as-directory (expand-file-name dir))))
-          (beads-dashboard))
+        (beads-dashboard :directory (file-name-as-directory (expand-file-name dir)))
       (user-error "beads.el is not available to show beads for %s" name))))
 
 ;;;###autoload

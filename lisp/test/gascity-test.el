@@ -1465,7 +1465,7 @@ fall-through a future vui change could reintroduce."
                (lambda (&rest _)
                  '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
               ((symbol-function 'beads-show)
-               (lambda (id) (setq seen-id id seen-dir default-directory))))
+               (lambda (id &rest _) (setq seen-id id seen-dir default-directory))))
       ;; Prefix resolution picks the owning rig's store.
       (gascity-bead-show "gce-afq")
       (should (equal seen-id "gce-afq"))
@@ -1486,28 +1486,23 @@ fall-through a future vui change could reintroduce."
 (ert-deftest gascity-test-bead-show-passes-directory ()
   "`gascity-bead-show' makes beads.el resolve the store with `--directory' (-C).
 beads.el's cwd-mode `bd' can be misrouted by the shared Dolt server, so the
-store is passed explicitly on the one `beads-command-show' that `beads-show'
-issues — this is what lets a city-level convoy open (gce-bhr)."
-  (let (exec-call seen-dir)
+store is handed to `beads-show' via its `:directory' keyword, which forwards
+it to `bd' as -C — this is what lets a city-level convoy open (gce-bhr)."
+  (let (seen-dir seen-directory)
     (cl-letf (((symbol-function 'gascity-command-rig-list!)
                (lambda (&rest _)
                  '((rigs . [((name . "example-town-cl") (path . "/r/bs") (prefix . "bs"))]))))
-              ;; Record the command class and args beads.el is asked to run.
-              ((symbol-function 'beads-execute)
-               (lambda (class &rest args) (setq exec-call (cons class args))))
-              ;; Stand in for beads.el's `beads-show': capture the directory it
-              ;; runs in and issue the one `beads-command-show' the real one does.
+              ;; Capture the directory beads.el runs in (for buffer naming) and
+              ;; the `:directory' it is told to scope `bd' to.
               ((symbol-function 'beads-show)
-               (lambda (id)
-                 (setq seen-dir default-directory)
-                 (beads-execute 'beads-command-show :issue-ids (list id)
-                                :include-dependents t))))
+               (lambda (_id &rest args)
+                 (setq seen-dir default-directory
+                       seen-directory (plist-get args :directory)))))
       (gascity-bead-show "bs-0q2z")
       ;; Buffer stays scoped to the prefix-routed store for naming...
       (should (equal seen-dir "/r/bs/"))
       ;; ...and the show carries `:directory' so `bd' uses -C, not cwd-mode.
-      (should (eq (car exec-call) 'beads-command-show))
-      (should (equal (plist-get (cdr exec-call) :directory) "/r/bs/")))))
+      (should (equal seen-directory "/r/bs/")))))
 
 (ert-deftest gascity-test-rig-beads-scopes-default-directory ()
   "`gascity-rig-beads' opens the board with `default-directory' at the store."
@@ -1516,7 +1511,8 @@ issues — this is what lets a city-level convoy open (gce-bhr)."
                (lambda (&rest _)
                  '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
               ((symbol-function 'beads-dashboard)
-               (lambda () (setq seen-dir default-directory))))
+               (lambda (&rest args)
+                 (setq seen-dir (or (plist-get args :directory) default-directory)))))
       (gascity-rig-beads "gascity.el")
       (should (equal seen-dir "/r/gce/"))
       ;; A rig alist works directly, no rig-list lookup needed.
@@ -1540,7 +1536,8 @@ agent's recorded worktree, without querying the tmux pane."
               ((symbol-function 'gascity-terminal-pane-cwd)
                (lambda (&rest _) (error "pane cwd must not be queried")))
               ((symbol-function 'beads-dashboard)
-               (lambda () (setq seen-dir default-directory))))
+               (lambda (&rest args)
+                 (setq seen-dir (or (plist-get args :directory) default-directory)))))
       (gascity-agent-beads '(:name "r/a" :work-dir "/wd" :session-name "tm"))
       (should (equal seen-dir "/wd/")))))
 
@@ -1553,7 +1550,8 @@ agent's recorded worktree, without querying the tmux pane."
                  (setq pane-args (list session socket))
                  "/live/pane"))
               ((symbol-function 'beads-dashboard)
-               (lambda () (setq seen-dir default-directory))))
+               (lambda (&rest args)
+                 (setq seen-dir (or (plist-get args :directory) default-directory)))))
       (gascity-agent-beads '(:name "a" :work-dir "" :session-name "tm" :socket "sock"))
       (should (equal seen-dir "/live/pane/"))
       (should (equal pane-args '("tm" "sock"))))))
@@ -1575,7 +1573,8 @@ header the rig's store; neither at point is a clean `user-error' (gce-3ip)."
               ((symbol-function 'gascity-terminal-pane-cwd)
                (lambda (&rest _) (error "pane cwd must not be queried")))
               ((symbol-function 'beads-dashboard)
-               (lambda () (setq seen-dir default-directory))))
+               (lambda (&rest args)
+                 (setq seen-dir (or (plist-get args :directory) default-directory)))))
       (with-temp-buffer
         (insert (propertize "agent"
                             'gascity-agent '(:name "rig/a" :rig "rig"
@@ -1589,7 +1588,8 @@ header the rig's store; neither at point is a clean `user-error' (gce-3ip)."
                (lambda (&rest _)
                  '((rigs . [((name . "rig") (path . "/rig/store") (prefix . "r"))]))))
               ((symbol-function 'beads-dashboard)
-               (lambda () (setq seen-dir default-directory))))
+               (lambda (&rest args)
+                 (setq seen-dir (or (plist-get args :directory) default-directory)))))
       (with-temp-buffer
         (insert (propertize "▼ rig" 'gascity-rig "rig"))
         (goto-char (point-min))
