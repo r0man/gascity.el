@@ -31,8 +31,8 @@
 ;; at point or attaches the agent at point's terminal, while `i' opens an
 ;; agent's detail view; `b' opens the rig's whole bead store as a
 ;; beads.el board (DESIGN.md §4.3); the agent action keys
-;; (`d'/`t'/`N'/`s'/`K'/`w'/`D'/`p') match the status dashboard and
-;; session list.
+;; (`d'/`t'/`M'/`s'/`K'/`w'/`D'/`p') match the status dashboard and
+;; session list, and `N'/`P' jump between the dashboard's sections.
 
 ;;; Code:
 
@@ -99,7 +99,7 @@ City-wide orders carry a nil `rig' and are excluded."
          (beads (alist-get 'beads rig)))
     (vui-vstack
      (vui-hstack :spacing 1
-                 (vui-text "Rig:" :face 'gascity-header)
+                 (vui-text "Rig:" :face 'gascity-header 'gascity-section t)
                  (vui-text (or name "?")
                            :face (if suspended 'gascity-suspended 'gascity-rig))
                  (when suspended (vui-text "(suspended)" :face 'gascity-suspended)))
@@ -131,7 +131,8 @@ Reuses the status dashboard's session join so the row carries a
                         (gascity-rig--agent-row a rig-name session-map socket))
                       (append agents nil))))
     (apply #'vui-vstack
-           (vui-text (format "Agents (%d)" (length rows)) :face 'gascity-header)
+           (vui-text (format "Agents (%d)" (length rows))
+                     :face 'gascity-header 'gascity-section t)
            (or rows (list (vui-text "  (no agents)" :face 'gascity-dim))))))
 
 (defun gascity-rig--bead-row (bead)
@@ -147,7 +148,8 @@ Reuses the status dashboard's session join so the row carries a
 RES is a `vui-use-async' plist; while pending or on error the section
 degrades to a dim placeholder rather than blanking the dashboard."
   (apply #'vui-vstack
-         (vui-text (format "%s (%d)" title (length beads)) :face 'gascity-header)
+         (vui-text (format "%s (%d)" title (length beads))
+                   :face 'gascity-header 'gascity-section t)
          (pcase (plist-get res :status)
            ('pending (list (vui-text "  loading…" :face 'gascity-dim)))
            ('error   (list (vui-text "  (unavailable)" :face 'gascity-dim)))
@@ -157,7 +159,8 @@ degrades to a dim placeholder rather than blanking the dashboard."
 (defun gascity-rig--orders-vnode (orders res)
   "Return the orders-section vnode for ORDERS, guarded by async RES."
   (apply #'vui-vstack
-         (vui-text (format "Orders (%d)" (length orders)) :face 'gascity-header)
+         (vui-text (format "Orders (%d)" (length orders))
+                   :face 'gascity-header 'gascity-section t)
          (pcase (plist-get res :status)
            ('pending (list (vui-text "  loading…" :face 'gascity-dim)))
            ('error   (list (vui-text "  (unavailable)" :face 'gascity-dim)))
@@ -179,7 +182,7 @@ that metric reads 0 for every database in practice, so rendering it here
 contradicted the Ready/In-progress bead sections shown just above (gce-ziz).
 Open-bead counts belong to those sections, which read live `bd' data."
   (vui-vstack
-   (vui-text "Dolt" :face 'gascity-header)
+   (vui-text "Dolt" :face 'gascity-header 'gascity-section t)
    (pcase (plist-get res :status)
      ('pending (vui-text "  loading…" :face 'gascity-dim))
      ('error   (vui-text "  (unavailable)" :face 'gascity-dim))
@@ -270,7 +273,8 @@ Open-bead counts belong to those sections, which read live `bd' data."
          (gascity-rig--orders-vnode orders orders-res)
          (gascity-rig--dolt-vnode db dolt-res)
          (vui-text (concat "g refresh · RET open/tmux · i detail · b beads · "
-                           "d dired · t tmux · N/s/K/w/D session · p peek · q bury")
+                           "d dired · t tmux · M/s/K/w/D session · p peek · "
+                           "N/P section · q bury")
                    :face 'gascity-dim)))))))
 
 ;;; Commands
@@ -329,7 +333,9 @@ can never succeed.  Refuse the HQ with a clear message instead; use
   "b"   #'gascity-rig-dashboard-beads
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
-  "N"   #'gascity-session-nudge-at-point
+  ;; Nudge moves off `N' (now next-section, inherited from
+  ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections.
+  "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
@@ -345,7 +351,7 @@ can never succeed.  Refuse the HQ with a clear message instead; use
   (setq truncate-lines t)
   (setq-local header-line-format
               (concat " Rig dashboard  (g refresh · RET open/tmux · i detail · b beads"
-                      " · d dired · t tmux · N/s/K/w/D/p session · q bury)")))
+                      " · d dired · t tmux · M/s/K/w/D/p session · N/P section · q bury)")))
 
 ;;;###autoload
 (defun gascity-rig-dashboard (rig-name)

@@ -1897,5 +1897,118 @@ refresh — so it tracks the filter across `g' and clears with `/ c'."
     (should (equal mode-name "Things [1/1]"))
     (should (null gascity-tabulated--filter-description))))
 
+;;; gce-xkr — N/P jump between top-level sections (city/rig/…)
+
+(defun gascity-test--section-labels (vnode)
+  "Return the text of VNODE-subtree nodes carrying the `gascity-section' prop.
+Walks the vnode tree the dashboards build and collects the content of
+every text node stamped as a navigable section header — so a test can
+assert which headers a render helper marks, without mounting a buffer."
+  (cond
+   ((null vnode) nil)
+   ((vui-vnode-text-p vnode)
+    (and (plist-get (vui-vnode-text-properties vnode) 'gascity-section)
+         (list (vui-vnode-text-content vnode))))
+   ((vui-vnode-vstack-p vnode)
+    (mapcan #'gascity-test--section-labels (vui-vnode-vstack-children vnode)))
+   ((vui-vnode-hstack-p vnode)
+    (mapcan #'gascity-test--section-labels (vui-vnode-hstack-children vnode)))
+   ((vui-vnode-fragment-p vnode)
+    (mapcan #'gascity-test--section-labels (vui-vnode-fragment-children vnode)))
+   (t nil)))
+
+(ert-deftest gascity-test-section-nav-walks-headers ()
+  "`N'/`P' jump between `gascity-section' headers and stop (no wrap) at the ends.
+Stands in for a rendered dashboard: header lines carry the
+`gascity-section' text property; content and footer rows do not.  From a
+content row, `P' lands on the section above and `N' on the one below."
+  (with-temp-buffer
+    (insert (propertize "City" 'gascity-section t) "\n")
+    (insert "  o agent\n")
+    (insert (propertize "rig-a" 'gascity-section t) "\n")
+    (insert "  o pol\n")
+    (insert (propertize "rig-b" 'gascity-section t) "\n")
+    (insert "footer (not a section)\n")
+    (cl-flet ((line () (string-trim (thing-at-point 'line t))))
+      ;; Forward from the first header, stopping at the last.
+      (goto-char (point-min))
+      (should (equal (line) "City"))
+      (gascity-section-next) (should (equal (line) "rig-a"))
+      (gascity-section-next) (should (equal (line) "rig-b"))
+      (should-error (gascity-section-next) :type 'user-error)
+      (should (equal (line) "rig-b"))      ; point unmoved when it stops
+      ;; Backward, symmetric.
+      (gascity-section-previous) (should (equal (line) "rig-a"))
+      (gascity-section-previous) (should (equal (line) "City"))
+      (should-error (gascity-section-previous) :type 'user-error)
+      (should (equal (line) "City"))
+      ;; From a content row: `P' -> the section above, `N' -> the one below.
+      (goto-char (point-min)) (forward-line 1)
+      (should (equal (line) "o agent"))
+      (gascity-section-previous) (should (equal (line) "City"))
+      (goto-char (point-min)) (forward-line 1)
+      (gascity-section-next) (should (equal (line) "rig-a"))
+      ;; From the footer (below the last header): `P' -> last header, `N' stops.
+      (goto-char (point-max))
+      (gascity-section-previous) (should (equal (line) "rig-b"))
+      (goto-char (point-max))
+      (should-error (gascity-section-next) :type 'user-error))))
+
+(ert-deftest gascity-test-section-headers-stamped ()
+  "Each dashboard stamps its top-level header lines with `gascity-section'.
+This is what `gascity-section-next'/`-previous' walk, so a missing stamp
+silently drops a section from N/P navigation."
+  ;; Rig dashboard: header, agents, beads, orders, dolt.
+  (should (equal (gascity-test--section-labels
+                  (gascity-rig--header-vnode '((name . "gce")) "bl"))
+                 '("Rig:")))
+  (should (equal (gascity-test--section-labels
+                  (gascity-rig--agents-vnode
+                   [] "gce" (make-hash-table :test 'equal) nil))
+                 '("Agents (0)")))
+  (should (equal (gascity-test--section-labels
+                  (gascity-rig--beads-section "Ready" nil '(:status ready)))
+                 '("Ready (0)")))
+  (should (equal (gascity-test--section-labels
+                  (gascity-rig--orders-vnode nil '(:status ready)))
+                 '("Orders (0)")))
+  (should (equal (gascity-test--section-labels
+                  (gascity-rig--dolt-vnode nil '(:status ready)))
+                 '("Dolt")))
+  ;; Session/polecat detail: state header + the two bead sections.
+  (should (equal (gascity-test--section-labels
+                  (gascity-session--state-vnode '(:name "rig/agent") nil))
+                 '("Agent:")))
+  (should (equal (gascity-test--section-labels
+                  (gascity-session--beads-section "On hook" nil 'ready ""))
+                 '("On hook (0)")))
+  ;; Status dashboard header (the city line).
+  (should (equal (gascity-test--section-labels
+                  (gascity-status--header-vnode '((city_name . "bl"))))
+                 '("Gas City:"))))
+
+(ert-deftest gascity-test-section-nav-keys ()
+  "`N'/`P' are section nav in the shared map; dashboards inherit them, nudge -> `M'.
+The at-point nudge that lived on `N' moves to `M' (Message) so `N'/`P'
+can be section navigation, bound once on the shared parent map and
+inherited by every vui dashboard.  The flat session list has no sections,
+so it only relocates nudge to `M' (it does not inherit the shared map)."
+  ;; Shared parent map binds the navigation directly.
+  (should (eq (keymap-lookup gascity-section-mode-map "N") #'gascity-section-next))
+  (should (eq (keymap-lookup gascity-section-mode-map "P") #'gascity-section-previous))
+  ;; The three vui dashboards inherit N/P (no longer shadowed by nudge) and
+  ;; bind the relocated nudge on M.
+  (dolist (map (list gascity-dashboard-mode-map
+                     gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map))
+    (should (eq (keymap-lookup map "N") #'gascity-section-next))
+    (should (eq (keymap-lookup map "P") #'gascity-section-previous))
+    (should (eq (keymap-lookup map "M") #'gascity-session-nudge-at-point)))
+  ;; The session list keeps nudge reachable (on M) but binds no section nav.
+  (should (eq (keymap-lookup gascity-session-list-mode-map "M")
+              #'gascity-session-nudge-at-point))
+  (should-not (eq (keymap-lookup gascity-session-list-mode-map "N")
+                  #'gascity-session-nudge-at-point)))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

@@ -122,7 +122,7 @@ SOCKET) so `d'/`t'/RET act on it."
          (total-agents (or (and summary (alist-get 'total_agents summary)) 0)))
     (vui-vstack
      (vui-hstack :spacing 1
-                 (vui-text "Gas City:" :face 'gascity-header)
+                 (vui-text "Gas City:" :face 'gascity-header 'gascity-section t)
                  (vui-text (or city "?") :face 'gascity-city))
      (vui-text (format "  controller %s · health %s · agents %s/%s running"
                        (if c-running "up" "down")
@@ -148,7 +148,7 @@ rig at point — see `gascity-status--toggle-rig')."
      (gascity-status--sessions-note-vnode sessions-state sessions-error)
      (when city-agents
        (apply #'vui-vstack
-              (vui-text "City" :face 'gascity-header)
+              (vui-text "City" :face 'gascity-header 'gascity-section t)
               (mapcar (lambda (a)
                         (gascity-status--agent-row a nil session-map socket))
                       city-agents)))
@@ -225,6 +225,7 @@ name, for the toggle) and `gascity-rig-dir' (its `path', for `d')."
                :face (if suspended 'gascity-suspended 'gascity-rig)
                'gascity-rig name
                'gascity-rig-dir path
+               'gascity-section t
                'mouse-face 'highlight
                'keymap gascity-status-header-keymap)
      (unless collapsed
@@ -361,7 +362,10 @@ collapse state and point); nil when BUFFER has no mounted instance."
   "b"   #'gascity-beads-at-point
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
-  "N"   #'gascity-session-nudge-at-point
+  ;; Nudge moves off `N' (now next-section, inherited from
+  ;; `gascity-section-mode-map') to `M' (Message); `n'/`p' keep line
+  ;; movement, `N'/`P' jump between sections.
+  "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
@@ -378,7 +382,7 @@ collapse state and point); nil when BUFFER has no mounted instance."
   (setq truncate-lines t)
   (setq-local header-line-format
               (concat " Gas City  (g refresh · RET tmux/toggle · i detail · b beads"
-                      " · d dired · t tmux · N/s/K/w/D session · q bury)")))
+                      " · d dired · t tmux · M/s/K/w/D session · N/P section · q bury)")))
 
 ;;;###autoload
 (defun gascity-status ()

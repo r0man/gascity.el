@@ -657,7 +657,10 @@ applied client-side to the decoded rows."
   "t"   #'gascity-tmux-at-point
   "RET" #'gascity-tmux-at-point
   "i"   #'gascity-polecat-detail-at-point
-  "N"   #'gascity-session-nudge-at-point
+  ;; Nudge is `M' (Message) here too, matching the vui dashboards where
+  ;; `N' became next-section; this flat list has no sections, so `N'/`P'
+  ;; are simply unbound (it does not inherit `gascity-section-mode-map').
+  "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
@@ -668,7 +671,7 @@ applied client-side to the decoded rows."
   "Major mode listing the city's agent sessions.
 `RET' (or `t') attaches to the session's tmux session — the primary
 action; `i' opens the session/polecat detail view; `d' opens its
-worktree in Dired.  `N' nudges (sends a message), `s' suspends, `K'
+worktree in Dired.  `M' nudges (sends a message), `s' suspends, `K'
 force-kills the runtime of, `w' wakes, `D' drains, and `p' peeks at the
 output of the session at point.
 \\{gascity-session-list-mode-map}"

@@ -277,7 +277,7 @@ data-tick for expensive derivations.
   (a broad window buries an agent's beads under a town's closed order beads),
   plus — since a polecat's finished work is reassigned to the refinery, matching
   no key — recent beads carrying a `work_dir` nested under the agent's worktree,
-  with inline `p` peek / `N` nudge / `D` drain / `d` dired / `t` tmux actions on
+  with inline `p` peek / `M` nudge / `D` drain / `d` dired / `t` tmux actions on
   the subject. `RET` from the rig list, session list, and status dashboard opens
   these instead of the former Dired/`beads-show` stand-ins. Adds `peek`
   (read-only output capture) and `runtime drain` to the command surface.

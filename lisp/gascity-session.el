@@ -39,9 +39,10 @@
 ;;
 ;; The action keys act on the buffer's subject agent (set buffer-locally
 ;; via `gascity-section--agent', so `gascity-agent-at-point' resolves it
-;; anywhere in the buffer): `p' peeks at recent output, `N' nudges, `D'
+;; anywhere in the buffer): `p' peeks at recent output, `M' nudges, `D'
 ;; drains, `s' suspends, `K' kills, `w' wakes, `d' opens the worktree in
-;; Dired, `t' attaches to tmux.  `g' refreshes in place.
+;; Dired, `t' attaches to tmux.  `g' refreshes in place; `N'/`P' jump
+;; between the view's sections.
 
 ;;; Code:
 
@@ -175,7 +176,7 @@ the merge defensive."
          (suspended (and state (equal state "suspended"))))
     (vui-vstack
      (vui-hstack :spacing 1
-                 (vui-text "Agent:" :face 'gascity-header)
+                 (vui-text "Agent:" :face 'gascity-header 'gascity-section t)
                  (vui-text (or name "?")
                            :face (gascity-section-state-face running suspended)))
      (vui-text (format "  state %s · provider %s · attached %s · last active %s"
@@ -220,7 +221,8 @@ the merge defensive."
 STATUS is `pending', `error', or `ready'.  EMPTY-MSG is shown (dimmed)
 when the load succeeded but BEADS is empty."
   (apply #'vui-vstack
-         (vui-text (format "%s (%d)" title (length beads)) :face 'gascity-header)
+         (vui-text (format "%s (%d)" title (length beads))
+                   :face 'gascity-header 'gascity-section t)
          (pcase status
            ('pending (list (vui-text "  loading…" :face 'gascity-dim)))
            ('error   (list (vui-text "  (unavailable)" :face 'gascity-dim)))
@@ -308,8 +310,8 @@ when the load succeeded but BEADS is empty."
                                      "idle — no work on hook")
      (gascity-session--beads-section "Recent history" history beads-status
                                      "no recent beads")
-     (vui-text (concat "g refresh · RET open bead · p peek · N nudge · D drain · "
-                       "d dired · t tmux · q bury")
+     (vui-text (concat "g refresh · RET open bead · p peek · M nudge · D drain · "
+                       "d dired · t tmux · N/P section · q bury")
                :face 'gascity-dim))))
 
 ;;; Commands
@@ -367,7 +369,9 @@ dashboard agent row, or a rig dashboard agent row."
   "g"   #'gascity-polecat-detail-refresh
   "RET" #'gascity-session-detail-activate
   "p"   #'gascity-session-peek-at-point
-  "N"   #'gascity-session-nudge-at-point
+  ;; Nudge moves off `N' (now next-section, inherited from
+  ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections.
+  "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
@@ -384,7 +388,7 @@ dashboard agent row, or a rig dashboard agent row."
   (setq truncate-lines t)
   (setq-local header-line-format
               (concat " Agent detail  (g refresh · RET open bead · p peek"
-                      " · N nudge · D drain · d dired · t tmux · q bury)")))
+                      " · M nudge · D drain · d dired · t tmux · N/P section · q bury)")))
 
 (provide 'gascity-session)
 ;;; gascity-session.el ends here

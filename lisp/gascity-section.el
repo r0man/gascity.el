@@ -26,6 +26,7 @@
 ;;; Code:
 
 (require 'cl-lib)                 ; cl-letf (scope beads.el's `bd' to a store)
+(require 'seq)                    ; seq-find (section-header scan)
 (require 'beads-section)
 (require 'vui)
 (require 'wid-edit)
@@ -54,12 +55,71 @@ richer notion of activation (the dashboard, for instance)."
       (widget-button-press (point))
     (user-error "Nothing to drill into here")))
 
+;;; Section navigation
+
+;; The vui dashboards render their content as a run of top-level sections
+;; — the city and each rig on the status board; the header/agents/beads/
+;; orders/dolt blocks of a rig; the state/hook/history blocks of an agent.
+;; Each section's *header* line is stamped with a `gascity-section' text
+;; property by the dashboards' render code (the gascity analogue of a
+;; magit section's heading — but a plain property, since these views are
+;; vui, not magit-section).  `N'/`P' walk between those headers: the
+;; coarse counterpart to `n'/`p' line movement.  We scan for header
+;; *starts* (a position carrying the property whose predecessor does not)
+;; rather than leaning on `text-property-search''s NOT-CURRENT skip, whose
+;; behaviour at a region's first/last position is position-sensitive.
+
+(defun gascity-section--header-starts ()
+  "Return the buffer positions that begin a `gascity-section' header, in order.
+A header start is a position carrying the `gascity-section' property whose
+preceding character does not — including `point-min' when it carries it."
+  (let ((pos (point-min))
+        (starts nil))
+    (when (get-text-property pos 'gascity-section)
+      (push pos starts))
+    (while (setq pos (next-single-property-change pos 'gascity-section))
+      (when (get-text-property pos 'gascity-section)
+        (push pos starts)))
+    (nreverse starts)))
+
+(defun gascity-section-next ()
+  "Move point to the next top-level section header.
+Section headers are the city/rig/… lines the vui dashboards stamp with a
+`gascity-section' text property; this jumps between them, the coarse
+counterpart to `n' (`next-line').  Stops at the last section — signalling
+a `user-error' rather than wrapping, matching `next-line' at end of
+buffer."
+  (interactive)
+  (let ((next (seq-find (lambda (p) (> p (point)))
+                        (gascity-section--header-starts))))
+    (if next
+        (goto-char next)
+      (user-error "No next section"))))
+
+(defun gascity-section-previous ()
+  "Move point to the previous top-level section header.
+The backward counterpart of `gascity-section-next' (see there); from a
+section's body this lands on that section's own header.  Stops at the
+first section — signalling a `user-error' rather than wrapping."
+  (interactive)
+  (let ((prev (seq-find (lambda (p) (< p (point)))
+                        (reverse (gascity-section--header-starts)))))
+    (if prev
+        (goto-char prev)
+      (user-error "No previous section"))))
+
 (defvar-keymap gascity-section-mode-map
   :doc "Keymap for `gascity-section-mode'."
   :parent beads-section-mode-map
   ;; Shadow `beads-section-mode's RET (its beads issue visitor) with a
   ;; gascity-appropriate default, honouring \"RET drills in everywhere\".
   "RET" #'gascity-section-activate
+  ;; Section navigation, bound here so every vui dashboard inherits it:
+  ;; `N'/`P' jump between top-level sections (city/rig/…), the coarse
+  ;; counterpart to `n'/`p' line movement.  (The at-point nudge that used
+  ;; to live on `N' moves to `M' in the dashboards that bind it.)
+  "N" #'gascity-section-next
+  "P" #'gascity-section-previous
   ;; Bind `q' to bury here so all three vui views — the status dashboard,
   ;; the rig dashboard, and the session/polecat detail — inherit it
   ;; through this parent map.  The vui keymap chain
