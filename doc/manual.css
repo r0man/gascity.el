@@ -1,0 +1,185 @@
+/* doc/manual.css --- Styling for the gascity.el HTML manual
+ *
+ * Copyright © 2026 Gas City Contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Modeled on the GNU/Guix reference manual: a single readable column,
+ * boxed code and definitions, and muted navigation chrome.  Small and
+ * dependency-free (no web fonts, no external assets) so that the rules
+ * embedded into each page by `makeinfo --css-include' stay self-contained.
+ *
+ * makeinfo emits its own default rules first and appends the rules below,
+ * so anything here wins over a default at equal specificity (e.g. the
+ * 3.2em `div.example' indent is overridden on purpose).
+ */
+
+/* --- Page: a centered, readable column on a quiet background. --- */
+html {
+  background: #f4f5f6;
+}
+body {
+  max-width: 54rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.4rem 4rem;
+  background: #ffffff;
+  color: #1f2328;
+  font-family: "DejaVu Sans", "Liberation Sans", Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+/* --- Headings. --- */
+h1, h2, h3, h4, h5, h6 {
+  color: #14181c;
+  font-weight: 600;
+  line-height: 1.25;
+}
+h1.settitle, h1.top {
+  font-size: 2rem;
+  margin-top: 0.4em;
+  padding-bottom: 0.25em;
+  border-bottom: 2px solid #e3e6e9;
+}
+h2.chapter, h2.unnumbered, h2.appendix, h2.contents-heading {
+  font-size: 1.55rem;
+  margin-top: 1.6em;
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid #e7eaed;
+}
+h3.section { font-size: 1.25rem; margin-top: 1.6em; }
+h4.subsection { font-size: 1.08rem; margin-top: 1.4em; }
+
+/* --- Links. --- */
+a { color: #2f6fa8; text-decoration: none; }
+a:hover, a:focus { text-decoration: underline; }
+
+/* --- Navigation header/footer (Next/Prev/Up + Contents/Index). --- */
+div.header {
+  font-size: 0.85rem;
+  background: #f0f3f6;
+  border: 1px solid #e1e6ea;
+  border-radius: 4px;
+  padding: 0.4rem 0.7rem;
+  margin: 0.6rem 0 1.3rem;
+  color: #5b6670;
+}
+div.header p { margin: 0; }
+
+/* --- Inline code-like spans. --- */
+code, samp, kbd, tt, var {
+  font-family: "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+  font-size: 0.92em;
+}
+code, samp, kbd {
+  background: #f2f3f5;
+  border-radius: 3px;
+  padding: 0.08em 0.32em;
+}
+/* Keystrokes (@kbd) read better with a subtle key-cap outline. */
+kbd {
+  border: 1px solid #d6dade;
+  box-shadow: 0 1px 0 #d6dade;
+}
+var { font-style: italic; }
+
+/* --- Block code: @example, @verbatim, @lisp, @smallexample. --- */
+div.example, div.display, div.lisp, div.smallexample {
+  margin-left: 0;            /* override makeinfo's 3.2em indent */
+}
+pre.example, pre.verbatim, pre.display, pre.format,
+pre.lisp, pre.smallexample, pre.smalllisp {
+  background: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 5px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+  font-family: "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+/* No nested pill background for code already inside a block. */
+pre code, pre samp, pre kbd { background: none; padding: 0; border: none; box-shadow: none; }
+
+/* --- Definitions: @defvr, @deffn, @deftp (user options, commands, ...). --- */
+dl.def {
+  background: #fbfcfd;
+  border: 1px solid #e6eaee;
+  border-left: 3px solid #b9c6d3;
+  border-radius: 0 5px 5px 0;
+  padding: 0.6em 0.95em;
+  margin: 1.3em 0;
+}
+dl.def > dt {
+  margin: 0 0 0.15em;
+  font-family: "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+}
+dl.def > dt + dt { margin-top: 0.1em; }   /* stacked signatures */
+dl.def > dd { margin: 0.55em 0 0; }
+span.category {
+  color: #6a737d;
+  font-family: "DejaVu Sans", "Liberation Sans", Helvetica, Arial, sans-serif;
+  font-style: italic;
+  font-weight: normal;
+  margin-right: 0.3em;
+}
+
+/* Nested argument lists (@table inside a definition: <dl compact>). */
+dl[compact] { margin-left: 0.4em; }
+dl[compact] > dt {
+  font-family: "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+}
+
+/* --- Tables of contents and @menu lists. --- */
+div.contents, div.section-toc {
+  background: #fafbfc;
+  border: 1px solid #eceff2;
+  border-radius: 5px;
+  padding: 0.4em 1em;
+  margin: 1.2em 0;
+}
+ul.no-bullet { padding-left: 1em; }
+a.summary-letter { text-decoration: none; }
+
+/* --- Tables and quotations. --- */
+table { border-collapse: collapse; }
+table td, table th { padding: 0.25em 0.6em; vertical-align: top; }
+blockquote {
+  margin: 1.2em 0;
+  padding: 0.2em 1em;
+  border-left: 3px solid #e3e6e9;
+  color: #44505a;
+}
+hr { border: none; border-top: 1px solid #e7eaed; }
+
+/* --- Screenshots: a centered preview that links to the full image. --- */
+div.screenshot {
+  margin: 1.4em 0;
+  text-align: center;
+}
+div.screenshot a { display: inline-block; line-height: 0; }
+div.screenshot img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  background: #f6f8fa;
+  padding: 5px;
+  cursor: zoom-in;
+  box-shadow: 0 1px 4px rgba(27, 31, 35, 0.10);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+div.screenshot a:hover img, div.screenshot a:focus img {
+  border-color: #b9c6d3;
+  box-shadow: 0 2px 8px rgba(27, 31, 35, 0.16);
+}
+div.screenshot-caption {
+  margin-top: 0.5em;
+  font-size: 0.88rem;
+  color: #6a737d;
+  font-style: italic;
+}
+
+/* --- Narrow screens: trim the page padding. --- */
+@media (max-width: 38rem) {
+  body { padding: 1rem 0.9rem 3rem; font-size: 15px; }
+}

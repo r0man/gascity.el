@@ -37,5 +37,8 @@
 (setf eldev-test-fileset '("lisp/test/*.el"))
 
 ;; Keep build artifacts and polecat worktrees out of the project fileset.
+;; Also keep the documentation tree (Texinfo source plus the standalone
+;; screenshot-capture scripts, which are not package code) out of the
+;; project fileset, so eldev never compiles, lints, or info-builds it.
 (setf eldev-standard-excludes
-      `(:or ,eldev-standard-excludes "worktrees/**"))
+      `(:or ,eldev-standard-excludes "worktrees/**" "doc/**"))

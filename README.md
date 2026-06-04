@@ -9,6 +9,23 @@ its commands, keyboard-first, the way Magit fronts git. The UI is hand-built in
 the magit/forge style — deliberately designed, sectioned, keyboard-driven
 buffers — not auto-generated. See [docs/DESIGN.md](docs/DESIGN.md).
 
+[![The gascity status dashboard](doc/images/status-dark-thumb.png)](doc/images/status-dark.png)
+
+## Documentation
+
+A full **[user manual](doc/gascity.texi)** (Texinfo) covers installation, every
+dashboard and list, the navigation and section model, the keymaps, the actions,
+and customization — with screenshots. Build it to Info and styled HTML:
+
+```sh
+make -C doc          # doc/gascity.info and doc/gascity.html/
+make -C doc info     # Info only
+make -C doc html     # styled multi-page HTML only
+```
+
+Screenshots are produced by a reusable, documented pipeline under
+[doc/screenshots/](doc/screenshots/README.md) (`make -C doc screenshots`).
+
 ## Status
 
 A usable porcelain: an interactive status dashboard; tabulated list views with

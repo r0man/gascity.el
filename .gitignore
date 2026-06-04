@@ -8,6 +8,24 @@
 # Byte-compiled Emacs Lisp
 *.elc
 
+# Built manual outputs (sources and images under doc/ are tracked)
+/doc/gascity.info
+/doc/gascity.html/
+/doc/gascity.pdf
+/doc/build.log
+/doc/gascity.aux
+/doc/gascity.cp
+/doc/gascity.cps
+/doc/gascity.fn
+/doc/gascity.fns
+/doc/gascity.ky
+/doc/gascity.kys
+/doc/gascity.log
+/doc/gascity.pg
+/doc/gascity.toc
+/doc/gascity.tp
+/doc/gascity.vr
+
 # Eldev
 /.eldev/
 /Eldev-local
