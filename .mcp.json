@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "firefox-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@mozilla/firefox-devtools-mcp@latest",
+        "--enableScript",
+        "--firefox-path", "/home/roman/.local/bin/firefox-flatpak-mcp",
+        "--profile-path", "/tmp/gascity-fx",
+        "--output-file", "/tmp/gascity-fx.log"
+      ],
+      "env": {}
+    }
+  }
+}
