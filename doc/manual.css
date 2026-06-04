@@ -151,12 +151,12 @@ blockquote {
 }
 hr { border: none; border-top: 1px solid #e7eaed; }
 
-/* --- Screenshots: a centered preview that links to the full image. --- */
+/* --- Screenshots: a centered preview that opens a full-image lightbox. --- */
 div.screenshot {
   margin: 1.4em 0;
   text-align: center;
 }
-div.screenshot a { display: inline-block; line-height: 0; }
+div.screenshot a { position: relative; display: inline-block; line-height: 0; }
 div.screenshot img {
   max-width: 100%;
   height: auto;
@@ -172,6 +172,30 @@ div.screenshot a:hover img, div.screenshot a:focus img {
   border-color: #b9c6d3;
   box-shadow: 0 2px 8px rgba(27, 31, 35, 0.16);
 }
+/* A small magnifier badge in the corner signals that the thumbnail
+ * enlarges -- discoverability for the lightbox, since the zoom cursor
+ * and title tooltip only appear on hover.  Drawn from an inline SVG data
+ * URI (no font glyph to miss, no extra asset), subtle by default and
+ * brighter on hover/focus.  Hidden from the no-JS fallback would be ideal
+ * but harmless there: the link still enlarges, just by navigation. */
+div.screenshot a::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 6px;
+  background-color: rgba(20, 24, 28, 0.6);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0.95rem 0.95rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10' cy='10' r='7'/%3E%3Cline x1='15.2' y1='15.2' x2='21' y2='21'/%3E%3C/svg%3E");
+  opacity: 0.62;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+div.screenshot a:hover::after, div.screenshot a:focus::after { opacity: 0.95; }
 div.screenshot-caption {
   margin-top: 0.5em;
   font-size: 0.88rem;
@@ -179,7 +203,79 @@ div.screenshot-caption {
   font-style: italic;
 }
 
+/* --- Lightbox: the full-image overlay opened by clicking a screenshot. ---
+ *
+ * Progressive enhancement.  doc/lightbox.js intercepts a click on a
+ * `.screenshot-link' and shows the full image here, above the page;
+ * without JavaScript the link just navigates to the image, so these
+ * rules style a feature that only ever appears when the script ran. */
+body.lightbox-open { overflow: hidden; }    /* freeze page scroll behind */
+
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.2rem 1.5rem;
+  background: rgba(20, 24, 28, 0.82);
+  cursor: zoom-out;                          /* the backdrop closes on click */
+  animation: lightbox-fade 0.12s ease-out;
+}
+.lightbox-overlay[hidden] { display: none; }
+
+@keyframes lightbox-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.lightbox-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: default;                           /* clicks on the image do nothing */
+}
+.lightbox-image {
+  max-width: 100%;
+  max-height: calc(100vh - 7rem);            /* leave room for the caption */
+  width: auto;
+  height: auto;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.5);
+}
+.lightbox-caption {
+  margin-top: 0.8em;
+  max-width: 48rem;
+  color: #e8eaed;
+  font-size: 0.9rem;
+  font-style: italic;
+  text-align: center;
+}
+.lightbox-close {
+  position: fixed;
+  top: 0.7rem;
+  right: 0.9rem;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: #1f2328;
+  font-size: 1.4rem;
+  line-height: 2.1rem;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+}
+.lightbox-close:hover { background: #f0f3f6; }
+.lightbox-close:focus-visible { outline: 2px solid #2f6fa8; outline-offset: 2px; }
+
 /* --- Narrow screens: trim the page padding. --- */
 @media (max-width: 38rem) {
   body { padding: 1rem 0.9rem 3rem; font-size: 15px; }
+  .lightbox-overlay { padding: 1rem 0.6rem; }
 }

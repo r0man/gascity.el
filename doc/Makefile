@@ -29,12 +29,21 @@ $(PACKAGE).info: $(TEXI)
 # Split, multi-page HTML with the stylesheet inlined into every page.
 # `-o NAME' with no .html extension makes makeinfo emit a directory of
 # per-node pages (index.html + one file per node).  The screenshots are
-# emitted as raw <img> (for click-to-enlarge), which makeinfo does not
-# copy, so mirror doc/images/ into the output directory afterwards.
+# emitted as raw <img> (for the lightbox), which makeinfo does not copy,
+# so mirror doc/images/ into the output directory afterwards.
+#
+# `lightbox.js' is inlined verbatim into the bottom of every page through
+# the PRE_BODY_CLOSE customization variable -- the script counterpart to
+# the CSS that `--css-include' inlines into every <head> -- so the output
+# stays self-contained with no external script asset to copy.  The shell
+# command substitution lands the file as a single argument, so its quotes
+# and `$' characters need no escaping.
 html: $(PACKAGE).html
-$(PACKAGE).html: $(TEXI) manual.css $(wildcard images/*.png)
+$(PACKAGE).html: $(TEXI) manual.css lightbox.js $(wildcard images/*.png)
 	rm -rf $@
-	$(MAKEINFO) --html --css-include=manual.css -I . -o $@ $<
+	$(MAKEINFO) --html --css-include=manual.css \
+	  --set-customization-variable "PRE_BODY_CLOSE=<script>$$(cat lightbox.js)</script>" \
+	  -I . -o $@ $<
 	cp -R images $@/images
 
 pdf: $(PACKAGE).pdf
