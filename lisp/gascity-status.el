@@ -45,6 +45,12 @@
 (declare-function gascity-session-kill-at-point "gascity-action")
 (declare-function gascity-session-wake-at-point "gascity-action")
 (declare-function gascity-session-drain-at-point "gascity-action")
+;; Write verbs (DESIGN-write-actions.md phase 1): session reset/undrain, the
+;; bead-note action, and the city-config reload bound on the dashboard.
+(declare-function gascity-session-reset-at-point "gascity-action")
+(declare-function gascity-session-undrain-at-point "gascity-action")
+(declare-function gascity-bead-note-at-point "gascity-action")
+(declare-function gascity-reload "gascity-action")
 (declare-function gascity-polecat-detail-at-point "gascity-session")
 
 ;;; Buffer

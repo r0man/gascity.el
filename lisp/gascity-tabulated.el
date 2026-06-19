@@ -61,6 +61,13 @@
 (declare-function gascity-session-wake-at-point "gascity-action")
 (declare-function gascity-session-drain-at-point "gascity-action")
 (declare-function gascity-session-peek-at-point "gascity-action")
+;; Write verbs (DESIGN-write-actions.md phase 1): session reset/undrain and
+;; the mail inbox read/archive/mark-unread at-point actions.
+(declare-function gascity-session-reset-at-point "gascity-action")
+(declare-function gascity-session-undrain-at-point "gascity-action")
+(declare-function gascity-mail-read-at-point "gascity-action")
+(declare-function gascity-mail-archive-at-point "gascity-action")
+(declare-function gascity-mail-mark-unread-at-point "gascity-action")
 
 ;; Detail-view openers (the `RET' targets) live in gascity-rig /
 ;; gascity-session, loaded after this module via gascity.el.
