@@ -15,7 +15,7 @@
  (gnu packages emacs)
  (gnu packages emacs-xyz)
  (gnu packages emacs-build)
- (guix git))
+ (guix git-download))
 
 (define %source-dir (dirname (current-filename)))
 
