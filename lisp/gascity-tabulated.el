@@ -649,6 +649,9 @@ applied client-side to the decoded rows."
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
+  ;; Write verbs (DESIGN-write-actions.md phase 1): reset/undrain at point.
+  "R"   #'gascity-session-reset-at-point
+  "U"   #'gascity-session-undrain-at-point
   ;; This flat list has no sections, so unlike the vui dashboards (which
   ;; inherit `n'/`p' from `gascity-section-mode-map') it binds line movement
   ;; locally.  Peek moves off `p' to `v' so `p' can mean previous-line.
@@ -898,11 +901,18 @@ Renders the data already fetched, without contacting `gc'; each slot of the
   :parent gascity-tabulated-base-map
   "g"   #'gascity-mail-inbox-refresh
   "/"   #'gascity-mail-inbox-filter
-  "RET" #'gascity-mail-inbox-show)
+  "RET" #'gascity-mail-inbox-show
+  ;; Write verbs (DESIGN-write-actions.md phase 1).  `RET' stays the cheap,
+  ;; gc-free field view; `r' is the gc-contacting read (shows the body and
+  ;; marks read).  `a' archives (confirmed); `u' marks unread.
+  "r"   #'gascity-mail-read-at-point
+  "a"   #'gascity-mail-archive-at-point
+  "u"   #'gascity-mail-mark-unread-at-point)
 
 (define-derived-mode gascity-mail-inbox-mode tabulated-list-mode "GC-Mail"
   "Major mode showing the current agent's mail inbox.
-`RET' shows the message at point.
+`RET' shows the cached message fields; `r' reads it via gc (shows the body,
+marks read); `a' archives (confirmed); `u' marks unread.
 \\{gascity-mail-inbox-mode-map}"
   :group 'gascity
   (setq tabulated-list-format

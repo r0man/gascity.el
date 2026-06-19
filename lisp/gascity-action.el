@@ -56,10 +56,23 @@
 ;;; ============================================================
 
 (defun gascity-action--summarize (result)
-  "Return a short human summary of a mutation RESULT (alist, string, or nil)."
+  "Return a short human summary of a mutation RESULT (alist, string, or nil).
+Beyond plain stdout and the generic `message'/`ok' shapes, recognises the
+two payload-returning mutations the write surface adds: `create' yields a
+new bead id (`id', or `issue' carrying one) summarised as \"created <id>\",
+and `send'/`reply' yield a `message_id' summarised as \"sent\".  These
+specific shapes are checked before the generic `message'/`ok' clauses so a
+payload that also carries a server `message' still reads as the action it
+was."
   (cond
    ((stringp result)
     (or (car (split-string (string-trim result) "\n" t)) "done"))
+   ((and (consp result) (alist-get 'message_id result)) "sent")
+   ((and (consp result) (alist-get 'id result))
+    (format "created %s" (alist-get 'id result)))
+   ((and (consp result) (alist-get 'issue result))
+    (let ((issue (alist-get 'issue result)))
+      (format "created %s" (if (consp issue) (alist-get 'id issue) issue))))
    ((and (consp result) (stringp (alist-get 'message result)))
     (alist-get 'message result))
    ((and (consp result) (assq 'ok result))
@@ -146,6 +159,13 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
   "Read an order name with PROMPT."
   (completing-read prompt (gascity-action--order-names)))
 
+(defun gascity-action--read-bead (prompt)
+  "Read a bead id with PROMPT, defaulting to the bead reference at point.
+Bead ids have no cheap city-wide completion source (they live in per-rig
+stores), so this is a plain `read-string'; the at-point default covers the
+common case of acting on the bead already under point."
+  (read-string prompt nil nil (gascity-bead-at-point)))
+
 (defun gascity-action--rig-at-point ()
   "Return the name of the rig at point, or signal a `user-error'."
   (let* ((rig (and (derived-mode-p 'tabulated-list-mode) (tabulated-list-get-id)))
@@ -173,6 +193,8 @@ display-oriented `scoped-name'."
    ((derived-mode-p 'gascity-rig-list-mode) (gascity-rig-list-refresh))
    ((derived-mode-p 'gascity-session-list-mode) (gascity-session-list-refresh))
    ((derived-mode-p 'gascity-order-list-mode) (gascity-order-list-refresh))
+   ((derived-mode-p 'gascity-convoy-list-mode) (gascity-convoy-list-refresh))
+   ((derived-mode-p 'gascity-mail-inbox-mode) (gascity-mail-inbox-refresh))
    ((derived-mode-p 'gascity-rig-dashboard-mode) (gascity-rig-dashboard-refresh))
    ((derived-mode-p 'gascity-session-detail-mode) (gascity-polecat-detail-refresh))))
 
@@ -340,6 +362,146 @@ display-oriented `scoped-name'."
   (interactive)
   (gascity-command-execute-interactive
    (gascity-command-runtime-drain :target (gascity-action--session-at-point)))
+  (gascity--refresh-current-view))
+
+;;; ============================================================
+;;; Write verbs — bead note, session reset/undrain, city reload, mail
+;;; ============================================================
+;;
+;; The safe additive / lifecycle-completion slice (DESIGN-write-actions.md
+;; §7, §12 phase 1).  Each is a `gascity-command-action' run through
+;; `gascity-command-act'; bead writes additionally pin their store with
+;; `-C' resolved from the bead id's prefix (`gascity-beads--bead-path').
+
+;;; Bead — note (gc bd note)
+
+(defun gascity-bead-note--run (id text)
+  "Append note TEXT to bead ID — store-routed by ID's prefix — then refresh.
+Resolves ID's store with `gascity-beads--bead-path' and passes it as `-C'
+so the write lands in the owning rig's database even when the shared Dolt
+server would misroute the working directory (gce-bhr)."
+  (gascity-command-execute-interactive
+   (gascity-command-bd-note
+    :id id :text text :directory (gascity-beads--bead-path id)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-bead-note (id text)
+  "Append a one-line note TEXT to bead ID (both prompted).
+ID defaults to the bead reference at point."
+  (interactive
+   (let ((id (gascity-action--read-bead "Note on bead: ")))
+     (list id (read-string (format "Note on %s: " id)))))
+  (gascity-bead-note--run id text))
+
+;;;###autoload
+(defun gascity-bead-note-at-point ()
+  "Append a prompted note to the bead reference at point, then refresh."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
+    (gascity-bead-note--run id (read-string (format "Note on %s: " id)))))
+
+;;; Session — reset (fresh restart) and undrain (clear the drain flag)
+
+;;;###autoload
+(defun gascity-session-reset (target)
+  "Restart session TARGET fresh while preserving its bead (prompted)."
+  (interactive (list (gascity-action--read-session "Reset session: ")))
+  (when (gascity-action--confirm "Restart session %s fresh (keep its bead)? " target)
+    (gascity-command-execute-interactive (gascity-command-session-reset :target target))))
+
+;;;###autoload
+(defun gascity-session-reset-at-point ()
+  "Restart the session/agent at point fresh (confirmed) and refresh."
+  (interactive)
+  (let ((target (gascity-action--session-at-point)))
+    (when (gascity-action--confirm "Restart session %s fresh (keep its bead)? " target)
+      (gascity-command-execute-interactive (gascity-command-session-reset :target target))
+      (gascity--refresh-current-view))))
+
+;;;###autoload
+(defun gascity-session-undrain (target)
+  "Clear the drain flag on session TARGET (prompted) — the inverse of drain."
+  (interactive (list (gascity-action--read-session "Undrain session: ")))
+  (gascity-command-execute-interactive (gascity-command-runtime-undrain :target target)))
+
+;;;###autoload
+(defun gascity-session-undrain-at-point ()
+  "Clear the drain flag on the session/agent at point and refresh."
+  (interactive)
+  (gascity-command-execute-interactive
+   (gascity-command-runtime-undrain :target (gascity-action--session-at-point)))
+  (gascity--refresh-current-view))
+
+;;; City — reload config (gc reload)
+
+;;;###autoload
+(defun gascity-reload (&optional soft)
+  "Re-read the city config and process one reload tick (`gc reload').
+With a prefix arg SOFT, pass `--soft' — absorb config drift on open
+sessions instead of draining them.  City-level (gc has no `rig reload')."
+  (interactive "P")
+  (gascity-command-execute-interactive (gascity-command-reload :soft (and soft t)))
+  (gascity--refresh-current-view))
+
+;;; Mail — read / archive / mark-read / mark-unread (at point in the inbox)
+
+(defun gascity-mail--id-at-point ()
+  "Return the message id of the mail at point, or signal a `user-error'."
+  (let* ((message (gascity-mail-at-point))
+         (id (and message (gascity-mail-id message))))
+    (if (and id (stringp id) (not (string-empty-p id)))
+        id
+      (user-error "No message at point"))))
+
+(defun gascity-mail--show-body (id text)
+  "Pop a read-only view buffer showing body TEXT of message ID."
+  (let ((buf (get-buffer-create (format "*gc-mail: %s*" id))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (if (and (stringp text) (not (string-empty-p (string-trim text))))
+                    text
+                  "(no message body)"))
+        (goto-char (point-min)))
+      (view-mode 1))
+    (pop-to-buffer buf)))
+
+;;;###autoload
+(defun gascity-mail-read-at-point ()
+  "Read the message at point and mark it read, show its body, then refresh.
+`RET' shows the cached fields without contacting gc; this `r' action runs
+`gc mail read', which also marks the message read, so the default
+unread-filtered inbox drops it on refresh."
+  (interactive)
+  (let* ((id (gascity-mail--id-at-point))
+         (text (gascity-command-act (gascity-command-mail-read :id id))))
+    (gascity-mail--show-body id text)
+    (gascity--refresh-current-view)))
+
+;;;###autoload
+(defun gascity-mail-archive-at-point ()
+  "Archive the message at point (confirmed) and refresh."
+  (interactive)
+  (let ((id (gascity-mail--id-at-point)))
+    (when (gascity-action--confirm "Archive message %s? " id)
+      (gascity-command-execute-interactive (gascity-command-mail-archive :id id))
+      (gascity--refresh-current-view))))
+
+;;;###autoload
+(defun gascity-mail-mark-read-at-point ()
+  "Mark the message at point read without opening it, then refresh."
+  (interactive)
+  (gascity-command-execute-interactive
+   (gascity-command-mail-mark-read :id (gascity-mail--id-at-point)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-mail-mark-unread-at-point ()
+  "Mark the message at point unread and refresh."
+  (interactive)
+  (gascity-command-execute-interactive
+   (gascity-command-mail-mark-unread :id (gascity-mail--id-at-point)))
   (gascity--refresh-current-view))
 
 ;;; ============================================================

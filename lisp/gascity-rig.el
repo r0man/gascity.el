@@ -348,7 +348,12 @@ refuses the city HQ (which has no rig dashboard) with a clear message."
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
-  "v"   #'gascity-session-peek-at-point)
+  "v"   #'gascity-session-peek-at-point
+  ;; Write verbs (DESIGN-write-actions.md phase 1): reset/undrain the agent
+  ;; at point, note the bead reference (ready/in-progress) at point.
+  "R"   #'gascity-session-reset-at-point
+  "U"   #'gascity-session-undrain-at-point
+  "c"   #'gascity-bead-note-at-point)
 
 (define-derived-mode gascity-rig-dashboard-mode gascity-section-mode "GC-Rig"
   "Major mode for the gascity rig dashboard.
@@ -359,7 +364,8 @@ refuses the city HQ (which has no rig dashboard) with a clear message."
   (setq truncate-lines t)
   (setq-local header-line-format
               (concat " Rig dashboard  (g refresh · RET open/tmux · i detail · b beads"
-                      " · d dired · t tmux · M/s/K/w/D/v session · N/P section · q bury)")))
+                      " · d dired · t tmux · M/s/K/w/D/v/R/U session · c note"
+                      " · N/P section · q bury)")))
 
 ;;;###autoload
 (defun gascity-rig-dashboard (rig-name)

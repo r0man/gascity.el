@@ -326,6 +326,14 @@ Narrows `gascity-object-at-point' to a `gascity-bead' text-property string
   (let ((obj (gascity-object-at-point)))
     (and (stringp obj) (not (string-empty-p obj)) obj)))
 
+(defun gascity-mail-at-point ()
+  "Return the `gascity-mail' message at point, or nil.
+Narrows `gascity-object-at-point' to a mail message — the entry id of a
+row in the `gascity-mail-inbox-mode' list.  Rows resolving to a different
+type yield nil."
+  (let ((obj (gascity-object-at-point)))
+    (and (gascity-mail-p obj) obj)))
+
 (defun gascity-section-beads (data)
   "Return the bead list from a `gc bd …' JSON payload DATA.
 gc emits either a bare array of beads or an object wrapping them under

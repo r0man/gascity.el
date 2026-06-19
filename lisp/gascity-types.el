@@ -208,6 +208,19 @@ Sets a drain flag; the agent finishes its current task, then exits.  Cancel
 with `gc runtime undrain'.  Distinct from suspend (stops the runtime now) and
 kill (force-kills the runtime).")
 
+(gascity-defcommand gascity-command-runtime-undrain (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias whose drain flag to clear."))
+  :documentation "Clear a session's drain flag — the inverse of `runtime drain'.
+The reconciler stops winding the agent down; it resumes taking work.")
+
+(gascity-defcommand gascity-command-session-reset (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to restart fresh."))
+  :documentation "Restart a session fresh while preserving its bead.
+Distinct from `session kill' (force-kill; the reconciler restarts) and
+`rig restart' (kills a rig's whole agent set).")
+
 ;;; Dispatch
 
 (gascity-defcommand gascity-command-sling (gascity-command-action)
@@ -232,6 +245,56 @@ kill (force-kills the runtime).")
   ((name :initarg :name :type string :initform "" :positional 1
          :documentation "Order to execute manually."))
   :documentation "Execute an order manually, bypassing its trigger conditions.")
+
+;;; Bead writes (gc bd …) — store-routed via `-C' (gascity-command-bd-action)
+
+(gascity-defcommand gascity-command-bd-note (gascity-command-bd-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Bead id to append a note to.")
+   (text :initarg :text :type string :initform "" :positional 2
+         :documentation "Note text; gc joins multi-word input.  The note is
+appended to the bead's discussion, never overwriting prior notes."))
+  :documentation "Append a note to a bead (`gc bd note <id> <text>').
+Inherits the `-C' store-routing slot from `gascity-command-bd-action'; the
+caller resolves it from ID's prefix with `gascity-beads--bead-path'.")
+
+;;; City config
+
+(gascity-defcommand gascity-command-reload (gascity-command-action)
+  ((soft :initarg :soft :type boolean :initform nil
+         :long-option "soft" :option-type :boolean
+         :documentation "Absorb config drift on open sessions instead of
+draining them."))
+  :documentation "Re-read effective config and process one reload tick
+\(`gc reload').  City-level (gc has no `rig reload').  With `--soft' it
+absorbs drift on open sessions rather than draining them.")
+
+;;; Mail actions (gc mail …)
+
+(gascity-defcommand gascity-command-mail-read (gascity-command-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Message id to read.  `gc mail read' also marks it read."))
+  :documentation "Read a message and mark it read (`gc mail read <id>').
+\(--json off: the captured human-readable body is shown verbatim.)")
+
+(gascity-defcommand gascity-command-mail-archive (gascity-command-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Message id to archive (close its message bead)."))
+  :documentation "Archive a message without reading it (`gc mail archive <id>').")
+
+(gascity-defcommand gascity-command-mail-mark-read (gascity-command-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Message id to mark read."))
+  ;; `mail-mark-read' has an internal hyphen the class-name->subcommand
+  ;; derivation would split into "mail mark read"; pin the real token.
+  :cli-command "mail mark-read"
+  :documentation "Mark a message read without opening it (`gc mail mark-read <id>').")
+
+(gascity-defcommand gascity-command-mail-mark-unread (gascity-command-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Message id to mark unread."))
+  :cli-command "mail mark-unread"
+  :documentation "Mark a message unread (`gc mail mark-unread <id>').")
 
 ;;; City lifecycle (streaming; not `gascity-command-action')
 
@@ -285,6 +348,35 @@ kill (force-kills the runtime).")
 (cl-defmethod gascity-command-validate ((command gascity-command-runtime-drain))
   "Require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-runtime-undrain))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-reset))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-note))
+  "Require a bead id and note text."
+  (cond ((gascity-command--blank-p command 'id) "a bead id is required")
+        ((gascity-command--blank-p command 'text) "note text is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-mail-read))
+  "Require a message id."
+  (and (gascity-command--blank-p command 'id) "a message id is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-mail-archive))
+  "Require a message id."
+  (and (gascity-command--blank-p command 'id) "a message id is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-mail-mark-read))
+  "Require a message id."
+  (and (gascity-command--blank-p command 'id) "a message id is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-mail-mark-unread))
+  "Require a message id."
+  (and (gascity-command--blank-p command 'id) "a message id is required"))
 
 (provide 'gascity-types)
 ;;; gascity-types.el ends here

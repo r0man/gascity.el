@@ -147,6 +147,34 @@ streaming `async-shell-command' backend used for read/long-running
 commands.  `--json' is off by default (see the `json' slot); positional
 and option slots are declared per concrete command.")
 
+(defclass gascity-command-bd-action (gascity-command-action)
+  ((store-directory
+    :initarg :directory
+    :initform nil
+    ;; Slot name is `store-directory', not `directory': beads-meta reserves
+    ;; `directory' as a *global* bd option (it is in
+    ;; `beads-meta--global-option-slots'), so a slot literally named
+    ;; `directory' is skipped by `beads-meta-build-command-line' and never
+    ;; emitted.  Under a non-reserved name the builder emits it normally.
+    ;; Short option only — no `:long-option' — so it renders as `-C <dir>'
+    ;; (this base is a plain `defclass', which skips long-option inference,
+    ;; so the slot name never back-fills a `--store-directory').  The
+    ;; `:initarg' stays `:directory' so callers read naturally.  gc accepts
+    ;; both `-C' and `--directory'.
+    :short-option "C"
+    :option-type :string
+    :documentation "Store directory (-C), resolved from the bead id's prefix
+via `gascity-beads--bead-path'.  Pins a `gc bd' write to the right rig's
+database despite the shared Dolt server's working-directory misrouting
+(the same hazard `gascity-beads--show-in-store' fixes for reads, gce-bhr).
+Nil emits no flag, deferring to gc's own prefix/ambient routing."))
+  :abstract t
+  :documentation "Base for `gc bd' mutations (note, and later close/priority/…).
+Adds the optional `-C'/`directory' store-routing slot to
+`gascity-command-action'; concrete bead verbs add their positionals.
+Callers resolve the directory once with `gascity-beads--bead-path' from
+the subject bead id and pass it as `:directory'.")
+
 (defclass gascity-command-execution ()
   ((command
     :initarg :command

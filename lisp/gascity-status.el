@@ -397,7 +397,14 @@ collapse state and point); nil when BUFFER has no mounted instance."
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
-  "D"   #'gascity-session-drain-at-point)
+  "D"   #'gascity-session-drain-at-point
+  ;; Write verbs (DESIGN-write-actions.md phase 1): `R' resets the agent at
+  ;; point fresh, `U' clears its drain flag, `c' notes the bead reference at
+  ;; point, and `L' reloads the city config (prefix arg -> --soft).
+  "R"   #'gascity-session-reset-at-point
+  "U"   #'gascity-session-undrain-at-point
+  "c"   #'gascity-bead-note-at-point
+  "L"   #'gascity-reload)
 
 (define-derived-mode gascity-dashboard-mode gascity-section-mode "GC-Status"
   "Major mode for the gascity status dashboard.
@@ -408,8 +415,8 @@ collapse state and point); nil when BUFFER has no mounted instance."
   (setq truncate-lines t)
   (setq-local header-line-format
               (concat " Gas City  (g refresh · TAB toggle · RET tmux/toggle · i detail"
-                      " · b beads · d dired · t tmux · M/s/K/w/D session · N/P section"
-                      " · q bury)")))
+                      " · b beads · d dired · t tmux · M/s/K/w/D/R/U session · c note"
+                      " · L reload · N/P section · q bury)")))
 
 ;;;###autoload
 (defun gascity-status ()

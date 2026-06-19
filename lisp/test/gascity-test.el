@@ -2266,5 +2266,207 @@ The rig dashboard, session-detail, and session-list maps bound
     (should-not (eq (keymap-lookup map "p")
                     #'gascity-session-peek-at-point))))
 
+;;; ============================================================
+;;; Write actions — phase 1 (gce-7rs.1)
+;;; ============================================================
+;;
+;; Safe additive + lifecycle-completion verbs and their plumbing
+;; (DESIGN-write-actions.md §3, §7, §12 phase 1): bead note (store-routed
+;; by `-C'), session reset/undrain, city reload, mail read/archive/
+;; mark-read/mark-unread, plus the summarize and refresh-dispatch
+;; extensions and the new key bindings.
+
+(ert-deftest gascity-test-write-command-lines ()
+  "Phase-1 write verbs derive their positional `gc' lines with `--json' OFF."
+  ;; Bead note: positionals then the `-C' store pin when a directory is set.
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-note :id "gce-1" :text "a note"))
+                 '("gc" "bd" "note" "gce-1" "a note")))
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-note :id "gce-1" :text "a note"
+                                           :directory "/r/gce/"))
+                 '("gc" "bd" "note" "gce-1" "a note" "-C" "/r/gce/")))
+  ;; Session reset / runtime undrain: single positional target.
+  (should (equal (gascity-command-line (gascity-command-session-reset :target "rig/a"))
+                 '("gc" "session" "reset" "rig/a")))
+  (should (equal (gascity-command-line (gascity-command-runtime-undrain :target "rig/a"))
+                 '("gc" "runtime" "undrain" "rig/a")))
+  ;; City reload: bare, and `--soft' via the flag.
+  (should (equal (gascity-command-line (gascity-command-reload)) '("gc" "reload")))
+  (should (equal (gascity-command-line (gascity-command-reload :soft t))
+                 '("gc" "reload" "--soft")))
+  ;; Mail verbs: single positional id; mark-read/unread keep their hyphen.
+  (should (equal (gascity-command-line (gascity-command-mail-read :id "m1"))
+                 '("gc" "mail" "read" "m1")))
+  (should (equal (gascity-command-line (gascity-command-mail-archive :id "m1"))
+                 '("gc" "mail" "archive" "m1")))
+  (should (equal (gascity-command-line (gascity-command-mail-mark-read :id "m1"))
+                 '("gc" "mail" "mark-read" "m1")))
+  (should (equal (gascity-command-line (gascity-command-mail-mark-unread :id "m1"))
+                 '("gc" "mail" "mark-unread" "m1")))
+  ;; No phase-1 write verb emits --json (they report from gc's exit status).
+  (dolist (cmd (list (gascity-command-bd-note :id "x" :text "y" :directory "/d/")
+                     (gascity-command-session-reset :target "x")
+                     (gascity-command-runtime-undrain :target "x")
+                     (gascity-command-reload :soft t)
+                     (gascity-command-mail-read :id "m")
+                     (gascity-command-mail-archive :id "m")
+                     (gascity-command-mail-mark-read :id "m")
+                     (gascity-command-mail-mark-unread :id "m")))
+    (should-not (member "--json" (gascity-command-line cmd)))))
+
+(ert-deftest gascity-test-write-subcommand-derivation ()
+  "Phase-1 subcommands derive from class names; hyphenated tokens are pinned."
+  (should (equal (gascity-command-subcommand (gascity-command-bd-note)) "bd note"))
+  (should (equal (gascity-command-subcommand (gascity-command-session-reset))
+                 "session reset"))
+  (should (equal (gascity-command-subcommand (gascity-command-runtime-undrain))
+                 "runtime undrain"))
+  (should (equal (gascity-command-subcommand (gascity-command-reload)) "reload"))
+  (should (equal (gascity-command-subcommand (gascity-command-mail-read)) "mail read"))
+  ;; `:cli-command' overrides the hyphen-splitting derivation.
+  (should (equal (gascity-command-subcommand (gascity-command-mail-mark-read))
+                 "mail mark-read"))
+  (should (equal (gascity-command-subcommand (gascity-command-mail-mark-unread))
+                 "mail mark-unread")))
+
+(ert-deftest gascity-test-write-validation ()
+  "Required positionals are enforced before gc is invoked."
+  ;; Bead note needs both id and text.
+  (should (gascity-command-validate (gascity-command-bd-note :id "gce-1")))
+  (should (gascity-command-validate (gascity-command-bd-note :text "x")))
+  (should-not (gascity-command-validate (gascity-command-bd-note :id "gce-1" :text "x")))
+  ;; Session reset / undrain need a target.
+  (should (gascity-command-validate (gascity-command-session-reset)))
+  (should-not (gascity-command-validate (gascity-command-session-reset :target "x")))
+  (should (gascity-command-validate (gascity-command-runtime-undrain)))
+  (should-not (gascity-command-validate (gascity-command-runtime-undrain :target "x")))
+  ;; Mail verbs need an id.
+  (dolist (cmd (list (gascity-command-mail-read) (gascity-command-mail-archive)
+                     (gascity-command-mail-mark-read) (gascity-command-mail-mark-unread)))
+    (should (gascity-command-validate cmd)))
+  (should-not (gascity-command-validate (gascity-command-mail-read :id "m1")))
+  ;; Reload requires nothing.
+  (should-not (gascity-command-validate (gascity-command-reload))))
+
+(ert-deftest gascity-test-bd-note-store-routing ()
+  "`gascity-bead-note--run' resolves the bead's store and pins it with `-C'.
+Reuses `gascity-beads--bead-path' (the read-side gce-bhr routing): a known
+id prefix maps to its rig store; an unknown prefix degrades to no `-C', so
+gc applies its own prefix/ambient routing."
+  (let (line)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'gascity-command-execute-interactive)
+               (lambda (cmd) (setq line (gascity-command-line cmd))))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      (gascity-bead-note--run "gce-afq" "a note")
+      (should (equal line '("gc" "bd" "note" "gce-afq" "a note" "-C" "/r/gce/")))
+      (gascity-bead-note--run "zz-9" "x")
+      (should (equal line '("gc" "bd" "note" "zz-9" "x"))))))
+
+(ert-deftest gascity-test-action-summarize-payloads ()
+  "Payload-returning mutations summarise to their action: created / sent.
+The specific `id'/`issue'/`message_id' shapes win over the generic
+`message'/`ok' clauses so a payload that also carries a server `message'
+still reads as the action it was (DESIGN-write-actions.md §3.2b)."
+  (should (equal (gascity-action--summarize '((id . "gce-9") (ok . t))) "created gce-9"))
+  (should (equal (gascity-action--summarize '((issue . ((id . "gce-9"))))) "created gce-9"))
+  (should (equal (gascity-action--summarize '((issue . "gce-9"))) "created gce-9"))
+  (should (equal (gascity-action--summarize '((message_id . "x") (message . "Sent to y")))
+                 "sent"))
+  ;; The pre-existing shapes still summarise as before.
+  (should (equal (gascity-action--summarize '((message . "routed"))) "routed"))
+  (should (equal (gascity-action--summarize '((ok . t))) "ok")))
+
+(ert-deftest gascity-test-refresh-dispatch-mail-convoy ()
+  "`gascity--refresh-current-view' resolves the mail-inbox and convoy modes.
+These were the two gaps in the mode-dispatch table (§3.3); a mutation made
+from either list now refreshes it in place like every other view."
+  (let (refreshed)
+    (cl-letf (((symbol-function 'gascity-mail-inbox-refresh)
+               (lambda () (setq refreshed 'mail)))
+              ((symbol-function 'gascity-convoy-list-refresh)
+               (lambda () (setq refreshed 'convoy))))
+      (with-temp-buffer
+        (gascity-mail-inbox-mode)
+        (gascity--refresh-current-view)
+        (should (eq refreshed 'mail)))
+      (setq refreshed nil)
+      (with-temp-buffer
+        (gascity-convoy-list-mode)
+        (gascity--refresh-current-view)
+        (should (eq refreshed 'convoy))))))
+
+(ert-deftest gascity-test-mail-at-point ()
+  "`gascity-mail-at-point' narrows to a mail message; `--id-at-point' guards."
+  (cl-letf (((symbol-function 'gascity-object-at-point)
+             (lambda () (gascity-mail :id "m1"))))
+    (should (gascity-mail-p (gascity-mail-at-point)))
+    (should (equal (gascity-mail--id-at-point) "m1")))
+  ;; A non-mail object at point yields nil / a clean error.
+  (cl-letf (((symbol-function 'gascity-object-at-point)
+             (lambda () (gascity-test--agent :name "rig/a"))))
+    (should (null (gascity-mail-at-point))))
+  (cl-letf (((symbol-function 'gascity-mail-at-point) (lambda () nil)))
+    (should-error (gascity-mail--id-at-point) :type 'user-error)))
+
+(ert-deftest gascity-test-write-keys-bound ()
+  "Phase-1 keys land in the right keymaps without shadowing shipped ones.
+Reset/undrain reach every agent view; bead `note' is on the three views
+that carry bead references (not the flat session list); reload is
+city-level (status dashboard only); mail verbs live in the inbox."
+  (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map gascity-session-list-mode-map))
+    (should (eq (keymap-lookup map "R") #'gascity-session-reset-at-point))
+    (should (eq (keymap-lookup map "U") #'gascity-session-undrain-at-point)))
+  (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map))
+    (should (eq (keymap-lookup map "c") #'gascity-bead-note-at-point)))
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "L") #'gascity-reload))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "r")
+              #'gascity-mail-read-at-point))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "a")
+              #'gascity-mail-archive-at-point))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "u")
+              #'gascity-mail-mark-unread-at-point))
+  ;; `RET' in the inbox stays the cheap cached-field view, not the gc read.
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "RET")
+              #'gascity-mail-inbox-show)))
+
+(ert-deftest gascity-test-write-confirm-gating ()
+  "Destructive write verbs gate on `yes-or-no-p'; a `no' skips the run."
+  ;; Session reset (at point) — `no' answer must not execute.
+  (gascity-test--with-agent-at-point
+   (lambda ()
+     (let (ran)
+       (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
+                 ((symbol-function 'gascity-command-execute-interactive)
+                  (lambda (&rest _) (setq ran t)))
+                 ((symbol-function 'gascity--refresh-current-view) #'ignore))
+         (gascity-session-reset-at-point)
+         (should-not ran)
+         ;; A `yes' answer does run it.
+         (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+           (gascity-session-reset-at-point)
+           (should ran))))))
+  ;; Mail archive (at point) — `no' answer must not execute.
+  (let (ran)
+    (cl-letf (((symbol-function 'gascity-mail-at-point)
+               (lambda () (gascity-mail :id "m1")))
+              ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
+              ((symbol-function 'gascity-command-execute-interactive)
+               (lambda (&rest _) (setq ran t)))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      (gascity-mail-archive-at-point)
+      (should-not ran))))
+
+(ert-deftest gascity-test-bd-action-is-abstract ()
+  "The `-C' bead-write base is abstract — only concrete verbs instantiate."
+  (should-error (gascity-command-bd-action) :type 'error)
+  (should (object-of-class-p (gascity-command-bd-note :id "x" :text "y")
+                             'gascity-command-bd-action)))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

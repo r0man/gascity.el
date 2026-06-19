@@ -380,7 +380,12 @@ dashboard agent row, or a rig dashboard agent row."
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
   "d"   #'gascity-dired-at-point
-  "t"   #'gascity-tmux-at-point)
+  "t"   #'gascity-tmux-at-point
+  ;; Write verbs (DESIGN-write-actions.md phase 1): reset/undrain this agent,
+  ;; note the hook/history bead reference at point.
+  "R"   #'gascity-session-reset-at-point
+  "U"   #'gascity-session-undrain-at-point
+  "c"   #'gascity-bead-note-at-point)
 
 (define-derived-mode gascity-session-detail-mode gascity-section-mode "GC-Agent"
   "Major mode for the gascity session/polecat detail view.
@@ -391,7 +396,8 @@ dashboard agent row, or a rig dashboard agent row."
   (setq truncate-lines t)
   (setq-local header-line-format
               (concat " Agent detail  (g refresh · RET open bead · v peek"
-                      " · M nudge · D drain · d dired · t tmux · N/P section · q bury)")))
+                      " · M nudge · s/K/w/D/R/U session · c note · d dired · t tmux"
+                      " · N/P section · q bury)")))
 
 (provide 'gascity-session)
 ;;; gascity-session.el ends here
