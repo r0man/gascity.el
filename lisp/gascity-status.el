@@ -382,12 +382,82 @@ collapse state and point); nil when BUFFER has no mounted instance."
   (unless (gascity-status--refresh-instance (current-buffer))
     (gascity-status)))
 
+;;; Auto-refresh timer
+
+;; A buffer-local repeating timer re-renders the dashboard on an interval,
+;; mirroring the tmux status-line timer in gascity-terminal.el: the timer is
+;; created at mode-enable (guarded by `gascity-status-auto-refresh' and a
+;; positive interval), torn down from `kill-buffer-hook', and its tick is a
+;; no-op unless the buffer is currently displayed.  A buried dashboard must
+;; not poll `gc'.  The tick refreshes in place via
+;; `gascity-status--refresh-instance', so collapsed rigs and point survive
+;; — never a full `gascity-status' remount.
+
+(defvar-local gascity-status--refresh-timer nil
+  "Repeating timer auto-refreshing this dashboard buffer, or nil.")
+
+(defun gascity-status--auto-refresh-tick (buffer)
+  "Refresh the dashboard in BUFFER, but only while it is visible.
+Timer callback.  When BUFFER is live and shown in a window on some visible
+frame, refresh it in place with `gascity-status--refresh-instance' (which
+preserves collapse state and point).  When BUFFER is buried or its frame is
+invisible, do nothing — no `gc' fetch and no refresh tick — so an
+out-of-sight dashboard costs nothing."
+  (when (and (buffer-live-p buffer)
+             (get-buffer-window buffer 'visible))
+    (gascity-status--refresh-instance buffer)))
+
+(defun gascity-status--auto-refresh-teardown ()
+  "Cancel the current buffer's auto-refresh timer.
+Run from `kill-buffer-hook' so killing the dashboard leaves no live timer."
+  (when (timerp gascity-status--refresh-timer)
+    (cancel-timer gascity-status--refresh-timer))
+  (setq gascity-status--refresh-timer nil))
+
+(defun gascity-status--auto-refresh-setup (buffer)
+  "Start BUFFER's auto-refresh timer per `gascity-status-auto-refresh'.
+Idempotent: cancels any existing timer first, so re-running never leaks a
+second one.  Creates a repeating timer only when `gascity-status-auto-refresh'
+is non-nil and `gascity-status-auto-refresh-interval' is a positive number;
+otherwise the dashboard stays manual-refresh only.  When a timer is created,
+arrange teardown on `kill-buffer-hook' so the timer dies with the buffer."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (timerp gascity-status--refresh-timer)
+        (cancel-timer gascity-status--refresh-timer))
+      (setq gascity-status--refresh-timer nil)
+      (when (and gascity-status-auto-refresh
+                 (numberp gascity-status-auto-refresh-interval)
+                 (> gascity-status-auto-refresh-interval 0))
+        (setq gascity-status--refresh-timer
+              (run-with-timer gascity-status-auto-refresh-interval
+                              gascity-status-auto-refresh-interval
+                              #'gascity-status--auto-refresh-tick buffer))
+        (add-hook 'kill-buffer-hook
+                  #'gascity-status--auto-refresh-teardown nil t)))))
+
+(defun gascity-status-toggle-auto-refresh ()
+  "Toggle automatic refresh of the Gas City status dashboard.
+Flips `gascity-status-auto-refresh' and (re)starts or cancels the current
+buffer's refresh timer to match.  While on, the dashboard re-renders every
+`gascity-status-auto-refresh-interval' seconds whenever it is visible."
+  (interactive)
+  (setq gascity-status-auto-refresh (not gascity-status-auto-refresh))
+  (gascity-status--auto-refresh-setup (current-buffer))
+  (message "Gas City auto-refresh %s"
+           (if gascity-status-auto-refresh
+               (format "on (every %ss while visible)"
+                       gascity-status-auto-refresh-interval)
+             "off")))
+
 ;;; Mode
 
 (defvar-keymap gascity-dashboard-mode-map
   :doc "Keymap for `gascity-dashboard-mode'."
   :parent gascity-section-mode-map
   "g"   #'gascity-status-refresh
+  ;; `G' (capital of manual refresh `g') toggles auto-refresh on/off live.
+  "G"   #'gascity-status-toggle-auto-refresh
   ;; `TAB' toggles the rig section at point — the magit-section convention
   ;; (TAB = toggle visibility).  It shadows the vui chain's `widget-forward'
   ;; (harmless: this view renders no widgets) and is bound here, not in the
@@ -426,9 +496,12 @@ collapse state and point); nil when BUFFER has no mounted instance."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Gas City  (g refresh · TAB toggle · RET tmux/toggle · i detail"
-                      " · b beads · d dired · t tmux · M/s/K/w/D/R/U session · c note"
-                      " · L reload · N/P section · q bury)")))
+              (concat " Gas City  (g refresh · G auto · TAB toggle · RET tmux/toggle"
+                      " · i detail · b beads · d dired · t tmux · M/s/K/w/D/R/U session"
+                      " · c note · L reload · N/P section · q bury)"))
+  ;; Start the visibility-gated auto-refresh timer (no-op when
+  ;; `gascity-status-auto-refresh' is nil or the interval is non-positive).
+  (gascity-status--auto-refresh-setup (current-buffer)))
 
 ;;;###autoload
 (defun gascity-status ()

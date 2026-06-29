@@ -932,6 +932,120 @@ that lost collapse state also flickered the view on every refresh."
           (when (get-buffer "*gascity-status-test*")
             (kill-buffer "*gascity-status-test*")))))))
 
+;;; gce-pt6 — auto-refresh the status dashboard on a timer, only when visible
+
+(ert-deftest gascity-test-status-auto-refresh-creates-timer-when-on ()
+  "`gascity-status--auto-refresh-setup' starts a repeating timer when
+`gascity-status-auto-refresh' is on and the interval is positive (gce-pt6)."
+  (let ((buf (generate-new-buffer "*gascity-status-auto-on*"))
+        (gascity-status-auto-refresh t)
+        (gascity-status-auto-refresh-interval 3600)) ; never fires in-test
+    (unwind-protect
+        (progn
+          (gascity-status--auto-refresh-setup buf)
+          (should (timerp (buffer-local-value 'gascity-status--refresh-timer buf))))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-status-auto-refresh-no-timer-when-off ()
+  "No timer is created when `gascity-status-auto-refresh' is nil (gce-pt6)."
+  (let ((buf (generate-new-buffer "*gascity-status-auto-off*"))
+        (gascity-status-auto-refresh nil)
+        (gascity-status-auto-refresh-interval 3600))
+    (unwind-protect
+        (progn
+          (gascity-status--auto-refresh-setup buf)
+          (should-not (buffer-local-value 'gascity-status--refresh-timer buf)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-status-auto-refresh-no-timer-when-interval-nonpositive ()
+  "A non-positive interval disables the timer even with auto-refresh on (gce-pt6)."
+  (let ((buf (generate-new-buffer "*gascity-status-auto-zero*"))
+        (gascity-status-auto-refresh t)
+        (gascity-status-auto-refresh-interval 0))
+    (unwind-protect
+        (progn
+          (gascity-status--auto-refresh-setup buf)
+          (should-not (buffer-local-value 'gascity-status--refresh-timer buf)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-status-auto-refresh-tick-noop-when-buried ()
+  "The timer tick does nothing when the dashboard is not displayed (gce-pt6).
+A buried buffer must not refresh — and therefore must not fetch from `gc'."
+  (let ((buf (generate-new-buffer "*gascity-status-buried*"))
+        (refreshed nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'get-buffer-window) (lambda (&rest _) nil))
+                  ((symbol-function 'gascity-status--refresh-instance)
+                   (lambda (b) (setq refreshed b))))
+          (gascity-status--auto-refresh-tick buf)
+          (should-not refreshed))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-status-auto-refresh-tick-refreshes-when-visible ()
+  "The timer tick refreshes the dashboard in place when it is visible (gce-pt6).
+It calls `gascity-status--refresh-instance' (collapse + point preserved),
+not a full `gascity-status' remount."
+  (let ((buf (generate-new-buffer "*gascity-status-visible*"))
+        (refreshed nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'get-buffer-window)
+                   (lambda (b &rest _) (and (eq b buf) 'a-window)))
+                  ((symbol-function 'gascity-status--refresh-instance)
+                   (lambda (b) (setq refreshed b))))
+          (gascity-status--auto-refresh-tick buf)
+          (should (eq refreshed buf)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-status-auto-refresh-teardown-cancels-timer ()
+  "Killing the dashboard cancels its auto-refresh timer via `kill-buffer-hook'
+— no leaked timers (gce-pt6)."
+  (let ((buf (generate-new-buffer "*gascity-status-teardown*"))
+        (gascity-status-auto-refresh t)
+        (gascity-status-auto-refresh-interval 3600)
+        timer)
+    (unwind-protect
+        (progn
+          (gascity-status--auto-refresh-setup buf)
+          (setq timer (buffer-local-value 'gascity-status--refresh-timer buf))
+          (should (timerp timer))
+          (should (memq timer timer-list))
+          (kill-buffer buf)
+          (should-not (memq timer timer-list)))
+      (when (timerp timer) (cancel-timer timer))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-status-dashboard-mode-starts-timer ()
+  "Enabling `gascity-dashboard-mode' starts the auto-refresh timer when
+`gascity-status-auto-refresh' is on (gce-pt6) — the mode is the wiring point."
+  (let ((buf (generate-new-buffer "*gascity-status-mode*"))
+        (gascity-status-auto-refresh t)
+        (gascity-status-auto-refresh-interval 3600))
+    (unwind-protect
+        (with-current-buffer buf
+          (gascity-dashboard-mode)
+          (should (timerp gascity-status--refresh-timer)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-status-auto-refresh-toggle ()
+  "`G' is bound to the auto-refresh toggle, which flips the variable and
+restarts/cancels the buffer's timer to match (gce-pt6)."
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "G")
+              #'gascity-status-toggle-auto-refresh))
+  (let ((buf (generate-new-buffer "*gascity-status-toggle*"))
+        (gascity-status-auto-refresh nil)
+        (gascity-status-auto-refresh-interval 3600))
+    (unwind-protect
+        (with-current-buffer buf
+          ;; Off -> on: a timer appears.
+          (gascity-status-toggle-auto-refresh)
+          (should gascity-status-auto-refresh)
+          (should (timerp gascity-status--refresh-timer))
+          ;; On -> off: the timer is cancelled.
+          (gascity-status-toggle-auto-refresh)
+          (should-not gascity-status-auto-refresh)
+          (should-not (timerp gascity-status--refresh-timer)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
 ;;; gce-x0c — blank line between rig groups; header carries rig path
 
 (defun gascity-test--blank-line-above-p (needle)

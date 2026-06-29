@@ -105,6 +105,26 @@ fall back to 5."
   :type 'number
   :group 'gascity)
 
+(defcustom gascity-status-auto-refresh t
+  "When non-nil, the Gas City status dashboard refreshes itself on a timer.
+The `*gascity-status*' dashboard re-reads `gc' every
+`gascity-status-auto-refresh-interval' seconds and re-renders in place,
+but only while its buffer is displayed in a visible window.  A buried or
+invisible dashboard does nothing: no timer work and no `gc' fetch.  The
+refresh preserves collapsed rigs and point, exactly like the manual `g'.
+
+Set to nil to refresh only manually with `g'; the command
+`gascity-status-toggle-auto-refresh' (G on the dashboard) flips it live."
+  :type 'boolean
+  :group 'gascity)
+
+(defcustom gascity-status-auto-refresh-interval 5
+  "Seconds between automatic refreshes of the Gas City status dashboard.
+Only consulted when `gascity-status-auto-refresh' is non-nil; a value at
+or below zero disables the timer (refresh manually with `g')."
+  :type 'number
+  :group 'gascity)
+
 ;;; Faces
 
 (defgroup gascity-faces nil
