@@ -104,3 +104,26 @@ Everywhere: `g` refreshes, `q` buries, `RET` drills in. In the tabulated lists,
 - `gascity-tmux-socket` — tmux server socket the agents run on. `nil`
   auto-detects it as the city name (gc runs one tmux server per city); set a
   string to override.
+
+## Development
+
+The standard quality gate is `scripts/gate.sh`, run from the repository root:
+
+```sh
+scripts/gate.sh
+```
+
+It runs the two offline checks that together guard the package:
+
+1. `eldev compile --warnings-as-errors` — byte-compiles every file with
+   warnings promoted to errors. This is the only check that catches
+   undefined-function references (e.g. a keymap entry naming an action verb
+   whose forward `declare-function` is missing): plain `eldev compile` reports
+   them merely as warnings, and `eldev test` never sees them.
+2. `eldev test` — the ERT suite.
+
+Either check failing exits non-zero, so a diff that reintroduces such a
+reference fails the gate before it can merge. The gate compiles the whole
+package (not an "affected" subset) because the action verbs are wired across
+files. Eldev resolves `beads.el`/`vui` from sibling checkouts — see the `Eldev`
+file.

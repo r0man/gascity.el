@@ -53,12 +53,21 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
+The standard quality gate (run from the repository root) is:
 
 ```bash
-# Example:
-# npm install
-# npm test
+scripts/gate.sh   # eldev compile --warnings-as-errors  +  eldev test
+```
+
+Run it before every push; it exits non-zero on any byte-compile warning
+(promoted to error) or test failure. The `--warnings-as-errors` compile is the
+only half that catches undefined-function references — a keymap/menu entry that
+names an action verb whose forward `declare-function` is missing (see gce-ege,
+gce-9f6). `eldev test` alone does not. The individual halves:
+
+```bash
+eldev compile --warnings-as-errors   # offline byte-compile gate
+eldev test                           # ERT suite
 ```
 
 ## Architecture Overview
