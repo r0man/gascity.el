@@ -404,12 +404,14 @@ collapse state and point); nil when BUFFER has no mounted instance."
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
-  ;; Write verbs (DESIGN-write-actions.md phase 1): `R' resets the agent at
-  ;; point fresh, `U' clears its drain flag, `c' notes the bead reference at
-  ;; point, and `L' reloads the city config (prefix arg -> --soft).
+  ;; Write verbs: `R' resets the agent at point fresh, `U' clears its drain
+  ;; flag, `L' reloads the city config (prefix arg -> --soft).  Phase 2
+  ;; promotes `c' to the bead-dispatch menu (note moved to its `o') and adds
+  ;; `S' for the sling/route flag transient on a bead reference.
   "R"   #'gascity-session-reset-at-point
   "U"   #'gascity-session-undrain-at-point
-  "c"   #'gascity-bead-note-at-point
+  "c"   #'gascity-bead-dispatch
+  "S"   #'gascity-sling-dispatch
   "L"   #'gascity-reload)
 
 (define-derived-mode gascity-dashboard-mode gascity-section-mode "GC-Status"

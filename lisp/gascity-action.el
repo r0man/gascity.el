@@ -40,6 +40,7 @@
 (require 'gascity-context)
 (require 'gascity-command)
 (require 'gascity-types)
+(require 'gascity-compose)   ; multi-line body buffer (mail send/reply)
 (require 'gascity-domain)    ; typed at-point objects (agent/rig/order)
 (require 'gascity-section)   ; gascity-agent-at-point
 (require 'gascity-tabulated) ; list refresh commands + command runners
@@ -58,16 +59,24 @@
 (defun gascity-action--summarize (result)
   "Return a short human summary of a mutation RESULT (alist, string, or nil).
 Beyond plain stdout and the generic `message'/`ok' shapes, recognises the
-two payload-returning mutations the write surface adds: `create' yields a
-new bead id (`id', or `issue' carrying one) summarised as \"created <id>\",
-and `send'/`reply' yield a `message_id' summarised as \"sent\".  These
-specific shapes are checked before the generic `message'/`ok' clauses so a
-payload that also carries a server `message' still reads as the action it
-was."
+payload-returning mutations the write surface adds: `mail send'/`reply'
+yield the sent message — summarised as \"sent\" — and `bd create' yields a
+new bead id (`id', or `issue' carrying one) summarised as \"created <id>\".
+
+The send/reply check comes *before* the `id' clause because the live
+`gc mail send/reply --json' object carries a top-level `id' (the new
+message's id) and an `action' of \"send\"/\"reply\" but no `message_id';
+without the action guard a sent message would mis-summarise as \"created
+<message-id>\".  The legacy `message_id' shape is still honoured.  All of
+these win over the generic `message'/`ok' clauses so a payload that also
+carries a server `message' still reads as the action it was."
   (cond
    ((stringp result)
     (or (car (split-string (string-trim result) "\n" t)) "done"))
-   ((and (consp result) (alist-get 'message_id result)) "sent")
+   ((and (consp result)
+         (or (alist-get 'message_id result)
+             (member (alist-get 'action result) '("send" "reply"))))
+    "sent")
    ((and (consp result) (alist-get 'id result))
     (format "created %s" (alist-get 'id result)))
    ((and (consp result) (alist-get 'issue result))
@@ -264,10 +273,15 @@ display-oriented `scoped-name'."
   (gascity-command-execute-interactive (gascity-command-sling :target target :arg arg)))
 
 ;;;###autoload
-(defun gascity-order-run (name)
-  "Run order NAME manually (prompted), bypassing its trigger."
-  (interactive (list (gascity-action--read-order "Run order: ")))
-  (gascity-command-execute-interactive (gascity-command-order-run :name name)))
+(defun gascity-order-run (name &optional rig)
+  "Run order NAME manually (prompted), bypassing its trigger.
+With a prefix argument, also prompt for a RIG to disambiguate same-name
+orders across rigs (`gc order run --rig', DESIGN-write-actions.md §11 #9)."
+  (interactive
+   (list (gascity-action--read-order "Run order: ")
+         (and current-prefix-arg (gascity-action--read-rig "Disambiguate rig: "))))
+  (gascity-command-execute-interactive
+   (gascity-command-order-run :name name :rig rig)))
 
 ;;;###autoload
 (defun gascity-start ()
@@ -315,11 +329,16 @@ display-oriented `scoped-name'."
 
 ;;;###autoload
 (defun gascity-order-run-at-point ()
-  "Run the order at point manually and refresh the list."
+  "Run the order at point manually and refresh the list.
+Passes the order's own rig as `--rig' so a same-name order in another rig
+is never run by mistake (DESIGN-write-actions.md §11 #9)."
   (interactive)
-  (gascity-command-execute-interactive
-   (gascity-command-order-run :name (gascity-action--order-at-point)))
-  (gascity--refresh-current-view))
+  (let* ((order (and (derived-mode-p 'tabulated-list-mode) (tabulated-list-get-id)))
+         (name (gascity-action--order-at-point))
+         (rig (and (gascity-order-p order) (gascity-order-rig order))))
+    (gascity-command-execute-interactive
+     (gascity-command-order-run :name name :rig rig))
+    (gascity--refresh-current-view)))
 
 ;;;###autoload
 (defun gascity-session-nudge-at-point ()
@@ -400,6 +419,88 @@ ID defaults to the bead reference at point."
   (interactive)
   (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
     (gascity-bead-note--run id (read-string (format "Note on %s: " id)))))
+
+;;; Bead — close / reopen / assign (gc bd close|reopen|assign), store-routed
+
+(defun gascity-action--read-assignee (prompt)
+  "Read an assignee with PROMPT — a session alias, completing over live names.
+Free entry is allowed so the refinery, `mayor', or a human address can be
+typed; the completion table is the city's session aliases for convenience."
+  (completing-read prompt (gascity-action--session-names) nil nil nil nil
+                   (gascity-action--agent-at-point-name)))
+
+(defun gascity-bead-close--run (id reason)
+  "Close bead ID with REASON — store-routed by ID's prefix — then refresh.
+REASON may be empty, in which case no `-r' is sent."
+  (gascity-command-execute-interactive
+   (gascity-command-bd-close
+    :id id
+    :reason (and (stringp reason) (not (string-empty-p reason)) reason)
+    :directory (gascity-beads--bead-path id)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-bead-close (id reason)
+  "Close bead ID with a REASON (both prompted, confirmed).
+ID defaults to the bead reference at point."
+  (interactive
+   (let ((id (gascity-action--read-bead "Close bead: ")))
+     (list id (read-string (format "Reason for closing %s: " id)))))
+  (when (gascity-action--confirm "Close bead %s? " id)
+    (gascity-bead-close--run id reason)))
+
+;;;###autoload
+(defun gascity-bead-close-at-point ()
+  "Close the bead reference at point with a prompted reason (confirmed)."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
+    (when (gascity-action--confirm "Close bead %s? " id)
+      (gascity-bead-close--run
+       id (read-string (format "Reason for closing %s: " id))))))
+
+(defun gascity-bead-reopen--run (id)
+  "Reopen closed bead ID — store-routed by ID's prefix — then refresh."
+  (gascity-command-execute-interactive
+   (gascity-command-bd-reopen :id id :directory (gascity-beads--bead-path id)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-bead-reopen (id)
+  "Reopen closed bead ID (prompted; defaults to the bead reference at point)."
+  (interactive (list (gascity-action--read-bead "Reopen bead: ")))
+  (gascity-bead-reopen--run id))
+
+;;;###autoload
+(defun gascity-bead-reopen-at-point ()
+  "Reopen the closed bead reference at point, then refresh."
+  (interactive)
+  (gascity-bead-reopen--run
+   (or (gascity-bead-at-point) (user-error "No bead at point"))))
+
+(defun gascity-bead-assign--run (id name)
+  "Assign bead ID to NAME — store-routed by ID's prefix — then refresh."
+  (gascity-command-execute-interactive
+   (gascity-command-bd-assign
+    :id id :name name :directory (gascity-beads--bead-path id)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-bead-assign (id name)
+  "Assign bead ID to assignee NAME (both prompted).
+ID defaults to the bead reference at point; NAME completes over session
+aliases but accepts any address (refinery, mayor, human)."
+  (interactive
+   (let ((id (gascity-action--read-bead "Assign bead: ")))
+     (list id (gascity-action--read-assignee (format "Assign %s to: " id)))))
+  (gascity-bead-assign--run id name))
+
+;;;###autoload
+(defun gascity-bead-assign-at-point ()
+  "Assign the bead reference at point to a prompted assignee, then refresh."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
+    (gascity-bead-assign--run
+     id (gascity-action--read-assignee (format "Assign %s to: " id)))))
 
 ;;; Session — reset (fresh restart) and undrain (clear the drain flag)
 
@@ -562,6 +663,161 @@ With a prefix argument, capture that many trailing LINES instead of the
                               gascity-session-peek-lines))
 
 ;;; ============================================================
+;;; Sling — richer flag dispatch (the one transient-backed command)
+;;; ============================================================
+;;
+;; Sling is the lone flag-heavy verb, so it gets a transient
+;; (`gascity-sling-dispatch', §5.2): infixes collect the flags, two
+;; suffixes act — one slings for real, one previews gc's routing plan with
+;; `--dry-run' (the preview affordance, §8).  The bead/text and target are
+;; read in the suffix (seeded from the bead at point); formula vars are
+;; prompted only when `--formula' is set.
+
+(defun gascity-sling--parse-transient-args (args)
+  "Parse flat transient ARGS into a `gascity-command-sling' initarg plist.
+ARGS is the list `transient-args' returns — switch strings (\"--formula\")
+and `option=value' strings (\"--merge=direct\").  Repeated \"--var=k=v\"
+entries collect into a single `:var' list.  Unknown entries are ignored."
+  (let (plist vars)
+    (dolist (a args)
+      (cond
+       ((equal a "--formula")   (setq plist (plist-put plist :formula t)))
+       ((equal a "--nudge")     (setq plist (plist-put plist :nudge t)))
+       ((equal a "--no-convoy") (setq plist (plist-put plist :no-convoy t)))
+       ((equal a "--reassign")  (setq plist (plist-put plist :reassign t)))
+       ((equal a "--dry-run")   (setq plist (plist-put plist :dry-run t)))
+       ((string-prefix-p "--merge=" a)
+        (setq plist (plist-put plist :merge (substring a (length "--merge=")))))
+       ((string-prefix-p "--title=" a)
+        (setq plist (plist-put plist :title (substring a (length "--title=")))))
+       ((string-prefix-p "--var=" a)
+        (push (substring a (length "--var=")) vars))))
+    (when vars (setq plist (plist-put plist :var (nreverse vars))))
+    plist))
+
+(defun gascity-sling--read-vars ()
+  "Read zero or more formula vars (key=value) from the minibuffer.
+Reads until an empty entry; returns the list of \"k=v\" strings, or nil."
+  (let (vars (v (read-string "Formula var (key=value, RET to finish): ")))
+    (while (not (string-empty-p (string-trim v)))
+      (push (string-trim v) vars)
+      (setq v (read-string "Formula var (key=value, RET to finish): ")))
+    (nreverse vars)))
+
+(defun gascity-sling--show-plan (command)
+  "Execute COMMAND (a `--dry-run' sling) and show gc's routing plan.
+Pops a read-only view buffer with gc's captured stdout; a validation or gc
+error surfaces as a clean `user-error'."
+  (let* ((text (condition-case err
+                   (oref (gascity-command-execute command) result)
+                 (gascity-validation-error
+                  (user-error "gc sling: %s" (cadr err)))
+                 (gascity-command-error
+                  (user-error "gc sling failed: %s" (gascity-error-detail err)))))
+         (buf (get-buffer-create "*gc-sling: dry-run*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (if (and (stringp text) (not (string-empty-p (string-trim text))))
+                    text
+                  "(no plan output)"))
+        (goto-char (point-min)))
+      (view-mode 1))
+    (pop-to-buffer buf)))
+
+(defun gascity-sling--run (args preview)
+  "Build and run a sling from transient ARGS (its flag list).
+Reads the bead/text and target (the bead at point seeds the arg), prompts
+for formula vars when `--formula' is present, then acts.  With PREVIEW
+non-nil, forces `--dry-run' and shows gc's routing plan instead of
+executing; otherwise acts and refreshes the originating view."
+  (let* ((plist (gascity-sling--parse-transient-args args))
+         (arg (read-string "Bead id or task text: " (gascity-bead-at-point)))
+         (target (gascity-action--read-session "Sling to target: "))
+         (vars (when (plist-get plist :formula) (gascity-sling--read-vars)))
+         (command (apply #'gascity-command-sling
+                         :target target :arg arg
+                         (append (when vars (list :var vars))
+                                 (when preview (list :dry-run t))
+                                 plist))))
+    (if preview
+        (gascity-sling--show-plan command)
+      (gascity-command-act command)
+      (gascity--refresh-current-view))))
+
+(transient-define-suffix gascity-sling-dispatch-run (args)
+  "Sling for real using the dispatch flags ARGS."
+  (interactive (list (transient-args 'gascity-sling-dispatch)))
+  (gascity-sling--run args nil))
+
+(transient-define-suffix gascity-sling-dispatch-preview (args)
+  "Preview the sling (gc `--dry-run' routing plan) for the dispatch ARGS."
+  (interactive (list (transient-args 'gascity-sling-dispatch)))
+  (gascity-sling--run args t))
+
+;;;###autoload (autoload 'gascity-sling-dispatch "gascity-action" nil t)
+(transient-define-prefix gascity-sling-dispatch ()
+  "Sling a bead/text with flags; preview shows gc's routing plan (`--dry-run')."
+  ["Routing flags"
+   ("-f" "Treat arg as a formula" "--formula")
+   ("-c" "Skip auto-convoy" "--no-convoy")
+   ("-a" "Reassign (clear human assignee)" "--reassign")
+   ("-n" "Nudge target after routing" "--nudge")
+   ("-m" "Merge strategy" "--merge=" :choices ("direct" "mr" "local"))
+   ("-t" "Wisp root title" "--title=")]
+  ["Sling"
+   ("s" "Sling…" gascity-sling-dispatch-run)
+   ("p" "Preview (dry-run)…" gascity-sling-dispatch-preview)])
+
+;;; ============================================================
+;;; Mail — send / reply via the compose buffer (gascity-compose §6)
+;;; ============================================================
+
+(defun gascity-mail--reply-subject (subject)
+  "Return a default reply subject for SUBJECT (prefix \"RE: \" once)."
+  (let ((s (or subject "")))
+    (if (string-match-p "\\`[Rr][Ee]: " s) s (concat "RE: " s))))
+
+;;;###autoload
+(defun gascity-mail-send (to subject)
+  "Compose and send a new message to TO with SUBJECT (both prompted).
+Opens a `gascity-compose' buffer for the body; `C-c C-c' sends and `C-c
+C-k' aborts.  TO completes over session aliases but accepts any address."
+  (interactive
+   (let ((to (gascity-action--read-assignee "Send mail to: ")))
+     (list to (read-string (format "Subject (to %s): " to)))))
+  (let ((origin (current-buffer)))
+    (gascity-compose
+     :buffer-name (format "*gc-mail to %s*" to)
+     :header (list (cons "To" to) (cons "Subject" subject))
+     :origin origin
+     :finish (lambda (body)
+               (gascity-command-act
+                (gascity-command-mail-send
+                 :to to :subject subject :message body))))))
+
+;;;###autoload
+(defun gascity-mail-reply-at-point ()
+  "Reply to the message at point — compose the body, then send to its sender.
+The subject defaults to the original prefixed with \"RE: \"."
+  (interactive)
+  (let* ((message (or (gascity-mail-at-point) (user-error "No message at point")))
+         (id (gascity-mail-id message))
+         (subject (read-string
+                   "Reply subject: "
+                   (gascity-mail--reply-subject (gascity-mail-subject message))))
+         (origin (current-buffer)))
+    (gascity-compose
+     :buffer-name (format "*gc-mail reply %s*" id)
+     :header (list (cons "To" (or (gascity-mail-from message) "(sender)"))
+                   (cons "Subject" subject))
+     :origin origin
+     :finish (lambda (body)
+               (gascity-command-act
+                (gascity-command-mail-reply
+                 :id id :subject subject :message body))))))
+
+;;; ============================================================
 ;;; Sub-transients — hand-built command-dispatch backends
 ;;; ============================================================
 
@@ -587,6 +843,32 @@ With a prefix argument, capture that many trailing LINES instead of the
   ["City lifecycle"
    ("S" "Start city" gascity-start)
    ("K" "Stop city" gascity-stop)])
+
+;;;###autoload (autoload 'gascity-bead-dispatch "gascity-action" nil t)
+(transient-define-prefix gascity-bead-dispatch ()
+  "Dispatch bead actions on the reference at point (hand-built backend).
+The verbs resolve their subject with `gascity-bead-at-point'; each `gc bd'
+write is store-routed by the bead id's prefix.  `RET'/`b' still open the
+bead in beads.el; this menu is targeted command dispatch (DESIGN §4)."
+  ["Bead"
+   ("s" "Sling / route…" gascity-sling-dispatch)
+   ("c" "Close…" gascity-bead-close-at-point)
+   ("o" "Note…" gascity-bead-note-at-point)
+   ("a" "Assign…" gascity-bead-assign-at-point)
+   ("r" "Reopen" gascity-bead-reopen-at-point)
+   ("v" "Visit (beads.el)" gascity-bead-visit)])
+
+;;;###autoload (autoload 'gascity-mail-dispatch "gascity-action" nil t)
+(transient-define-prefix gascity-mail-dispatch ()
+  "Dispatch mail actions in the inbox (a hand-built command backend).
+`read'/`archive'/`reply' act on the message at point; `send' composes a
+fresh message to a prompted recipient."
+  ["Mail"
+   ("r" "Read…" gascity-mail-read-at-point)
+   ("R" "Reply…" gascity-mail-reply-at-point)
+   ("s" "Send…" gascity-mail-send)
+   ("a" "Archive…" gascity-mail-archive-at-point)
+   ("u" "Mark unread" gascity-mail-mark-unread-at-point)])
 
 (provide 'gascity-action)
 ;;; gascity-action.el ends here

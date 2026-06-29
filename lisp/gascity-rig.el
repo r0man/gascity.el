@@ -349,11 +349,13 @@ refuses the city HQ (which has no rig dashboard) with a clear message."
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
   "v"   #'gascity-session-peek-at-point
-  ;; Write verbs (DESIGN-write-actions.md phase 1): reset/undrain the agent
-  ;; at point, note the bead reference (ready/in-progress) at point.
+  ;; Write verbs: reset/undrain the agent at point.  Phase 2 promotes `c'
+  ;; to the bead-dispatch menu (note moved to its `o') and adds `S' for the
+  ;; sling/route flag transient on a ready/in-progress bead reference.
   "R"   #'gascity-session-reset-at-point
   "U"   #'gascity-session-undrain-at-point
-  "c"   #'gascity-bead-note-at-point)
+  "c"   #'gascity-bead-dispatch
+  "S"   #'gascity-sling-dispatch)
 
 (define-derived-mode gascity-rig-dashboard-mode gascity-section-mode "GC-Rig"
   "Major mode for the gascity rig dashboard.

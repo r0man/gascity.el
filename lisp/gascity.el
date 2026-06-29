@@ -107,9 +107,12 @@ the lists and the status dashboard."
    ["Dispatch"
     ("R" "Rig control…" gascity-rig-dispatch)
     ("A" "Session control…" gascity-session-dispatch)
-    ("S" "Sling…" gascity-sling)
+    ("S" "Sling…" gascity-sling-dispatch)
     ("O" "Run order…" gascity-order-run)
-    ("L" "City lifecycle…" gascity-lifecycle-dispatch)]])
+    ("L" "City lifecycle…" gascity-lifecycle-dispatch)]
+   ["Bead / Mail"
+    ("B" "Bead actions…" gascity-bead-dispatch)
+    ("M" "Mail actions…" gascity-mail-dispatch)]])
 
 (provide 'gascity)
 ;;; gascity.el ends here

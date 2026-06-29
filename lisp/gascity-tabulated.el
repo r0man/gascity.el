@@ -909,12 +909,15 @@ Renders the data already fetched, without contacting `gc'; each slot of the
   "g"   #'gascity-mail-inbox-refresh
   "/"   #'gascity-mail-inbox-filter
   "RET" #'gascity-mail-inbox-show
-  ;; Write verbs (DESIGN-write-actions.md phase 1).  `RET' stays the cheap,
-  ;; gc-free field view; `r' is the gc-contacting read (shows the body and
-  ;; marks read).  `a' archives (confirmed); `u' marks unread.
+  ;; Write verbs.  `RET' stays the cheap, gc-free field view; `r' is the
+  ;; gc-contacting read (shows the body and marks read).  `a' archives
+  ;; (confirmed); `u' marks unread.  Phase 2 adds `R' reply (compose) and
+  ;; `c' for the mail-dispatch menu (which also exposes send).
   "r"   #'gascity-mail-read-at-point
+  "R"   #'gascity-mail-reply-at-point
   "a"   #'gascity-mail-archive-at-point
-  "u"   #'gascity-mail-mark-unread-at-point)
+  "u"   #'gascity-mail-mark-unread-at-point
+  "c"   #'gascity-mail-dispatch)
 
 (define-derived-mode gascity-mail-inbox-mode tabulated-list-mode "GC-Mail"
   "Major mode showing the current agent's mail inbox.

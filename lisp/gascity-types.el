@@ -234,16 +234,38 @@ Distinct from `session kill' (force-kill; the reconciler restarts) and
    (nudge :initarg :nudge :type boolean :initform nil
           :long-option "nudge" :option-type :boolean
           :documentation "Nudge the target after routing.")
+   (no-convoy :initarg :no-convoy :type boolean :initform nil
+              :long-option "no-convoy" :option-type :boolean
+              :documentation "Skip auto-convoy creation.")
+   (reassign :initarg :reassign :type boolean :initform nil
+             :long-option "reassign" :option-type :boolean
+             :documentation "Clear any existing human assignee before routing
+\(human->pool handoff).")
+   (merge :initarg :merge :initform nil
+          :long-option "merge" :option-type :string
+          :documentation "Merge strategy: \"direct\", \"mr\", or \"local\".")
+   (title :initarg :title :initform nil
+          :long-option "title" :option-type :string
+          :documentation "Wisp root bead title (with --formula).")
+   (var :initarg :var :initform nil
+        :long-option "var" :option-type :list
+        :documentation "Formula variable substitutions, each a \"key=value\"
+string.  Emitted as a repeated `--var' (gc's stringArray flag).")
    (dry-run :initarg :dry-run :type boolean :initform nil
             :long-option "dry-run" :option-type :boolean
             :documentation "Show what would be done without executing."))
-  :documentation "Route a bead (or task text/formula) to a session or agent.")
+  :documentation "Route a bead (or task text/formula) to a session or agent.
+The flag-heavy verb, so it backs the `gascity-sling-dispatch' transient;
+`--dry-run' doubles as the preview affordance.")
 
 ;;; Orders
 
 (gascity-defcommand gascity-command-order-run (gascity-command-action)
   ((name :initarg :name :type string :initform "" :positional 1
-         :documentation "Order to execute manually."))
+         :documentation "Order to execute manually.")
+   (rig :initarg :rig :initform nil
+        :long-option "rig" :option-type :string
+        :documentation "Rig name to disambiguate same-name orders across rigs."))
   :documentation "Execute an order manually, bypassing its trigger conditions.")
 
 ;;; Bead writes (gc bd …) — store-routed via `-C' (gascity-command-bd-action)
@@ -257,6 +279,29 @@ appended to the bead's discussion, never overwriting prior notes."))
   :documentation "Append a note to a bead (`gc bd note <id> <text>').
 Inherits the `-C' store-routing slot from `gascity-command-bd-action'; the
 caller resolves it from ID's prefix with `gascity-beads--bead-path'.")
+
+(gascity-defcommand gascity-command-bd-close (gascity-command-bd-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Bead id to close.")
+   (reason :initarg :reason :initform nil
+           :long-option "reason" :option-type :string
+           :documentation "Optional reason recorded on the close event (`-r')."))
+  :documentation "Close a bead (`gc bd close <id> -r <reason>').
+Store-routed by `-C' (inherited).  The porcelain confirms before running.")
+
+(gascity-defcommand gascity-command-bd-reopen (gascity-command-bd-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Bead id to reopen."))
+  :documentation "Reopen a closed bead (`gc bd reopen <id>') — clears
+`closed_at' and emits a Reopened event.  Store-routed by `-C' (inherited).")
+
+(gascity-defcommand gascity-command-bd-assign (gascity-command-bd-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Bead id to assign.")
+   (name :initarg :name :type string :initform "" :positional 2
+         :documentation "Assignee (agent qualified name, refinery, or human)."))
+  :documentation "Assign a bead to an agent or human (`gc bd assign <id> <name>').
+Store-routed by `-C' (inherited).")
 
 ;;; City config
 
@@ -295,6 +340,42 @@ absorbs drift on open sessions rather than draining them.")
        :documentation "Message id to mark unread."))
   :cli-command "mail mark-unread"
   :documentation "Mark a message unread (`gc mail mark-unread <id>').")
+
+(gascity-defcommand gascity-command-mail-send (gascity-command-action)
+  ((to :initarg :to :type string :initform "" :positional 1
+       :documentation "Recipient address (session alias, mayor/, human, …).")
+   (subject :initarg :subject :initform nil
+            :long-option "subject" :option-type :string
+            :documentation "Message subject line (`-s'/`--subject').")
+   (message :initarg :message :initform nil
+            :long-option "message" :option-type :string
+            :documentation "Message body text (`-m'/`--message'); from the
+compose buffer.")
+   (json :initarg :json :type boolean :initform t
+         :long-option "json" :option-type :boolean
+         :documentation "On: the JSON result carries the new message, which
+`gascity-action--summarize' renders as \"sent\"."))
+  :documentation "Send a message to a session alias or human
+\(`gc mail send <to> -s … -m …').  Body-bearing, so it is driven from the
+compose buffer (`gascity-compose').")
+
+(gascity-defcommand gascity-command-mail-reply (gascity-command-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Message id to reply to; the reply goes to its sender.")
+   (subject :initarg :subject :initform nil
+            :long-option "subject" :option-type :string
+            :documentation "Reply subject line (`-s'/`--subject').")
+   (message :initarg :message :initform nil
+            :long-option "message" :option-type :string
+            :documentation "Reply body text (`-m'/`--message'); from the
+compose buffer.")
+   (json :initarg :json :type boolean :initform t
+         :long-option "json" :option-type :boolean
+         :documentation "On: the JSON result carries the reply, which
+`gascity-action--summarize' renders as \"sent\"."))
+  :documentation "Reply to a message, addressed to its original sender
+\(`gc mail reply <id> -s … -m …').  Body-bearing, driven from the compose
+buffer (`gascity-compose').")
 
 ;;; City lifecycle (streaming; not `gascity-command-action')
 
@@ -376,6 +457,27 @@ absorbs drift on open sessions rather than draining them.")
 
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-mark-unread))
   "Require a message id."
+  (and (gascity-command--blank-p command 'id) "a message id is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-close))
+  "Require a bead id (the reason is optional)."
+  (and (gascity-command--blank-p command 'id) "a bead id is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-reopen))
+  "Require a bead id."
+  (and (gascity-command--blank-p command 'id) "a bead id is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-assign))
+  "Require a bead id and an assignee name."
+  (cond ((gascity-command--blank-p command 'id) "a bead id is required")
+        ((gascity-command--blank-p command 'name) "an assignee is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-mail-send))
+  "Require a recipient (subject/body come from the compose buffer)."
+  (and (gascity-command--blank-p command 'to) "a recipient is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-mail-reply))
+  "Require the id of the message being replied to."
   (and (gascity-command--blank-p command 'id) "a message id is required"))
 
 (provide 'gascity-types)

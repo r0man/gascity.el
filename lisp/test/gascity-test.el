@@ -2368,12 +2368,22 @@ gc applies its own prefix/ambient routing."
 
 (ert-deftest gascity-test-action-summarize-payloads ()
   "Payload-returning mutations summarise to their action: created / sent.
-The specific `id'/`issue'/`message_id' shapes win over the generic
+The specific send/reply and `id'/`issue' shapes win over the generic
 `message'/`ok' clauses so a payload that also carries a server `message'
 still reads as the action it was (DESIGN-write-actions.md §3.2b)."
   (should (equal (gascity-action--summarize '((id . "gce-9") (ok . t))) "created gce-9"))
   (should (equal (gascity-action--summarize '((issue . ((id . "gce-9"))))) "created gce-9"))
   (should (equal (gascity-action--summarize '((issue . "gce-9"))) "created gce-9"))
+  ;; Live `gc mail send/reply --json' carries a top-level `id' (the message
+  ;; id) plus `action' "send"/"reply" and NO `message_id'; the action guard
+  ;; must beat the `id'->"created" clause so a sent mail reads as "sent".
+  (should (equal (gascity-action--summarize
+                  '((command . "mail.send") (action . "send") (id . "bl-wisp-1")))
+                 "sent"))
+  (should (equal (gascity-action--summarize
+                  '((command . "mail.reply") (action . "reply") (id . "bl-wisp-2")))
+                 "sent"))
+  ;; The legacy `message_id' shape is still honoured.
   (should (equal (gascity-action--summarize '((message_id . "x") (message . "Sent to y")))
                  "sent"))
   ;; The pre-existing shapes still summarise as before.
@@ -2413,24 +2423,33 @@ from either list now refreshes it in place like every other view."
     (should-error (gascity-mail--id-at-point) :type 'user-error)))
 
 (ert-deftest gascity-test-write-keys-bound ()
-  "Phase-1 keys land in the right keymaps without shadowing shipped ones.
-Reset/undrain reach every agent view; bead `note' is on the three views
-that carry bead references (not the flat session list); reload is
-city-level (status dashboard only); mail verbs live in the inbox."
+  "Write keys land in the right keymaps without shadowing shipped ones.
+Reset/undrain reach every agent view; reload is city-level (status
+dashboard only); mail verbs live in the inbox.  Phase 2: `c' on the three
+bead-bearing vui views opens `gascity-bead-dispatch' (note moved to its
+`o'), `S' opens the sling/route transient, and the inbox gains `R' reply
+and `c' mail-dispatch."
   (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
                      gascity-session-detail-mode-map gascity-session-list-mode-map))
     (should (eq (keymap-lookup map "R") #'gascity-session-reset-at-point))
     (should (eq (keymap-lookup map "U") #'gascity-session-undrain-at-point)))
+  ;; `c' is the bead-dispatch menu and `S' the sling transient on the three
+  ;; views that carry bead references (not the flat session list).
   (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
                      gascity-session-detail-mode-map))
-    (should (eq (keymap-lookup map "c") #'gascity-bead-note-at-point)))
+    (should (eq (keymap-lookup map "c") #'gascity-bead-dispatch))
+    (should (eq (keymap-lookup map "S") #'gascity-sling-dispatch)))
   (should (eq (keymap-lookup gascity-dashboard-mode-map "L") #'gascity-reload))
   (should (eq (keymap-lookup gascity-mail-inbox-mode-map "r")
               #'gascity-mail-read-at-point))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "R")
+              #'gascity-mail-reply-at-point))
   (should (eq (keymap-lookup gascity-mail-inbox-mode-map "a")
               #'gascity-mail-archive-at-point))
   (should (eq (keymap-lookup gascity-mail-inbox-mode-map "u")
               #'gascity-mail-mark-unread-at-point))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "c")
+              #'gascity-mail-dispatch))
   ;; `RET' in the inbox stays the cheap cached-field view, not the gc read.
   (should (eq (keymap-lookup gascity-mail-inbox-mode-map "RET")
               #'gascity-mail-inbox-show)))
@@ -2463,10 +2482,179 @@ city-level (status dashboard only); mail verbs live in the inbox."
       (should-not ran))))
 
 (ert-deftest gascity-test-bd-action-is-abstract ()
-  "The `-C' bead-write base is abstract — only concrete verbs instantiate."
+  "The `-C' bead-write base is abstract — only concrete verbs instantiate.
+Every phase-2 bead verb (close/reopen/assign) inherits the store-routing
+base alongside the phase-1 note."
   (should-error (gascity-command-bd-action) :type 'error)
-  (should (object-of-class-p (gascity-command-bd-note :id "x" :text "y")
-                             'gascity-command-bd-action)))
+  (dolist (cmd (list (gascity-command-bd-note :id "x" :text "y")
+                     (gascity-command-bd-close :id "x")
+                     (gascity-command-bd-reopen :id "x")
+                     (gascity-command-bd-assign :id "x" :name "y")))
+    (should (object-of-class-p cmd 'gascity-command-bd-action))))
+
+;;; Phase 2 — dispatch transients, close/reopen/assign, richer sling, compose
+
+(ert-deftest gascity-test-bd-write-command-lines ()
+  "Close/reopen/assign build the right `gc bd' line; `-C' precedes `--reason'."
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-close :id "gce-1" :reason "done"
+                                            :directory "/r/gce/"))
+                 '("gc" "bd" "close" "gce-1" "-C" "/r/gce/" "--reason" "done")))
+  ;; No reason -> no --reason; nil directory -> no -C.
+  (should (equal (gascity-command-line (gascity-command-bd-close :id "gce-1"))
+                 '("gc" "bd" "close" "gce-1")))
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-reopen :id "gce-1" :directory "/r/gce/"))
+                 '("gc" "bd" "reopen" "gce-1" "-C" "/r/gce/")))
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-assign :id "gce-1" :name "rig/x"
+                                             :directory "/r/gce/"))
+                 '("gc" "bd" "assign" "gce-1" "rig/x" "-C" "/r/gce/"))))
+
+(ert-deftest gascity-test-bd-write-validation ()
+  "Phase-2 write verbs reject missing required positionals before gc runs."
+  (should (gascity-command-validate (gascity-command-bd-close)))
+  (should-not (gascity-command-validate (gascity-command-bd-close :id "x")))
+  (should (gascity-command-validate (gascity-command-bd-reopen)))
+  (should-not (gascity-command-validate (gascity-command-bd-reopen :id "x")))
+  (should (gascity-command-validate (gascity-command-bd-assign :id "x")))
+  (should (gascity-command-validate (gascity-command-bd-assign :name "y")))
+  (should-not (gascity-command-validate (gascity-command-bd-assign :id "x" :name "y")))
+  (should (gascity-command-validate (gascity-command-mail-send)))
+  (should-not (gascity-command-validate (gascity-command-mail-send :to "mayor")))
+  (should (gascity-command-validate (gascity-command-mail-reply)))
+  (should-not (gascity-command-validate (gascity-command-mail-reply :id "m1"))))
+
+(ert-deftest gascity-test-bd-write-store-routing ()
+  "Close/reopen/assign resolve the bead store and pin it with `-C', like note.
+An empty close reason drops `--reason'; an unknown id prefix degrades to no
+`-C' (gc's own prefix/ambient routing)."
+  (let (line)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'gascity-command-execute-interactive)
+               (lambda (cmd) (setq line (gascity-command-line cmd))))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      (gascity-bead-close--run "gce-afq" "done")
+      (should (equal line '("gc" "bd" "close" "gce-afq" "-C" "/r/gce/" "--reason" "done")))
+      (gascity-bead-close--run "gce-afq" "")
+      (should (equal line '("gc" "bd" "close" "gce-afq" "-C" "/r/gce/")))
+      (gascity-bead-assign--run "gce-afq" "gascity.el/gastown.refinery")
+      (should (equal line '("gc" "bd" "assign" "gce-afq"
+                            "gascity.el/gastown.refinery" "-C" "/r/gce/")))
+      (gascity-bead-reopen--run "zz-9")
+      (should (equal line '("gc" "bd" "reopen" "zz-9"))))))
+
+(ert-deftest gascity-test-bd-close-confirm-gating ()
+  "`gascity-bead-close-at-point' gates on `yes-or-no-p'; a `no' skips the run."
+  (cl-letf (((symbol-function 'gascity-bead-at-point) (lambda () "gce-1"))
+            ((symbol-function 'gascity-beads--bead-path) (lambda (_) nil))
+            ((symbol-function 'read-string) (lambda (&rest _) "because"))
+            ((symbol-function 'gascity--refresh-current-view) #'ignore))
+    (let (ran)
+      (cl-letf (((symbol-function 'gascity-command-execute-interactive)
+                 (lambda (&rest _) (setq ran t)))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
+        (gascity-bead-close-at-point)
+        (should-not ran)
+        (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+          (gascity-bead-close-at-point)
+          (should ran))))))
+
+(ert-deftest gascity-test-sling-rich-command-line ()
+  "Sling emits every new infix in declaration order; defaults stay off.
+`--var' becomes a repeated flag (gc's stringArray); `--merge'/`--title'
+take a value; the booleans are absent unless set."
+  (should (equal
+           (gascity-command-line
+            (gascity-command-sling :target "t" :arg "b" :formula t :nudge t
+                                   :no-convoy t :reassign t :merge "direct"
+                                   :title "Root" :var '("a=1" "b=2") :dry-run t))
+           '("gc" "sling" "t" "b" "--formula" "--nudge" "--no-convoy"
+             "--reassign" "--merge" "direct" "--title" "Root"
+             "--var" "a=1" "--var" "b=2" "--dry-run")))
+  (should (equal (gascity-command-line (gascity-command-sling :target "t" :arg "b"))
+                 '("gc" "sling" "t" "b")))
+  (should (equal (gascity-command-line
+                  (gascity-command-sling :target "t" :arg "b" :merge "mr"))
+                 '("gc" "sling" "t" "b" "--merge" "mr")))
+  ;; A single var still emits one --var pair.
+  (should (equal (gascity-command-line
+                  (gascity-command-sling :target "t" :arg "b" :var '("k=v")))
+                 '("gc" "sling" "t" "b" "--var" "k=v"))))
+
+(ert-deftest gascity-test-sling-parse-transient-args ()
+  "The pure transient-arg parser maps switches/options to sling initargs."
+  (let ((p (gascity-sling--parse-transient-args
+            '("--formula" "--no-convoy" "--reassign" "--nudge"
+              "--merge=direct" "--title=Root" "--var=a=1" "--var=b=2"))))
+    (should (eq (plist-get p :formula) t))
+    (should (eq (plist-get p :no-convoy) t))
+    (should (eq (plist-get p :reassign) t))
+    (should (eq (plist-get p :nudge) t))
+    (should (equal (plist-get p :merge) "direct"))
+    (should (equal (plist-get p :title) "Root"))
+    (should (equal (plist-get p :var) '("a=1" "b=2"))))
+  ;; Empty -> empty plist; unknown entries ignored.
+  (should (null (gascity-sling--parse-transient-args nil)))
+  (should (null (gascity-sling--parse-transient-args '("--bogus"))))
+  ;; Parsed args drive a real command line end to end.
+  (should (equal (gascity-command-line
+                  (apply #'gascity-command-sling :target "t" :arg "b"
+                         (gascity-sling--parse-transient-args
+                          '("--formula" "--merge=local" "--var=x=1"))))
+                 '("gc" "sling" "t" "b" "--formula" "--merge" "local" "--var" "x=1"))))
+
+(ert-deftest gascity-test-order-run-rig ()
+  "Order run emits `--rig' only when a rig is supplied (DESIGN §11 #9)."
+  (should (equal (gascity-command-line (gascity-command-order-run :name "o1"))
+                 '("gc" "order" "run" "o1")))
+  (should (equal (gascity-command-line
+                  (gascity-command-order-run :name "o1" :rig "gascity.el"))
+                 '("gc" "order" "run" "o1" "--rig" "gascity.el"))))
+
+(ert-deftest gascity-test-mail-compose-command-lines ()
+  "Mail send/reply request JSON (for the `sent' summary) and carry s/m."
+  (should (equal (gascity-command-line
+                  (gascity-command-mail-send :to "mayor" :subject "Hi" :message "yo"))
+                 '("gc" "mail" "send" "mayor" "--json" "--subject" "Hi"
+                   "--message" "yo")))
+  (should (equal (gascity-command-line
+                  (gascity-command-mail-reply :id "m1" :subject "RE" :message "yo"))
+                 '("gc" "mail" "reply" "m1" "--json" "--subject" "RE"
+                   "--message" "yo")))
+  (should (equal (gascity-command-subcommand (gascity-command-mail-send)) "mail send"))
+  (should (equal (gascity-command-subcommand (gascity-command-mail-reply)) "mail reply"))
+  ;; The reply default subject prefixes RE: once, idempotently.
+  (should (equal (gascity-mail--reply-subject "Build green") "RE: Build green"))
+  (should (equal (gascity-mail--reply-subject "RE: Build green") "RE: Build green"))
+  (should (equal (gascity-mail--reply-subject nil) "RE: ")))
+
+(ert-deftest gascity-test-compose-finish ()
+  "`gascity-compose-finish' runs its closure with the body, then discards.
+`gascity-compose-abort' discards without calling the closure.  The
+read-only header is excluded from the body."
+  (let (received)
+    (let ((buf (gascity-compose
+                :buffer-name "*gc-test-compose*"
+                :header '(("To" . "mayor") ("Subject" . "Hi"))
+                :finish (lambda (body) (setq received body)))))
+      (with-current-buffer buf
+        (goto-char (point-max))
+        (insert "line one\nline two")
+        (gascity-compose-finish))
+      (should (equal received "line one\nline two"))
+      (should-not (buffer-live-p buf))))
+  (let (called)
+    (let ((buf (gascity-compose
+                :buffer-name "*gc-test-compose-2*"
+                :header '(("To" . "x"))
+                :finish (lambda (_body) (setq called t)))))
+      (with-current-buffer buf
+        (gascity-compose-abort))
+      (should-not called)
+      (should-not (buffer-live-p buf)))))
 
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

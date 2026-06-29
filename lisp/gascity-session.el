@@ -381,11 +381,13 @@ dashboard agent row, or a rig dashboard agent row."
   "D"   #'gascity-session-drain-at-point
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
-  ;; Write verbs (DESIGN-write-actions.md phase 1): reset/undrain this agent,
-  ;; note the hook/history bead reference at point.
+  ;; Write verbs: reset/undrain this agent.  Phase 2 promotes `c' to the
+  ;; bead-dispatch menu (note moved to its `o') and adds `S' for the
+  ;; sling/route flag transient on the hook/history bead reference at point.
   "R"   #'gascity-session-reset-at-point
   "U"   #'gascity-session-undrain-at-point
-  "c"   #'gascity-bead-note-at-point)
+  "c"   #'gascity-bead-dispatch
+  "S"   #'gascity-sling-dispatch)
 
 (define-derived-mode gascity-session-detail-mode gascity-section-mode "GC-Agent"
   "Major mode for the gascity session/polecat detail view.
