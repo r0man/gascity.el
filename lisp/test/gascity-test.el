@@ -2656,5 +2656,238 @@ read-only header is excluded from the body."
       (should-not called)
       (should-not (buffer-live-p buf)))))
 
+;;; Phase 3 — bead update/create/deps, session lifecycle, rig composition
+
+(ert-deftest gascity-test-bd-author-command-lines ()
+  "Update/create/dep build the right `gc bd' line; `-C' precedes the flags.
+Only fields that are set are emitted (update); create flips `--json' on (for
+the new-id payload) right after the title; deps emit two positionals."
+  ;; update: -C, then only the supplied --status/--priority.
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-update :id "gce-1" :status "open"
+                                             :priority "1" :directory "/r/gce/"))
+                 '("gc" "bd" "update" "gce-1" "-C" "/r/gce/"
+                   "--status" "open" "--priority" "1")))
+  ;; update: description only (the compose path).
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-update :id "gce-1" :description "body"
+                                             :directory "/r/gce/"))
+                 '("gc" "bd" "update" "gce-1" "-C" "/r/gce/" "--description" "body")))
+  ;; update: no directory -> no -C.
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-update :id "gce-1" :status "closed"))
+                 '("gc" "bd" "update" "gce-1" "--status" "closed")))
+  ;; create: --json right after the title, then -C, then the flags.
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-create :title "Hello world" :type "task"
+                                             :priority "2" :assignee "x"
+                                             :directory "/r/gce/"))
+                 '("gc" "bd" "create" "Hello world" "--json" "-C" "/r/gce/"
+                   "--type" "task" "--priority" "2" "--assignee" "x")))
+  (should (equal (gascity-command-line (gascity-command-bd-create :title "T"))
+                 '("gc" "bd" "create" "T" "--json")))
+  ;; dep add/remove: id + dependency positionals, then -C.
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-dep-add :id "gce-1" :dependency "gce-2"
+                                              :directory "/r/gce/"))
+                 '("gc" "bd" "dep" "add" "gce-1" "gce-2" "-C" "/r/gce/")))
+  (should (equal (gascity-command-line
+                  (gascity-command-bd-dep-remove :id "gce-1" :dependency "gce-2"
+                                                 :directory "/r/gce/"))
+                 '("gc" "bd" "dep" "remove" "gce-1" "gce-2" "-C" "/r/gce/")))
+  (should (equal (gascity-command-subcommand (gascity-command-bd-dep-add)) "bd dep add"))
+  (should (equal (gascity-command-subcommand (gascity-command-bd-dep-remove))
+                 "bd dep remove")))
+
+(ert-deftest gascity-test-bd-author-validation ()
+  "Update needs an id and ≥1 field; create needs a title; deps need both ids."
+  (should (gascity-command-validate (gascity-command-bd-update)))
+  ;; id but no field -> still invalid (an empty update is a no-op).
+  (should (gascity-command-validate (gascity-command-bd-update :id "x")))
+  (should-not (gascity-command-validate
+               (gascity-command-bd-update :id "x" :status "open")))
+  (should-not (gascity-command-validate
+               (gascity-command-bd-update :id "x" :priority "1")))
+  (should-not (gascity-command-validate
+               (gascity-command-bd-update :id "x" :description "d")))
+  (should (gascity-command-validate (gascity-command-bd-create)))
+  (should-not (gascity-command-validate (gascity-command-bd-create :title "T")))
+  (should (gascity-command-validate (gascity-command-bd-dep-add :id "x")))
+  (should (gascity-command-validate (gascity-command-bd-dep-add :dependency "y")))
+  (should-not (gascity-command-validate
+               (gascity-command-bd-dep-add :id "x" :dependency "y")))
+  (should (gascity-command-validate (gascity-command-bd-dep-remove :id "x")))
+  (should-not (gascity-command-validate
+               (gascity-command-bd-dep-remove :id "x" :dependency "y"))))
+
+(ert-deftest gascity-test-bd-author-is-bd-action ()
+  "Update/create/dep verbs inherit the `-C' store-routing base."
+  (dolist (cmd (list (gascity-command-bd-update :id "x" :status "open")
+                     (gascity-command-bd-create :title "t")
+                     (gascity-command-bd-dep-add :id "x" :dependency "y")
+                     (gascity-command-bd-dep-remove :id "x" :dependency "y")))
+    (should (object-of-class-p cmd 'gascity-command-bd-action))))
+
+(ert-deftest gascity-test-bd-author-store-routing ()
+  "Update/dep runners resolve the bead store from the id prefix and pin `-C'.
+Create resolves its store from the contextual rig (no existing id) and
+surfaces the new id payload through `gascity-command-act'."
+  (let (line created)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'gascity-command-execute-interactive)
+               (lambda (cmd) (setq line (gascity-command-line cmd))))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      (gascity-bead-update--run "gce-afq" :status "in_progress")
+      (should (equal line '("gc" "bd" "update" "gce-afq" "-C" "/r/gce/"
+                            "--status" "in_progress")))
+      (gascity-bead-update--run "gce-afq" :priority "0")
+      (should (equal line '("gc" "bd" "update" "gce-afq" "-C" "/r/gce/"
+                            "--priority" "0")))
+      (gascity-bead-dep-add--run "gce-afq" "gce-1")
+      (should (equal line '("gc" "bd" "dep" "add" "gce-afq" "gce-1" "-C" "/r/gce/")))
+      (gascity-bead-dep-remove--run "gce-afq" "gce-1")
+      (should (equal line '("gc" "bd" "dep" "remove" "gce-afq" "gce-1" "-C" "/r/gce/")))
+      ;; An unknown id prefix degrades to no -C.
+      (gascity-bead-update--run "zz-9" :status "open")
+      (should (equal line '("gc" "bd" "update" "zz-9" "--status" "open"))))
+    ;; Create: store from the contextual rig; act surfaces the created id.
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'gascity-context-rig-name) (lambda (&rest _) "gascity.el"))
+              ((symbol-function 'gascity-command-act)
+               (lambda (cmd) (setq created (gascity-command-line cmd)) '((id . "gce-new"))))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      (gascity-bead-create "New bead" "task" "2" "")
+      (should (equal created '("gc" "bd" "create" "New bead" "--json" "-C" "/r/gce/"
+                               "--type" "task" "--priority" "2")))
+      ;; The created-id payload summarises as "created <id>".
+      (should (equal (gascity-action--summarize '((id . "gce-new"))) "created gce-new")))))
+
+(ert-deftest gascity-test-bd-compose-edits ()
+  "Describe/note-compose open a compose buffer whose finish builds the verb.
+`describe' replaces the description via `gc bd update'; `note (compose)'
+appends via `gc bd note'.  Both are store-routed by the id prefix."
+  (cl-letf (((symbol-function 'gascity-bead-at-point) (lambda () "gce-1"))
+            ((symbol-function 'gascity-beads--bead-path) (lambda (_) "/r/gce/"))
+            ((symbol-function 'gascity--refresh-current-view) #'ignore))
+    (let (acted)
+      (cl-letf (((symbol-function 'gascity-command-act)
+                 (lambda (cmd) (setq acted (gascity-command-line cmd)))))
+        ;; Description edit -> gc bd update --description <body>.
+        (gascity-bead-describe-at-point)
+        (with-current-buffer "*gc-bead gce-1 description*"
+          (goto-char (point-max))
+          (insert "a longer\ndescription")
+          (gascity-compose-finish))
+        (should (equal acted '("gc" "bd" "update" "gce-1" "-C" "/r/gce/"
+                               "--description" "a longer\ndescription")))
+        ;; Long note -> gc bd note <id> <body>.
+        (gascity-bead-note-compose-at-point)
+        (with-current-buffer "*gc-bead gce-1 note*"
+          (goto-char (point-max))
+          (insert "multi\nline note")
+          (gascity-compose-finish))
+        (should (equal acted '("gc" "bd" "note" "gce-1" "multi\nline note"
+                               "-C" "/r/gce/")))))))
+
+(ert-deftest gascity-test-session-lifecycle-command-lines ()
+  "Rename/close/pin/unpin/prune build the right `gc session' line (no --json)."
+  (should (equal (gascity-command-line
+                  (gascity-command-session-rename :target "rig/a" :title "New name"))
+                 '("gc" "session" "rename" "rig/a" "New name")))
+  (should (equal (gascity-command-line (gascity-command-session-close :target "rig/a"))
+                 '("gc" "session" "close" "rig/a")))
+  (should (equal (gascity-command-line (gascity-command-session-pin :target "rig/a"))
+                 '("gc" "session" "pin" "rig/a")))
+  (should (equal (gascity-command-line (gascity-command-session-unpin :target "rig/a"))
+                 '("gc" "session" "unpin" "rig/a")))
+  (should (equal (gascity-command-line (gascity-command-session-prune))
+                 '("gc" "session" "prune")))
+  (should (equal (gascity-command-line
+                  (gascity-command-session-prune :before "7d" :state "suspended,asleep"))
+                 '("gc" "session" "prune" "--before" "7d" "--state" "suspended,asleep")))
+  (dolist (cmd (list (gascity-command-session-rename :target "a" :title "b")
+                     (gascity-command-session-close :target "a")
+                     (gascity-command-session-prune)))
+    (should-not (member "--json" (gascity-command-line cmd)))))
+
+(ert-deftest gascity-test-session-lifecycle-validation ()
+  "Rename needs target+title; close/pin/unpin need a target; prune needs nothing."
+  (should (gascity-command-validate (gascity-command-session-rename :target "a")))
+  (should (gascity-command-validate (gascity-command-session-rename :title "b")))
+  (should-not (gascity-command-validate
+               (gascity-command-session-rename :target "a" :title "b")))
+  (dolist (cmd (list (gascity-command-session-close) (gascity-command-session-pin)
+                     (gascity-command-session-unpin)))
+    (should (gascity-command-validate cmd)))
+  (should-not (gascity-command-validate (gascity-command-session-close :target "a")))
+  (should-not (gascity-command-validate (gascity-command-session-pin :target "a")))
+  (should-not (gascity-command-validate (gascity-command-session-unpin :target "a")))
+  (should-not (gascity-command-validate (gascity-command-session-prune))))
+
+(ert-deftest gascity-test-rig-compose-command-lines ()
+  "Rig add/remove build the right `gc rig' line; optional name/prefix emit flags."
+  (should (equal (gascity-command-line (gascity-command-rig-add :path "/p/x"))
+                 '("gc" "rig" "add" "/p/x")))
+  (should (equal (gascity-command-line
+                  (gascity-command-rig-add :path "/p/x" :name "myrig" :prefix "mr"))
+                 '("gc" "rig" "add" "/p/x" "--name" "myrig" "--prefix" "mr")))
+  (should (equal (gascity-command-line (gascity-command-rig-remove :name "myrig"))
+                 '("gc" "rig" "remove" "myrig")))
+  (should (equal (gascity-command-subcommand (gascity-command-rig-add)) "rig add"))
+  (should (equal (gascity-command-subcommand (gascity-command-rig-remove)) "rig remove")))
+
+(ert-deftest gascity-test-rig-compose-validation ()
+  "Rig add needs a path; rig remove needs a name."
+  (should (gascity-command-validate (gascity-command-rig-add)))
+  (should-not (gascity-command-validate (gascity-command-rig-add :path "/p")))
+  (should (gascity-command-validate (gascity-command-rig-remove)))
+  (should-not (gascity-command-validate (gascity-command-rig-remove :name "r"))))
+
+(ert-deftest gascity-test-phase3-confirm-gating ()
+  "Destructive phase-3 verbs gate on `yes-or-no-p'; a `no' skips the run.
+Covers session close, session prune (city-wide), and rig remove."
+  (dolist (probe
+           (list
+            (list #'gascity-session-close "rig/a")
+            (list #'gascity-rig-remove "myrig")))
+    (let ((fn (nth 0 probe)) (arg (nth 1 probe)) ran)
+      (cl-letf (((symbol-function 'gascity-command-execute-interactive)
+                 (lambda (&rest _) (setq ran t)))
+                ((symbol-function 'gascity--refresh-current-view) #'ignore)
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
+        (funcall fn arg)
+        (should-not ran)
+        (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+          (funcall fn arg)
+          (should ran)))))
+  ;; Prune takes flag args, not a target; gate it the same way.
+  (let (ran)
+    (cl-letf (((symbol-function 'gascity-command-execute-interactive)
+               (lambda (&rest _) (setq ran t)))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore)
+              ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
+      (gascity-session-prune "7d" "suspended")
+      (should-not ran)
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+        (gascity-session-prune "7d" "suspended")
+        (should ran)))))
+
+(ert-deftest gascity-test-phase3-dispatch-entries ()
+  "The phase-3 verbs are wired into their dispatch transients.
+The dispatchers are the access path (bound to `c'/`R'/`A' in the views and
+the main `gascity' menu); assert each new suffix command is reachable."
+  (dolist (cmd '(gascity-bead-set-status-at-point gascity-bead-set-priority-at-point
+                 gascity-bead-describe-at-point gascity-bead-note-compose-at-point
+                 gascity-bead-dep-add-at-point gascity-bead-dep-remove-at-point
+                 gascity-bead-create
+                 gascity-session-rename gascity-session-close gascity-session-pin
+                 gascity-session-unpin gascity-session-prune
+                 gascity-rig-add gascity-rig-remove))
+    (should (commandp cmd))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

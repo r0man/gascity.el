@@ -176,6 +176,27 @@ and shows the captured text in a view buffer.")
   ;; defaults --json off, so nothing extra is needed here.
   :documentation "Restart a rig by killing its agent sessions.")
 
+;;; Rig composition (phase 3) — add / remove
+
+(gascity-defcommand gascity-command-rig-add (gascity-command-action)
+  ((path :initarg :path :type string :initform "" :positional 1
+         :documentation "Project directory to register as a rig.")
+   (name :initarg :name :initform nil
+         :long-option "name" :option-type :string
+         :documentation "Rig name (default: directory basename).")
+   (prefix :initarg :prefix :initform nil
+           :long-option "prefix" :option-type :string
+           :documentation "Bead id prefix (default: derived from the name)."))
+  :documentation "Register a project directory as a rig (`gc rig add <path>').
+Optional `--name'/`--prefix' override gc's directory-basename defaults.")
+
+(gascity-defcommand gascity-command-rig-remove (gascity-command-action)
+  ((name :initarg :name :type string :initform "" :positional 1
+         :documentation "Rig to remove from the city configuration."))
+  :documentation "Remove a rig from the city config (`gc rig remove <name>').
+Removes its city.toml entry and machine-local path binding.  The porcelain
+confirms.")
+
 ;;; Session control
 
 (gascity-defcommand gascity-command-session-nudge (gascity-command-action)
@@ -220,6 +241,45 @@ The reconciler stops winding the agent down; it resumes taking work.")
   :documentation "Restart a session fresh while preserving its bead.
 Distinct from `session kill' (force-kill; the reconciler restarts) and
 `rig restart' (kills a rig's whole agent set).")
+
+;;; Session lifecycle (phase 3) — rename / close / pin / unpin / prune
+
+(gascity-defcommand gascity-command-session-rename (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to rename.")
+   (title :initarg :title :type string :initform "" :positional 2
+          :documentation "New session title."))
+  :documentation "Rename a session (`gc session rename <target> <title>').")
+
+(gascity-defcommand gascity-command-session-close (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to close permanently."))
+  :documentation "Close a session permanently (`gc session close <target>') —
+stops the runtime if active and closes its bead.  The porcelain confirms.")
+
+(gascity-defcommand gascity-command-session-pin (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to pin awake."))
+  :documentation "Pin a session awake (`gc session pin <target>') — sets a
+durable awake override (does not clear suspend holds).")
+
+(gascity-defcommand gascity-command-session-unpin (gascity-command-action)
+  ((target :initarg :target :type string :initform "" :positional 1
+           :documentation "Session id or alias to unpin."))
+  :documentation "Remove a session's durable awake pin (`gc session unpin <target>').")
+
+(gascity-defcommand gascity-command-session-prune (gascity-command-action)
+  ((before :initarg :before :initform nil
+           :long-option "before" :option-type :string
+           :documentation "Prune sessions older than this duration (e.g. 7d,
+24h).  Nil defers to gc's default (7d).")
+   (state :initarg :state :initform nil
+          :long-option "state" :option-type :string
+          :documentation "Comma-separated states to prune (suspended, asleep,
+drained).  Nil defers to gc's default (suspended)."))
+  :documentation "Close dormant sessions older than an age
+\(`gc session prune [--before …] [--state …]').  City-wide cleanup, so the
+porcelain confirms; active sessions are never pruned.")
 
 ;;; Dispatch
 
@@ -302,6 +362,71 @@ Store-routed by `-C' (inherited).  The porcelain confirms before running.")
          :documentation "Assignee (agent qualified name, refinery, or human)."))
   :documentation "Assign a bead to an agent or human (`gc bd assign <id> <name>').
 Store-routed by `-C' (inherited).")
+
+;;; Bead authoring (phase 3) — update / create / deps, store-routed via `-C'
+
+(gascity-defcommand gascity-command-bd-update (gascity-command-bd-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Bead id to update.")
+   (status :initarg :status :initform nil
+           :long-option "status" :option-type :string
+           :documentation "New status: open, in_progress, blocked, deferred,
+closed, pinned, or hooked.  Emitted as `--status' when set.")
+   (priority :initarg :priority :initform nil
+             :long-option "priority" :option-type :string
+             :documentation "New priority (0-4 or P0-P4, 0 = highest).")
+   (assignee :initarg :assignee :initform nil
+             :long-option "assignee" :option-type :string
+             :documentation "New assignee.  Models `gc bd update -a'; the
+at-point assign UI uses the dedicated `gc bd assign' verb (phase 2), so this
+slot keeps the update class a faithful, tested model of the CLI verb rather
+than a second assign path in the menu.")
+   (description :initarg :description :initform nil
+                :long-option "description" :option-type :string
+                :documentation "Replacement description body, from the compose
+buffer (multi-line)."))
+  :documentation "Update a bead's fields (`gc bd update <id> --status/--priority/…').
+The general bead-mutation verb behind the focused set-status / set-priority
+actions and the compose-driven description edit.  Store-routed by `-C'
+\(inherited); at least one field must be set (`gascity-command-validate').")
+
+(gascity-defcommand gascity-command-bd-create (gascity-command-bd-action)
+  ((title :initarg :title :type string :initform "" :positional 1
+          :documentation "New bead title (quick-capture).")
+   (type :initarg :type :initform nil
+         :long-option "type" :option-type :string
+         :documentation "Issue type (bug|feature|task|epic|chore|decision).")
+   (priority :initarg :priority :initform nil
+             :long-option "priority" :option-type :string
+             :documentation "Priority (0-4 or P0-P4, 0 = highest).")
+   (assignee :initarg :assignee :initform nil
+             :long-option "assignee" :option-type :string
+             :documentation "Initial assignee (agent qualified name or human).")
+   (json :initarg :json :type boolean :initform t
+         :long-option "json" :option-type :boolean
+         :documentation "On: the JSON result carries the new bead id, which
+`gascity-action--summarize' renders as \"created <id>\".  Overrides the action
+default (off) — create is a payload-returning mutation (§3.2b)."))
+  :documentation "Quick-capture a bead (`gc bd create <title> --type … --json').
+Deep authoring (full body, dependency graph) stays in beads.el (DESIGN.md
+§4.3); this captures title/type/priority/assignee and surfaces the new id for
+hand-off.  Store-routed by `-C' (inherited), resolved from the contextual rig.")
+
+(gascity-defcommand gascity-command-bd-dep-add (gascity-command-bd-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Bead that gains a dependency (the dependent).")
+   (dependency :initarg :dependency :type string :initform "" :positional 2
+               :documentation "Bead it depends on (the blocker)."))
+  :documentation "Add a dependency — ID depends on DEPENDENCY
+\(`gc bd dep add <id> <dependency>').  Store-routed by `-C' (inherited).")
+
+(gascity-defcommand gascity-command-bd-dep-remove (gascity-command-bd-action)
+  ((id :initarg :id :type string :initform "" :positional 1
+       :documentation "Bead to remove a dependency from.")
+   (dependency :initarg :dependency :type string :initform "" :positional 2
+               :documentation "The depended-on bead to unlink."))
+  :documentation "Remove a dependency — ID no longer depends on DEPENDENCY
+\(`gc bd dep remove <id> <dependency>').  Store-routed by `-C' (inherited).")
 
 ;;; City config
 
@@ -479,6 +604,58 @@ buffer (`gascity-compose').")
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-reply))
   "Require the id of the message being replied to."
   (and (gascity-command--blank-p command 'id) "a message id is required"))
+
+;;; Validation — phase 3 (bead authoring, session lifecycle, rig composition)
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-update))
+  "Require a bead id and at least one field to change."
+  (cond ((gascity-command--blank-p command 'id) "a bead id is required")
+        ((and (gascity-command--blank-p command 'status)
+              (gascity-command--blank-p command 'priority)
+              (gascity-command--blank-p command 'assignee)
+              (gascity-command--blank-p command 'description))
+         "at least one field to update is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-create))
+  "Require a title."
+  (and (gascity-command--blank-p command 'title) "a title is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-dep-add))
+  "Require the dependent bead id and the bead it depends on."
+  (cond ((gascity-command--blank-p command 'id) "a bead id is required")
+        ((gascity-command--blank-p command 'dependency)
+         "a dependency id is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-bd-dep-remove))
+  "Require the bead id and the dependency to remove."
+  (cond ((gascity-command--blank-p command 'id) "a bead id is required")
+        ((gascity-command--blank-p command 'dependency)
+         "a dependency id is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-rename))
+  "Require a session target and a new title."
+  (cond ((gascity-command--blank-p command 'target) "a session target is required")
+        ((gascity-command--blank-p command 'title) "a new title is required")))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-close))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-pin))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-session-unpin))
+  "Require a session target."
+  (and (gascity-command--blank-p command 'target) "a session target is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-rig-add))
+  "Require a project path."
+  (and (gascity-command--blank-p command 'path) "a project path is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-rig-remove))
+  "Require a rig name."
+  (and (gascity-command--blank-p command 'name) "a rig name is required"))
 
 (provide 'gascity-types)
 ;;; gascity-types.el ends here

@@ -231,6 +231,33 @@ display-oriented `scoped-name'."
     (gascity-command-execute-interactive (gascity-command-rig-restart :name name))))
 
 ;;;###autoload
+(defun gascity-rig-add (path &optional name prefix)
+  "Register PATH as a rig (prompted), then refresh.
+With a prefix argument, also prompt for NAME and bead PREFIX; otherwise gc
+defaults the name to PATH's basename and the prefix from the name."
+  (interactive
+   (let ((path (read-directory-name "Add rig at path: ")))
+     (if current-prefix-arg
+         (list path
+               (read-string "Rig name (empty = basename): ")
+               (read-string "Bead prefix (empty = derived): "))
+       (list path nil nil))))
+  (gascity-command-execute-interactive
+   (gascity-command-rig-add
+    :path path
+    :name (and (stringp name) (not (string-empty-p name)) name)
+    :prefix (and (stringp prefix) (not (string-empty-p prefix)) prefix)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-rig-remove (name)
+  "Remove rig NAME from the city configuration (prompted, confirmed), then refresh."
+  (interactive (list (gascity-action--read-rig "Remove rig: ")))
+  (when (gascity-action--confirm "Remove rig %s from the city config? " name)
+    (gascity-command-execute-interactive (gascity-command-rig-remove :name name))
+    (gascity--refresh-current-view)))
+
+;;;###autoload
 (defun gascity-session-nudge (target message)
   "Send MESSAGE to session TARGET (both prompted)."
   (interactive
@@ -429,6 +456,30 @@ typed; the completion table is the city's session aliases for convenience."
   (completing-read prompt (gascity-action--session-names) nil nil nil nil
                    (gascity-action--agent-at-point-name)))
 
+(defconst gascity-action--bead-statuses
+  '("open" "in_progress" "blocked" "deferred" "closed" "pinned" "hooked")
+  "Built-in bead statuses offered for completion by `gascity-action--read-status'.
+Free entry is still allowed for any configured custom status.")
+
+(defconst gascity-action--bead-priorities '("0" "1" "2" "3" "4")
+  "Bead priorities (0 = highest) offered for completion.")
+
+(defconst gascity-action--bead-types
+  '("task" "bug" "feature" "epic" "chore" "decision")
+  "Built-in bead types offered for completion by `gascity-action--read-type'.")
+
+(defun gascity-action--read-status (prompt)
+  "Read a bead status with PROMPT, completing over the built-in set (free entry)."
+  (completing-read prompt gascity-action--bead-statuses))
+
+(defun gascity-action--read-priority (prompt)
+  "Read a bead priority with PROMPT, completing over 0-4 (0 = highest, free entry)."
+  (completing-read prompt gascity-action--bead-priorities))
+
+(defun gascity-action--read-type (prompt)
+  "Read a bead type with PROMPT, completing over the built-in types (free entry)."
+  (completing-read prompt gascity-action--bead-types nil nil nil nil "task"))
+
 (defun gascity-bead-close--run (id reason)
   "Close bead ID with REASON — store-routed by ID's prefix — then refresh.
 REASON may be empty, in which case no `-r' is sent."
@@ -502,6 +553,161 @@ aliases but accepts any address (refinery, mayor, human)."
     (gascity-bead-assign--run
      id (gascity-action--read-assignee (format "Assign %s to: " id)))))
 
+;;; Bead — update (status / priority / description), deps, create (phase 3)
+;;
+;; `gc bd update' is the general bead-mutation verb; the focused
+;; set-status / set-priority commands set one field each, and the
+;; description edit drives it from the compose buffer.  Deps use `gc bd
+;; dep add/remove'; create is quick-capture (`gc bd create', json-on ->
+;; summarised id, then hand off to beads.el).  Every verb is store-routed
+;; by `-C' (existing beads resolve it from the id prefix; create resolves
+;; it from the contextual rig).
+
+(defun gascity-bead-update--run (id &rest props)
+  "Run `gc bd update ID' with PROPS — store-routed by ID's prefix — then refresh.
+PROPS is a plist of `:status'/`:priority'/`:assignee'/`:description' values;
+nil entries are dropped by the command line so only supplied fields change."
+  (gascity-command-execute-interactive
+   (apply #'gascity-command-bd-update
+          :id id :directory (gascity-beads--bead-path id) props))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-bead-set-status (id status)
+  "Set bead ID's STATUS (both prompted; ID defaults to the bead at point)."
+  (interactive
+   (let ((id (gascity-action--read-bead "Set status of bead: ")))
+     (list id (gascity-action--read-status (format "Status of %s: " id)))))
+  (gascity-bead-update--run id :status status))
+
+;;;###autoload
+(defun gascity-bead-set-status-at-point ()
+  "Set the status of the bead reference at point (prompted), then refresh."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
+    (gascity-bead-update--run
+     id :status (gascity-action--read-status (format "Status of %s: " id)))))
+
+;;;###autoload
+(defun gascity-bead-set-priority (id priority)
+  "Set bead ID's PRIORITY (both prompted; ID defaults to the bead at point)."
+  (interactive
+   (let ((id (gascity-action--read-bead "Set priority of bead: ")))
+     (list id (gascity-action--read-priority (format "Priority of %s: " id)))))
+  (gascity-bead-update--run id :priority priority))
+
+;;;###autoload
+(defun gascity-bead-set-priority-at-point ()
+  "Set the priority of the bead reference at point (prompted), then refresh."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
+    (gascity-bead-update--run
+     id :priority (gascity-action--read-priority (format "Priority of %s: " id)))))
+
+;;;###autoload
+(defun gascity-bead-describe-at-point ()
+  "Edit the description of the bead at point in a compose buffer.
+`C-c C-c' replaces the bead's description with the buffer body via
+`gc bd update --description'; `C-c C-k' aborts.  The longer-body counterpart
+to the focused field edits (DESIGN-write-actions.md §6)."
+  (interactive)
+  (let* ((id (or (gascity-bead-at-point) (user-error "No bead at point")))
+         (dir (gascity-beads--bead-path id))
+         (origin (current-buffer)))
+    (gascity-compose
+     :buffer-name (format "*gc-bead %s description*" id)
+     :header (list (cons "Bead" id) (cons "Field" "description"))
+     :origin origin
+     :finish (lambda (body)
+               (gascity-command-act
+                (gascity-command-bd-update
+                 :id id :description body :directory dir))))))
+
+;;;###autoload
+(defun gascity-bead-note-compose-at-point ()
+  "Append a multi-line note to the bead at point via a compose buffer.
+`C-c C-c' appends the buffer body with `gc bd note'; `C-c C-k' aborts.  The
+one-line `gascity-bead-note-at-point' stays the quick minibuffer path."
+  (interactive)
+  (let* ((id (or (gascity-bead-at-point) (user-error "No bead at point")))
+         (dir (gascity-beads--bead-path id))
+         (origin (current-buffer)))
+    (gascity-compose
+     :buffer-name (format "*gc-bead %s note*" id)
+     :header (list (cons "Bead" id) (cons "Field" "note (append)"))
+     :origin origin
+     :finish (lambda (body)
+               (gascity-command-act
+                (gascity-command-bd-note
+                 :id id :text body :directory dir))))))
+
+(defun gascity-bead-dep-add--run (id dependency)
+  "Add a dependency — ID depends on DEPENDENCY — store-routed, then refresh."
+  (gascity-command-execute-interactive
+   (gascity-command-bd-dep-add
+    :id id :dependency dependency :directory (gascity-beads--bead-path id)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-bead-dep-add (id dependency)
+  "Make bead ID depend on DEPENDENCY (both prompted).
+ID defaults to the bead reference at point."
+  (interactive
+   (let ((id (gascity-action--read-bead "Add dependency to bead: ")))
+     (list id (read-string (format "%s depends on: " id)))))
+  (gascity-bead-dep-add--run id dependency))
+
+;;;###autoload
+(defun gascity-bead-dep-add-at-point ()
+  "Add a dependency to the bead at point (prompted for the depended-on id)."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
+    (gascity-bead-dep-add--run id (read-string (format "%s depends on: " id)))))
+
+(defun gascity-bead-dep-remove--run (id dependency)
+  "Remove ID's dependency on DEPENDENCY — store-routed, then refresh."
+  (gascity-command-execute-interactive
+   (gascity-command-bd-dep-remove
+    :id id :dependency dependency :directory (gascity-beads--bead-path id)))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-bead-dep-remove (id dependency)
+  "Remove bead ID's dependency on DEPENDENCY (both prompted).
+ID defaults to the bead reference at point."
+  (interactive
+   (let ((id (gascity-action--read-bead "Remove dependency from bead: ")))
+     (list id (read-string (format "%s no longer depends on: " id)))))
+  (gascity-bead-dep-remove--run id dependency))
+
+;;;###autoload
+(defun gascity-bead-dep-remove-at-point ()
+  "Remove a dependency from the bead at point (prompted)."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point) (user-error "No bead at point"))))
+    (gascity-bead-dep-remove--run
+     id (read-string (format "%s no longer depends on: " id)))))
+
+;;;###autoload
+(defun gascity-bead-create (title type priority assignee)
+  "Quick-capture a new bead: TITLE/TYPE/PRIORITY/ASSIGNEE (all prompted).
+Creates in the contextual rig's store (`-C'); on success the new id is echoed
+for hand-off to beads.el for deeper authoring (DESIGN.md §4.3).  An empty
+ASSIGNEE leaves the bead unassigned."
+  (interactive
+   (list (read-string "New bead title: ")
+         (gascity-action--read-type "Type: ")
+         (gascity-action--read-priority "Priority: ")
+         (gascity-action--read-assignee "Assignee (empty for none): ")))
+  (gascity-command-act
+   (gascity-command-bd-create
+    :title title
+    :type (and (stringp type) (not (string-empty-p type)) type)
+    :priority (and (stringp priority) (not (string-empty-p priority)) priority)
+    :assignee (and (stringp assignee) (not (string-empty-p assignee)) assignee)
+    :directory (gascity-beads--rig-path (gascity-context-rig-name))))
+  (gascity--refresh-current-view))
+
 ;;; Session — reset (fresh restart) and undrain (clear the drain flag)
 
 ;;;###autoload
@@ -533,6 +739,63 @@ aliases but accepts any address (refinery, mayor, human)."
   (gascity-command-execute-interactive
    (gascity-command-runtime-undrain :target (gascity-action--session-at-point)))
   (gascity--refresh-current-view))
+
+;;; Session — rename / close / pin / unpin / prune (phase 3 lifecycle)
+;;
+;; Prompted commands (with at-point defaults via `--read-session'),
+;; mirroring the shipped session verbs; close and the city-wide prune
+;; confirm first.  Reached from `gascity-session-dispatch'.
+
+;;;###autoload
+(defun gascity-session-rename (target title)
+  "Rename session TARGET to TITLE (both prompted), then refresh."
+  (interactive
+   (let ((target (gascity-action--read-session "Rename session: ")))
+     (list target (read-string (format "New title for %s: " target)))))
+  (gascity-command-execute-interactive
+   (gascity-command-session-rename :target target :title title))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-session-close (target)
+  "Close session TARGET permanently (prompted, confirmed), then refresh."
+  (interactive (list (gascity-action--read-session "Close session: ")))
+  (when (gascity-action--confirm "Close session %s permanently? " target)
+    (gascity-command-execute-interactive (gascity-command-session-close :target target))
+    (gascity--refresh-current-view)))
+
+;;;###autoload
+(defun gascity-session-pin (target)
+  "Pin session TARGET awake (prompted), then refresh."
+  (interactive (list (gascity-action--read-session "Pin session: ")))
+  (gascity-command-execute-interactive (gascity-command-session-pin :target target))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-session-unpin (target)
+  "Remove the awake pin on session TARGET (prompted), then refresh."
+  (interactive (list (gascity-action--read-session "Unpin session: ")))
+  (gascity-command-execute-interactive (gascity-command-session-unpin :target target))
+  (gascity--refresh-current-view))
+
+;;;###autoload
+(defun gascity-session-prune (before state)
+  "Close dormant sessions older than BEFORE in STATE (prompted, confirmed).
+BEFORE is a duration (e.g. 7d, 24h); STATE is a comma-separated state list
+\(suspended, asleep, drained).  Empty answers defer to gc's defaults (7d,
+suspended).  City-wide, so confirm first."
+  (interactive
+   (list (read-string "Prune sessions older than (empty = gc default 7d): ")
+         (read-string "States to prune (empty = gc default suspended): ")))
+  (let ((before (and (stringp before) (not (string-empty-p before)) before))
+        (state (and (stringp state) (not (string-empty-p state)) state)))
+    (when (gascity-action--confirm
+           "Prune dormant sessions%s%s? "
+           (if before (format " older than %s" before) "")
+           (if state (format " in state %s" state) ""))
+      (gascity-command-execute-interactive
+       (gascity-command-session-prune :before before :state state))
+      (gascity--refresh-current-view))))
 
 ;;; City — reload config (gc reload)
 
@@ -826,7 +1089,9 @@ The subject defaults to the original prefixed with \"RE: \"."
   ["Rig control"
    ("s" "Suspend rig…" gascity-rig-suspend)
    ("r" "Resume rig…" gascity-rig-resume)
-   ("R" "Restart rig…" gascity-rig-restart)])
+   ("R" "Restart rig…" gascity-rig-restart)
+   ("a" "Add rig…" gascity-rig-add)
+   ("x" "Remove rig…" gascity-rig-remove)])
 
 (transient-define-prefix gascity-session-dispatch ()
   "Dispatch session-control actions (a hand-built command backend)."
@@ -836,7 +1101,15 @@ The subject defaults to the original prefixed with \"RE: \"."
    ("k" "Kill runtime…" gascity-session-kill)
    ("w" "Wake…" gascity-session-wake)
    ("D" "Drain…" gascity-session-drain)
-   ("v" "Peek output…" gascity-session-peek)])
+   ("R" "Reset (fresh restart)…" gascity-session-reset)
+   ("U" "Undrain…" gascity-session-undrain)
+   ("v" "Peek output…" gascity-session-peek)]
+  ["Lifecycle"
+   ("m" "Rename…" gascity-session-rename)
+   ("c" "Close…" gascity-session-close)
+   ("p" "Pin awake…" gascity-session-pin)
+   ("P" "Unpin…" gascity-session-unpin)
+   ("x" "Prune dormant…" gascity-session-prune)])
 
 (transient-define-prefix gascity-lifecycle-dispatch ()
   "Dispatch city-lifecycle actions (a hand-built command backend)."
@@ -854,8 +1127,15 @@ bead in beads.el; this menu is targeted command dispatch (DESIGN §4)."
    ("s" "Sling / route…" gascity-sling-dispatch)
    ("c" "Close…" gascity-bead-close-at-point)
    ("o" "Note…" gascity-bead-note-at-point)
+   ("O" "Note (compose)…" gascity-bead-note-compose-at-point)
+   ("e" "Describe (compose)…" gascity-bead-describe-at-point)
+   ("u" "Set status…" gascity-bead-set-status-at-point)
+   ("p" "Set priority…" gascity-bead-set-priority-at-point)
    ("a" "Assign…" gascity-bead-assign-at-point)
    ("r" "Reopen" gascity-bead-reopen-at-point)
+   ("d" "Add dependency…" gascity-bead-dep-add-at-point)
+   ("D" "Remove dependency…" gascity-bead-dep-remove-at-point)
+   ("n" "Create…" gascity-bead-create)
    ("v" "Visit (beads.el)" gascity-bead-visit)])
 
 ;;;###autoload (autoload 'gascity-mail-dispatch "gascity-action" nil t)
