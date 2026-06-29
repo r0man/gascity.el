@@ -51,6 +51,10 @@
 (declare-function gascity-session-undrain-at-point "gascity-action")
 (declare-function gascity-bead-note-at-point "gascity-action")
 (declare-function gascity-reload "gascity-action")
+;; Write verbs (DESIGN-write-actions.md phase 2): the bead-dispatch (`c') and
+;; sling (`S') menus bound on a bead reference.
+(declare-function gascity-bead-dispatch "gascity-action")
+(declare-function gascity-sling-dispatch "gascity-action")
 (declare-function gascity-polecat-detail-at-point "gascity-session")
 
 ;;; Buffer

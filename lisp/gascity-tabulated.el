@@ -68,6 +68,10 @@
 (declare-function gascity-mail-read-at-point "gascity-action")
 (declare-function gascity-mail-archive-at-point "gascity-action")
 (declare-function gascity-mail-mark-unread-at-point "gascity-action")
+;; Write verbs (DESIGN-write-actions.md phase 2): mail reply (compose) and
+;; the mail-dispatch menu (`c').
+(declare-function gascity-mail-reply-at-point "gascity-action")
+(declare-function gascity-mail-dispatch "gascity-action")
 
 ;; Detail-view openers (the `RET' targets) live in gascity-rig /
 ;; gascity-session, loaded after this module via gascity.el.
