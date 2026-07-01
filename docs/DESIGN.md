@@ -289,9 +289,9 @@ data-tick for expensive derivations.
   contextual rig). Bead `RET` (`gascity-bead-show`) now scopes detail to the
   store owning the bead id's prefix, so convoy / rig-dashboard / session-detail
   references open against the right store instead of the ambient directory.
-- ⬜ **P6 — Polish.** completion, error surfaces, `whats-new`, Eldev/guix.scm.
-- ⬜ **P7 — Write/action commands.** The full mutate surface beyond the P1
-  dispatch slice — bead close/note/update/create + richer sling, session
+- ⬜ **P6 — Polish.** completion, error surfaces, Eldev/guix.scm.
+- ✅ **P7 — Write/action commands.** Delivered: the full mutate surface beyond
+  the P1 dispatch slice — bead close/note/update/create + richer sling, session
   reset/undrain, city reload, and mail read/archive/reply/send — hand-built
   magit/forge-style off the existing command classes. Designed separately in
   [`DESIGN-write-actions.md`](DESIGN-write-actions.md); tracked by epic
@@ -390,6 +390,9 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    already models `--formula`/`--nudge`/`--dry-run`; the interactive
    `gascity-sling` only prompts target + bead/text. Add a sling sub-transient
    exposing those flags (plus `--merge`, `--no-convoy`) as infixes.
-9. **`order run --rig` disambiguation (P1 follow-up).** `gascity-order-run`
-   passes only the order name; add the rig (available on the at-point order
-   row, and promptable elsewhere) so same-named orders across rigs resolve.
+9. ✅ **`order run --rig` disambiguation (P1 follow-up).** `gascity-order-run`
+   and `gascity-order-run-at-point` now pass `--rig` (`gascity-action.el`), and
+   the `gascity-command-order-run` class carries the `rig` `:long-option` slot
+   (`gascity-types.el`), so same-named orders across rigs resolve. The at-point
+   `x` action uses the order row's own rig; `C-u M-x gascity-order-run` prompts
+   for one.
