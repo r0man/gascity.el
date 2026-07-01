@@ -932,6 +932,137 @@ that lost collapse state also flickered the view on every refresh."
           (when (get-buffer "*gascity-status-test*")
             (kill-buffer "*gascity-status-test*")))))))
 
+;;; Status dashboard refresh — semantic cursor preservation (gce-9am, §11.7)
+
+;; These two mount the real `gascity-status-app' in a `gascity-dashboard-mode'
+;; buffer (so `gascity-section--around-rerender' — gated on
+;; `gascity-section-mode' — actually fires) and drive it through a refresh with
+;; the parked-callback stub.  `gascity-status-auto-refresh' is bound nil so
+;; entering the mode starts no live timer.
+
+(ert-deftest gascity-test-status-refresh-preserves-cursor-on-row ()
+  "Point follows the same agent row across a refresh, even when rows reorder.
+`gascity-section--around-rerender' restores point by the row's SEMANTIC id
+\(here the agent's qualified name), not by a widget path or line number, so it
+stays on that row after vui `erase-buffer's and rebuilds the tree with the
+agents in a different order (gce-9am, §11.7)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)                ; render synchronously, no timers
+        (gascity-status-auto-refresh nil)     ; mode starts no auto-refresh timer
+        ;; Cold load: furiosa then nux.  Refresh: nux then furiosa.
+        (status-a '((ok . t) (city_name . "bright-lights")
+                    (controller . ((running . t)))
+                    (rigs . [((name . "gascity.el"))])
+                    (agents . [((name . "furiosa")
+                                (qualified_name . "gascity.el/gastown.furiosa")
+                                (running . t))
+                               ((name . "nux")
+                                (qualified_name . "gascity.el/gastown.nux")
+                                (running . t))])))
+        (status-b '((ok . t) (city_name . "bright-lights")
+                    (controller . ((running . t)))
+                    (rigs . [((name . "gascity.el"))])
+                    (agents . [((name . "nux")
+                                (qualified_name . "gascity.el/gastown.nux")
+                                (running . t))
+                               ((name . "furiosa")
+                                (qualified_name . "gascity.el/gastown.furiosa")
+                                (running . t))])))
+        (sessions '((sessions . []))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (with-current-buffer (get-buffer-create "*gascity-status-test*")
+                (gascity-dashboard-mode))
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (funcall (car status-box) status-a)
+                (funcall (car sessions-box) sessions)
+                ;; Land on the SECOND agent row (nux), so a naive "stay at the
+                ;; top" would fail.
+                (goto-char (point-min))
+                (should (search-forward "nux" nil t))
+                (goto-char (match-beginning 0))
+                (let ((id (gascity-section--line-id)))
+                  (should (equal id '(agent . "gascity.el/gastown.nux")))
+                  ;; Refresh, then let the reordered data arrive: nux moves up a
+                  ;; line, furiosa moves down.
+                  (gascity-status--refresh-instance (current-buffer))
+                  (funcall (car status-box) status-b)
+                  (funcall (car sessions-box) sessions)
+                  ;; Point is still on the nux row — it followed the id to the
+                  ;; row's new position, not the old line number or point-min.
+                  (should (equal (gascity-section--line-id) id))
+                  (should (string-search
+                           "nux" (buffer-substring (line-beginning-position)
+                                                   (line-end-position)))))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
+(ert-deftest gascity-test-status-refresh-preserves-window-point-non-selected ()
+  "A dashboard in a NON-selected window keeps its window-point across a refresh.
+Regression (gce-9am, §11.7): `erase-buffer' resets every `window-point' to 1
+and vui restores only `window-start', so a status buffer shown in a window
+other than the selected one jumped to buffer top on each tick.
+`gascity-section--around-rerender' calls `set-window-point' for every window
+showing the buffer, restoring them to the semantic row."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)
+        (gascity-status-auto-refresh nil)
+        (status '((ok . t) (city_name . "bright-lights")
+                  (controller . ((running . t)))
+                  (rigs . [((name . "gascity.el"))])
+                  (agents . [((name . "furiosa")
+                              (qualified_name . "gascity.el/gastown.furiosa")
+                              (running . t))])))
+        (sessions '((sessions . []))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (let ((buf (get-buffer-create "*gascity-status-test*"))
+              (other (get-buffer-create "*gascity-other-test*")))
+          (unwind-protect
+              (progn
+                (with-current-buffer buf (gascity-dashboard-mode))
+                (vui-mount (vui-component 'gascity-status-app)
+                           "*gascity-status-test*")
+                (funcall (car status-box) status)
+                (funcall (car sessions-box) sessions)
+                (let (target-pos)
+                  ;; Put point on the furiosa row and remember it.
+                  (with-current-buffer buf
+                    (goto-char (point-min))
+                    (should (search-forward "furiosa" nil t))
+                    (goto-char (match-beginning 0))
+                    (setq target-pos (point))
+                    (should (equal (gascity-section--line-id)
+                                   '(agent . "gascity.el/gastown.furiosa"))))
+                  ;; Selected window shows OTHER; buf lives in a split below it.
+                  (with-current-buffer other (insert "placeholder"))
+                  (set-window-buffer (selected-window) other)
+                  (let ((status-window (split-window (selected-window) nil 'below)))
+                    (set-window-buffer status-window buf)
+                    (set-window-point status-window target-pos)
+                    (should-not (eq (selected-window) status-window))
+                    ;; Refresh while buf is in the non-selected window.
+                    (gascity-status--refresh-instance buf)
+                    (funcall (car status-box) status)
+                    (funcall (car sessions-box) sessions)
+                    ;; window-point stayed on the furiosa row, not reset to 1.
+                    (let ((wp (window-point status-window)))
+                      (should (> wp 1))
+                      (with-current-buffer buf
+                        (save-excursion
+                          (goto-char wp)
+                          (should (equal (gascity-section--line-id)
+                                         '(agent . "gascity.el/gastown.furiosa")))))))))
+            (when (buffer-live-p buf) (kill-buffer buf))
+            (when (buffer-live-p other) (kill-buffer other))))))))
+
 ;;; gce-pt6 — auto-refresh the status dashboard on a timer, only when visible
 
 (ert-deftest gascity-test-status-auto-refresh-creates-timer-when-on ()

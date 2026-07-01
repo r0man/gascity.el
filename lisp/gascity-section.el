@@ -143,6 +143,117 @@ detail views) derive from this, inherit `q', and add their own keys."
   :interactive nil
   :group 'gascity)
 
+;;; Semantic cursor preservation across vui re-renders
+;;
+;; vui's re-render `erase-buffer's the whole buffer and then restores point by
+;; WIDGET PATH (`vui--save-cursor-position' / `--restore-cursor-position').  Two
+;; gaps surface once a section buffer refreshes on a timer (the status
+;; dashboard's 5s tick, gce-pt6):
+;;
+;;   1. A widget path is unstable when async data changes a section's row count
+;;      or order — a rig starts/stops, an agent appears/leaves — so point drifts
+;;      off the row it was on.
+;;   2. `erase-buffer' resets every window's `window-point' to 1, and vui
+;;      restores only `window-start' (the viewport), never `window-point'.
+;;      `goto-char' inside `with-current-buffer' moves only the buffer's own
+;;      point, so a buffer shown in a NON-selected window jumps to the top on
+;;      every tick.
+;;
+;; Layer semantic restoration on top of vui's widget-path pass with an `:around'
+;; advice on `vui--rerender-instance': before the re-render remember the
+;; SEMANTIC id of the row at point (its rig/agent/bead identity, stable across a
+;; reorder) and the windows showing the buffer; after, put point back on the row
+;; carrying that id and sync every one of those windows' `window-point' to it.
+;; The advice gates on `gascity-section-mode', so it is a no-op for every other
+;; buffer — beads.el's own vui dashboards included, since `beads-section-mode' is
+;; this mode's PARENT, not a child.  It is purely additive: vui's own pass still
+;; runs, and gascity-status.el's collapse + stale-while-revalidate behaviour is
+;; untouched.  Ported from gastown.el (gastown-status-buffer.el).
+
+(defun gascity-section--line-property (prop)
+  "Return the value of text property PROP anywhere on the current line, or nil.
+Scans from `line-beginning-position' to `line-end-position': a row's identity
+property starts past its leading indent, not at column 0, so a bare
+`get-text-property' at point would miss it when point sits in the margin."
+  (let ((beg (line-beginning-position))
+        (end (line-end-position)))
+    (or (get-text-property beg prop)
+        (let ((pos (next-single-property-change beg prop nil end)))
+          (and pos (get-text-property pos prop))))))
+
+(defun gascity-section--line-id ()
+  "Return a semantic identifier for the row on the current line, or nil.
+Reuses the identity text properties the vui dashboards already stamp, most
+specific first: a `gascity-agent' object (by name), a `gascity-bead' id, then a
+`gascity-rig' name.  Returns a cons of (KIND . IDENTITY-STRING) — stable across
+a re-render even when rows are added, removed, or reordered, and comparable
+with `equal' — or nil on a line carrying no such identity (a blank line or a
+bare city/section header), which the caller leaves to vui's own restoration."
+  (let ((agent (gascity-section--line-property 'gascity-agent))
+        (bead (gascity-section--line-property 'gascity-bead))
+        (rig (gascity-section--line-property 'gascity-rig)))
+    (cond
+     ((gascity-agent-p agent) (cons 'agent (or (gascity-agent-name agent) "")))
+     ((and (stringp bead) (not (string-empty-p bead))) (cons 'bead bead))
+     ((and (stringp rig) (not (string-empty-p rig))) (cons 'rig rig)))))
+
+(defun gascity-section--restore-cursor-to-id (id col)
+  "Move point to the first line whose semantic id is ID, then to column COL.
+ID is a cons as returned by `gascity-section--line-id'.  Scans from
+`point-min'; when no line matches (the row vanished in the re-render) point is
+left at `point-min' — the same graceful degradation vui's widget-path restore
+gives when its path no longer resolves."
+  (goto-char (point-min))
+  (catch 'found
+    (while (not (eobp))
+      (when (equal (gascity-section--line-id) id)
+        (move-to-column col)
+        (throw 'found t))
+      (forward-line 1))))
+
+(defun gascity-section--around-rerender (orig instance)
+  "Advice around `vui--rerender-instance' for semantic cursor restoration.
+ORIG is the wrapped `vui--rerender-instance'; INSTANCE the component instance
+being re-rendered.  For a `gascity-section-mode' buffer, capture the semantic
+id (`gascity-section--line-id') and column of the row at point plus the windows
+showing the buffer, run ORIG, then restore point to the row with that id and
+propagate it to every captured window's `window-point' (the fix for the
+non-selected-window jump — see the section commentary).  For any other buffer
+this is a pass-through, so vui's behaviour elsewhere is unchanged."
+  (let* ((buf (vui-instance-buffer instance))
+         (in-section (and buf
+                          (buffer-live-p buf)
+                          (with-current-buffer buf
+                            (derived-mode-p 'gascity-section-mode)))))
+    (if (not in-section)
+        (funcall orig instance)
+      (let ((id nil)
+            (col 0)
+            (windows (get-buffer-window-list buf nil t)))
+        (with-current-buffer buf
+          (let ((line-id (gascity-section--line-id)))
+            (when line-id
+              (setq id line-id
+                    col (current-column)))))
+        (funcall orig instance)
+        (when id
+          (with-current-buffer buf
+            (gascity-section--restore-cursor-to-id id col)))
+        ;; `erase-buffer' reset every window-point to 1; propagate the restored
+        ;; buffer point to all windows that were showing the buffer so a
+        ;; non-selected window does not jump to the top.
+        (let ((pos (with-current-buffer buf (point))))
+          (dolist (win windows)
+            (when (window-live-p win)
+              (set-window-point win pos))))))))
+
+;; Install semantic cursor preservation for every gascity vui section buffer.
+;; The advice gates itself on `gascity-section-mode', so it is a no-op for all
+;; other buffers and safe to install once at load.  Guard against duplicate
+;; advice when the module is reloaded.
+(unless (advice-member-p #'gascity-section--around-rerender 'vui--rerender-instance)
+  (advice-add 'vui--rerender-instance :around #'gascity-section--around-rerender))
+
 ;;; In-place refresh
 
 (defun gascity-section-refresh-instance (buffer)
