@@ -138,7 +138,7 @@ vui section helpers and faces so gascity and beads buffers look and behave
 identically (same keymaps, same `g`/`q`, same collapsible idioms).
 
 ### 4.3 Bead UI delegation (the contract)
-gc owns beads through `gc bd <…>` with **prefix-based routing** (e.g. `exc-*` →
+gc owns beads through `gc bd <…>` with **prefix-based routing** (e.g. `ex-*` →
 example.city). gascity does **not** render beads. Instead:
 
 - A rig row / rig dashboard exposes **“beads”** (`b`) → opens beads.el's board
