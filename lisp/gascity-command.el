@@ -35,6 +35,7 @@
 
 (require 'eieio)
 (require 'cl-lib)
+(require 'files-x)       ; with-connection-local-variables
 (require 'beads-meta)    ; slot-metadata engine + command-line builder
 (require 'beads-command) ; bridge generics (beads-command-validate / -execute-interactive / -preview)
 (require 'gascity-custom)
@@ -254,8 +255,12 @@ The list starts with the executable.")
 ;;; ============================================================
 
 (cl-defmethod gascity-command-line :around ((_command gascity-command))
-  "Prepend the executable to the argument list built by the primary method."
-  (cons gascity-executable (cl-call-next-method)))
+  "Prepend the executable to the argument list built by the primary method.
+`gascity-executable' is read under `with-connection-local-variables', so
+a per-host value set via connection-local profiles governs previews and
+interactive execution for a remote city just as it does the reader."
+  (with-connection-local-variables
+   (cons gascity-executable (cl-call-next-method))))
 
 (cl-defmethod gascity-command-line ((command gascity-command))
   "Build COMMAND's argument list from its slot metadata.
@@ -326,7 +331,12 @@ specializer this method dispatches on."
 (cl-defmethod gascity-command-execute-interactive ((command gascity-command))
   "Run COMMAND asynchronously, streaming output to a buffer.
 A deliberately minimal P0 backend built on `async-shell-command';
-richer vterm/eat/term backends arrive with `gascity-terminal'."
+richer vterm/eat/term backends arrive with `gascity-terminal'.
+
+`async-shell-command' is TRAMP-aware: invoked from a buffer whose
+`default-directory' is a remote city (every gascity view pins its
+city's root), the command runs on that host, in its POSIX shell —
+which is what the `shell-quote-argument' quoting here targets."
   (let* ((cmd-line (gascity-command-line command))
          (cmd-string (mapconcat #'shell-quote-argument cmd-line " "))
          (buffer-name (format "*gc %s*"

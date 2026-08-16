@@ -32,6 +32,7 @@
 (require 'gascity-custom)
 (require 'gascity-context)
 (require 'gascity-domain)        ; typed rig/agent objects + at-point generic
+(require 'gascity-remote)        ; host-local path localization (remote cities)
 (require 'gascity-types)         ; gascity-command-rig-list! (rig-store lookup)
 (require 'gascity-terminal)
 
@@ -371,6 +372,9 @@ resolved directory is missing on disk.  Shared by `gascity-agent-dired' and
                                            (gascity-agent-socket agent)))))
     (unless (and dir (stringp dir) (not (string-empty-p dir)))
       (user-error "No working directory recorded for %s" name))
+    ;; gc (and the tmux pane probe) report host-local paths; for a view of
+    ;; a remote city, re-prefix so Dired/beads open it on that host.
+    (setq dir (gascity-remote-localize-path dir))
     (unless (file-directory-p dir)
       (user-error "Directory not found for %s: %s" name dir))
     dir))
@@ -391,17 +395,19 @@ AGENT is a `gascity-agent'; its `session-name' (and optional `socket' and
                                 (gascity-agent-work-dir agent)))
 
 (defun gascity-rig-dired (name dir)
-  "Open Dired on rig NAME's local directory DIR.
-DIR is the rig's `path' (as `gc rig list'/`gc status' report it).  Like
+  "Open Dired on rig NAME's directory DIR.
+DIR is the rig's `path' (as `gc rig list'/`gc status' report it) — a
+host-local path, re-prefixed for a remote city.  Like
 `gascity-agent-dired', this signals a clean `user-error' — never an
 internal error — when DIR is absent (the rig has no local checkout) or
 missing on disk, so `d' on such a rig no-ops gracefully."
-  (cond
-   ((or (null dir) (not (stringp dir)) (string-empty-p dir))
-    (user-error "No local directory for rig %s" (or name "?")))
-   ((not (file-directory-p dir))
-    (user-error "Directory not found for rig %s: %s" (or name "?") dir))
-   (t (dired dir))))
+  (let ((dir (gascity-remote-localize-path dir)))
+    (cond
+     ((or (null dir) (not (stringp dir)) (string-empty-p dir))
+      (user-error "No local directory for rig %s" (or name "?")))
+     ((not (file-directory-p dir))
+      (user-error "Directory not found for rig %s: %s" (or name "?") dir))
+     (t (dired dir)))))
 
 ;;;###autoload
 (defun gascity-dired-at-point ()
@@ -471,8 +477,9 @@ failure; callers that tolerate absence wrap the call in `ignore-errors'."
 (defun gascity-beads--rig-path (rig)
   "Return the absolute store directory for RIG, or nil.
 RIG is a rig name (string) or a `gascity-rig'.  The store directory is the
-rig's repo `path' (the directory that holds its `.beads/').  A name is
-resolved against `gascity-rigs'; any failure degrades to nil."
+rig's repo `path' (the directory that holds its `.beads/'), re-prefixed
+for a remote city so beads.el resolves the store on the city's host.  A
+name is resolved against `gascity-rigs'; any failure degrades to nil."
   (let ((rig (cond ((gascity-rig-p rig) rig)
                    ((stringp rig)
                     (ignore-errors
@@ -481,7 +488,8 @@ resolved against `gascity-rigs'; any failure degrades to nil."
     (when-let* ((path (and rig (gascity-rig-path rig)))
                 ((stringp path))
                 ((not (string-empty-p path))))
-      (file-name-as-directory (expand-file-name path)))))
+      (file-name-as-directory
+       (expand-file-name (gascity-remote-localize-path path))))))
 
 (defun gascity-beads--id-prefix (id)
   "Return the store prefix of bead ID (text before the first `-'), or nil."
@@ -513,10 +521,16 @@ and is not subject to that server state, so pass STORE through
 `beads-show''s `:directory' keyword to force it.  `default-directory' is
 still bound to STORE so beads.el names the detail buffer for the right
 project.  With no STORE there is nothing to scope, so defer to beads.el's
-own resolution."
+own resolution.
+
+For a remote city STORE is a TRAMP name: binding `default-directory' to
+it makes beads.el run `bd' on the city's host (its runner is
+`process-file'-based), while the `-C' flag must name the store as that
+host sees it — so the `:directory' keyword gets `file-local-name' (the
+identity for a local STORE)."
   (if store
       (let ((default-directory store))
-        (beads-show id :directory store))
+        (beads-show id :directory (file-local-name store)))
     (beads-show id)))
 
 (defun gascity-bead-show (id &optional directory)

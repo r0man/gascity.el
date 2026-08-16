@@ -396,3 +396,74 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    (`gascity-types.el`), so same-named orders across rigs resolve. The at-point
    `x` action uses the order row's own rig; `C-u M-x gascity-order-run` prompts
    for one.
+
+---
+
+## 12. Remote cities (TRAMP)
+
+From a local Emacs, a view opened on a remote directory (e.g.
+`/ssh:user@example.com:/home/user/city/`) manages THAT
+city — no silent fallback to a local gc (gce-90t). The moving parts:
+
+- **Reads run where `default-directory` points.** `gascity-reader-run` uses
+  `process-file`; `gascity-reader-read-async` passes `:file-handler t` to
+  `make-process`. The async stderr separation is a hidden scratch buffer
+  locally but the remote **null device** remotely: a `:stderr` buffer over
+  TRAMP is backed by a remote named pipe plus a reader process whose
+  cleanup runs TRAMP operations from process sentinels — under the
+  dashboard's parallel loads those fire inside each other's TRAMP calls
+  and raise "Forbidden reentrant call of Tramp" (and need mkfifo on the
+  host). Separation, not capture, is what the porcelain needs — the
+  buffer's content was never read. The sync stderr capture file is created
+  host-side (`make-nearby-temp-file`) and passed WHOLE to `process-file` —
+  TRAMP reduces a same-host name to its local part itself, whereas passing
+  the local part would make it copy stderr back into a *local* file of
+  that name and the remote readback would find nothing.
+- **Executable resolution.** A bare `gascity-executable` resolves against
+  `tramp-remote-path` (not `exec-path`). Two supported setups: add
+  `tramp-own-remote-path`, or set `gascity-executable` connection-locally —
+  every invocation site (reader sync/async, command-line construction for
+  preview and interactive execution) reads it under
+  `with-connection-local-variables`, capturing the value before any
+  `with-temp-buffer` (the buffer switch would hide the buffer-locally
+  applied value). A remote "command not found" is a shell exit 127, not a
+  spawn error, so the setup hint — naming the host and both fixes — rides
+  the non-zero-exit path as well as the spawn-failure path.
+- **Host-local paths.** Everything gc reports (worktree, `work_dir`,
+  `pane_current_path`, rig `path`, order `source`) is a path on the city's
+  host; every find-file/Dired/beads target goes through
+  `gascity-remote-localize-path`, which re-prefixes it with the view's
+  TRAMP prefix. beads.el delegation binds `default-directory` to the TRAMP
+  store (beads' runner is `process-file`-based, so bd runs on the host) and
+  passes `file-local-name` for `bd -C` (the flag names the store as the
+  host sees it).
+- **View identity.** Buffer names are host-qualified via
+  `gascity-remote-buffer-name` (`*gascity-status@/ssh:u@h:*`) and every
+  view pins its `default-directory` to `gascity-context-pin-directory`
+  (the city root) at open, so refresh timers and at-point actions keep
+  resolving the same city and host regardless of where refresh is invoked
+  from. One keying scheme for the status dashboard, the lists, the rig
+  dashboard, the agent detail, and terminal attach buffers.
+- **tmux.** The probes (`has-session`, pane cwd, the status-mirror reads)
+  go through `process-file` and run on the city's host. The attach cannot:
+  beads.el's `beads-terminal-spawn` keeps its plain local-argv contract, so
+  a remote attach wraps the tmux command in a local
+  `ssh -t [-l USER] [-p PORT] HOST …` argv (`gascity-remote-ssh-argv`;
+  ssh/sshx/scp/scpx only, a clear `user-error` for other methods and
+  multi-hop names). The status-mirror timer lives in that LOCAL terminal
+  buffer, so the remote context is carried buffer-locally
+  (`gascity-terminal--status-directory`) and bound around every probe and
+  the teardown.
+- **Refresh under latency.** The status auto-refresh tick is skipped while
+  a load is in flight (`gascity-status--loads-pending-p`): bumping the
+  refresh tick changes every `vui-use-async` key, which kills and restarts
+  the in-flight gc processes — on a link slower than the interval an
+  unguarded timer would never complete a load. Both timer paths (the
+  dashboard tick and the tmux status mirror) also bind `non-essential`, so
+  TRAMP never establishes a NEW connection from a timer — a dropped link
+  degrades the view instead of freezing Emacs on a reconnect timeout; a
+  manual `g` (or reattach) reconnects. Tune
+  `gascity-status-auto-refresh-interval` for slow links.
+- **Tests.** The remote paths are covered offline through the TRAMP "mock"
+  method (the tramp-tests.el pattern — a real local `sh` behind the full
+  file-name machinery) — no network, no real hosts.

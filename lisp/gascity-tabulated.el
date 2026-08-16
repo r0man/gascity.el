@@ -38,8 +38,10 @@
 (require 'view)
 (require 'beads-pager)            ; pure pagination arithmetic (window size / count / slice)
 (require 'gascity-custom)
+(require 'gascity-context)            ; pin-directory (view keyed to its city)
 (require 'gascity-error)
 (require 'gascity-domain)             ; typed row objects (rig/session/agent/convoy/mail/order)
+(require 'gascity-remote)             ; host-qualified names + path localization
 (require 'gascity-section)
 (require 'gascity-command)
 (require 'gascity-types)
@@ -217,9 +219,17 @@ re-derived here on every refresh so it tracks the filter across `g'."
     (gascity-tabulated--init-paged base-name entries)))
 
 (defun gascity-tabulated--show (buffer-name mode-sym refresh-fn)
-  "Pop to BUFFER-NAME in major mode MODE-SYM and run REFRESH-FN."
-  (let ((buf (get-buffer-create buffer-name)))
+  "Pop to BUFFER-NAME in major mode MODE-SYM and run REFRESH-FN.
+The buffer is keyed to the city it is opened for: BUFFER-NAME is
+host-qualified for a remote city (`gascity-remote-buffer-name', so a
+local and a remote list coexist) and the buffer's `default-directory' is
+pinned to that city's root (`gascity-context-pin-directory'), so `g'
+refreshes and at-point actions keep resolving the same gc — and,
+remotely, the same host — regardless of where they are invoked from."
+  (let* ((dir (gascity-context-pin-directory))
+         (buf (get-buffer-create (gascity-remote-buffer-name buffer-name dir))))
     (with-current-buffer buf
+      (setq default-directory dir)
       (unless (derived-mode-p mode-sym) (funcall mode-sym))
       (funcall refresh-fn))
     (pop-to-buffer buf)))
@@ -472,10 +482,13 @@ The entry id is the typed rig, so `RET'/`d'/`b' act on it."
                 (gascity-tabulated--str (gascity-rig-store rig)))))
 
 (defun gascity-rig-list-dired ()
-  "Open Dired on the path of the rig at point."
+  "Open Dired on the path of the rig at point.
+The rig's `path' is host-local (as gc reports it); for a remote city it
+is re-prefixed so Dired opens it on the city's host."
   (interactive)
   (let* ((rig (tabulated-list-get-id))
-         (path (and (gascity-rig-p rig) (gascity-rig-path rig))))
+         (path (gascity-remote-localize-path
+                (and (gascity-rig-p rig) (gascity-rig-path rig)))))
     (if (and path (file-directory-p path))
         (dired path)
       (user-error "No rig directory at point"))))
@@ -978,8 +991,10 @@ The entry id is the typed order, so `RET' can open its source."
                 (if (gascity-order-enabled order) "●" ""))))
 
 (cl-defmethod gascity-at-point-visit ((order gascity-order))
-  "Visit an order: open its source file."
-  (let ((source (gascity-order-source order)))
+  "Visit an order: open its source file.
+The `source' path is host-local (as gc reports it); for a remote city it
+is re-prefixed so the file opens on the city's host."
+  (let ((source (gascity-remote-localize-path (gascity-order-source order))))
     (if (and source (file-readable-p source))
         (find-file source)
       (user-error "No readable source for the order at point"))))

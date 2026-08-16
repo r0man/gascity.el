@@ -3134,5 +3134,323 @@ the main `gascity' menu); assert each new suffix command is reachable."
                  gascity-rig-add gascity-rig-remove))
     (should (commandp cmd))))
 
+;;; ============================================================
+;;; Remote cities (TRAMP) — gce-90t
+;;; ============================================================
+;;
+;; Offline coverage of the remote code paths via the standard TRAMP
+;; "mock" method (the tramp-tests.el pattern): a real local `sh' behind
+;; the full TRAMP file-name machinery, so `process-file' redirection,
+;; `make-process :file-handler', and connection-local resolution all
+;; exercise the same tramp-sh handlers a real ssh city would — with no
+;; network.
+
+(require 'tramp)
+
+(defconst gascity-test--mock-directory
+  (format "/mock::%s" temporary-file-directory)
+  "TRAMP name of the local temp directory behind the mock method.")
+
+(defun gascity-test--ensure-mock-method ()
+  "Register the tramp-tests.el \"mock\" method (idempotent).
+A real local `sh' behind the full TRAMP machinery — remote-flavored
+code paths, no network."
+  (unless (assoc "mock" tramp-methods)
+    (add-to-list 'tramp-methods
+                 '("mock"
+                   (tramp-login-program "sh")
+                   (tramp-login-args (("-i")))
+                   (tramp-direct-async ("-c"))
+                   (tramp-remote-shell "/bin/sh")
+                   (tramp-remote-shell-args ("-c"))
+                   (tramp-connection-timeout 10)))
+    (add-to-list 'tramp-default-host-alist
+                 `("\\`mock\\'" nil ,(system-name)))))
+
+(defmacro gascity-test--with-mock-remote (&rest body)
+  "Run BODY with a remote `default-directory' via the TRAMP mock method.
+Skips the calling test when the mock connection cannot be established
+\(e.g. no local sh)."
+  (declare (indent 0) (debug t))
+  `(progn
+     (gascity-test--ensure-mock-method)
+     (let ((tramp-verbose 0)
+           (default-directory gascity-test--mock-directory))
+       (skip-unless (ignore-errors (file-directory-p default-directory)))
+       ,@body)))
+
+(defun gascity-test--wait-for (box &optional timeout)
+  "Pump the event loop until BOX's car is non-nil or TIMEOUT (10s) lapses.
+Return BOX's car."
+  (let ((deadline (+ (float-time) (or timeout 10))))
+    (while (and (null (car box)) (< (float-time) deadline))
+      (accept-process-output nil 0.1))
+    (car box)))
+
+(ert-deftest gascity-test-remote-localize-path ()
+  "Host-local gc paths are re-prefixed for a remote view; locals untouched."
+  ;; Local context: unchanged.
+  (let ((default-directory "/"))
+    (should (equal (gascity-remote-localize-path "/wd") "/wd")))
+  ;; Remote context: prefixed with the view's TRAMP prefix.
+  (let ((default-directory "/ssh:u@h:/home/u/city/"))
+    (should (equal (gascity-remote-localize-path "/wd") "/ssh:u@h:/wd"))
+    ;; An already-remote path passes through; nil/empty degrade unchanged.
+    (should (equal (gascity-remote-localize-path "/ssh:u@h:/x") "/ssh:u@h:/x"))
+    (should (null (gascity-remote-localize-path nil)))
+    (should (equal (gascity-remote-localize-path "") "")))
+  ;; Explicit DIR overrides `default-directory'.
+  (should (equal (gascity-remote-localize-path "/wd" "/ssh:u@h:/city/")
+                 "/ssh:u@h:/wd")))
+
+(ert-deftest gascity-test-remote-buffer-name ()
+  "View buffer names are host-qualified for a remote city, bare locally."
+  (let ((default-directory "/"))
+    (should (equal (gascity-remote-buffer-name "*gascity-status*")
+                   "*gascity-status*")))
+  (let ((default-directory "/ssh:u@h:/city/"))
+    (should (equal (gascity-remote-buffer-name "*gascity-status*")
+                   "*gascity-status@/ssh:u@h:*"))
+    ;; A base without the trailing star still gets qualified.
+    (should (equal (gascity-remote-buffer-name "plain") "plain@/ssh:u@h:"))))
+
+(ert-deftest gascity-test-remote-ssh-argv ()
+  "The local ssh argv carries user/port, quotes remote tokens, and rejects
+methods/names one plain ssh cannot reach."
+  (should (equal (gascity-remote-ssh-argv
+                  "/ssh:user@example.com:/home/user/city/"
+                  '("env" "-u" "TMUX" "tmux" "attach-session" "-t"
+                    "gastown__mayor"))
+                 '("ssh" "-t" "-l" "user" "example.com"
+                   "env" "-u" "TMUX" "tmux" "attach-session" "-t"
+                   "gastown__mayor")))
+  ;; No user: no -l.  sshx counts as ssh-reachable.
+  (should (equal (gascity-remote-ssh-argv "/sshx:h:/x" '("true"))
+                 '("ssh" "-t" "h" "true")))
+  ;; A #port becomes -p.
+  (let ((argv (gascity-remote-ssh-argv "/ssh:u@h#2222:/x" '("true"))))
+    (should (equal (seq-take argv 7) '("ssh" "-t" "-l" "u" "-p" "2222" "h"))))
+  ;; Remote tokens are quoted for the remote POSIX shell (ssh joins them).
+  (should (member (shell-quote-argument "a b")
+                  (gascity-remote-ssh-argv "/ssh:u@h:/x" '("echo" "a b"))))
+  ;; Non-ssh methods, multi-hop chains, and local names are refused.
+  (should-error (gascity-remote-ssh-argv "/sudo:root@localhost:/etc" '("true"))
+                :type 'user-error)
+  (should-error (gascity-remote-ssh-argv "/ssh:a@b|ssh:c@d:/x" '("true"))
+                :type 'user-error)
+  (should-error (gascity-remote-ssh-argv "/home/x" '("true"))
+                :type 'user-error))
+
+(ert-deftest gascity-test-terminal-attach-argv ()
+  "Attach argv: direct tmux locally; wrapped in local ssh for a remote city."
+  (should (equal (gascity-terminal--attach-argv "sess" "sock")
+                 '("env" "-u" "TMUX" "tmux" "-L" "sock"
+                   "attach-session" "-t" "sess")))
+  (should (equal (gascity-terminal--attach-argv "sess" nil "/ssh:u@h:/city/")
+                 '("ssh" "-t" "-l" "u" "h"
+                   "env" "-u" "TMUX" "tmux" "attach-session" "-t" "sess"))))
+
+(ert-deftest gascity-test-remote-reader-run ()
+  "`gascity-reader-run' on a remote directory runs on the host: stdout and
+stderr separate, exit code preserved.  The stderr capture file is created
+host-side and read back through its full TRAMP name (gce-90t audit #1 —
+handing `process-file' the local part instead would make TRAMP copy
+stderr back to a LOCAL file of that name and the readback find nothing)."
+  (gascity-test--with-mock-remote
+    (let* ((gascity-executable "/bin/sh")
+           (result (gascity-reader-run
+                    '("-c" "echo OUT; echo ERR >&2; exit 3"))))
+      (should (equal (plist-get result :exit-code) 3))
+      (should (equal (plist-get result :stdout) "OUT\n"))
+      (should (equal (plist-get result :stderr) "ERR\n")))))
+
+(ert-deftest gascity-test-remote-reader-read-missing-gc-hint ()
+  "A remote \"command not found\" names the host and both setup paths.
+TRAMP raises no spawn error for a missing remote program — the remote
+shell reports it on stderr and exits 127 — so the hint rides the
+non-zero-exit path of `gascity-reader-read' (gce-90t audit #6)."
+  (gascity-test--with-mock-remote
+    (let* ((gascity-executable "gascity-test-absent-gc")
+           (err (should-error (gascity-reader-read "status")
+                              :type 'gascity-command-error))
+           (msg (cadr err)))
+      (should (string-match-p "mock" msg))
+      (should (string-match-p "tramp-own-remote-path" msg))
+      (should (string-match-p "gascity-executable" msg)))))
+
+(ert-deftest gascity-test-remote-reader-read-async ()
+  "Async reads dispatch through the TRAMP file handler (gce-90t audit #2):
+gc runs on the host and stderr noise never corrupts the parsed JSON —
+remotely stderr is redirected to the remote null device (separation
+without TRAMP's named-pipe machinery, whose sentinel-time cleanup
+raises reentrancy errors under parallel loads)."
+  (gascity-test--with-mock-remote
+    (let ((gascity-executable "/bin/sh")
+          (result (list nil)))
+      (gascity-reader-read-async
+       '("-c" "echo GARBAGE-ON-STDERR >&2; echo '{\"city_name\":\"mock-city\"}'"
+         "--json")
+       (lambda (data) (setcar result data))
+       (lambda (msg) (setcar result (cons :error msg))))
+      (should (gascity-test--wait-for result))
+      (should (equal (alist-get 'city_name (car result)) "mock-city")))))
+
+(ert-deftest gascity-test-remote-reader-read-async-error ()
+  "A non-zero remote exit reaches the errback, not the callback."
+  (gascity-test--with-mock-remote
+    (let ((gascity-executable "/bin/sh")
+          (result (list nil)))
+      (gascity-reader-read-async
+       '("-c" "exit 7" "--json")
+       (lambda (_data) (setcar result '(:unexpected-success)))
+       (lambda (msg) (setcar result (cons :error msg))))
+      (should (gascity-test--wait-for result))
+      (should (eq (car (car result)) :error))
+      (should (string-match-p "exit 7" (cdr (car result)))))))
+
+(ert-deftest gascity-test-remote-connection-local-executable ()
+  "A connection-local `gascity-executable' governs command lines and runs.
+The invocation sites read the variable under
+`with-connection-local-variables', so a per-host absolute path set via
+connection-local profiles wins on that host and only there (gce-90t
+audit #6).  The registration is torn down explicitly in unwind-protect:
+`connection-local-set-profiles' persists via `custom-set-variables', so
+a dynamic let of copied alists does NOT contain it — the residue would
+apply the profile to every later mock-method test in this file."
+  (gascity-test--with-mock-remote
+    (let ((echo (executable-find "echo")))
+      (skip-unless echo)
+      (unwind-protect
+          (progn
+            (connection-local-set-profile-variables
+             'gascity-test-remote-gc `((gascity-executable . ,echo)))
+            (connection-local-set-profiles
+             '(:application tramp :protocol "mock") 'gascity-test-remote-gc)
+            ;; The command layer resolves the per-host value…
+            (should (equal (car (gascity-command-line (gascity-command-status)))
+                           echo))
+            ;; …the reader actually invokes it — a regression guard for the
+            ;; `with-temp-buffer' trap: the connection-local value is applied
+            ;; buffer-locally, so the runner must capture it before switching
+            ;; buffers…
+            (let ((run (gascity-reader-run '("hello"))))
+              (should (equal (plist-get run :exit-code) 0))
+              (should (equal (plist-get run :stdout) "hello\n"))
+              (should (equal (plist-get run :executable) echo)))
+            ;; …and a local directory still sees the global default.
+            (let ((default-directory "/"))
+              (should (equal (car (gascity-command-line (gascity-command-status)))
+                             "gc"))))
+        (setq connection-local-criteria-alist
+              (delq nil
+                    (mapcar (lambda (e)
+                              (let ((ps (remq 'gascity-test-remote-gc (cdr e))))
+                                (and ps (cons (car e) ps))))
+                            connection-local-criteria-alist)))
+        (setq connection-local-profile-alist
+              (assq-delete-all 'gascity-test-remote-gc
+                               connection-local-profile-alist))))))
+
+(ert-deftest gascity-test-context-pin-directory ()
+  "Views pin the city root when inside a city tree, else the directory itself."
+  (let* ((tmp (make-temp-file "gascity-test-pin" t))
+         (city (file-name-as-directory (expand-file-name "town" tmp))))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "town/deep/nest" tmp) t)
+          (write-region "" nil (expand-file-name "town/city.toml" tmp))
+          (let ((default-directory (file-name-as-directory
+                                    (expand-file-name "town/deep/nest" tmp))))
+            (should (equal (gascity-context-pin-directory) city)))
+          (let ((default-directory (file-name-as-directory tmp)))
+            (should (equal (gascity-context-pin-directory)
+                           (file-name-as-directory tmp)))))
+      (delete-directory tmp t))))
+
+(ert-deftest gascity-test-remote-view-identity ()
+  "A view opened on a remote city gets a host-qualified buffer name and a
+`default-directory' pinned to that city (gce-90t audit #7), so refresh
+timers keep hitting the same host and a local view coexists."
+  (gascity-test--with-mock-remote
+    (let ((remote-prefix (file-remote-p default-directory))
+          (buf nil))
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              (setq buf (gascity-tabulated--show "*gascity-test-view*"
+                                                 #'fundamental-mode
+                                                 #'ignore))
+              (should (equal (buffer-name buf)
+                             (format "*gascity-test-view@%s*" remote-prefix)))
+              (should (equal (file-remote-p
+                              (buffer-local-value 'default-directory buf))
+                             remote-prefix)))
+          (when (buffer-live-p buf) (kill-buffer buf)))))))
+
+(ert-deftest gascity-test-remote-attach-spawns-local-ssh ()
+  "Attaching from a remote view spawns a LOCAL ssh argv in a local dir.
+`beads-terminal-spawn' keeps its local-argv contract (gce-90t audit #4):
+the tmux command is wrapped in `ssh -t HOST …', the working directory is
+local (never the city's host-local path), and the terminal buffer name
+is host-qualified."
+  (let ((default-directory "/ssh:u@h:/city/")
+        spawn)
+    (cl-letf (((symbol-function 'gascity-terminal-tmux-session-exists-p)
+               (lambda (&rest _) t))
+              ((symbol-function 'gascity-terminal--status-install)
+               (lambda (&rest _) nil))
+              ((symbol-function 'beads-terminal-spawn)
+               (lambda (_term buffer-name argv dir _env)
+                 (setq spawn (list buffer-name argv dir))
+                 (get-buffer-create buffer-name)))
+              ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+      (unwind-protect
+          (progn
+            (gascity-terminal-attach-tmux "sess" "sock" "/remote/wd")
+            (should (equal (nth 1 spawn)
+                           '("ssh" "-t" "-l" "u" "h"
+                             "env" "-u" "TMUX" "tmux" "-L" "sock"
+                             "attach-session" "-t" "sess")))
+            (should-not (file-remote-p (nth 2 spawn)))
+            (should (equal (nth 0 spawn) "*gc-agent-sess@/ssh:u@h:*")))
+        (when (get-buffer "*gc-agent-sess@/ssh:u@h:*")
+          (kill-buffer "*gc-agent-sess@/ssh:u@h:*"))))))
+
+(ert-deftest gascity-test-status-tick-skips-inflight-load ()
+  "The auto-refresh tick never restarts loads still in flight (gce-90t #9).
+Bumping the refresh tick changes every `vui-use-async' key, which KILLS
+the in-flight gc process and restarts the load — so on a link where a
+read takes longer than the interval (a remote city over ssh), an
+unguarded timer would starve the dashboard forever."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)
+        (refreshes 0))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app)
+                         "*gascity-status-test*")
+              (let ((buf (get-buffer "*gascity-status-test*")))
+                ;; Cold loads parked -> in flight -> the tick must skip.
+                (should (gascity-status--loads-pending-p buf))
+                (cl-letf (((symbol-function 'get-buffer-window)
+                           (lambda (&rest _) t))
+                          ((symbol-function 'gascity-status--refresh-instance)
+                           (lambda (&rest _) (cl-incf refreshes) t)))
+                  (gascity-status--auto-refresh-tick buf)
+                  (should (= refreshes 0))
+                  ;; Resolve both loads -> idle -> the next tick refreshes.
+                  (funcall (car status-box)
+                           '((city_name . "x") (rigs . []) (agents . [])))
+                  (funcall (car sessions-box) '((sessions . [])))
+                  (should-not (gascity-status--loads-pending-p buf))
+                  (gascity-status--auto-refresh-tick buf)
+                  (should (= refreshes 1)))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

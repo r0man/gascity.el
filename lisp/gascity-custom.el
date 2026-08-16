@@ -25,7 +25,23 @@
 (defcustom gascity-executable "gc"
   "Name of, or path to, the Gas City `gc' executable.
 A bare command name is resolved against the variable `exec-path'; an
-absolute path is used as-is."
+absolute path is used as-is.
+
+For a remote city (a TRAMP `default-directory'), a bare name resolves
+against `tramp-remote-path' — NOT `exec-path' — which by default omits
+non-standard profile directories such as `~/.guix-home/profile/bin'.
+Either extend it:
+
+  (add-to-list \\='tramp-remote-path \\='tramp-own-remote-path)
+
+or set this variable connection-locally to an absolute remote path —
+every invocation site reads it under `with-connection-local-variables':
+
+  (connection-local-set-profile-variables
+   \\='gascity-remote-gc
+   \\='((gascity-executable . \"/home/user/.guix-home/profile/bin/gc\")))
+  (connection-local-set-profiles
+   \\='(:machine \"example.com\") \\='gascity-remote-gc)"
   :type 'string
   :group 'gascity)
 
@@ -121,7 +137,12 @@ Set to nil to refresh only manually with `g'; the command
 (defcustom gascity-status-auto-refresh-interval 5
   "Seconds between automatic refreshes of the Gas City status dashboard.
 Only consulted when `gascity-status-auto-refresh' is non-nil; a value at
-or below zero disables the timer (refresh manually with `g')."
+or below zero disables the timer (refresh manually with `g').
+
+For a remote city each refresh is an ssh round trip.  TRAMP reuses the
+connection, so the default is usually fine, and a tick is skipped while
+a previous load is still in flight — but on a slow link consider
+raising this (say 15–30) so the dashboard is not perpetually fetching."
   :type 'number
   :group 'gascity)
 

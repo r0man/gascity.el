@@ -31,8 +31,10 @@
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
+(require 'gascity-context)            ; pin-directory (view keyed to its city)
 (require 'gascity-domain)             ; typed session/agent objects
 (require 'gascity-reader)
+(require 'gascity-remote)             ; host-qualified buffer names
 (require 'gascity-command)
 (require 'gascity-command-status)
 (require 'gascity-section)
@@ -60,7 +62,10 @@
 ;;; Buffer
 
 (defconst gascity-status-buffer-name "*gascity-status*"
-  "Name of the gascity status dashboard buffer.")
+  "Base name of the gascity status dashboard buffer.
+For a remote city the live buffer's name is this qualified by the TRAMP
+prefix (`gascity-remote-buffer-name'), so a local and a remote dashboard
+coexist.")
 
 ;;; Data shaping (pure)
 
@@ -396,16 +401,51 @@ collapse state and point); nil when BUFFER has no mounted instance."
 (defvar-local gascity-status--refresh-timer nil
   "Repeating timer auto-refreshing this dashboard buffer, or nil.")
 
+(defun gascity-status--loads-pending-p (buffer)
+  "Return non-nil when BUFFER's mounted dashboard has a load in flight.
+Inspects the root vui instance's async-hook cache for an entry still in
+the `pending' state.  Used by the auto-refresh tick: bumping the refresh
+tick changes every `vui-use-async' key, which KILLS the in-flight gc
+process and restarts the load — so on a link where a read takes longer
+than the refresh interval (a remote city over ssh, say), an unguarded
+timer would restart the loads forever and the dashboard would never
+show data."
+  (and (buffer-live-p buffer)
+       (with-current-buffer buffer
+         (when (and (boundp 'vui--root-instance) vui--root-instance)
+           (let ((asyncs (vui-instance-asyncs vui--root-instance))
+                 (pending nil))
+             (when asyncs
+               (maphash (lambda (_id entry)
+                          (when (eq (plist-get entry :status) 'pending)
+                            (setq pending t)))
+                        asyncs))
+             pending)))))
+
 (defun gascity-status--auto-refresh-tick (buffer)
-  "Refresh the dashboard in BUFFER, but only while it is visible.
-Timer callback.  When BUFFER is live and shown in a window on some visible
-frame, refresh it in place with `gascity-status--refresh-instance' (which
-preserves collapse state and point).  When BUFFER is buried or its frame is
-invisible, do nothing — no `gc' fetch and no refresh tick — so an
-out-of-sight dashboard costs nothing."
+  "Refresh the dashboard in BUFFER, but only while it is visible and idle.
+Timer callback.  When BUFFER is live, shown in a window on some visible
+frame, and has no load still in flight (`gascity-status--loads-pending-p'
+— refreshing mid-flight cancels and restarts the fetch, so a slow link
+would otherwise never complete one), refresh it in place with
+`gascity-status--refresh-instance' (which preserves collapse state and
+point).  When BUFFER is buried or its frame is invisible, do nothing —
+no `gc' fetch and no refresh tick — so an out-of-sight dashboard costs
+nothing."
   (when (and (buffer-live-p buffer)
-             (get-buffer-window buffer 'visible))
-    (gascity-status--refresh-instance buffer)))
+             (get-buffer-window buffer 'visible)
+             ;; TRAMP mid-operation: a timer can fire inside another TRAMP
+             ;; call's `accept-process-output', where spawning the refresh
+             ;; processes signals "Forbidden reentrant call of Tramp" and
+             ;; needlessly errors the loads.  Skip; the next tick retries.
+             (not (bound-and-true-p tramp-locked))
+             (not (gascity-status--loads-pending-p buffer)))
+    ;; `non-essential': a timer must never make TRAMP establish a NEW
+    ;; connection — on a dropped link that is a multi-second freeze per
+    ;; tick.  A live connection is unaffected; after a drop the tick
+    ;; degrades to an error state and a manual `g' reconnects.
+    (let ((non-essential t))
+      (gascity-status--refresh-instance buffer))))
 
 (defun gascity-status--auto-refresh-teardown ()
   "Cancel the current buffer's auto-refresh timer.
@@ -505,17 +545,26 @@ buffer's refresh timer to match.  While on, the dashboard re-renders every
 
 ;;;###autoload
 (defun gascity-status ()
-  "Show the Gas City status dashboard."
+  "Show the Gas City status dashboard.
+The dashboard is keyed to the city it is opened for: its buffer name is
+host-qualified for a remote city (so a local and a remote dashboard
+coexist) and its `default-directory' is pinned to that city's root, so
+the refresh timer and every at-point action keep resolving the same gc
+— and, remotely, the same host — no matter where a refresh is invoked
+from."
   (interactive)
-  (let ((buf (get-buffer-create gascity-status-buffer-name)))
+  (let* ((dir (gascity-context-pin-directory))
+         (name (gascity-remote-buffer-name gascity-status-buffer-name dir))
+         (buf (get-buffer-create name)))
     (with-current-buffer buf
+      (setq default-directory dir)
       (unless (derived-mode-p 'gascity-dashboard-mode)
         (gascity-dashboard-mode)))
     (unless (gascity-status--refresh-instance buf)
       ;; vui-mount switch-to-buffers internally; contain that so the buffer is
       ;; displayed once, via pop-to-buffer, on both the cold and refresh paths.
       (save-window-excursion
-        (vui-mount (vui-component 'gascity-status-app) gascity-status-buffer-name)))
+        (vui-mount (vui-component 'gascity-status-app) name)))
     (pop-to-buffer buf)))
 
 (cl-defmethod gascity-command-execute-interactive ((_cmd gascity-command-status))

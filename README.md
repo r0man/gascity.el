@@ -39,7 +39,9 @@ session/polecat detail. Bead-UI delegation and polish are planned (DESIGN.md §7
 ## Requirements
 
 - Emacs 29.1+
-- The `gc` CLI on your `exec-path` (or set `gascity-executable`)
+- The `gc` CLI on your `exec-path` (or set `gascity-executable`); for a
+  remote city, on the host's `tramp-remote-path` — see
+  [Remote cities (TRAMP)](#remote-cities-tramp)
 - [beads.el](https://github.com/r0man/beads.el) (provides `beads-meta`,
   `beads-section`, `beads-terminal`) and [vui](https://github.com/r0man/vui)
 - Optional: `vterm` or `eat` for a nicer tmux-attach terminal (falls back to the
@@ -93,6 +95,54 @@ Everywhere: `g` refreshes, `q` buries, `RET` drills in. In the tabulated lists,
   by line, `N`/`P` jump between sections.
 - **Convoys:** `RET` opens the convoy bead via beads.el.
 - **Orders:** `RET` opens the order's source file; `x` runs the order manually.
+
+## Remote cities (TRAMP)
+
+gascity is fully remote-capable: open any directory of a remote city over
+TRAMP and start a view from there — every read, action, and refresh then runs
+`gc` on that host, never a silent local fallback.
+
+```
+C-x d /ssh:user@example.com:/home/user/city/ RET
+M-x gascity-status
+```
+
+Setup, one of two paths. TRAMP resolves remote programs against
+`tramp-remote-path` (not `exec-path`), which omits non-default profile
+directories such as `~/.guix-home/profile/bin`, so either extend it:
+
+```elisp
+(add-to-list 'tramp-remote-path 'tramp-own-remote-path)
+```
+
+or set a per-host absolute path via connection-local profiles:
+
+```elisp
+(connection-local-set-profile-variables
+ 'gascity-remote-gc
+ '((gascity-executable . "/home/user/.guix-home/profile/bin/gc")))
+(connection-local-set-profiles
+ '(:machine "example.com") 'gascity-remote-gc)
+```
+
+Notes:
+
+- Views are keyed per city: buffer names are host-qualified
+  (`*gascity-status@/ssh:user@example.com:*`), so a local and a
+  remote dashboard coexist, and each view pins its `default-directory` to
+  the city it was opened for — refresh timers keep hitting that host.
+- Paths gc reports (agent worktrees, rig directories, order sources) are
+  host-local; `d` (Dired) and `RET` re-prefix them and open them on the
+  city's host.
+- `t`/`RET` tmux attach spawns a **local** `ssh -t HOST env -u TMUX tmux …`
+  in the terminal backend. Supported for the ssh-based TRAMP methods
+  (`ssh`/`sshx`/`scp`/`scpx`); other methods and multi-hop names signal a
+  clear error. The mode-line tmux status mirror probes the remote server on
+  its timer. `tmux` must be reachable on `tramp-remote-path` too.
+- Performance: each refresh is an ssh round trip. Emacs reuses the TRAMP
+  connection, and the dashboard skips an auto-refresh tick while a load is
+  still in flight; raise `gascity-status-auto-refresh-interval` on slow
+  links.
 
 ## Customization
 

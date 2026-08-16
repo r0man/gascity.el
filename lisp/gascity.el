@@ -46,6 +46,7 @@
 (require 'transient)
 (require 'gascity-custom)
 (require 'gascity-error)
+(require 'gascity-remote)
 (require 'gascity-reader)
 (require 'gascity-command)
 (require 'gascity-context)

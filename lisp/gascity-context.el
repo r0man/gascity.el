@@ -58,6 +58,20 @@ for `gascity-context-city-file'.  Returns an absolute directory name
                 (found (locate-dominating-file start gascity-context-city-file)))
       (file-name-as-directory (expand-file-name found)))))
 
+(defun gascity-context-pin-directory (&optional dir)
+  "Return the directory a gascity view opened from DIR should pin.
+The city root governing DIR when DIR sits inside a city tree, else DIR
+itself (default `default-directory').  A view buffer sets the result as
+its `default-directory' at open time, so its refresh timers and at-point
+actions keep resolving gc — and, for a remote city, the ssh/tmux host —
+against the city the view was opened for, no matter where a later
+refresh is invoked from.  The city root is preferred over DIR itself
+because it outlives DIR (a polecat worktree the view was opened from may
+be reclaimed while the view is still refreshing)."
+  (let ((dir (expand-file-name (or dir default-directory))))
+    (or (gascity-context-city-root dir)
+        (file-name-as-directory dir))))
+
 (defun gascity-context-city-name (&optional dir)
   "Return the city name governing DIR, or nil.
 Derived from the basename of `gascity-context-city-root', so it only

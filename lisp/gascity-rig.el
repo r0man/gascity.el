@@ -40,8 +40,10 @@
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
+(require 'gascity-context)            ; pin-directory (view keyed to its city)
 (require 'gascity-domain)             ; typed agent + at-point visit generic
 (require 'gascity-reader)             ; gascity-reader-read-async (per-section loads)
+(require 'gascity-remote)             ; host-qualified buffer names
 (require 'gascity-types)             ; gascity-command-rig-list! (rig-name completion)
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters (--str, --vector->list)
@@ -68,8 +70,11 @@ opens the rig's beads in beads.el) act on the dashboard's rig regardless
 of point.")
 
 (defun gascity-rig-dashboard--buffer-name (rig-name)
-  "Return the dashboard buffer name for RIG-NAME."
-  (format "*gascity-rig: %s*" rig-name))
+  "Return the dashboard buffer name for RIG-NAME.
+Host-qualified for a remote city (`gascity-remote-buffer-name', keyed
+off `default-directory'), so a local and a remote rig dashboard of the
+same name coexist."
+  (gascity-remote-buffer-name (format "*gascity-rig: %s*" rig-name)))
 
 ;;; Data shaping (pure)
 
@@ -381,8 +386,13 @@ contextual rig."
                                                 (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))
                             (gascity-error nil))
                           nil nil nil nil (gascity-context-rig-name))))
-  (let ((buf (get-buffer-create (gascity-rig-dashboard--buffer-name rig-name))))
+  (let* ((dir (gascity-context-pin-directory))
+         (name (gascity-rig-dashboard--buffer-name rig-name))
+         (buf (get-buffer-create name)))
     (with-current-buffer buf
+      ;; Pin the buffer to the city it was opened for, so `g' keeps
+      ;; resolving the same gc (and, for a remote city, the same host).
+      (setq default-directory dir)
       (unless (derived-mode-p 'gascity-rig-dashboard-mode)
         (gascity-rig-dashboard-mode))
       (setq gascity-rig-dashboard--rig-name rig-name))
@@ -391,7 +401,7 @@ contextual rig."
       ;; displayed once, via pop-to-buffer, on both the cold and refresh paths.
       (save-window-excursion
         (vui-mount (vui-component 'gascity-rig-dashboard-app :rig-name rig-name)
-                   (gascity-rig-dashboard--buffer-name rig-name))))
+                   name)))
     (pop-to-buffer buf)))
 
 (provide 'gascity-rig)
