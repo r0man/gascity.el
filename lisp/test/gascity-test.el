@@ -1821,7 +1821,7 @@ fall-through a future vui change could reintroduce."
   "A bead id's store prefix is the text before the first hyphen."
   (should (equal (gascity-beads--id-prefix "gce-afq") "gce"))
   (should (equal (gascity-beads--id-prefix "bl-1jp") "bl"))
-  (should (equal (gascity-beads--id-prefix "exc-12ab") "gxc"))
+  (should (equal (gascity-beads--id-prefix "exc-12ab") "exc"))
   (should (null (gascity-beads--id-prefix "noprefix")))
   (should (null (gascity-beads--id-prefix "")))
   (should (null (gascity-beads--id-prefix nil))))
