@@ -24,6 +24,7 @@
 
 (require 'cl-lib)
 (require 'gascity-reader)
+(require 'gascity-remote)
 
 (defvar gascity-context-city nil
   "When non-nil, an absolute path that overrides city auto-detection.")
@@ -41,11 +42,15 @@
   "Cache mapping an absolute directory to its gc-resolved city name.")
 
 (defun gascity-context-clear-cache ()
-  "Forget cached rig and city resolutions.
-Call after the city's rig set changes, or to force re-resolution."
+  "Forget cached rig, city, and remote-executable resolutions.
+The one cache entry point: also clears the per-connection gc/tmux
+resolutions of `gascity-remote-find-executable'.  Call after the
+city's rig set changes, after a program moved on a remote host, or to
+force re-resolution."
   (interactive)
   (clrhash gascity-context--rig-cache)
-  (clrhash gascity-context--city-cache))
+  (clrhash gascity-context--city-cache)
+  (gascity-remote-forget-executables))
 
 (defun gascity-context-city-root (&optional dir)
   "Return the Gas City root governing DIR (default `default-directory').

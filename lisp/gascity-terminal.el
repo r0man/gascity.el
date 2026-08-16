@@ -20,11 +20,15 @@
 ;;
 ;; Remote cities: the tmux server runs on the city's host, so the
 ;; existence/pane probes go through `process-file' — on a remote
-;; `default-directory' they run tmux on that host.  The attach itself
+;; `default-directory' they run tmux on that host, with the tmux
+;; program resolved by `gascity-remote-find-executable' (so a Guix
+;; host's profile tmux is found with zero setup).  The attach itself
 ;; cannot: the terminal backend spawns LOCAL processes (beads.el's
 ;; local-argv contract), so for a remote city the tmux command is
 ;; wrapped into a local `ssh -t HOST …' argv
-;; (`gascity-terminal--attach-argv' via `gascity-remote-ssh-argv').
+;; (`gascity-terminal--attach-argv' via `gascity-remote-ssh-argv'),
+;; carrying the same resolved tmux — `ssh HOST cmd' is no login shell,
+;; so profile PATHs may be absent there too.
 ;; The status-mirror timer runs in the terminal buffer, whose
 ;; `default-directory' is LOCAL (it hosts a local ssh); the remote
 ;; context is carried buffer-locally (`gascity-terminal--status-directory')
@@ -124,11 +128,13 @@ default tmux server\" — no -L flag."
 (defun gascity-terminal-tmux-session-exists-p (session &optional socket)
   "Return non-nil when tmux SESSION exists (on optional SOCKET).
 Probes via `process-file', so on a remote `default-directory' the
-city's own tmux server is asked, on its host.  Signals a `file-error'
-when tmux itself cannot be run there (callers that need a clean message
-wrap this — see `gascity-terminal-attach-tmux')."
+city's own tmux server is asked, on its host — tmux resolved there by
+`gascity-remote-find-executable'.  Signals a `file-error' when tmux
+itself cannot be run there (callers that need a clean message wrap
+this — see `gascity-terminal-attach-tmux')."
   (and session (stringp session) (not (string-empty-p session))
-       (eq 0 (apply #'process-file "tmux" nil nil nil
+       (eq 0 (apply #'process-file (gascity-remote-find-executable "tmux")
+                    nil nil nil
                     (append (gascity-terminal--socket-args socket)
                             (list "has-session" "-t" session))))))
 
@@ -145,7 +151,9 @@ agent's live working directory even when its session bead recorded no
   (when (and session (stringp session) (not (string-empty-p session)))
     (with-temp-buffer
       (when (eq 0 (condition-case nil
-                      (apply #'process-file "tmux" nil t nil
+                      (apply #'process-file
+                             (gascity-remote-find-executable "tmux")
+                             nil t nil
                              (append (gascity-terminal--socket-args socket)
                                      (list "display-message" "-t" session
                                            "-p" "#{pane_current_path}")))
@@ -185,12 +193,15 @@ Recomputed by `gascity-terminal--status-refresh' and read by the
 (defun gascity-terminal--tmux (socket &rest args)
   "Run \"tmux [-L SOCKET] ARGS\" and return trimmed stdout, or nil.
 Runs via `process-file' where `default-directory' points, so a remote
-city's tmux server is probed on its own host.  Returns nil when tmux is
+city's tmux server is probed on its own host — tmux resolved there by
+`gascity-remote-find-executable'.  Returns nil when tmux is
 unavailable, the remote connection fails, or tmux exits non-zero (e.g.
 the session is gone), so callers treat a missing session uniformly."
   (with-temp-buffer
     (when (eq 0 (condition-case nil
-                    (apply #'process-file "tmux" nil t nil
+                    (apply #'process-file
+                           (gascity-remote-find-executable "tmux")
+                           nil t nil
                            (append (gascity-terminal--socket-args socket) args))
                   (file-error nil)))
       (string-trim (buffer-string)))))
@@ -358,7 +369,7 @@ Idempotent: safe to re-run when reattaching to a live terminal."
       ;; Tear down when the terminal buffer is killed.
       (add-hook 'kill-buffer-hook #'gascity-terminal--status-teardown nil t))))
 
-(defun gascity-terminal--attach-argv (session socket &optional remote)
+(defun gascity-terminal--attach-argv (session socket &optional remote program)
   "Return the local argv that attaches tmux SESSION on SOCKET.
 A pure function of its inputs.  The local shape is `env -u TMUX tmux
 [-L SOCKET] attach-session -t SESSION' — a clean argv, no shell: `env -u
@@ -368,8 +379,10 @@ with no quoting/injection surface.  With REMOTE (a TRAMP name for the
 city's host) the same command is wrapped into a local `ssh -t' argv via
 `gascity-remote-ssh-argv' — the city's tmux server runs on the city's
 host, while the terminal backend only spawns local processes — which
-signals a `user-error' for non-ssh methods and multi-hop names."
-  (let ((argv (append (list "env" "-u" "TMUX" "tmux")
+signals a `user-error' for non-ssh methods and multi-hop names.
+PROGRAM overrides the tmux program name; the remote attach passes the
+resolved host path so the ssh side runs the same tmux the probes did."
+  (let ((argv (append (list "env" "-u" "TMUX" (or program "tmux"))
                       (gascity-terminal--socket-args socket)
                       (list "attach-session" "-t" session))))
     (if remote (gascity-remote-ssh-argv remote argv) argv)))
@@ -383,9 +396,12 @@ is empty or does not exist (e.g. the agent has stopped).
 When `default-directory' is remote (a view of a remote city), the
 existence probe runs on the city's host, the spawned terminal is a
 LOCAL ssh running tmux there (`gascity-terminal--attach-argv' — ssh
-methods only, a `user-error' otherwise), DIR (a host-local path on the
-city) is ignored in favour of the local home directory, and the buffer
-name is host-qualified so local and remote attaches coexist.
+methods only, a `user-error' otherwise) with tmux resolved to the same
+host path the probes use (`gascity-remote-find-executable' — `ssh HOST
+cmd' runs no login shell, so a Guix profile tmux may be off its PATH),
+DIR (a host-local path on the city) is ignored in favour of the local
+home directory, and the buffer name is host-qualified so local and
+remote attaches coexist.
 
 When `gascity-terminal-mode-line-status' is non-nil, the session's tmux
 status bar is hidden and mirrored in the terminal buffer's mode line (see
@@ -395,7 +411,7 @@ status bar is hidden and mirrored in the terminal buffer's mode line (see
   (let* ((remote (and (file-remote-p default-directory) default-directory))
          ;; Build the argv before probing: an unsupported TRAMP method
          ;; should fail with its clear `user-error', not after a remote
-         ;; round trip.
+         ;; round trip — so this validation pass stays unresolved.
          (argv (gascity-terminal--attach-argv session socket remote))
          (buf-name (gascity-remote-buffer-name
                     (format "*gc-agent-%s*" session))))
@@ -405,6 +421,12 @@ status bar is hidden and mirrored in the terminal buffer's mode line (see
                (user-error "%s" (gascity-remote-spawn-error-hint
                                  "tmux" (error-message-string err)))))
       (user-error "Can't find tmux session: %s (agent may have stopped)" session))
+    ;; Method validated, session exists: swap in the host-resolved tmux
+    ;; for the ssh side (a cache hit — the probe above resolved it).
+    (when remote
+      (setq argv (gascity-terminal--attach-argv
+                  session socket remote
+                  (gascity-remote-find-executable "tmux" remote))))
     (when (fboundp 'gascity--log)
       (gascity--log 'info "tmux attach: %s" (mapconcat #'identity argv " ")))
     (let ((buf (gascity-terminal-run argv buf-name (if remote "~/" dir))))

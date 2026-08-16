@@ -407,28 +407,56 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
 
 - **Reads run where `default-directory` points.** `gascity-reader-run` uses
   `process-file`; `gascity-reader-read-async` passes `:file-handler t` to
-  `make-process`. The async stderr separation is a hidden scratch buffer
-  locally but the remote **null device** remotely: a `:stderr` buffer over
-  TRAMP is backed by a remote named pipe plus a reader process whose
-  cleanup runs TRAMP operations from process sentinels — under the
-  dashboard's parallel loads those fire inside each other's TRAMP calls
-  and raise "Forbidden reentrant call of Tramp" (and need mkfifo on the
-  host). Separation, not capture, is what the porcelain needs — the
-  buffer's content was never read. The sync stderr capture file is created
+  `make-process`. Async stderr separation never uses a string `:stderr`
+  (gce-qke): tramp-sh happens to tolerate a file name there, but TRAMP's
+  direct-async handler (`tramp-handle-make-process`, enabled per
+  connection via the connection-local variable
+  `tramp-direct-async-process`) accepts only nil or a buffer and signals
+  `wrong-type-argument bufferp` — with direct-async on, the old remote
+  null-device NAME crashed every dashboard read. Instead the remote
+  command is wrapped as `/bin/sh -c "exec \"$0\" \"$@\" 2>/dev/null"
+  GC ARGS…`, so separation happens ON the host identically under both
+  handlers, with GC pre-resolved to an absolute host path (see below) so
+  the handlers' differing PATH semantics cannot diverge either
+  (direct-async resolves in the login shell, not against
+  `tramp-remote-path`). A `:stderr` buffer over tramp-sh stays off the
+  table — it is backed by a remote named pipe plus a reader process whose
+  sentinel-time cleanup runs TRAMP inside TRAMP under the dashboard's
+  parallel loads ("Forbidden reentrant call of Tramp", and it needs
+  mkfifo on the host). Under direct-async, though, the spawned process is
+  a fresh LOCAL login program (ssh) whose own stderr chatter — host-key
+  warnings, banners — would merge into the stdout pipe, so exactly there
+  a local scratch buffer IS passed: the direct handler forwards `:stderr`
+  to the local `make-process` unchanged, plain local plumbing with no
+  fifo (gated on `tramp-direct-async-process-p`, the very predicate
+  TRAMP's dispatch consults). The sync stderr capture file is created
   host-side (`make-nearby-temp-file`) and passed WHOLE to `process-file` —
   TRAMP reduces a same-host name to its local part itself, whereas passing
   the local part would make it copy stderr back into a *local* file of
   that name and the remote readback would find nothing.
-- **Executable resolution.** A bare `gascity-executable` resolves against
-  `tramp-remote-path` (not `exec-path`). Two supported setups: add
-  `tramp-own-remote-path`, or set `gascity-executable` connection-locally —
-  every invocation site (reader sync/async, command-line construction for
-  preview and interactive execution) reads it under
-  `with-connection-local-variables`, capturing the value before any
-  `with-temp-buffer` (the buffer switch would hide the buffer-locally
-  applied value). A remote "command not found" is a shell exit 127, not a
-  spawn error, so the setup hint — naming the host and both fixes — rides
-  the non-zero-exit path as well as the spawn-failure path.
+- **Executable resolution.** Bare names — `gascity-executable` and the
+  tmux probes' `"tmux"` — are resolved on the host by
+  `gascity-remote-find-executable`: (1) an absolute name (e.g. a
+  connection-local `gascity-executable`) is used as-is; (2)
+  `executable-find` on the host, which searches `tramp-remote-path` and
+  so honours a `tramp-own-remote-path` setup; (3) the
+  `gascity-remote-search-path` directories in order — by default the
+  Guix home, user, and system profile bins, `~` expanded host-side —
+  first hit wins. Guix hosts therefore work with ZERO setup. Hits are
+  cached per (connection × name) with `gascity-context-clear-cache` as
+  the single invalidation entry point; misses are not cached, so
+  installing the program on the host heals itself. Every invocation site
+  resolves: reader sync/async, command-line construction (preview and
+  the `async-shell-command` interactive backend — the remote shell's
+  PATH omits profile directories just as `tramp-remote-path` does), and
+  the tmux probes. The connection-local `gascity-executable` read still
+  happens under `with-connection-local-variables`, capturing the value
+  before any `with-temp-buffer` (the buffer switch would hide the
+  buffer-locally applied value). A remote "command not found" is a shell
+  exit 127, not a spawn error, so the setup hint — naming the host and
+  all three fixes (`tramp-own-remote-path`, `gascity-remote-search-path`,
+  connection-local `gascity-executable`) — rides the non-zero-exit path
+  as well as the spawn-failure path.
 - **Host-local paths.** Everything gc reports (worktree, `work_dir`,
   `pane_current_path`, rig `path`, order `source`) is a path on the city's
   host; every find-file/Dired/beads target goes through
@@ -445,13 +473,21 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   from. One keying scheme for the status dashboard, the lists, the rig
   dashboard, the agent detail, and terminal attach buffers.
 - **tmux.** The probes (`has-session`, pane cwd, the status-mirror reads)
-  go through `process-file` and run on the city's host. The attach cannot:
-  beads.el's `beads-terminal-spawn` keeps its plain local-argv contract, so
-  a remote attach wraps the tmux command in a local
+  go through `process-file` and run on the city's host, with tmux
+  resolved by `gascity-remote-find-executable` like gc. The attach
+  cannot: beads.el's `beads-terminal-spawn` keeps its plain local-argv
+  contract, so a remote attach wraps the tmux command in a local
   `ssh -t [-l USER] [-p PORT] HOST …` argv (`gascity-remote-ssh-argv`;
   ssh/sshx/scp/scpx only, a clear `user-error` for other methods and
-  multi-hop names). The status-mirror timer lives in that LOCAL terminal
-  buffer, so the remote context is carried buffer-locally
+  multi-hop names). Decision (gce-qke): the attach argv carries the
+  RESOLVED host path for tmux too, not the bare name — `ssh HOST cmd`
+  runs a non-login shell whose PATH may omit profile directories
+  (shell-dependent), and reusing the probes' resolution keeps probe and
+  attach on the same binary. The resolution is applied only after the
+  method validation (an unsupported TRAMP method still fails fast with
+  no remote round trip) and is a cache hit by then, since the existence
+  probe just resolved it. The status-mirror timer lives in that LOCAL
+  terminal buffer, so the remote context is carried buffer-locally
   (`gascity-terminal--status-directory`) and bound around every probe and
   the teardown.
 - **Refresh under latency.** The status auto-refresh tick is skipped while
@@ -466,4 +502,11 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   `gascity-status-auto-refresh-interval` for slow links.
 - **Tests.** The remote paths are covered offline through the TRAMP "mock"
   method (the tramp-tests.el pattern — a real local `sh` behind the full
-  file-name machinery) — no network, no real hosts.
+  file-name machinery) — no network, no real hosts. That includes the
+  direct-async handler: the mock method declares `tramp-direct-async`, a
+  regression test enables the connection-local
+  `tramp-direct-async-process` and drives an async read end-to-end
+  through `tramp-handle-make-process` (spied to prove the dispatch),
+  asserting no `make-process` call ever sees a string `:stderr`; the
+  resolver's probe order, caching, and invalidation run against real
+  directories behind the mock connection.

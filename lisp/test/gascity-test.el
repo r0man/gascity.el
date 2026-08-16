@@ -3248,7 +3248,15 @@ methods/names one plain ssh cannot reach."
                    "attach-session" "-t" "sess")))
   (should (equal (gascity-terminal--attach-argv "sess" nil "/ssh:u@h:/city/")
                  '("ssh" "-t" "-l" "u" "h"
-                   "env" "-u" "TMUX" "tmux" "attach-session" "-t" "sess"))))
+                   "env" "-u" "TMUX" "tmux" "attach-session" "-t" "sess")))
+  ;; A resolved PROGRAM (a host path from `gascity-remote-find-executable')
+  ;; replaces the bare tmux in the remote command.
+  (should (equal (gascity-terminal--attach-argv
+                  "sess" nil "/ssh:u@h:/city/"
+                  "/home/user/.guix-home/profile/bin/tmux")
+                 '("ssh" "-t" "-l" "u" "h"
+                   "env" "-u" "TMUX" "/home/user/.guix-home/profile/bin/tmux"
+                   "attach-session" "-t" "sess"))))
 
 (ert-deftest gascity-test-remote-reader-run ()
   "`gascity-reader-run' on a remote directory runs on the host: stdout and
@@ -3275,25 +3283,166 @@ non-zero-exit path of `gascity-reader-read' (gce-90t audit #6)."
                               :type 'gascity-command-error))
            (msg (cadr err)))
       (should (string-match-p "mock" msg))
+      ;; All three setup paths are named (gce-qke).
       (should (string-match-p "tramp-own-remote-path" msg))
+      (should (string-match-p "gascity-remote-search-path" msg))
       (should (string-match-p "gascity-executable" msg)))))
+
+(ert-deftest gascity-test-remote-find-executable ()
+  "Bare names resolve on the host with zero setup (gce-qke): a
+`tramp-remote-path' hit (`executable-find') wins, else the
+`gascity-remote-search-path' profile directories are probed in order,
+first hit wins.  Hits are cached per (connection × name) until
+`gascity-context-clear-cache'; misses are NOT cached, so installing
+the program heals itself.  Local directories and names that already
+carry a directory pass through untouched."
+  ;; Local: untouched, no resolution.
+  (let ((default-directory "/"))
+    (should (equal (gascity-remote-find-executable "gc") "gc")))
+  (gascity-test--with-mock-remote
+    (gascity-context-clear-cache)
+    ;; Absolute (e.g. a connection-local `gascity-executable'): as-is.
+    (should (equal (gascity-remote-find-executable "/opt/bin/gc")
+                   "/opt/bin/gc"))
+    ;; A host PATH hit wins; the profile directories are never probed.
+    (let ((probed nil))
+      (cl-letf (((symbol-function 'executable-find)
+                 (lambda (&rest _) "/usr/bin/gc"))
+                ((symbol-function 'file-executable-p)
+                 (lambda (f) (push f probed) nil)))
+        (should (equal (gascity-remote-find-executable "gc") "/usr/bin/gc"))
+        (should (null probed))))
+    (gascity-context-clear-cache)
+    ;; Probe order, first-hit-wins, caching, self-healing miss — over
+    ;; real directories behind the mock method's file machinery.  All
+    ;; file mutations go through the TRAMP names: that keeps TRAMP's
+    ;; own file-property cache coherent, so what these assertions see
+    ;; is gascity's cache, not TRAMP's.
+    (let* ((remote (file-remote-p default-directory))
+           (tmp (make-temp-file "gascity-test-profiles" t))
+           (dir-a (expand-file-name "a/bin" tmp))
+           (dir-b (expand-file-name "b/bin" tmp))
+           (tool-a (expand-file-name "gascity-test-tool" dir-a))
+           (tool-b (expand-file-name "gascity-test-tool" dir-b))
+           (gascity-remote-search-path (list dir-a dir-b)))
+      (unwind-protect
+          (progn
+            (make-directory dir-a t)
+            (make-directory dir-b t)
+            (write-region "#!/bin/sh\n" nil (concat remote tool-b))
+            (set-file-modes (concat remote tool-b) #o755)
+            ;; Not on the host PATH, absent from dir-a -> dir-b's hit.
+            (should (equal (gascity-remote-find-executable
+                            "gascity-test-tool")
+                           tool-b))
+            ;; Cached: deleting the file does not change the answer...
+            (delete-file (concat remote tool-b))
+            (should (equal (gascity-remote-find-executable
+                            "gascity-test-tool")
+                           tool-b))
+            ;; ...until invalidated — then the miss passes through
+            ;; unchanged (the launch error path owns the hint).
+            (gascity-context-clear-cache)
+            (should (equal (gascity-remote-find-executable
+                            "gascity-test-tool")
+                           "gascity-test-tool"))
+            ;; The miss was NOT cached: installing the tool (now in
+            ;; BOTH directories) is picked up with no cache clear, and
+            ;; the earlier entry wins.
+            (write-region "#!/bin/sh\n" nil (concat remote tool-a))
+            (set-file-modes (concat remote tool-a) #o755)
+            (write-region "#!/bin/sh\n" nil (concat remote tool-b))
+            (set-file-modes (concat remote tool-b) #o755)
+            (should (equal (gascity-remote-find-executable
+                            "gascity-test-tool")
+                           tool-a)))
+        (delete-directory tmp t)
+        (gascity-context-clear-cache)))))
 
 (ert-deftest gascity-test-remote-reader-read-async ()
   "Async reads dispatch through the TRAMP file handler (gce-90t audit #2):
-gc runs on the host and stderr noise never corrupts the parsed JSON —
-remotely stderr is redirected to the remote null device (separation
-without TRAMP's named-pipe machinery, whose sentinel-time cleanup
-raises reentrancy errors under parallel loads)."
+gc runs on the host and stderr noise never corrupts the parsed JSON.
+Separation happens ON the host via the /bin/sh exec wrapper — without
+TRAMP's named-pipe machinery, whose sentinel-time cleanup raises
+reentrancy errors under parallel loads — and `make-process' never sees
+a string `:stderr' (gce-qke: tramp-sh tolerated the old remote
+null-device NAME, the direct-async handler crashes on any string)."
   (gascity-test--with-mock-remote
-    (let ((gascity-executable "/bin/sh")
-          (result (list nil)))
-      (gascity-reader-read-async
-       '("-c" "echo GARBAGE-ON-STDERR >&2; echo '{\"city_name\":\"mock-city\"}'"
-         "--json")
-       (lambda (data) (setcar result data))
-       (lambda (msg) (setcar result (cons :error msg))))
-      (should (gascity-test--wait-for result))
-      (should (equal (alist-get 'city_name (car result)) "mock-city")))))
+    (let* ((gascity-executable "/bin/sh")
+           (result (list nil))
+           (stderrs nil)
+           (real-make-process (symbol-function 'make-process)))
+      (cl-letf (((symbol-function 'make-process)
+                 (lambda (&rest args)
+                   (push (plist-get args :stderr) stderrs)
+                   (apply real-make-process args))))
+        (gascity-reader-read-async
+         '("-c" "echo GARBAGE-ON-STDERR >&2; echo '{\"city_name\":\"mock-city\"}'"
+           "--json")
+         (lambda (data) (setcar result data))
+         (lambda (msg) (setcar result (cons :error msg))))
+        (should (gascity-test--wait-for result)))
+      (should (equal (alist-get 'city_name (car result)) "mock-city"))
+      (should stderrs)
+      (should (cl-notany #'stringp stderrs)))))
+
+(ert-deftest gascity-test-remote-reader-read-async-direct-async ()
+  "The gce-qke P1 regression: async reads survive TRAMP direct-async.
+With the connection-local `tramp-direct-async-process' enabled, TRAMP
+dispatches `make-process' to `tramp-handle-make-process', which accepts
+only nil or a buffer as `:stderr' — the old code's remote null-device
+STRING made every dashboard load signal `wrong-type-argument bufferp'.
+This drives one read end-to-end through the direct handler (spied, to
+prove the dispatch really took that path): the JSON must arrive intact
+despite garbage on the command's stderr AND the login program's own
+chatter (which direct-async merges into stdout unless a LOCAL scratch
+buffer captures it — the mock method's `sh -i' reliably emits \"no job
+control\" noise), and no `make-process' call may see a string
+`:stderr'."
+  (gascity-test--with-mock-remote
+    (unwind-protect
+        (progn
+          (connection-local-set-profile-variables
+           'gascity-test-direct-async '((tramp-direct-async-process . t)))
+          (connection-local-set-profiles
+           '(:application tramp :protocol "mock") 'gascity-test-direct-async)
+          (let* ((gascity-executable "/bin/sh")
+                 (result (list nil))
+                 (direct-calls 0)
+                 (stderrs nil)
+                 (real-direct (symbol-function 'tramp-handle-make-process))
+                 (real-make-process (symbol-function 'make-process)))
+            (cl-letf (((symbol-function 'tramp-handle-make-process)
+                       (lambda (&rest args)
+                         (cl-incf direct-calls)
+                         (apply real-direct args)))
+                      ((symbol-function 'make-process)
+                       (lambda (&rest args)
+                         (push (plist-get args :stderr) stderrs)
+                         (apply real-make-process args))))
+              (gascity-reader-read-async
+               '("-c"
+                 "echo GARBAGE-ON-STDERR >&2; echo '{\"city_name\":\"mock-city\"}'"
+                 "--json")
+               (lambda (data) (setcar result data))
+               (lambda (msg) (setcar result (cons :error msg))))
+              (should (gascity-test--wait-for result)))
+            (should (equal (alist-get 'city_name (car result)) "mock-city"))
+            (should (> direct-calls 0))
+            (should stderrs)
+            (should (cl-notany #'stringp stderrs))))
+      ;; `connection-local-set-profiles' persists beyond a let (see
+      ;; gascity-test-remote-connection-local-executable); tear the
+      ;; registration down so later mock tests stay non-direct.
+      (setq connection-local-criteria-alist
+            (delq nil
+                  (mapcar (lambda (e)
+                            (let ((ps (remq 'gascity-test-direct-async (cdr e))))
+                              (and ps (cons (car e) ps))))
+                          connection-local-criteria-alist)))
+      (setq connection-local-profile-alist
+            (assq-delete-all 'gascity-test-direct-async
+                             connection-local-profile-alist)))))
 
 (ert-deftest gascity-test-remote-reader-read-async-error ()
   "A non-zero remote exit reaches the errback, not the callback."
@@ -3397,6 +3546,12 @@ is host-qualified."
         spawn)
     (cl-letf (((symbol-function 'gascity-terminal-tmux-session-exists-p)
                (lambda (&rest _) t))
+              ;; The post-probe tmux resolution must not open a real
+              ;; connection to the fictitious host; a resolved host
+              ;; path must land in the ssh argv.
+              ((symbol-function 'gascity-remote-find-executable)
+               (lambda (name &optional _dir)
+                 (concat "/opt/bin/" name)))
               ((symbol-function 'gascity-terminal--status-install)
                (lambda (&rest _) nil))
               ((symbol-function 'beads-terminal-spawn)
@@ -3409,7 +3564,7 @@ is host-qualified."
             (gascity-terminal-attach-tmux "sess" "sock" "/remote/wd")
             (should (equal (nth 1 spawn)
                            '("ssh" "-t" "-l" "u" "h"
-                             "env" "-u" "TMUX" "tmux" "-L" "sock"
+                             "env" "-u" "TMUX" "/opt/bin/tmux" "-L" "sock"
                              "attach-session" "-t" "sess")))
             (should-not (file-remote-p (nth 2 spawn)))
             (should (equal (nth 0 spawn) "*gc-agent-sess@/ssh:u@h:*")))

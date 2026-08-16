@@ -107,9 +107,16 @@ C-x d /ssh:user@example.com:/home/user/city/ RET
 M-x gascity-status
 ```
 
-Setup, one of two paths. TRAMP resolves remote programs against
-`tramp-remote-path` (not `exec-path`), which omits non-default profile
-directories such as `~/.guix-home/profile/bin`, so either extend it:
+Setup: usually none. A bare program name is resolved on the host —
+first against `tramp-remote-path` (via `executable-find`), then, when
+that misses, by probing the profile directories in
+`gascity-remote-search-path`, by default the Guix profiles
+(`~/.guix-home/profile/bin`, `~/.guix-profile/bin`,
+`/run/current-system/profile/bin`). A host that installs `gc` and
+`tmux` via Guix therefore works out of the box. Resolutions are cached
+per connection; `M-x gascity-context-clear-cache` forgets them (e.g.
+after moving a binary on the host). For other layouts, either extend
+TRAMP's own search path:
 
 ```elisp
 (add-to-list 'tramp-remote-path 'tramp-own-remote-path)
@@ -138,7 +145,11 @@ Notes:
   in the terminal backend. Supported for the ssh-based TRAMP methods
   (`ssh`/`sshx`/`scp`/`scpx`); other methods and multi-hop names signal a
   clear error. The mode-line tmux status mirror probes the remote server on
-  its timer. `tmux` must be reachable on `tramp-remote-path` too.
+  its timer. `tmux` is resolved on the host like `gc` (profile probing
+  included), for the probes and for the ssh attach command alike.
+- TRAMP's faster direct-async process mode is fully supported — enable it
+  per connection via the connection-local variable
+  `tramp-direct-async-process` to cut per-read overhead on the dashboard.
 - Performance: each refresh is an ssh round trip. Emacs reuses the TRAMP
   connection, and the dashboard skips an auto-refresh tick while a load is
   still in flight; raise `gascity-status-auto-refresh-interval` on slow
@@ -149,6 +160,9 @@ Notes:
 `M-x customize-group RET gascity RET`. Notably:
 
 - `gascity-executable` — name/path of the `gc` binary (default `"gc"`).
+- `gascity-remote-search-path` — remote directories probed for `gc`/`tmux`
+  on a remote city when `tramp-remote-path` misses; defaults to the Guix
+  profile bins.
 - `gascity-terminal-backend` — `nil` (auto: vterm > eat > term), `vterm`, `eat`,
   or `term`, for tmux attach.
 - `gascity-tmux-socket` — tmux server socket the agents run on. `nil`

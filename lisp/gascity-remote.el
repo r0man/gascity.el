@@ -27,13 +27,22 @@
 ;;   argv that runs a command on the city's host.  beads.el's
 ;;   `beads-terminal-spawn' keeps receiving a plain local argv.
 ;;
-;; This module has no gascity dependencies, so every other module can
-;; require it.
+;; - Executables.  Nothing guix-related is on `tramp-remote-path' by
+;;   default, so on a host that installs gc/tmux via Guix profiles a
+;;   bare program name resolves to nothing until the user configures
+;;   TRAMP.  `gascity-remote-find-executable' closes that gap with zero
+;;   setup: it falls back to probing `gascity-remote-search-path' (the
+;;   standard Guix profile bins) and returns an absolute host-local
+;;   path, cached per connection.
+;;
+;; This module depends only on `gascity-custom' (the defcustom home),
+;; so every other module can require it.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'tramp)
+(require 'gascity-custom)
 
 ;;; Paths
 
@@ -103,24 +112,88 @@ name (neither maps onto one plain ssh invocation)."
             (list host)
             (mapcar #'shell-quote-argument argv))))
 
+;;; Finding executables on the host
+
+(defvar gascity-remote--executable-cache (make-hash-table :test 'equal)
+  "Cache mapping (REMOTE-PREFIX . NAME) to a resolved host-local path.
+Only successful resolutions are cached — a miss is re-probed on the
+next call, so installing the program on the host heals itself.  Cleared
+by `gascity-remote-forget-executables' (via
+`gascity-context-clear-cache').")
+
+(defun gascity-remote-forget-executables ()
+  "Forget cached remote executable resolutions.
+Called from `gascity-context-clear-cache' — the one user-facing cache
+entry point — e.g. after a program moved on the host."
+  (clrhash gascity-remote--executable-cache))
+
+(defun gascity-remote-find-executable (name &optional dir)
+  "Return NAME resolved for DIR's host (default `default-directory').
+For a local DIR, or when NAME already carries a directory (an absolute
+path, or `~/…' — e.g. a connection-local `gascity-executable'), NAME is
+returned unchanged.  For a remote DIR a bare NAME is resolved to an
+absolute host-local path (`file-local-name' form, valid in
+`process-file', `make-process', and remote shell command lines):
+
+1. `executable-find' on the host, which searches `tramp-remote-path'
+   and so honours any user setup such as `tramp-own-remote-path';
+2. each `gascity-remote-search-path' entry in order — `~' expanded on
+   the host — testing NAME for executability there; first hit wins.
+   The defaults cover Guix profiles with zero configuration.
+
+Successful resolutions are cached per (connection × NAME); clear with
+`gascity-context-clear-cache'.  An unresolvable NAME (and any probe
+error, e.g. a dropped connection) returns NAME unchanged, so the
+launch fails exactly where it always did — the remote shell's
+\"command not found\" (exit 127) — and
+`gascity-remote-spawn-error-hint' names the setup paths."
+  (let ((remote (file-remote-p (or dir default-directory))))
+    (if (or (not remote) (file-name-absolute-p name))
+        name
+      (let ((key (cons remote name)))
+        (or (gethash key gascity-remote--executable-cache)
+            (let* ((default-directory (or dir default-directory))
+                   (found
+                    (condition-case nil
+                        (or (executable-find name t)
+                            (cl-some
+                             (lambda (entry)
+                               (let ((candidate
+                                      (expand-file-name
+                                       name (expand-file-name
+                                             (concat remote entry)))))
+                                 (and (file-executable-p candidate)
+                                      (file-local-name candidate))))
+                             gascity-remote-search-path))
+                      ;; A probe error (unreachable host, dead
+                      ;; connection) must surface as the launch failure
+                      ;; the callers already handle, not here.
+                      (error nil))))
+              (when found
+                (puthash key found gascity-remote--executable-cache))
+              (or found name)))))))
+
 ;;; Spawn diagnostics
 
 (defun gascity-remote-spawn-error-hint (program reason &optional dir var)
   "Return a message for failing to launch PROGRAM in DIR, naming the host.
 REASON is the underlying error string.  For a local DIR (default
 `default-directory') this is just \"Cannot run PROGRAM: REASON\"; for a
-remote DIR the message names the host and explains the fix: remote
+remote DIR the message names the host and the three setup paths: remote
 programs resolve against `tramp-remote-path' (not the local variable
 `exec-path'), which omits non-default profile directories unless
-`tramp-own-remote-path' is added.  VAR, when non-nil, is a defcustom
-symbol (e.g. `gascity-executable') the user can instead set
-connection-locally to an absolute remote path."
+`tramp-own-remote-path' is added; `gascity-remote-search-path' is the
+probed fallback (a hit there needs no setup at all, so reaching this
+hint means the program was in none of its directories); and VAR, when
+non-nil, is a defcustom symbol (e.g. `gascity-executable') the user can
+set connection-locally to an absolute remote path."
   (let ((remote (file-remote-p (or dir default-directory))))
     (if (not remote)
         (format "Cannot run %s: %s" program reason)
       (format (concat "Cannot run %s on %s: %s — put it on TRAMP's remote"
                       " path: (add-to-list 'tramp-remote-path"
-                      " 'tramp-own-remote-path)%s")
+                      " 'tramp-own-remote-path) or add its directory to"
+                      " `gascity-remote-search-path'%s")
               program remote reason
               (if var
                   (format ", or set %s connection-locally for this host" var)

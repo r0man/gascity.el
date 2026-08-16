@@ -258,9 +258,14 @@ The list starts with the executable.")
   "Prepend the executable to the argument list built by the primary method.
 `gascity-executable' is read under `with-connection-local-variables', so
 a per-host value set via connection-local profiles governs previews and
-interactive execution for a remote city just as it does the reader."
+interactive execution for a remote city just as it does the reader.  A
+bare name on a remote directory is then resolved to an absolute host
+path (`gascity-remote-find-executable') — the interactive backend's
+`async-shell-command' hands the line to the remote shell, whose PATH
+omits Guix profile directories just as `tramp-remote-path' does."
   (with-connection-local-variables
-   (cons gascity-executable (cl-call-next-method))))
+   (cons (gascity-remote-find-executable gascity-executable)
+         (cl-call-next-method))))
 
 (cl-defmethod gascity-command-line ((command gascity-command))
   "Build COMMAND's argument list from its slot metadata.

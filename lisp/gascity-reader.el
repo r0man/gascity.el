@@ -34,7 +34,10 @@
 ;; opened on a remote city reads THAT city's gc.  `gascity-executable'
 ;; is resolved under `with-connection-local-variables', so a per-host
 ;; absolute path can be set via connection-local profiles (see the
-;; defcustom).
+;; defcustom); a bare name is then resolved on the host by
+;; `gascity-remote-find-executable' (`tramp-remote-path', falling back
+;; to the Guix profile directories in `gascity-remote-search-path'), so
+;; a Guix host works with zero setup.
 
 ;;; Code:
 
@@ -48,6 +51,10 @@
 ;; Defined in gascity.el, which loads this module; guarded by `fboundp'
 ;; at every call site so this module is usable standalone.
 (declare-function gascity--log "gascity")
+
+;; Internal, but the exact predicate TRAMP's own `make-process' dispatch
+;; consults; `fboundp'-guarded at the call site for older TRAMPs.
+(declare-function tramp-direct-async-process-p "tramp" (&rest args))
 
 ;;; Low-level invocation
 
@@ -70,13 +77,16 @@ name to its local part itself; handing it the local part instead would
 make TRAMP copy stderr back into a *local* file of that name, and the
 readback of the remote name would find nothing.  `gascity-executable'
 is resolved under `with-connection-local-variables', honouring a
-per-host connection-local value."
+per-host connection-local value; a bare name on a remote directory is
+then resolved to an absolute host path by
+`gascity-remote-find-executable' (`tramp-remote-path', falling back
+to `gascity-remote-search-path')."
   (with-connection-local-variables
    ;; Capture the executable HERE: `with-connection-local-variables'
    ;; applies a connection-local value buffer-locally in the current
    ;; buffer, so a read inside `with-temp-buffer' below would silently
    ;; fall back to the global default.
-   (let ((executable gascity-executable)
+   (let ((executable (gascity-remote-find-executable gascity-executable))
          (stderr-file (make-nearby-temp-file "gascity-stderr-")))
      (when (fboundp 'gascity--log)
        (gascity--log 'info "Running: %s %s"
@@ -195,18 +205,35 @@ non-zero exit, or malformed JSON — ERRBACK, when non-nil, is called with
 a human-readable error string; CALLBACK is not.
 
 Standard error is separated so a stray warning on stderr never corrupts
-the JSON parsed from stdout: locally it is captured in a hidden scratch
-buffer (killed on exit — its content is never read); on a remote
-directory it is redirected to the remote null device instead.  A
-`:stderr' buffer over TRAMP would be backed by a remote named pipe plus
-a reader process whose cleanup runs TRAMP operations from process
+the JSON parsed from stdout — but never via a string `:stderr': tramp-sh
+happens to accept a file name there, while TRAMP's direct-async handler
+\(`tramp-handle-make-process', enabled per connection through the
+connection-local variable `tramp-direct-async-process') accepts only nil
+or a buffer and signals `wrong-type-argument bufferp'.  Locally, stderr
+is captured in a hidden scratch buffer (killed on exit — its content is
+never read).  On a remote directory the separation happens ON the host
+instead: the command is wrapped as
+
+  /bin/sh -c \"exec \\\"$0\\\" \\\"$@\\\" 2>/dev/null\" GC ARGS...
+
+which behaves identically under tramp-sh and direct-async, and GC is
+pre-resolved to an absolute host path (`gascity-remote-find-executable')
+so resolution cannot differ between the handlers either (direct-async
+resolves against the login shell's PATH, not `tramp-remote-path').  A
+`:stderr' BUFFER over tramp-sh would be backed by a remote named pipe
+plus a reader process whose cleanup runs TRAMP operations from process
 sentinels — under the dashboard's parallel loads those fire inside each
 other's TRAMP calls and raise \"Forbidden reentrant call of Tramp\" —
-and would not work at all on a host without mkfifo/mknod.  The null
-device sidesteps the whole class, at no cost: separation, not capture,
-is what the porcelain needs.  Returns the process object, or nil when
-it could not be started.  Designed to drive `vui-use-async', whose
-returned process is auto-killed on key change or unmount.
+and would not work at all on a host without mkfifo/mknod; the wrapper
+sidesteps that whole class.  Under direct-async, though, the spawned
+process is a fresh LOCAL login program (e.g. ssh) whose own stderr
+chatter — host-key warnings, banners — would merge into the stdout pipe,
+so exactly there a local scratch buffer is passed after all: the
+direct-async handler hands `:stderr' to the local `make-process'
+unchanged, plain local plumbing with no fifo involved.  Returns the
+process object, or nil when it could not be started.  Designed to drive
+`vui-use-async', whose returned process is auto-killed on key change or
+unmount.
 
 Runs where `default-directory' points: `:file-handler t' dispatches
 through TRAMP on a remote directory, so gc runs on that host
@@ -221,11 +248,24 @@ through TRAMP on a remote directory, so gc runs on that host
           ;; (and so `default-directory' and any connection-locally
           ;; applied `gascity-executable') happens to be current then.
           (remote (file-remote-p default-directory))
-          (executable gascity-executable)
-          ;; TRAMP accepts a string :stderr naming a file on the SAME
-          ;; remote (it reduces the name to its local part for the
-          ;; redirect); a local `make-process' would reject a string.
-          (stderr-target (if remote (concat remote "/dev/null")
+          (executable (gascity-remote-find-executable gascity-executable))
+          ;; Remotely, stderr separation happens on the host via this
+          ;; wrapper — a string :stderr crashes direct-async, a buffer
+          ;; is tramp-sh's fifo machinery (see the docstring).
+          (command (if remote
+                       (append
+                        (list "/bin/sh" "-c" "exec \"$0\" \"$@\" 2>/dev/null")
+                        (cons executable full-args))
+                     (cons executable full-args)))
+          ;; Local runs capture the process's stderr; so do remote
+          ;; direct-async runs, whose LOCAL login program (ssh) has
+          ;; stderr chatter of its own — there TRAMP passes the buffer
+          ;; to the local `make-process' as-is.  The tramp-sh path must
+          ;; get nil.  `tramp-direct-async-process-p' is the very
+          ;; predicate TRAMP's dispatch consults.
+          (stderr-buffer (when (or (not remote)
+                                   (and (fboundp 'tramp-direct-async-process-p)
+                                        (tramp-direct-async-process-p)))
                            (generate-new-buffer " *gascity-gc-stderr*"))))
      (when (fboundp 'gascity--log)
        (gascity--log 'info "Running async: %s %s"
@@ -233,11 +273,11 @@ through TRAMP on a remote directory, so gc runs on that host
      (condition-case err
          (make-process
           :name "gascity-gc"
-          :command (cons executable full-args)
+          :command command
           :noquery t
           :connection-type 'pipe
           :file-handler t
-          :stderr stderr-target
+          :stderr stderr-buffer
           :filter (lambda (_proc chunk) (setq output (concat output chunk)))
           :sentinel
           (lambda (proc _event)
@@ -264,12 +304,12 @@ through TRAMP on a remote directory, so gc runs on that host
                          (when errback
                            (funcall errback
                                     (error-message-string perr)))))))
-                  (when (and (bufferp stderr-target)
-                             (buffer-live-p stderr-target))
-                    (kill-buffer stderr-target)))))))
+                  (when (and (bufferp stderr-buffer)
+                             (buffer-live-p stderr-buffer))
+                    (kill-buffer stderr-buffer)))))))
        (error
-        (when (and (bufferp stderr-target) (buffer-live-p stderr-target))
-          (kill-buffer stderr-target))
+        (when (and (bufferp stderr-buffer) (buffer-live-p stderr-buffer))
+          (kill-buffer stderr-buffer))
         (when errback
           (funcall errback (gascity-remote-spawn-error-hint
                             executable

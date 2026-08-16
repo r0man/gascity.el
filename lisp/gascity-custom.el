@@ -27,15 +27,18 @@
 A bare command name is resolved against the variable `exec-path'; an
 absolute path is used as-is.
 
-For a remote city (a TRAMP `default-directory'), a bare name resolves
-against `tramp-remote-path' — NOT `exec-path' — which by default omits
-non-standard profile directories such as `~/.guix-home/profile/bin'.
-Either extend it:
+For a remote city (a TRAMP `default-directory'), a bare name is
+resolved on the host by `gascity-remote-find-executable': first
+against `tramp-remote-path' — NOT `exec-path' — then by probing the
+profile directories in `gascity-remote-search-path', which covers
+Guix hosts with zero setup.  When gc lives elsewhere, either extend
+TRAMP's search path:
 
   (add-to-list \\='tramp-remote-path \\='tramp-own-remote-path)
 
-or set this variable connection-locally to an absolute remote path —
-every invocation site reads it under `with-connection-local-variables':
+add its directory to `gascity-remote-search-path', or set this
+variable connection-locally to an absolute remote path — every
+invocation site reads it under `with-connection-local-variables':
 
   (connection-local-set-profile-variables
    \\='gascity-remote-gc
@@ -43,6 +46,24 @@ every invocation site reads it under `with-connection-local-variables':
   (connection-local-set-profiles
    \\='(:machine \"example.com\") \\='gascity-remote-gc)"
   :type 'string
+  :group 'gascity)
+
+;;; Remote cities
+
+(defcustom gascity-remote-search-path
+  '("~/.guix-home/profile/bin"
+    "~/.guix-profile/bin"
+    "/run/current-system/profile/bin")
+  "Remote directories probed for gc and tmux as a resolution fallback.
+On a remote city, a bare program name (`gascity-executable', the tmux
+probes) that `executable-find' cannot resolve on the host — TRAMP
+searches `tramp-remote-path', which omits non-default profile
+directories — is looked up in these directories instead, first hit
+wins.  Entries are host-side paths; `~' expands to the remote home.
+The defaults cover Guix hosts (guix home, user, and system profiles)
+with zero configuration.  Resolutions are cached per connection;
+clear with `gascity-context-clear-cache' after installing a program."
+  :type '(repeat string)
   :group 'gascity)
 
 ;;; Debug logging
