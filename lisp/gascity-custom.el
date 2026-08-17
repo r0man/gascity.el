@@ -54,14 +54,14 @@ invocation site reads it under `with-connection-local-variables':
   '("~/.guix-home/profile/bin"
     "~/.guix-profile/bin"
     "/run/current-system/profile/bin")
-  "Remote directories probed for gc and tmux as a resolution fallback.
+  "Remote directories probed for gc, tmux, and bd as a resolution fallback.
 On a remote city, a bare program name (`gascity-executable', the tmux
-probes) that `executable-find' cannot resolve on the host — TRAMP
-searches `tramp-remote-path', which omits non-default profile
-directories — is looked up in these directories instead, first hit
-wins.  Entries are host-side paths; `~' expands to the remote home.
-The defaults cover Guix hosts (guix home, user, and system profiles)
-with zero configuration.
+probes, the `bd' of a delegated beads.el view) that `executable-find'
+cannot resolve on the host — TRAMP searches `tramp-remote-path', which
+omits non-default profile directories — is looked up in these
+directories instead, first hit wins.  Entries are host-side paths;
+`~' expands to the remote home.  The defaults cover Guix hosts (guix
+home, user, and system profiles) with zero configuration.
 
 These directories are also prepended to the PATH exported to every
 remote gc invocation (`gascity-remote-path-assignment'), so the

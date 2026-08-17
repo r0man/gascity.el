@@ -458,6 +458,51 @@ gc emits either a bare array of beads or an object wrapping them under
   (let ((beads (if (vectorp data) data (alist-get 'issues data))))
     (append beads nil)))
 
+;;; Remote bd resolution across the delegation (DESIGN.md §4.3)
+;;
+;; beads.el builds every `bd' command line through `beads-command-line'
+;; — its `:around' method prepends `beads-executable', a bare "bd" by
+;; default — and it does so at *build time*, in the invoking buffer:
+;; the delegated entry call, a later `g' refresh, a dashboard section's
+;; async loader.  On a remote city those buffers carry the store's
+;; TRAMP `default-directory', so the bare name resolves against
+;; `tramp-remote-path' — which omits Guix profile directories — and
+;; every delegated view fails with exit 127 while gascity's own
+;; gc/tmux invocations resolve fine (gce-9hh).  A `let' around the
+;; entry points cannot reach the later refreshes, and beads.el's view
+;; modes share no common base mode a hook could target — so filter the
+;; one choke point every bd command line passes through, resolving the
+;; program the same zero-setup way as gc and tmux
+;; (`gascity-remote-find-executable': `tramp-remote-path' first, then
+;; the `gascity-remote-search-path' profile directories, cached per
+;; connection).
+
+(defun gascity-beads--resolve-command-line (line)
+  "Resolve LINE's program for a remote `default-directory'.
+LINE is a bd command line, (PROGRAM ARG...), as built by beads.el's
+`beads-command-line'.  For a remote `default-directory', a bare
+PROGRAM (the stock `beads-executable', \"bd\") is resolved to an
+absolute host-local path with `gascity-remote-find-executable' — the
+zero-setup resolution gascity's own gc/tmux invocations get.  A local
+directory, an already-absolute PROGRAM (e.g. a user-set
+`beads-executable'), and an unresolvable name all pass through
+unchanged; the last fails exactly where it always did, with beads.el's
+own error surface.  Installed as `:filter-return' advice on
+`beads-command-line'."
+  (if (and (consp line) (stringp (car line)))
+      (cons (gascity-remote-find-executable (car line)) (cdr line))
+    line))
+
+;; Install the resolution on beads.el's command-line builder, which is
+;; already defined here: `beads-section' (required above) requires
+;; `beads-command'.  The resolver is the identity for local directories
+;; and absolute names, so this is a no-op everywhere but a remote store
+;; view and safe to install once at load.  Guard against duplicate
+;; advice when the module is reloaded.
+(unless (advice-member-p #'gascity-beads--resolve-command-line 'beads-command-line)
+  (advice-add 'beads-command-line :filter-return
+              #'gascity-beads--resolve-command-line))
+
 ;;; Bead-store scoping (DESIGN.md §4.3, §9.1)
 ;;
 ;; beads.el resolves *which* store to act on from `default-directory'

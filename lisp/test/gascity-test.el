@@ -3359,6 +3359,77 @@ carry a directory pass through untouched."
         (delete-directory tmp t)
         (gascity-context-clear-cache)))))
 
+;;; Remote bd resolution across the beads.el delegation (gce-9hh)
+
+(ert-deftest gascity-test-beads-resolve-command-line-local ()
+  "A local `default-directory' leaves a delegated bd line untouched, and
+degenerate lines (nil, a non-string program) pass through unharmed."
+  (let ((default-directory "/"))
+    (should (equal (gascity-beads--resolve-command-line '("bd" "show" "gce-1"))
+                   '("bd" "show" "gce-1")))
+    (should (null (gascity-beads--resolve-command-line nil)))
+    (should (equal (gascity-beads--resolve-command-line '(nil "x"))
+                   '(nil "x")))))
+
+(ert-deftest gascity-test-beads-resolve-command-line-remote ()
+  "On a remote store a bare bd resolves like gc/tmux do (gce-9hh): not on
+`tramp-remote-path' -> probe the `gascity-remote-search-path' profile
+directories, first executable hit wins.  An absolute program and an
+unresolvable name pass through, the latter to fail exactly where it
+always did (beads.el's own error surface)."
+  (gascity-test--with-mock-remote
+    (gascity-context-clear-cache)
+    (let* ((remote (file-remote-p default-directory))
+           (tmp (make-temp-file "gascity-test-bd-profile" t))
+           (bin (expand-file-name "bin" tmp))
+           (tool (expand-file-name "gascity-test-bd" bin))
+           (gascity-remote-search-path (list bin)))
+      (unwind-protect
+          (progn
+            (make-directory bin t)
+            (write-region "#!/bin/sh\n" nil (concat remote tool))
+            (set-file-modes (concat remote tool) #o755)
+            ;; The bare program resolves to the profile-directory hit;
+            ;; the argument vector is preserved untouched.
+            (should (equal (gascity-beads--resolve-command-line
+                            '("gascity-test-bd" "show" "gce-1" "--json"))
+                           (list tool "show" "gce-1" "--json")))
+            ;; An absolute program (a user-set `beads-executable') is
+            ;; left alone.
+            (should (equal (gascity-beads--resolve-command-line
+                            '("/opt/bin/bd" "show"))
+                           '("/opt/bin/bd" "show")))
+            ;; An unresolvable name passes through unchanged.
+            (should (equal (gascity-beads--resolve-command-line
+                            '("gascity-test-bd-absent" "show"))
+                           '("gascity-test-bd-absent" "show"))))
+        (delete-directory tmp t)
+        (gascity-context-clear-cache)))))
+
+(ert-deftest gascity-test-beads-command-line-advice-installed ()
+  "The resolution is advice on beads.el's `beads-command-line', so it
+reaches every delegated invocation — the entry call, a `g' refresh, a
+dashboard section's async loader — with no gascity code on the stack.
+The advised builder returns the resolved program with beads.el's
+argument vector intact (gce-9hh)."
+  (require 'beads-command-show)
+  (should (advice-member-p #'gascity-beads--resolve-command-line
+                           'beads-command-line))
+  (let (seen)
+    (cl-letf (((symbol-function 'gascity-remote-find-executable)
+               (lambda (name &optional _dir)
+                 (setq seen name)
+                 "/profile/bin/bd")))
+      (let* ((beads-executable "bd")
+             (line (beads-command-line
+                    (beads-command-show :issue-ids '("gce-1")))))
+        ;; The program beads.el prepended is what gets resolved...
+        (should (equal seen "bd"))
+        (should (equal (car line) "/profile/bin/bd"))
+        ;; ...and the rest of the line is beads.el's, untouched.
+        (should (member "show" line))
+        (should (member "gce-1" line))))))
+
 (ert-deftest gascity-test-remote-path-assignment ()
   "The PATH fragment (gce-k5d): nil locally and for an empty search path;
 entries expanded on the host (`~' -> remote home) in order,
