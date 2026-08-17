@@ -283,84 +283,111 @@ process object, or nil when it could not be started.  Designed to drive
 `vui-use-async', whose returned process is auto-killed on key change or
 unmount.
 
+A remote directory that does not exist is detected up front and
+reported through ERRBACK without spawning anything: no TRAMP
+`make-process' handler signals a missing working directory — tramp-sh
+sends \"cd DIR && exec gc …\" to a fresh channel shell, the failed cd
+short-circuits the exec, and the interactive channel idles at its
+prompt forever, so the sentinel never fires and every attempt leaks a
+wedged channel process (gce-q84).  Locally the spawn itself signals
+`file-missing', reaching ERRBACK through the launch-error handler
+below.  A directory probe error (unreachable host, dead connection)
+falls through to the spawn, whose own failure carries the real reason.
+
 Runs where `default-directory' points: `:file-handler t' dispatches
 through TRAMP on a remote directory, so gc runs on that host
 \(`gascity-executable' resolved connection-locally, as in
 `gascity-reader-run')."
-  (with-connection-local-variables
-   (let* ((full-args (if (member "--json" args)
-                         args
-                       (append args (list "--json"))))
-          (output "")
-          ;; Both captured now: the sentinel fires with whatever buffer
-          ;; (and so `default-directory' and any connection-locally
-          ;; applied `gascity-executable') happens to be current then.
-          (remote (file-remote-p default-directory))
-          (executable (gascity-remote-find-executable gascity-executable))
-          ;; Remotely, stderr separation and the PATH export for gc's
-          ;; subprocesses both happen on the host via the /bin/sh
-          ;; wrapper — a string :stderr crashes direct-async, a buffer
-          ;; is tramp-sh's fifo machinery (see the docstring).
-          (command (gascity-reader--command executable full-args t))
-          ;; Local runs capture the process's stderr; so do remote
-          ;; direct-async runs, whose LOCAL login program (ssh) has
-          ;; stderr chatter of its own — there TRAMP passes the buffer
-          ;; to the local `make-process' as-is.  The tramp-sh path must
-          ;; get nil.  `tramp-direct-async-process-p' is the very
-          ;; predicate TRAMP's dispatch consults.
-          (stderr-buffer (when (or (not remote)
-                                   (and (fboundp 'tramp-direct-async-process-p)
-                                        (tramp-direct-async-process-p)))
-                           (generate-new-buffer " *gascity-gc-stderr*"))))
-     (when (fboundp 'gascity--log)
-       (gascity--log 'info "Running async: %s %s"
-                     executable (mapconcat #'identity full-args " ")))
-     (condition-case err
-         (make-process
-          :name "gascity-gc"
-          :command command
-          :noquery t
-          :connection-type 'pipe
-          :file-handler t
-          :stderr stderr-buffer
-          :filter (lambda (_proc chunk) (setq output (concat output chunk)))
-          :sentinel
-          (lambda (proc _event)
-            (when (memq (process-status proc) '(exit signal))
-              (let ((code (process-exit-status proc)))
-                (unwind-protect
-                    (cond
-                     ((not (eql code 0))
-                      (when (fboundp 'gascity--log)
-                        (gascity--log 'error "Async gc exited %s: %s" code
-                                      (mapconcat #'identity args " ")))
-                      (when errback
-                        ;; Stderr is not captured here; a remote 127
-                        ;; still gets the setup hint, with the exit
-                        ;; code as the reason.
-                        (funcall errback
-                                 (gascity-reader--exit-error-message
-                                  executable args code nil remote))))
-                     (t
-                      (condition-case perr
-                          (let ((data (gascity-reader-parse-json output)))
-                            (funcall callback data))
-                        (gascity-json-parse-error
-                         (when errback
-                           (funcall errback
-                                    (error-message-string perr)))))))
-                  (when (and (bufferp stderr-buffer)
-                             (buffer-live-p stderr-buffer))
-                    (kill-buffer stderr-buffer)))))))
-       (error
-        (when (and (bufferp stderr-buffer) (buffer-live-p stderr-buffer))
-          (kill-buffer stderr-buffer))
+  (if (and (file-remote-p default-directory)
+           ;; A probe error (unreachable host, dead connection) must
+           ;; surface as the launch failure the spawn path already
+           ;; handles, not as a bogus missing-directory report.
+           (condition-case nil
+               (not (file-directory-p default-directory))
+             (error nil)))
+      (progn
+        (when (fboundp 'gascity--log)
+          (gascity--log 'error "Async gc not started: no such directory: %s"
+                        default-directory))
         (when errback
-          (funcall errback (gascity-remote-spawn-error-hint
-                            executable
-                            (error-message-string err)
-                            remote 'gascity-executable)))
-        nil)))))
+          (funcall errback (format "gc %s failed: no such directory: %s"
+                                   (mapconcat #'identity args " ")
+                                   default-directory)))
+        nil)
+    (with-connection-local-variables
+     (let* ((full-args (if (member "--json" args)
+                           args
+                         (append args (list "--json"))))
+            (output "")
+            ;; Both captured now: the sentinel fires with whatever buffer
+            ;; (and so `default-directory' and any connection-locally
+            ;; applied `gascity-executable') happens to be current then.
+            (remote (file-remote-p default-directory))
+            (executable (gascity-remote-find-executable gascity-executable))
+            ;; Remotely, stderr separation and the PATH export for gc's
+            ;; subprocesses both happen on the host via the /bin/sh
+            ;; wrapper — a string :stderr crashes direct-async, a buffer
+            ;; is tramp-sh's fifo machinery (see the docstring).
+            (command (gascity-reader--command executable full-args t))
+            ;; Local runs capture the process's stderr; so do remote
+            ;; direct-async runs, whose LOCAL login program (ssh) has
+            ;; stderr chatter of its own — there TRAMP passes the buffer
+            ;; to the local `make-process' as-is.  The tramp-sh path must
+            ;; get nil.  `tramp-direct-async-process-p' is the very
+            ;; predicate TRAMP's dispatch consults.
+            (stderr-buffer (when (or (not remote)
+                                     (and (fboundp 'tramp-direct-async-process-p)
+                                          (tramp-direct-async-process-p)))
+                             (generate-new-buffer " *gascity-gc-stderr*"))))
+       (when (fboundp 'gascity--log)
+         (gascity--log 'info "Running async: %s %s"
+                       executable (mapconcat #'identity full-args " ")))
+       (condition-case err
+           (make-process
+            :name "gascity-gc"
+            :command command
+            :noquery t
+            :connection-type 'pipe
+            :file-handler t
+            :stderr stderr-buffer
+            :filter (lambda (_proc chunk) (setq output (concat output chunk)))
+            :sentinel
+            (lambda (proc _event)
+              (when (memq (process-status proc) '(exit signal))
+                (let ((code (process-exit-status proc)))
+                  (unwind-protect
+                      (cond
+                       ((not (eql code 0))
+                        (when (fboundp 'gascity--log)
+                          (gascity--log 'error "Async gc exited %s: %s" code
+                                        (mapconcat #'identity args " ")))
+                        (when errback
+                          ;; Stderr is not captured here; a remote 127
+                          ;; still gets the setup hint, with the exit
+                          ;; code as the reason.
+                          (funcall errback
+                                   (gascity-reader--exit-error-message
+                                    executable args code nil remote))))
+                       (t
+                        (condition-case perr
+                            (let ((data (gascity-reader-parse-json output)))
+                              (funcall callback data))
+                          (gascity-json-parse-error
+                           (when errback
+                             (funcall errback
+                                      (error-message-string perr)))))))
+                    (when (and (bufferp stderr-buffer)
+                               (buffer-live-p stderr-buffer))
+                      (kill-buffer stderr-buffer)))))))
+         (error
+          (when (and (bufferp stderr-buffer) (buffer-live-p stderr-buffer))
+            (kill-buffer stderr-buffer))
+          (when errback
+            (funcall errback (gascity-remote-spawn-error-hint
+                              executable
+                              (error-message-string err)
+                              remote 'gascity-executable)))
+          nil))))))
 
 ;; Named per-subcommand reads are the `gascity-command-*!' bang
 ;; functions (see `gascity-command'/`gascity-types'); there is no

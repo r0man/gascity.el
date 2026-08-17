@@ -3659,6 +3659,65 @@ control\" noise), and no `make-process' call may see a string
       (should (eq (car (car result)) :error))
       (should (string-match-p "exit 7" (cdr (car result)))))))
 
+(ert-deftest gascity-test-remote-reader-read-async-missing-directory ()
+  "gce-q84: a nonexistent remote directory reaches the errback, spawns nothing.
+No TRAMP `make-process' handler signals a missing working directory —
+tramp-sh sends \"cd DIR && exec gc …\" to a fresh channel shell, the
+failed cd short-circuits the exec, and the interactive channel idles at
+its prompt forever: no exit, no sentinel, neither callback ever fires,
+and every attempt leaks one wedged channel process.  The reader
+pre-checks the directory and fails through the errback synchronously,
+before resolving the executable or spawning anything."
+  (gascity-test--with-mock-remote
+    (let* ((default-directory (concat gascity-test--mock-directory
+                                      "gascity-test-no-such-dir-q84/"))
+           (gascity-executable "/bin/sh")
+           (result (list nil))
+           (spawned nil)
+           (real-make-process (symbol-function 'make-process))
+           (proc (cl-letf (((symbol-function 'make-process)
+                            (lambda (&rest args)
+                              (setq spawned t)
+                              (apply real-make-process args))))
+                   (gascity-reader-read-async
+                    '("status")
+                    (lambda (_data) (setcar result '(:unexpected-success)))
+                    (lambda (msg) (setcar result (cons :error msg)))))))
+      ;; Nothing spawned or returned; the errback already fired — the
+      ;; failure is synchronous, no waiting involved.
+      (should-not proc)
+      (should-not spawned)
+      (should (eq (car (car result)) :error))
+      (should (string-match-p "\\`gc status failed" (cdr (car result))))
+      (should (string-match-p "no such directory" (cdr (car result))))
+      (should (string-match-p "gascity-test-no-such-dir-q84"
+                              (cdr (car result)))))))
+
+(ert-deftest gascity-test-remote-reader-read-async-directory-probe-error ()
+  "A failing directory probe falls through to the spawn path (gce-q84).
+An unreachable host or dead connection must surface as the launch
+failure the spawn path already reports — with the real reason — not as
+a bogus missing-directory error; here the probe signals but the read
+still completes."
+  (gascity-test--with-mock-remote
+    (let* ((gascity-executable "/bin/sh")
+           (result (list nil))
+           (probe-dir default-directory)
+           (real-file-directory-p (symbol-function 'file-directory-p)))
+      (cl-letf (((symbol-function 'file-directory-p)
+                 ;; Only the reader's own probe fails; TRAMP's internal
+                 ;; calls (other paths) keep working.
+                 (lambda (dir)
+                   (if (equal dir probe-dir)
+                       (error "Probe failed")
+                     (funcall real-file-directory-p dir)))))
+        (gascity-reader-read-async
+         '("-c" "echo '{\"city_name\":\"mock-city\"}'" "--json")
+         (lambda (data) (setcar result data))
+         (lambda (msg) (setcar result (cons :error msg)))))
+      (should (gascity-test--wait-for result))
+      (should (equal (alist-get 'city_name (car result)) "mock-city")))))
+
 (ert-deftest gascity-test-remote-connection-local-executable ()
   "A connection-local `gascity-executable' governs command lines and runs.
 The invocation sites read the variable under
