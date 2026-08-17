@@ -457,6 +457,38 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   all three fixes (`tramp-own-remote-path`, `gascity-remote-search-path`,
   connection-local `gascity-executable`) — rides the non-zero-exit path
   as well as the spawn-failure path.
+- **PATH export for gc's subprocesses (gce-k5d).** Resolving gc to an
+  absolute profile path is not enough on a zero-config Guix host: gc
+  forks its own subprocesses (git for pack imports, dolt), and they
+  inherit the spawned process's PATH — `tramp-remote-path` under
+  tramp-sh, the login environment under direct-async — which lacks the
+  profile directories, so a real city dies with "git: executable file
+  not found in $PATH". Every remote invocation site therefore splices
+  the sh fragment `PATH=<dirs>:$PATH` (`gascity-remote-path-assignment`;
+  `<dirs>` = the `gascity-remote-search-path` entries, `~` expanded on
+  the host via the remote `expand-file-name`, shell-quoted,
+  colon-joined) before the command: the reader's sync and async runners
+  share one remote wrapper (`gascity-reader--command`,
+  `/bin/sh -c "PATH=…:$PATH exec \"$0\" \"$@\"[ 2>/dev/null]" GC ARGS…`
+  — the async `2>/dev/null` is the gce-qke stderr separation), and the
+  interactive `async-shell-command` backend prefixes its command
+  string. One mechanism, no sync/async split. The assignment must be
+  evaluated BY the remote shell, where `$PATH` expands to whatever the
+  process actually inherited; the `process-environment` route was
+  considered and refuted (verified on Emacs 30.2 / TRAMP 2.7.3):
+  tramp-sh's process-file and make-process handlers and the
+  direct-async handler all forward let-bound env entries, but every one
+  shell-quotes the value into a remote `env` call, so a `$PATH` in the
+  value arrives literal and the inherited tail is destroyed. Decisions:
+  the export applies whenever the directory is remote and the search
+  path non-empty (not only when the fallback resolved gc — harmless
+  extra entries, no provenance tracking); nonexistent directories are
+  kept (a dead PATH entry is harmless; filtering would cost per-entry
+  existence probes and mask a profile created later); the fragment is
+  cached per connection in the executable cache (key `(REMOTE . :path)`,
+  same `gascity-context-clear-cache` invalidation); a host-side
+  expansion error degrades to the unaugmented command — the launch then
+  fails exactly where it always did.
 - **Host-local paths.** Everything gc reports (worktree, `work_dir`,
   `pane_current_path`, rig `path`, order `source`) is a path on the city's
   host; every find-file/Dired/beads target goes through
@@ -509,4 +541,11 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   through `tramp-handle-make-process` (spied to prove the dispatch),
   asserting no `make-process` call ever sees a string `:stderr`; the
   resolver's probe order, caching, and invalidation run against real
-  directories behind the mock connection.
+  directories behind the mock connection. The PATH export is proved end
+  to end with a fake gc script that is itself resolved via the search
+  path and prints the PATH *its child* inherits: sync, async, and
+  async-under-direct-async runs all assert the search directories lead
+  (with `~` expanded to the remote home), no literal `$PATH` survives,
+  and the inherited tail still follows; the interactive backend's
+  command string is asserted to carry the `PATH=…:$PATH ` prefix
+  remotely and none locally.

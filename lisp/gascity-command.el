@@ -341,13 +341,22 @@ richer vterm/eat/term backends arrive with `gascity-terminal'.
 `async-shell-command' is TRAMP-aware: invoked from a buffer whose
 `default-directory' is a remote city (every gascity view pins its
 city's root), the command runs on that host, in its POSIX shell —
-which is what the `shell-quote-argument' quoting here targets."
-  (let* ((cmd-line (gascity-command-line command))
-         (cmd-string (mapconcat #'shell-quote-argument cmd-line " "))
-         (buffer-name (format "*gc %s*"
-                              (or (gascity-command-subcommand command)
-                                  "command"))))
-    (async-shell-command cmd-string buffer-name)))
+which is what the `shell-quote-argument' quoting here targets.  For a
+remote city the line is prefixed with the PATH assignment of
+`gascity-remote-path-assignment' (evaluated by that same shell), so
+gc's own subprocesses — git, dolt — resolve against the profile
+directories exactly as they do for the reader paths (gce-k5d)."
+  (with-connection-local-variables
+   (let* ((cmd-line (gascity-command-line command))
+          (assignment (gascity-remote-path-assignment))
+          (cmd-string (mapconcat #'shell-quote-argument cmd-line " "))
+          (cmd-string (if assignment
+                          (concat assignment " " cmd-string)
+                        cmd-string))
+          (buffer-name (format "*gc %s*"
+                               (or (gascity-command-subcommand command)
+                                   "command"))))
+     (async-shell-command cmd-string buffer-name))))
 
 ;;; ============================================================
 ;;; Execution

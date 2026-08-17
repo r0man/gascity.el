@@ -33,7 +33,13 @@
 ;;   TRAMP.  `gascity-remote-find-executable' closes that gap with zero
 ;;   setup: it falls back to probing `gascity-remote-search-path' (the
 ;;   standard Guix profile bins) and returns an absolute host-local
-;;   path, cached per connection.
+;;   path, cached per connection.  Resolving gc itself is not enough,
+;;   though: gc spawns subprocesses (git for pack imports, dolt), and
+;;   they inherit the spawned process's bare PATH.
+;;   `gascity-remote-path-assignment' closes that second gap — a
+;;   \"PATH=dirs:$PATH\" sh fragment every remote invocation site
+;;   splices before the command, prepending the same profile
+;;   directories to the PATH gc's children resolve against.
 ;;
 ;; This module depends only on `gascity-custom' (the defcustom home),
 ;; so every other module can require it.
@@ -117,7 +123,9 @@ name (neither maps onto one plain ssh invocation)."
 (defvar gascity-remote--executable-cache (make-hash-table :test 'equal)
   "Cache mapping (REMOTE-PREFIX . NAME) to a resolved host-local path.
 Only successful resolutions are cached — a miss is re-probed on the
-next call, so installing the program on the host heals itself.  Cleared
+next call, so installing the program on the host heals itself.  The
+per-connection PATH fragment of `gascity-remote-path-assignment' lives
+here too, under the un-collidable key (REMOTE-PREFIX . :path).  Cleared
 by `gascity-remote-forget-executables' (via
 `gascity-context-clear-cache').")
 
@@ -172,6 +180,59 @@ launch fails exactly where it always did — the remote shell's
               (when found
                 (puthash key found gascity-remote--executable-cache))
               (or found name)))))))
+
+;;; PATH export for gc's subprocesses
+
+(defun gascity-remote-path-assignment (&optional dir)
+  "Return a \"PATH=DIRS:$PATH\" sh fragment for DIR's host, or nil.
+DIRS are the `gascity-remote-search-path' entries expanded on DIR's
+host (default `default-directory'; a `~' becomes the remote home),
+shell-quoted and colon-joined.  Returns nil for a local DIR, an empty
+search path, or when host-side expansion fails (e.g. a dropped
+connection) — callers then run the command unaugmented, and the launch
+fails exactly where it always did.
+
+Every remote invocation site splices this fragment before the command
+it hands the remote shell.  Resolving gc itself to an absolute profile
+path (`gascity-remote-find-executable') is not enough: gc spawns
+subprocesses (git for pack imports, dolt), and those children inherit
+the spawned process's PATH — `tramp-remote-path' for tramp-sh, the
+login environment for direct-async — which omits the profile
+directories, so a real city fails with \"git: executable file not
+found in $PATH\".  The assignment must be evaluated BY the remote
+shell, where $PATH expands to whatever the process actually inherited;
+exporting PATH through `process-environment' cannot express that:
+every TRAMP handler (tramp-sh process-file/make-process and
+direct-async alike, verified on Emacs 30/TRAMP 2.7) forwards env
+entries shell-quoted, so a $PATH in the value arrives literal and the
+inherited tail is lost.
+
+Nonexistent directories are kept: a dead PATH entry is harmless, and
+filtering would cost an existence probe per entry per connection while
+masking a profile created later.  The fragment is cached per
+connection alongside the executable resolutions; clear with
+`gascity-context-clear-cache' after changing
+`gascity-remote-search-path'."
+  (let ((remote (file-remote-p (or dir default-directory))))
+    (when (and remote gascity-remote-search-path)
+      (let ((key (cons remote :path)))
+        (or (gethash key gascity-remote--executable-cache)
+            (when-let* ((dirs
+                         (condition-case nil
+                             (mapcar (lambda (entry)
+                                       (shell-quote-argument
+                                        (file-local-name
+                                         (expand-file-name
+                                          (concat remote entry)))))
+                                     gascity-remote-search-path)
+                           ;; Expanding `~' needs the connection; a
+                           ;; probe error must surface as the launch
+                           ;; failure the callers already handle.
+                           (error nil))))
+              (puthash key
+                       (format "PATH=%s:$PATH"
+                               (mapconcat #'identity dirs ":"))
+                       gascity-remote--executable-cache)))))))
 
 ;;; Spawn diagnostics
 

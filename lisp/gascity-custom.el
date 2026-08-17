@@ -61,8 +61,16 @@ searches `tramp-remote-path', which omits non-default profile
 directories — is looked up in these directories instead, first hit
 wins.  Entries are host-side paths; `~' expands to the remote home.
 The defaults cover Guix hosts (guix home, user, and system profiles)
-with zero configuration.  Resolutions are cached per connection;
-clear with `gascity-context-clear-cache' after installing a program."
+with zero configuration.
+
+These directories are also prepended to the PATH exported to every
+remote gc invocation (`gascity-remote-path-assignment'), so the
+subprocesses gc spawns — git for pack imports, dolt — resolve on the
+host as well; resolving gc alone would not survive its first fork.
+
+Resolutions and the exported PATH fragment are cached per connection;
+clear with `gascity-context-clear-cache' after installing a program
+or changing this path."
   :type '(repeat string)
   :group 'gascity)
 

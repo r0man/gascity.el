@@ -37,7 +37,10 @@
 ;; defcustom); a bare name is then resolved on the host by
 ;; `gascity-remote-find-executable' (`tramp-remote-path', falling back
 ;; to the Guix profile directories in `gascity-remote-search-path'), so
-;; a Guix host works with zero setup.
+;; a Guix host works with zero setup.  Remote commands run through the
+;; /bin/sh wrapper of `gascity-reader--command', which also exports
+;; those directories on PATH — gc spawns subprocesses (git for pack
+;; imports, dolt), and they must resolve on the host too (gce-k5d).
 
 ;;; Code:
 
@@ -57,6 +60,40 @@
 (declare-function tramp-direct-async-process-p "tramp" (&rest args))
 
 ;;; Low-level invocation
+
+(defun gascity-reader--command (executable args &optional discard-stderr)
+  "Return the argv running EXECUTABLE with ARGS where `default-directory' points.
+Locally that is (EXECUTABLE . ARGS) unchanged.  On a remote directory
+the command is wrapped as
+
+  /bin/sh -c \"[PATH=…:$PATH ]exec \\\"$0\\\" \\\"$@\\\"[ 2>/dev/null]\"
+  EXECUTABLE ARGS…
+
+— the one remote shape for both runners.  The wrapper splices
+`gascity-remote-path-assignment', so EXECUTABLE and every subprocess
+it spawns (gc forks git for pack imports, dolt, …) resolve against the
+profile directories — resolving gc itself to an absolute path is not
+enough, its children inherit the process PATH (gce-k5d).  The
+assignment must be evaluated by the remote shell, where $PATH expands
+to whatever the process actually inherited: every TRAMP handler
+forwards `process-environment' entries shell-quoted, so the env route
+would deliver a literal $PATH and lose the inherited tail.  With
+DISCARD-STDERR (the async runner) the wrapper also separates stderr ON
+the host, identically under tramp-sh and direct-async (gce-qke).
+EXECUTABLE rides as $0, so exit codes, signals, and the remote
+\"command not found\" 127/126 are exactly the unwrapped ones.
+
+Reads `default-directory' and (via the assignment) possibly
+connection-local variables — call it before any buffer switch, next to
+the `gascity-remote-find-executable' capture."
+  (if (not (file-remote-p default-directory))
+      (cons executable args)
+    (let ((assignment (gascity-remote-path-assignment)))
+      (append (list "/bin/sh" "-c"
+                    (concat (and assignment (concat assignment " "))
+                            "exec \"$0\" \"$@\""
+                            (and discard-stderr " 2>/dev/null")))
+              (cons executable args)))))
 
 (defun gascity-reader-run (args)
   "Run the `gc' executable with ARGS, a list of strings.
@@ -80,14 +117,19 @@ is resolved under `with-connection-local-variables', honouring a
 per-host connection-local value; a bare name on a remote directory is
 then resolved to an absolute host path by
 `gascity-remote-find-executable' (`tramp-remote-path', falling back
-to `gascity-remote-search-path')."
+to `gascity-remote-search-path').  A remote command runs through the
+/bin/sh wrapper of `gascity-reader--command', which exports the
+search-path directories on PATH so gc's own subprocesses (git, dolt)
+resolve too (gce-k5d)."
   (with-connection-local-variables
-   ;; Capture the executable HERE: `with-connection-local-variables'
-   ;; applies a connection-local value buffer-locally in the current
-   ;; buffer, so a read inside `with-temp-buffer' below would silently
-   ;; fall back to the global default.
-   (let ((executable (gascity-remote-find-executable gascity-executable))
-         (stderr-file (make-nearby-temp-file "gascity-stderr-")))
+   ;; Capture the executable and command HERE:
+   ;; `with-connection-local-variables' applies a connection-local
+   ;; value buffer-locally in the current buffer, so a read inside
+   ;; `with-temp-buffer' below would silently fall back to the global
+   ;; default.
+   (let* ((executable (gascity-remote-find-executable gascity-executable))
+          (command (gascity-reader--command executable args))
+          (stderr-file (make-nearby-temp-file "gascity-stderr-")))
      (when (fboundp 'gascity--log)
        (gascity--log 'info "Running: %s %s"
                      executable (mapconcat #'identity args " ")))
@@ -95,8 +137,9 @@ to `gascity-remote-search-path')."
          (with-temp-buffer
            (let* ((exit-code
                    (condition-case err
-                       (apply #'process-file executable nil
-                              (list (current-buffer) stderr-file) nil args)
+                       (apply #'process-file (car command) nil
+                              (list (current-buffer) stderr-file) nil
+                              (cdr command))
                      (file-error
                       (signal 'gascity-command-error
                               (list (gascity-remote-spawn-error-hint
@@ -212,14 +255,19 @@ connection-local variable `tramp-direct-async-process') accepts only nil
 or a buffer and signals `wrong-type-argument bufferp'.  Locally, stderr
 is captured in a hidden scratch buffer (killed on exit — its content is
 never read).  On a remote directory the separation happens ON the host
-instead: the command is wrapped as
+instead: the command is wrapped (`gascity-reader--command') as
 
-  /bin/sh -c \"exec \\\"$0\\\" \\\"$@\\\" 2>/dev/null\" GC ARGS...
+  /bin/sh -c \"PATH=…:$PATH exec \\\"$0\\\" \\\"$@\\\" 2>/dev/null\"
+  GC ARGS...
 
 which behaves identically under tramp-sh and direct-async, and GC is
 pre-resolved to an absolute host path (`gascity-remote-find-executable')
 so resolution cannot differ between the handlers either (direct-async
-resolves against the login shell's PATH, not `tramp-remote-path').  A
+resolves against the login shell's PATH, not `tramp-remote-path').  The
+PATH assignment (`gascity-remote-path-assignment') prepends the
+search-path profile directories for gc's own subprocesses — git, dolt —
+which inherit the process PATH no matter how gc itself was resolved
+\(gce-k5d).  A
 `:stderr' BUFFER over tramp-sh would be backed by a remote named pipe
 plus a reader process whose cleanup runs TRAMP operations from process
 sentinels — under the dashboard's parallel loads those fire inside each
@@ -249,14 +297,11 @@ through TRAMP on a remote directory, so gc runs on that host
           ;; applied `gascity-executable') happens to be current then.
           (remote (file-remote-p default-directory))
           (executable (gascity-remote-find-executable gascity-executable))
-          ;; Remotely, stderr separation happens on the host via this
+          ;; Remotely, stderr separation and the PATH export for gc's
+          ;; subprocesses both happen on the host via the /bin/sh
           ;; wrapper — a string :stderr crashes direct-async, a buffer
           ;; is tramp-sh's fifo machinery (see the docstring).
-          (command (if remote
-                       (append
-                        (list "/bin/sh" "-c" "exec \"$0\" \"$@\" 2>/dev/null")
-                        (cons executable full-args))
-                     (cons executable full-args)))
+          (command (gascity-reader--command executable full-args t))
           ;; Local runs capture the process's stderr; so do remote
           ;; direct-async runs, whose LOCAL login program (ssh) has
           ;; stderr chatter of its own — there TRAMP passes the buffer

@@ -3359,6 +3359,208 @@ carry a directory pass through untouched."
         (delete-directory tmp t)
         (gascity-context-clear-cache)))))
 
+(ert-deftest gascity-test-remote-path-assignment ()
+  "The PATH fragment (gce-k5d): nil locally and for an empty search path;
+entries expanded on the host (`~' -> remote home) in order,
+shell-quoted, nonexistent ones kept (a dead PATH entry is harmless and
+filtering would mask a profile created later); cached per connection
+until `gascity-context-clear-cache'."
+  (let ((default-directory "/"))
+    (should-not (gascity-remote-path-assignment)))
+  (gascity-test--with-mock-remote
+    (gascity-context-clear-cache)
+    (unwind-protect
+        (let* ((remote (file-remote-p default-directory))
+               (home (file-local-name
+                      (expand-file-name (concat remote "~")))))
+          (let ((gascity-remote-search-path nil))
+            (should-not (gascity-remote-path-assignment)))
+          ;; Order kept, `~' expanded host-side, a nonexistent entry
+          ;; and one needing shell quoting both ride along verbatim.
+          (let ((gascity-remote-search-path
+                 '("~/gascity-test-absent/bin" "/opt/gascity test/bin")))
+            (should (equal (gascity-remote-path-assignment)
+                           (format "PATH=%s/gascity-test-absent/bin:%s:$PATH"
+                                   home
+                                   (shell-quote-argument
+                                    "/opt/gascity test/bin")))))
+          ;; Cached per connection: a changed search path answers stale
+          ;; until the one cache entry point clears it.
+          (let ((gascity-remote-search-path '("/gascity-test-other/bin")))
+            (should (string-match-p "gascity-test-absent"
+                                    (gascity-remote-path-assignment)))
+            (gascity-context-clear-cache)
+            (should (equal (gascity-remote-path-assignment)
+                           "PATH=/gascity-test-other/bin:$PATH"))))
+      (gascity-context-clear-cache))))
+
+(defmacro gascity-test--with-fake-remote-gc (&rest body)
+  "Run BODY with a fake remote gc resolved via the search path.
+Binds `gascity-remote-search-path' to (DIR-A \"~/gascity-test-absent/bin\")
+— DIR-A a fresh host directory holding the `gascity-test-gc' script,
+the `~' entry a nonexistent one — and `gascity-executable' to the bare
+script name, so the zero-config chain (search-path resolution + PATH
+export) is exercised end to end.  The script mirrors the gce-k5d
+failure exactly: gc's own subprocesses — git for pack imports, dolt —
+must resolve, not just gc itself.  It invokes `gascity-test-child' (a
+second DIR-A script, findable ONLY through the exported PATH) by bare
+name and prints the PATH a child inherits, as
+{\"path\": \"...\", \"child\": \"...\"} JSON on stdout, after noise on
+stderr.  BODY sees REMOTE, DIR-A, FAKE-GC, and PATH-PREFIX (the
+expected leading PATH entries, colon-terminated)."
+  (declare (indent 0) (debug t))
+  `(gascity-test--with-mock-remote
+     (gascity-context-clear-cache)
+     (let* ((remote (file-remote-p default-directory))
+            (tmp (make-temp-file "gascity-test-path" t))
+            (dir-a (expand-file-name "profile/bin" tmp))
+            (fake-gc (expand-file-name "gascity-test-gc" dir-a))
+            (child (expand-file-name "gascity-test-child" dir-a))
+            (home (file-local-name (expand-file-name (concat remote "~"))))
+            (path-prefix (concat dir-a ":" home "/gascity-test-absent/bin:"))
+            (gascity-remote-search-path
+             (list dir-a "~/gascity-test-absent/bin"))
+            (gascity-executable "gascity-test-gc"))
+       (ignore remote dir-a fake-gc path-prefix)
+       (unwind-protect
+           (progn
+             (make-directory dir-a t)
+             (write-region "#!/bin/sh\necho FOUND\n" nil (concat remote child))
+             (set-file-modes (concat remote child) #o755)
+             (write-region
+              (concat "#!/bin/sh\n"
+                      "echo GARBAGE-ON-STDERR >&2\n"
+                      "printf '{\"path\":\"%s\",\"child\":\"%s\"}' "
+                      "\"$(sh -c 'echo \"$PATH\"')\" "
+                      "\"$(gascity-test-child 2>/dev/null || echo MISSING)\"\n")
+              nil (concat remote fake-gc))
+             (set-file-modes (concat remote fake-gc) #o755)
+             ,@body)
+         (delete-directory tmp t)
+         (gascity-context-clear-cache)))))
+
+(defun gascity-test--check-export (data path-prefix)
+  "Assert the fake gc's DATA proves the PATH export (gce-k5d).
+DATA is the decoded {\"path\", \"child\"} payload.  The bare-named
+`gascity-test-child' must have RESOLVED — the very failure gc's git
+child hits without the export — and the child PATH must start with
+PATH-PREFIX (search-path directories in order, `~' expanded host-side)
+with no literal $PATH surviving (the refuted `process-environment'
+route would leave one — every TRAMP handler forwards env values
+shell-quoted) and the tail the process would have inherited anyway
+still following."
+  (let ((path (alist-get 'path data)))
+    (should (equal (alist-get 'child data) "FOUND"))
+    (should (stringp path))
+    (should (string-prefix-p path-prefix path))
+    (should-not (string-match-p (regexp-quote "$PATH") path))
+    (should (> (length path) (length path-prefix)))))
+
+(ert-deftest gascity-test-remote-reader-run-exports-search-path ()
+  "Sync reads export the search-path directories to gc's CHILDREN.
+The gce-k5d gap: `gascity-remote-find-executable' resolving gc to an
+absolute profile path is not enough — gc spawns git (pack imports) and
+dolt, and those inherit the process PATH, which lacks the profile
+directories.  The /bin/sh wrapper's PATH assignment fixes that for
+`process-file'; the remote shell evaluates it, so the inherited tail
+survives."
+  (gascity-test--with-fake-remote-gc
+    (let ((result (gascity-reader-run '("status"))))
+      ;; Resolved via the search path, run succeeded, stderr separate.
+      (should (equal (plist-get result :executable) fake-gc))
+      (should (equal (plist-get result :exit-code) 0))
+      (should (equal (plist-get result :stderr) "GARBAGE-ON-STDERR\n"))
+      (gascity-test--check-export
+       (gascity-reader-parse-json (plist-get result :stdout))
+       path-prefix))))
+
+(ert-deftest gascity-test-remote-reader-read-async-exports-search-path ()
+  "Async reads export the search-path directories to gc's children
+\(gce-k5d) — the PATH assignment rides the same host-side /bin/sh
+wrapper that separates stderr, so the tramp-sh path gets it for free."
+  (gascity-test--with-fake-remote-gc
+    (let ((result (list nil)))
+      (gascity-reader-read-async
+       '("status")
+       (lambda (data) (setcar result data))
+       (lambda (msg) (setcar result (cons :error msg))))
+      (should (gascity-test--wait-for result))
+      (gascity-test--check-export (car result) path-prefix))))
+
+(ert-deftest gascity-test-remote-reader-read-async-direct-async-exports-search-path ()
+  "Direct-async reads export the search-path directories too (gce-k5d).
+TRAMP's direct-async handler spawns through the login program, whose
+environment (login shell PATH, plus TRAMP's own env-injected remote
+path) also lacks the profile directories — and it forwards
+`process-environment' entries shell-quoted, so only the wrapper's
+shell-evaluated assignment can prepend while keeping the inherited
+tail.  The handler is spied to prove the dispatch took that path."
+  (gascity-test--with-fake-remote-gc
+    (unwind-protect
+        (progn
+          (connection-local-set-profile-variables
+           'gascity-test-direct-async-path
+           '((tramp-direct-async-process . t)))
+          (connection-local-set-profiles
+           '(:application tramp :protocol "mock")
+           'gascity-test-direct-async-path)
+          (let* ((result (list nil))
+                 (direct-calls 0)
+                 (real-direct (symbol-function 'tramp-handle-make-process)))
+            (cl-letf (((symbol-function 'tramp-handle-make-process)
+                       (lambda (&rest args)
+                         (cl-incf direct-calls)
+                         (apply real-direct args))))
+              (gascity-reader-read-async
+               '("status")
+               (lambda (data) (setcar result data))
+               (lambda (msg) (setcar result (cons :error msg))))
+              (should (gascity-test--wait-for result)))
+            (should (> direct-calls 0))
+            (gascity-test--check-export (car result) path-prefix)))
+      ;; `connection-local-set-profiles' persists beyond a let (see
+      ;; gascity-test-remote-connection-local-executable); tear the
+      ;; registration down so later mock tests stay non-direct.
+      (setq connection-local-criteria-alist
+            (delq nil
+                  (mapcar
+                   (lambda (e)
+                     (let ((ps (remq 'gascity-test-direct-async-path
+                                     (cdr e))))
+                       (and ps (cons (car e) ps))))
+                   connection-local-criteria-alist)))
+      (setq connection-local-profile-alist
+            (assq-delete-all 'gascity-test-direct-async-path
+                             connection-local-profile-alist)))))
+
+(ert-deftest gascity-test-remote-interactive-command-exports-search-path ()
+  "The interactive `async-shell-command' backend prefixes the remote
+line with the PATH assignment (gce-k5d) — the remote shell's PATH
+omits the profile directories just as `tramp-remote-path' does, and
+gc's subprocesses must resolve there too.  A local line stays bare."
+  (gascity-test--with-mock-remote
+    (gascity-context-clear-cache)
+    (unwind-protect
+        (let ((gascity-remote-search-path '("/gascity-test-profile/bin"))
+              (lines nil))
+          ;; session-peek streams through the BASE backend — status and
+          ;; the list commands specialize `execute-interactive' into
+          ;; their views and never reach `async-shell-command'.
+          (cl-letf (((symbol-function 'async-shell-command)
+                     (lambda (line &rest _) (push line lines))))
+            (gascity-command-execute-interactive
+             (gascity-command-session-peek :target "gastown__mayor"))
+            (should (string-prefix-p
+                     "PATH=/gascity-test-profile/bin:$PATH "
+                     (car lines)))
+            (should (string-match-p " session peek" (car lines)))
+            ;; Locally the very same command line is unprefixed.
+            (let ((default-directory "/"))
+              (gascity-command-execute-interactive
+               (gascity-command-session-peek :target "gastown__mayor"))
+              (should-not (string-match-p "PATH=" (car lines))))))
+      (gascity-context-clear-cache))))
+
 (ert-deftest gascity-test-remote-reader-read-async ()
   "Async reads dispatch through the TRAMP file handler (gce-90t audit #2):
 gc runs on the host and stderr noise never corrupts the parsed JSON.
