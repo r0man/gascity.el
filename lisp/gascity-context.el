@@ -19,6 +19,11 @@
 ;;
 ;; Override `gascity-context-city' / `gascity-context-rig' to pin the
 ;; context (e.g. for a switch-rig command, arriving in later phases).
+;;
+;; `gascity-view-get-buffer-create' composes this resolution with the
+;; remote buffer-naming scheme of `gascity-remote' into the single
+;; view-buffer factory: every buffer a gascity view opens gets a
+;; host-qualified name and a `default-directory' pinned to its city.
 
 ;;; Code:
 
@@ -76,6 +81,29 @@ be reclaimed while the view is still refreshing)."
   (let ((dir (expand-file-name (or dir default-directory))))
     (or (gascity-context-city-root dir)
         (file-name-as-directory dir))))
+
+(defun gascity-view-get-buffer-create (base &optional dir)
+  "Return the view buffer named BASE, keyed and pinned to DIR's city.
+The one factory behind every buffer a gascity view opens — dashboards,
+lists, detail views, mail message/body views, peek and dry-run output,
+compose drafts.  BASE is the buffer's base name (\"*gascity-status*\");
+DIR defaults to `default-directory' (the view or action context).  The
+buffer's name is host-qualified for a remote city
+\(`gascity-remote-buffer-name', so a local and a remote view of the same
+kind coexist instead of one stealing the other's buffer) and its
+`default-directory' is pinned to the city root governing DIR
+\(`gascity-context-pin-directory') — re-pinned on every call, healing a
+buffer that survived from another context.  So refresh timers, at-point
+actions, and gc invocations keep resolving the city the view was opened
+for, and `dired'/`find-file'/`shell' from any such buffer default to
+that city's host.  Creating view buffers with a bare
+`get-buffer-create' instead is what let a remote city's mail view open
+with a local `default-directory' — new views must come through here."
+  (let* ((dir (gascity-context-pin-directory dir))
+         (buf (get-buffer-create (gascity-remote-buffer-name base dir))))
+    (with-current-buffer buf
+      (setq default-directory dir))
+    buf))
 
 (defun gascity-context-city-name (&optional dir)
   "Return the city name governing DIR, or nil.

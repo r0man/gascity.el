@@ -819,8 +819,11 @@ sessions instead of draining them.  City-level (gc has no `rig reload')."
       (user-error "No message at point"))))
 
 (defun gascity-mail--show-body (id text)
-  "Pop a read-only view buffer showing body TEXT of message ID."
-  (let ((buf (get-buffer-create (format "*gc-mail: %s*" id))))
+  "Pop a read-only view buffer showing body TEXT of message ID.
+The buffer is keyed and pinned to the inbox's city
+\(`gascity-view-get-buffer-create'), so a remote city's message body
+carries that host's `default-directory'."
+  (let ((buf (gascity-view-get-buffer-create (format "*gc-mail: %s*" id))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -897,7 +900,8 @@ error surfaces as a `user-error'."
                  (gascity-command-error
                   (user-error "gc session peek failed: %s"
                               (gascity-error-detail err))))))
-    (let ((buf (get-buffer-create (gascity-session-peek--buffer-name target))))
+    (let ((buf (gascity-view-get-buffer-create
+                (gascity-session-peek--buffer-name target))))
       (with-current-buffer buf
         (let ((inhibit-read-only t))
           (erase-buffer)
@@ -977,7 +981,7 @@ error surfaces as a clean `user-error'."
                   (user-error "gc sling: %s" (cadr err)))
                  (gascity-command-error
                   (user-error "gc sling failed: %s" (gascity-error-detail err)))))
-         (buf (get-buffer-create "*gc-sling: dry-run*")))
+         (buf (gascity-view-get-buffer-create "*gc-sling: dry-run*")))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)

@@ -3903,6 +3903,207 @@ is host-qualified."
         (when (get-buffer "*gc-agent-sess@/ssh:u@h:*")
           (kill-buffer "*gc-agent-sess@/ssh:u@h:*"))))))
 
+;;; The view-buffer factory (gce-cvu) — every buffer a view opens must
+;;; carry its city's `default-directory'.  The user-visible failure: on
+;;; a remote city, `M-x dired' from an attach/mail/compose buffer
+;;; offered a LOCAL directory, and a reused compose draft would even
+;;; run its gc command against the wrong city.
+
+(ert-deftest gascity-test-view-get-buffer-create ()
+  "The factory host-qualifies the name and pins the city directory —
+and re-pins an existing buffer, healing a stale `default-directory'."
+  ;; Local: base name untouched, directory pinned to the context.
+  (let* ((tmp (file-name-as-directory (make-temp-file "gascity-test-view" t)))
+         (buf nil))
+    (unwind-protect
+        (let ((default-directory tmp))
+          (setq buf (gascity-view-get-buffer-create "*gascity-test-fac*"))
+          (should (equal (buffer-name buf) "*gascity-test-fac*"))
+          (should (equal (buffer-local-value 'default-directory buf) tmp)))
+      (when (buffer-live-p buf) (kill-buffer buf))
+      (delete-directory tmp t)))
+  ;; Remote: name qualified, directory pinned remotely; a later call
+  ;; from the same context re-pins a buffer whose directory drifted.
+  (gascity-test--with-mock-remote
+    (let ((remote-prefix (file-remote-p default-directory))
+          (buf nil))
+      (unwind-protect
+          (progn
+            (setq buf (gascity-view-get-buffer-create "*gascity-test-fac*"))
+            (should (equal (buffer-name buf)
+                           (format "*gascity-test-fac@%s*" remote-prefix)))
+            (should (equal (file-remote-p
+                            (buffer-local-value 'default-directory buf))
+                           remote-prefix))
+            (with-current-buffer buf (setq default-directory "/"))
+            (should (eq (gascity-view-get-buffer-create "*gascity-test-fac*")
+                        buf))
+            (should (equal (file-remote-p
+                            (buffer-local-value 'default-directory buf))
+                           remote-prefix)))
+        (when (buffer-live-p buf) (kill-buffer buf))))))
+
+(ert-deftest gascity-test-view-buffer-names-are-base-names ()
+  "The per-view name helpers return BASE names even in a remote context:
+qualification belongs to the factory alone, so routing a helper's name
+through it can never double-qualify."
+  (let ((default-directory "/ssh:u@h:/city/"))
+    (should (equal (gascity-session-detail--buffer-name "rig/agent")
+                   "*gascity-agent: rig/agent*"))
+    (should (equal (gascity-rig-dashboard--buffer-name "rig")
+                   "*gascity-rig: rig*"))
+    (should (equal (gascity-session-peek--buffer-name "rig/agent")
+                   "*gc-peek: rig/agent*"))))
+
+(ert-deftest gascity-test-remote-mail-message-view ()
+  "RET on a remote inbox row opens a host-qualified, remotely pinned
+message view — and never reuses a local city's message buffer (the
+gce-cvu repro: the shared name kept a stale local `default-directory')."
+  (gascity-test--with-mock-remote
+    (let* ((remote-prefix (file-remote-p default-directory))
+           (name (format "*gascity-mail-message@%s*" remote-prefix))
+           (message (gascity-mail :id "m1" :from "qa@example.com" :to "you"
+                                  :subject "s" :body "b"
+                                  :created-at "2026-01-01" :read nil)))
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              (gascity-at-point-visit message)
+              (let ((buf (get-buffer name)))
+                (should buf)
+                (should (equal (file-remote-p
+                                (buffer-local-value 'default-directory buf))
+                               remote-prefix))))
+          (when (get-buffer name) (kill-buffer name)))))))
+
+(ert-deftest gascity-test-remote-mail-body-view ()
+  "`r' on a remote inbox row shows the body in a host-qualified,
+remotely pinned buffer."
+  (gascity-test--with-mock-remote
+    (let* ((remote-prefix (file-remote-p default-directory))
+           (name (format "*gc-mail: m1@%s*" remote-prefix)))
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              (gascity-mail--show-body "m1" "body text")
+              (let ((buf (get-buffer name)))
+                (should buf)
+                (should (equal (file-remote-p
+                                (buffer-local-value 'default-directory buf))
+                               remote-prefix))))
+          (when (get-buffer name) (kill-buffer name)))))))
+
+(ert-deftest gascity-test-remote-peek-view ()
+  "Peek output from a remote view lands in a host-qualified, remotely
+pinned buffer (gc itself is stubbed — no live reads)."
+  (gascity-test--with-mock-remote
+    (let* ((remote-prefix (file-remote-p default-directory))
+           (name (format "*gc-peek: rig/agent@%s*" remote-prefix)))
+      (cl-letf (((symbol-function 'gascity-command-execute)
+                 (lambda (cmd) (gascity-command-execution
+                                :command cmd :result "peeked")))
+                ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              (gascity-session-peek--show "rig/agent" 5)
+              (let ((buf (get-buffer name)))
+                (should buf)
+                (should (equal (file-remote-p
+                                (buffer-local-value 'default-directory buf))
+                               remote-prefix))))
+          (when (get-buffer name) (kill-buffer name)))))))
+
+(ert-deftest gascity-test-remote-sling-plan-view ()
+  "A sling dry-run from a remote view shows its plan in a host-qualified,
+remotely pinned buffer (gc itself is stubbed — no live reads)."
+  (gascity-test--with-mock-remote
+    (let* ((remote-prefix (file-remote-p default-directory))
+           (name (format "*gc-sling: dry-run@%s*" remote-prefix)))
+      (cl-letf (((symbol-function 'gascity-command-execute)
+                 (lambda (cmd) (gascity-command-execution
+                                :command cmd :result "plan")))
+                ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              (gascity-sling--show-plan (gascity-command-sling))
+              (let ((buf (get-buffer name)))
+                (should buf)
+                (should (equal (file-remote-p
+                                (buffer-local-value 'default-directory buf))
+                               remote-prefix))))
+          (when (get-buffer name) (kill-buffer name)))))))
+
+(ert-deftest gascity-test-remote-compose-view ()
+  "A compose draft opened from a remote view is host-qualified and
+remotely pinned — the pin is what routes the `C-c C-c' gc call to the
+right city, so a stale same-named draft must be re-pinned, not trusted."
+  (gascity-test--with-mock-remote
+    (let* ((remote-prefix (file-remote-p default-directory))
+           (name (format "*gc-mail to mayor/@%s*" remote-prefix)))
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              ;; A drifted survivor of the same qualified name…
+              (with-current-buffer (get-buffer-create name)
+                (setq default-directory "/"))
+              (gascity-compose :buffer-name "*gc-mail to mayor/*"
+                               :header '(("To" . "mayor/"))
+                               :finish #'ignore)
+              (let ((buf (get-buffer name)))
+                (should buf)
+                ;; …is reused but re-pinned to the invoking city.
+                (should (equal (file-remote-p
+                                (buffer-local-value 'default-directory buf))
+                               remote-prefix))))
+          (when (get-buffer name) (kill-buffer name)))))))
+
+(ert-deftest gascity-test-remote-attach-buffer-pinned ()
+  "A remote attach buffer spawns locally but is PINNED remotely: to the
+agent's directory localized for the host when it exists there, else to
+the remote context the attach came from — so `M-x dired' in the attach
+buffer offers the city's host, never the local home (the gce-cvu
+user repro)."
+  (gascity-test--with-mock-remote
+    (let* ((remote-prefix (file-remote-p default-directory))
+           (remote-context default-directory)
+           (name (format "*gc-agent-sess@%s*" remote-prefix))
+           (workdir (file-local-name
+                     (expand-file-name (make-temp-file "gascity-test-wd" t))))
+           spawn-dir)
+      (cl-letf (((symbol-function 'gascity-terminal-tmux-session-exists-p)
+                 (lambda (&rest _) t))
+                ((symbol-function 'gascity-remote-find-executable)
+                 (lambda (n &optional _) n))
+                ((symbol-function 'gascity-terminal--attach-argv)
+                 (lambda (&rest _) '("true")))
+                ((symbol-function 'gascity-terminal--status-install)
+                 (lambda (&rest _) nil))
+                ((symbol-function 'beads-terminal-spawn)
+                 (lambda (_term buffer-name _argv dir _env)
+                   (setq spawn-dir dir)
+                   (with-current-buffer (get-buffer-create buffer-name)
+                     (setq default-directory dir)
+                     (current-buffer))))
+                ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              ;; With a work dir that exists on the host: pinned to it.
+              (gascity-terminal-attach-tmux "sess" nil workdir)
+              (let ((buf (get-buffer name)))
+                (should buf)
+                (should-not (file-remote-p spawn-dir))
+                (should (equal (buffer-local-value 'default-directory buf)
+                               (file-name-as-directory
+                                (concat remote-prefix workdir)))))
+              (kill-buffer name)
+              ;; Without one: pinned to the invoking remote context.
+              (gascity-terminal-attach-tmux "sess" nil nil)
+              (should (equal (buffer-local-value
+                              'default-directory (get-buffer name))
+                             remote-context)))
+          (when (get-buffer name) (kill-buffer name))
+          (delete-directory (concat remote-prefix workdir) t))))))
+
 (ert-deftest gascity-test-status-tick-skips-inflight-load ()
   "The auto-refresh tick never restarts loads still in flight (gce-90t #9).
 Bumping the refresh tick changes every `vui-use-async' key, which KILLS

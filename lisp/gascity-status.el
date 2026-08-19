@@ -34,7 +34,6 @@
 (require 'gascity-context)            ; pin-directory (view keyed to its city)
 (require 'gascity-domain)             ; typed session/agent objects
 (require 'gascity-reader)
-(require 'gascity-remote)             ; host-qualified buffer names
 (require 'gascity-command)
 (require 'gascity-command-status)
 (require 'gascity-section)
@@ -64,8 +63,8 @@
 (defconst gascity-status-buffer-name "*gascity-status*"
   "Base name of the gascity status dashboard buffer.
 For a remote city the live buffer's name is this qualified by the TRAMP
-prefix (`gascity-remote-buffer-name'), so a local and a remote dashboard
-coexist.")
+prefix (via `gascity-view-get-buffer-create'), so a local and a remote
+dashboard coexist.")
 
 ;;; Data shaping (pure)
 
@@ -553,18 +552,15 @@ the refresh timer and every at-point action keep resolving the same gc
 — and, remotely, the same host — no matter where a refresh is invoked
 from."
   (interactive)
-  (let* ((dir (gascity-context-pin-directory))
-         (name (gascity-remote-buffer-name gascity-status-buffer-name dir))
-         (buf (get-buffer-create name)))
+  (let ((buf (gascity-view-get-buffer-create gascity-status-buffer-name)))
     (with-current-buffer buf
-      (setq default-directory dir)
       (unless (derived-mode-p 'gascity-dashboard-mode)
         (gascity-dashboard-mode)))
     (unless (gascity-status--refresh-instance buf)
       ;; vui-mount switch-to-buffers internally; contain that so the buffer is
       ;; displayed once, via pop-to-buffer, on both the cold and refresh paths.
       (save-window-excursion
-        (vui-mount (vui-component 'gascity-status-app) name)))
+        (vui-mount (vui-component 'gascity-status-app) (buffer-name buf))))
     (pop-to-buffer buf)))
 
 (cl-defmethod gascity-command-execute-interactive ((_cmd gascity-command-status))

@@ -53,7 +53,6 @@
 (require 'gascity-context)            ; pin-directory (view keyed to its city)
 (require 'gascity-domain)             ; typed agent (the detail view's subject)
 (require 'gascity-reader)
-(require 'gascity-remote)             ; host-qualified buffer names
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters
 
@@ -72,11 +71,11 @@
 ;;; Buffer
 
 (defun gascity-session-detail--buffer-name (name)
-  "Return the detail buffer name for agent NAME.
-Host-qualified for a remote city (`gascity-remote-buffer-name', keyed
-off `default-directory'), so a local and a remote agent detail of the
-same name coexist."
-  (gascity-remote-buffer-name (format "*gascity-agent: %s*" name)))
+  "Return the base detail buffer name for agent NAME.
+The view-buffer factory (`gascity-view-get-buffer-create') qualifies it
+with the host for a remote city, so a local and a remote agent detail
+of the same name coexist."
+  (format "*gascity-agent: %s*" name))
 
 ;;; Data shaping (pure)
 
@@ -343,13 +342,9 @@ when the load succeeded but BEADS is empty."
 AGENT is the action object carried by a session-list row, a status
 dashboard agent row, or a rig dashboard agent row."
   (let* ((name (or (gascity-agent-name agent) (user-error "Agent has no name")))
-         (dir (gascity-context-pin-directory))
-         (buffer-name (gascity-session-detail--buffer-name name))
-         (buf (get-buffer-create buffer-name)))
+         (buf (gascity-view-get-buffer-create
+               (gascity-session-detail--buffer-name name))))
     (with-current-buffer buf
-      ;; Pin the buffer to the city it was opened for, so `g' keeps
-      ;; resolving the same gc (and, for a remote city, the same host).
-      (setq default-directory dir)
       (unless (derived-mode-p 'gascity-session-detail-mode)
         (gascity-session-detail-mode)))
     (unless (gascity-section-refresh-instance buf)
@@ -357,7 +352,7 @@ dashboard agent row, or a rig dashboard agent row."
       ;; displayed once, via pop-to-buffer, on both the cold and refresh paths.
       (save-window-excursion
         (vui-mount (vui-component 'gascity-session-detail-app :agent agent)
-                   buffer-name)))
+                   (buffer-name buf))))
     ;; Record the subject so the agent actions resolve it anywhere in the
     ;; buffer (set after mount so it survives the cold-mount render).
     (with-current-buffer buf

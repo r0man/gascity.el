@@ -25,6 +25,7 @@
 
 (require 'cl-lib)
 (require 'text-mode)
+(require 'gascity-context)   ; view-buffer factory (buffer keyed to its city)
 
 ;; The refresh helper lives in gascity-action, which requires this module;
 ;; call it by name (guarded) after a finish to avoid a load cycle.
@@ -81,8 +82,14 @@ read-only but rear-non-sticky, so the body that follows stays editable."
 HEADER is an alist of (LABEL . VALUE) lines.  FINISH is a function of one
 argument, the body string, run on `C-c C-c'; it builds and acts the gc
 command.  ORIGIN is the buffer whose view is refreshed after finishing.
-BODY pre-fills the editable area.  Returns the compose buffer."
-  (let ((buf (get-buffer-create (or buffer-name "*gc-compose*"))))
+BODY pre-fills the editable area.  Returns the compose buffer.
+
+The buffer is keyed and pinned to the city it is composed for
+\(`gascity-view-get-buffer-create', from the invoking view's
+`default-directory').  The pin is what routes the finish closure's gc
+call: composing from a remote city's view must run gc on that host, not
+wherever a same-named draft buffer happened to be created earlier."
+  (let ((buf (gascity-view-get-buffer-create (or buffer-name "*gc-compose*"))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)

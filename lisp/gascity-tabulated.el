@@ -220,16 +220,14 @@ re-derived here on every refresh so it tracks the filter across `g'."
 
 (defun gascity-tabulated--show (buffer-name mode-sym refresh-fn)
   "Pop to BUFFER-NAME in major mode MODE-SYM and run REFRESH-FN.
-The buffer is keyed to the city it is opened for: BUFFER-NAME is
-host-qualified for a remote city (`gascity-remote-buffer-name', so a
-local and a remote list coexist) and the buffer's `default-directory' is
-pinned to that city's root (`gascity-context-pin-directory'), so `g'
-refreshes and at-point actions keep resolving the same gc — and,
-remotely, the same host — regardless of where they are invoked from."
-  (let* ((dir (gascity-context-pin-directory))
-         (buf (get-buffer-create (gascity-remote-buffer-name buffer-name dir))))
+The buffer comes from `gascity-view-get-buffer-create', so it is keyed
+to the city it is opened for: BUFFER-NAME is host-qualified for a
+remote city (a local and a remote list coexist) and the buffer's
+`default-directory' is pinned to that city's root, so `g' refreshes and
+at-point actions keep resolving the same gc — and, remotely, the same
+host — regardless of where they are invoked from."
+  (let ((buf (gascity-view-get-buffer-create buffer-name)))
     (with-current-buffer buf
-      (setq default-directory dir)
       (unless (derived-mode-p mode-sym) (funcall mode-sym))
       (funcall refresh-fn))
     (pop-to-buffer buf)))
@@ -861,8 +859,10 @@ marker).  The entry id is the typed message, so `RET' can show every field."
 (cl-defmethod gascity-at-point-visit ((message gascity-mail))
   "Visit a mail message: show its typed fields in a read-only view buffer.
 Renders the data already fetched, without contacting `gc'; each slot of the
-`gascity-mail' is shown as \"slot: value\"."
-  (let ((buf (get-buffer-create "*gascity-mail-message*")))
+`gascity-mail' is shown as \"slot: value\".  The buffer is keyed and
+pinned to the inbox's city (`gascity-view-get-buffer-create'), so a
+remote city's message view carries that host's `default-directory'."
+  (let ((buf (gascity-view-get-buffer-create "*gascity-mail-message*")))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)

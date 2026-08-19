@@ -399,9 +399,15 @@ LOCAL ssh running tmux there (`gascity-terminal--attach-argv' — ssh
 methods only, a `user-error' otherwise) with tmux resolved to the same
 host path the probes use (`gascity-remote-find-executable' — `ssh HOST
 cmd' runs no login shell, so a Guix profile tmux may be off its PATH),
-DIR (a host-local path on the city) is ignored in favour of the local
-home directory, and the buffer name is host-qualified so local and
-remote attaches coexist.
+and the buffer name is host-qualified so local and remote attaches
+coexist.  DIR (a host-local path on the city) cannot be the spawn
+directory — the backend spawns the local ssh from the local home — but
+the buffer's `default-directory' is then pinned remotely: to DIR
+re-prefixed for the host when that directory exists there, else to the
+remote `default-directory' the attach was invoked from.  The pin does
+not affect the running ssh; it makes `dired'/`find-file' from the
+attach buffer default to the agent's directory on the city's host
+instead of the local home.
 
 When `gascity-terminal-mode-line-status' is non-nil, the session's tmux
 status bar is hidden and mirrored in the terminal buffer's mode line (see
@@ -430,6 +436,25 @@ status bar is hidden and mirrored in the terminal buffer's mode line (see
     (when (fboundp 'gascity--log)
       (gascity--log 'info "tmux attach: %s" (mapconcat #'identity argv " ")))
     (let ((buf (gascity-terminal-run argv buf-name (if remote "~/" dir))))
+      (when (and remote (buffer-live-p buf))
+        ;; The local ssh had to spawn from a local directory, but the
+        ;; buffer must belong to the city: pin the agent's directory on
+        ;; the host (else the city context the attach came from), so
+        ;; user commands (dired, find-file) default remotely.
+        ;; `non-essential' keeps the existence probe off any NEW
+        ;; connection (the city's is already open from the session
+        ;; probe above), and a probe error just falls back to REMOTE.
+        (with-current-buffer buf
+          (setq default-directory
+                (or (let ((non-essential t))
+                      (ignore-errors
+                        (when-let* ((localized (gascity-remote-localize-path
+                                                dir remote))
+                                    ((stringp localized))
+                                    ((file-remote-p localized))
+                                    ((file-directory-p localized)))
+                          (file-name-as-directory localized))))
+                    remote))))
       (when (and gascity-terminal-mode-line-status (buffer-live-p buf))
         (gascity-terminal--status-install buf session socket remote))
       buf)))
