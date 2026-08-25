@@ -173,12 +173,24 @@ which lives outside the buffer text."
         (setq lines (1+ lines)))
       lines)))
 
+(defun screenshot--chrome-rows (buffer)
+  "Return the frame rows BUFFER's chrome takes beyond its text area.
+`set-frame-size' counts every screen line of the frame, not just the
+selected window's text: the mode line, the header line when the buffer
+has one, and the minibuffer window each take a row.  Leaving them out
+makes the fitted frame short by up to three rows, which clips the tail
+of the very content it was fitted to."
+  (+ 1                                  ; mode line
+     (if (buffer-local-value 'header-line-format buffer) 1 0)
+     1))                                ; minibuffer window
+
 (defun screenshot-fit-frame (buffer &optional fixed-rows)
   "Resize the selected frame to fit BUFFER's content.
 Width always fits the content (clamped to the col bounds).  Height fits
-the content too, unless FIXED-ROWS is non-nil, in which case the frame
-keeps that many rows (used for paginated `tabulated-list-mode' views
-whose page size tracks the window height)."
+the content plus its chrome (`screenshot--chrome-rows'), unless
+FIXED-ROWS is non-nil, in which case the frame keeps that many rows
+\(used for paginated `tabulated-list-mode' views whose page size tracks
+the window height)."
   (let* ((cols (min screenshot-max-cols
                     (max screenshot-min-cols
                          (+ (screenshot--content-cols buffer)
@@ -187,6 +199,7 @@ whose page size tracks the window height)."
                    (min screenshot-max-rows
                         (max screenshot-min-rows
                              (+ (screenshot--content-rows buffer)
+                                (screenshot--chrome-rows buffer)
                                 screenshot-row-pad))))))
     (set-frame-size (selected-frame) cols rows)
     (redisplay t)))

@@ -122,8 +122,9 @@ cached behind your back and nothing is guessed --- what you see is what
 @itemize @bullet
 @item
 @strong{A status dashboard} (@pxref{The Status Dashboard}) --- the whole
-city at a glance: the controller, each rig, and every agent, colored by
-state and collapsible per rig.
+city at a glance: the controller, each rig, every agent (pooled ones
+grouped under their template) and the beads store's health, colored by
+state and collapsible per rig and per pool.
 @item
 @strong{Detail views} (@pxref{The Rig Dashboard}, @pxref{Session
 Detail}) --- a single rig or a single agent, with its work, mail and
@@ -238,10 +239,11 @@ agent, in one scrollable, collapsible buffer.
 
 @shot{status-dark, The status dashboard (ef-elea-dark)}
 
-Each rig is a collapsible section; a filled bullet (@code{●}) marks a
-running agent and a hollow one (@code{○}) a stopped agent.  Move by line
-with @kbd{n} and @kbd{p}, jump between sections with @kbd{N} and
-@kbd{P}, fold a rig with @key{TAB}, and reload with @kbd{g}.  Press
+Each rig is a collapsible section, as is each scaled pool of agents
+within it; a filled bullet (@code{●}) marks a running agent and a hollow
+one (@code{○}) a stopped agent.  Move by line with @kbd{n} and @kbd{p},
+jump between sections with @kbd{N} and @kbd{P}, fold a rig or a pool
+with @key{TAB}, and reload with @kbd{g}.  Press
 @kbd{i} on an agent to open its detail view, or @key{RET} to attach its
 terminal.  These keys are shared by every gascity buffer; they are
 described once in @ref{Buffers and Navigation}.
@@ -396,19 +398,25 @@ tooltip carrying the full value.
 @findex gascity-status
 
 @kbd{M-x gascity-status} opens @file{*gascity-status*} in
-@code{gascity-dashboard-mode}.  It joins @code{gc status} with @code{gc
-session list} so that every agent row also carries a worktree and a tmux
-target, and renders the result as a city overview.
+@code{gascity-dashboard-mode}.  It joins three reads --- @code{gc
+status}, @code{gc session list} (so that every agent row also carries a
+worktree and a tmux target) and @code{gc agent list} (for each pool's
+bounds) --- and renders the result as a city overview showing what
+@code{gc status} prints.
 
 @shot{status-light, The status dashboard (ef-cyprus)}
 
 @section What it shows
 
-The header names the city and summarizes the controller (up or down),
-health (ok or degraded) and the running agent count.  A @strong{City}
-block lists the city-scope agents (dogs, the deacon, the mayor).  Then
-one collapsible section per rig shows the rig name (with
-@samp{(suspended)} when applicable) and its agents:
+The header names the city and its path, then summarizes the controller
+(the mode it runs under and the PID holding authority, or @samp{down}),
+health (ok or degraded), whether the city is suspended, the running
+agent count and the session counts.
+
+A @strong{City} block lists the city-scope agents (dogs, the deacon, the
+mayor).  Then one collapsible section per rig shows the rig name (with
+@samp{(suspended)} when applicable) and its path, followed by its
+agents:
 
 @table @asis
 @item @code{● name}
@@ -417,12 +425,43 @@ A running agent (the @code{gascity-running} face).
 A stopped agent (the @code{gascity-stopped} face).
 @end table
 
-@cindex stale-while-revalidate
-The two reads run asynchronously, and @kbd{g} re-fetches them while
-leaving the last good snapshot on screen, so your point and your
-collapsed rigs survive a refresh.  If the session read fails, a one-line
-note warns that the terminal and Dired keys are disabled for this
+@cindex pools
+@cindex scaled agents
+Within either scope, the members of a scaled pool are not siblings of
+the singletons: they nest under their template, whose header carries the
+pool's bounds, exactly as @code{gc status} prints them.
+
+@example
+▼ gastown.polecat  scaled (min=0, max=5)
+    ● gastown.furiosa
+    ○ gastown.nux
+@end example
+
+@noindent
+A pool group is collapsible in its own right --- @key{TAB} or @key{RET}
+on its header folds it away, and like a rig's, the fold survives a
 refresh.
+
+A @strong{Store health} block closes the buffer with the beads store's
+path, size, live row count and size-per-row ratio.  When that ratio
+crosses the threshold @command{gc} reports, the line switches to the
+@code{gascity-failed} face --- the store has accumulated garbage and
+wants a @code{gc dolt gc}.
+
+@cindex stale-while-revalidate
+The three reads run asynchronously, and @kbd{g} re-fetches them while
+leaving the last good snapshot on screen, so your point and your
+collapsed sections survive a refresh.  If the session read fails, a
+one-line note warns that the terminal and Dired keys are disabled for
+this refresh; if the agent read fails, the pool grouping is simply
+skipped and every agent renders as its own row.
+
+@quotation Note
+@command{gc status} additionally prints an API URL and a @samp{Named
+sessions} block (each named agent's @samp{always}/@samp{on_demand} mode
+and awake state).  Neither is exposed by any @code{--json} payload, so
+neither is shown here.
+@end quotation
 
 @section Keys
 
@@ -430,16 +469,16 @@ refresh.
 @item g
 @kindex g @r{(status)}
 @findex gascity-status-refresh
-Reload, preserving collapsed rigs and point.
+Reload, preserving collapsed sections and point.
 @item @key{TAB}
 @kindex TAB @r{(status)}
 @findex gascity-status-toggle-section
-Toggle the rig section at point.
+Toggle the rig section or pool group at point.
 @item @key{RET}
 @kindex RET @r{(status)}
 @findex gascity-status-activate
-On a rig header, toggle collapse; on an agent row, attach its tmux
-terminal.
+On a rig or pool header, toggle collapse; on an agent row, attach its
+tmux terminal.
 @item i
 @kindex i @r{(status)}
 @findex gascity-polecat-detail-at-point

@@ -126,6 +126,14 @@ sessions, so `agent-name' is preferred (see `gascity-session-qualified-name').")
     :initarg :rig :initform nil :type (or null string) :json-key rig
     :accessor gascity-session-rig
     :documentation "The rig this session belongs to.")
+   (template
+    :initarg :template :initform nil :type (or null string) :json-key template
+    :accessor gascity-session-template
+    :documentation "Qualified name of the pool template this session was
+spawned from, e.g. \"gascity.el/gastown.polecat\" for a polecat.  The join
+key that nests a pool member under its template on the status board: a named
+member's own name (\"gastown.furiosa\") carries no trace of its pool, and
+`gc agent list' reports the templates without their members.")
    (state
     :initarg :state :initform nil :type (or null string) :json-key state
     :accessor gascity-session-state

@@ -808,6 +808,206 @@ The join yields a typed `gascity-agent'."
     (should (equal (gascity-agent-socket obj) "sock"))
     (should (eq (gascity-agent-running obj) t))))
 
+;;; Status pool grouping (gce-v4c)
+
+(defconst gascity-test--agent-list
+  '((agents . [((qualified_name . "bd.dog") (pool . ((min . 0) (max . 2))))
+               ((qualified_name . "gastown.mayor") (pool . ((min . 0) (max . 1))))
+               ((qualified_name . "gascity.el/gastown.polecat")
+                (pool . ((min . 0) (max . 5))))
+               ((qualified_name . "gascity.el/gastown.witness")
+                (pool . ((min . 0) (max . 1))))
+               ((qualified_name . "no-pool-agent"))]))
+  "A `gc agent list --json' payload: the configured agents and their pools.")
+
+(ert-deftest gascity-test-status-pool-templates ()
+  "Pool bounds are lifted from `gc agent list', the only payload carrying them.
+An entry without a `pool' block contributes no template."
+  (should (equal (gascity-status--pool-templates
+                  (alist-get 'agents gascity-test--agent-list))
+                 '(("bd.dog" 0 2)
+                   ("gastown.mayor" 0 1)
+                   ("gascity.el/gastown.polecat" 0 5)
+                   ("gascity.el/gastown.witness" 0 1)))))
+
+(ert-deftest gascity-test-status-scaled-p ()
+  "A pool capped at exactly one member is a singleton, not a scaled pool.
+An unbounded pool (gc reports max as -1) is scaled."
+  (should-not (gascity-status--scaled-p '("gastown.mayor" 0 1)))
+  (should (gascity-status--scaled-p '("bd.dog" 0 2)))
+  (should (gascity-status--scaled-p '("gascity.el/claude" 0 -1))))
+
+(ert-deftest gascity-test-status-pool-of-template-itself ()
+  "An agent that IS a configured template stands alone — never nested.
+`gc status' prints the single member of a max=1 pool as a plain row named
+after the template (gastown.mayor, gascity.el/gastown.witness); nesting it
+under itself would invent a group of one."
+  (let ((templates '(("gastown.mayor" 0 1) ("gascity.el/gastown.polecat" 0 5))))
+    (should-not (gascity-status--pool-of "gastown.mayor" nil templates))))
+
+(ert-deftest gascity-test-status-pool-of-numbered ()
+  "A `TEMPLATE-N' member joins its pool by stripping the numeric suffix."
+  (let ((templates '(("bd.dog" 0 2) ("gastown.dog" 0 3))))
+    (should (equal (gascity-status--pool-of "bd.dog-1" nil templates)
+                   '("bd.dog" 0 2)))
+    (should (equal (gascity-status--pool-of "gastown.dog-3" nil templates)
+                   '("gastown.dog" 0 3)))
+    ;; A numeric suffix naming no configured template groups nothing.
+    (should-not (gascity-status--pool-of "stray.thing-1" nil templates))))
+
+(ert-deftest gascity-test-status-pool-of-session-template ()
+  "A running member joins its pool through its session's `template' field.
+The authoritative join for a named member: the agent name (\"gastown.furiosa\")
+carries no trace of the pool, and here its namespace does not either."
+  (let* ((templates '(("gascity.el/gastown.polecat" 0 5)))
+         (smap (gascity-status--session-map
+                (vector '((agent_name . "gascity.el/other.furiosa")
+                          (template . "gascity.el/gastown.polecat")))))
+         (session (gethash "gascity.el/other.furiosa" smap)))
+    (should (equal (gascity-session-template session)
+                   "gascity.el/gastown.polecat"))
+    ;; The namespace ("gascity.el/other.") holds no scaled pool, so only the
+    ;; session's own template can make this join.
+    (should-not (gascity-status--namespace-pool "gascity.el/other.furiosa"
+                                                templates))
+    (should (equal (gascity-status--pool-of "gascity.el/other.furiosa"
+                                            session templates)
+                   '("gascity.el/gastown.polecat" 0 5)))))
+
+(ert-deftest gascity-test-status-pool-of-namespace ()
+  "A stopped named member joins its pool through its namespace.
+The polecat case: four of a rig's five polecats are stopped, so they have no
+session and no `template' field, yet `gc status' still nests all five.  They
+share \"gascity.el/gastown.\" with exactly one scaled pool, which is the
+join.  An ambiguous namespace (two scaled pools) leaves the agent standalone
+rather than guessing it into the wrong group."
+  (let ((templates '(("gascity.el/gastown.polecat" 0 5)
+                     ("gascity.el/gastown.witness" 0 1)
+                     ("gascity.el/claude" 0 -1))))
+    (should (equal (gascity-status--pool-of "gascity.el/gastown.nux" nil templates)
+                   '("gascity.el/gastown.polecat" 0 5)))
+    ;; The rig-level namespace holds two scaled pools (claude and, by prefix,
+    ;; the polecats), so a bare "gascity.el/thing" stays standalone.
+    (should-not (gascity-status--pool-of "gascity.el/thing" nil templates))))
+
+(defconst gascity-test--status-agents
+  (vector '((name . "bd.dog-1") (qualified_name . "bd.dog-1")
+            (scope . "city") (running))
+          '((name . "mayor") (qualified_name . "gastown.mayor")
+            (scope . "city") (running . t))
+          '((name . "bd.dog-2") (qualified_name . "bd.dog-2")
+            (scope . "city") (running)))
+  "A `gc status' agent list: a pool's members interleaved with a singleton.")
+
+(ert-deftest gascity-test-status-group-agents ()
+  "Members nest under their template; the pool takes its first member's slot.
+`gc status' reports agents flat, so bd.dog-1 and bd.dog-2 arrive as siblings
+of gastown.mayor — even split by it.  Grouping must collect both under the
+one pool while leaving the standalone agent where the payload put it."
+  (let* ((templates '(("bd.dog" 0 2) ("gastown.mayor" 0 1)))
+         (groups (gascity-status--group-agents
+                  gascity-test--status-agents templates
+                  (make-hash-table :test 'equal))))
+    (should (equal (mapcar #'car groups) '(pool agent)))
+    (should (equal (nth 1 (car groups)) "bd.dog"))
+    (should (equal (list (nth 2 (car groups)) (nth 3 (car groups))) '(0 2)))
+    (should (equal (mapcar (lambda (m) (alist-get 'qualified_name m))
+                           (nth 4 (car groups)))
+                   '("bd.dog-1" "bd.dog-2")))
+    (should (equal (alist-get 'qualified_name (nth 1 (cadr groups)))
+                   "gastown.mayor"))))
+
+(ert-deftest gascity-test-status-group-agents-without-templates ()
+  "With no templates the dashboard degrades to the flat list it showed before.
+The `gc agent list' read is an enrichment: while it is in flight, or after it
+fails, every agent must still render — as its own row."
+  (let ((groups (gascity-status--group-agents
+                 gascity-test--status-agents nil
+                 (make-hash-table :test 'equal))))
+    (should (equal (mapcar #'car groups) '(agent agent agent)))
+    (should (equal (mapcar (lambda (g) (alist-get 'qualified_name (nth 1 g)))
+                           groups)
+                   '("bd.dog-1" "gastown.mayor" "bd.dog-2")))))
+
+(ert-deftest gascity-test-status-group-key ()
+  "Group keys are namespaced by kind, so a pool and an agent cannot collide."
+  (should (equal (gascity-status--group-key '(pool "bd.dog" 0 2 nil))
+                 "pool:bd.dog"))
+  (should (equal (gascity-status--group-key
+                  '(agent ((qualified_name . "bd.dog"))))
+                 "agent:bd.dog")))
+
+(ert-deftest gascity-test-status-pool-label ()
+  "The pool header states the bounds `gc status' prints; -1 reads as ∞."
+  (should (equal (gascity-status--pool-label 0 5) "scaled (min=0, max=5)"))
+  (should (equal (gascity-status--pool-label 1 -1) "scaled (min=1, max=∞)")))
+
+(ert-deftest gascity-test-status-short-name ()
+  "Inside a rig section a name drops the rig prefix it is already scoped by."
+  (should (equal (gascity-status--short-name "gascity.el/gastown.polecat"
+                                             "gascity.el")
+                 "gastown.polecat"))
+  (should (equal (gascity-status--short-name "bd.dog" nil) "bd.dog"))
+  (should (equal (gascity-status--short-name "bd.dog" "gascity.el") "bd.dog")))
+
+;;; Status header parity (gce-v4c)
+
+(ert-deftest gascity-test-status-controller-label ()
+  "The controller line reports its mode and PID, not a bare up/down."
+  (should (equal (gascity-status--controller-label
+                  '((running . t) (pid . 16949) (mode . "supervisor")))
+                 "supervisor (PID 16949)"))
+  (should (equal (gascity-status--controller-label '((running . t))) "up"))
+  (should (equal (gascity-status--controller-label
+                  '((running) (pid . 16949) (mode . "supervisor")))
+                 "down"))
+  (should (equal (gascity-status--controller-label nil) "down")))
+
+(ert-deftest gascity-test-status-sessions-label ()
+  "Suspended sessions are counted only by the session payload's summary.
+`gc status' summary knows `active_sessions' alone, so it is the fallback
+while the session-list read is in flight."
+  (should (equal (gascity-status--sessions-label
+                  nil '((active . 9) (suspended . 2)))
+                 "9 active, 2 suspended"))
+  (should (equal (gascity-status--sessions-label
+                  '((summary . ((active_sessions . 7)))) nil)
+                 "7 active"))
+  (should (equal (gascity-status--sessions-label nil nil) "0 active")))
+
+(ert-deftest gascity-test-status-format-bytes ()
+  "Store size renders in the decimal units `gc status' uses."
+  (should (equal (gascity-status--format-bytes 227124795) "227.1 MB"))
+  (should (equal (gascity-status--format-bytes 2500000000) "2.5 GB"))
+  (should (equal (gascity-status--format-bytes 1500) "1.5 kB"))
+  (should (equal (gascity-status--format-bytes 512) "512 B"))
+  (should (equal (gascity-status--format-bytes nil) "?")))
+
+(ert-deftest gascity-test-status-ratio-label ()
+  "The MB-per-row ratio carries gc's threshold when gc reports one."
+  (should (equal (gascity-status--ratio-label 0.12695 1)
+                 "0.13 MB/row (threshold 1.0 MB/row)"))
+  (should (equal (gascity-status--ratio-label 0.5 nil) "0.50 MB/row"))
+  (should (equal (gascity-status--ratio-label nil 1) "ratio ?")))
+
+(ert-deftest gascity-test-status-store-health-vnode ()
+  "The store-health block renders gc's path, size, rows and ratio.
+A payload without `store_health' (an older gc) renders no section at all."
+  (should-not (gascity-status--store-health-vnode '((summary . ((total_agents . 1))))))
+  (let ((text (gascity-test--vnode-text
+               (gascity-status--store-health-vnode
+                '((summary . ((store_health . ((path . "/city/.beads/dolt")
+                                               (size_bytes . 227124795)
+                                               (live_rows . 1789)
+                                               (ratio_mb_per_row . 0.12695)
+                                               (warning)
+                                               (threshold_mb_per_row . 1))))))))))
+    (should (string-search "Store health" text))
+    (should (string-search "/city/.beads/dolt" text))
+    (should (string-search "227.1 MB" text))
+    (should (string-search "1789 live rows" text))
+    (should (string-search "0.13 MB/row (threshold 1.0 MB/row)" text))))
+
 (ert-deftest gascity-test-status-sessions-note ()
   "A sessions-load hint appears only when that load is not ready.
 Without it, a failed/pending session load degrades silently — agent rows
@@ -826,28 +1026,35 @@ lose `work_dir'/`session_name', so `d'/`t' no-op with no explanation."
     (and (search-forward needle nil t) t)))
 
 (defun gascity-test--press-header (name &optional command)
-  "Run COMMAND on the collapsible rig header whose label contains NAME.
-NAME is matched against the buffer's visible text; the rig name appears
-only in its header, so the first match lands on that header.  COMMAND
-defaults to `gascity-status-activate' (what `RET' runs); pass
-`gascity-status-toggle-section' to exercise the `TAB' toggle instead.  Both
-flip the rig's collapse via the `gascity-rig' text property on the header."
+  "Run COMMAND on the collapsible header whose label contains NAME.
+NAME is matched against the buffer's visible text; a rig's name and a pool
+template's short name each appear only in their own header, so the first
+match lands on that header.  COMMAND defaults to `gascity-status-activate'
+\(what `RET' runs); pass `gascity-status-toggle-section' to exercise the
+`TAB' toggle instead.  Both flip the section's collapse via the
+`gascity-rig' / `gascity-pool' text property on the header."
   (goto-char (point-min))
   (unless (search-forward name nil t)
     (error "rig header %S not found in dashboard" name))
   (goto-char (match-beginning 0))
   (funcall (or command #'gascity-status-activate)))
 
-(defun gascity-test--status-async-stub (status-box sessions-box)
+(defun gascity-test--status-async-stub (status-box sessions-box &optional agents-box)
   "Return a `gascity-reader-read-async' stub that parks resolve callbacks.
 The `status' load's callback is stored in the car of STATUS-BOX and the
 `session list' load's in SESSIONS-BOX, so a test can fire them on demand
 and drive the dashboard through pending -> ready transitions
-deterministically — no live `gc', no process timing."
+deterministically — no live `gc', no process timing.  The `agent list' load
+\(pool bounds) parks in AGENTS-BOX when one is supplied; without it the read
+resolves immediately with no configured agents, which is what a test that
+does not care about pool grouping wants: no templates, so every agent
+renders flat, and no load left pending to trip the auto-refresh guard."
   (lambda (args callback &optional _errback)
     (cond
      ((equal args '("status")) (setcar status-box callback))
      ((equal args '("session" "list")) (setcar sessions-box callback))
+     ((equal args '("agent" "list"))
+      (if agents-box (setcar agents-box callback) (funcall callback '((agents . [])))))
      (t (error "unexpected async args: %S" args)))
     nil))
 
@@ -4139,6 +4346,149 @@ unguarded timer would starve the dashboard forever."
                   (should (= refreshes 1)))))
           (when (get-buffer "*gascity-status-test*")
             (kill-buffer "*gascity-status-test*")))))))
+
+;;; Status dashboard parity with `gc status' (gce-v4c)
+
+(defconst gascity-test--status-parity-payload
+  '((ok . t)
+    (city_name . "bright-lights")
+    (city_path . "/home/roman/bright-lights")
+    (controller . ((running . t) (pid . 16949) (mode . "supervisor")))
+    (suspended)
+    (health . ((usable . t) (degraded)))
+    (summary . ((total_agents . 25) (running_agents . 9) (active_sessions . 9)
+                (store_health . ((path . "/home/roman/bright-lights/.beads/dolt")
+                                 (size_bytes . 227124795)
+                                 (live_rows . 1789)
+                                 (ratio_mb_per_row . 0.12695628563443265)
+                                 (warning)
+                                 (threshold_mb_per_row . 1)))))
+    (rigs . [((name . "gascity.el") (path . "/home/roman/workspace/gascity.el"))])
+    (agents . [((name . "bd.dog-1") (qualified_name . "bd.dog-1")
+                (scope . "city") (running))
+               ((name . "bd.dog-2") (qualified_name . "bd.dog-2")
+                (scope . "city") (running))
+               ((name . "mayor") (qualified_name . "gastown.mayor")
+                (scope . "city") (running . t))
+               ((name . "gastown.furiosa")
+                (qualified_name . "gascity.el/gastown.furiosa")
+                (scope . "rig") (running . t))
+               ((name . "gastown.nux") (qualified_name . "gascity.el/gastown.nux")
+                (scope . "rig") (running))
+               ((name . "witness") (qualified_name . "gascity.el/gastown.witness")
+                (scope . "rig") (running . t))]))
+  "A `gc status --json' payload shaped like a real city's.
+One numbered city pool (bd.dog), one city singleton, and a rig holding a
+running polecat, a stopped polecat, and a singleton witness.")
+
+(defconst gascity-test--status-parity-sessions
+  '((sessions . [((agent_name . "gascity.el/gastown.furiosa")
+                  (template . "gascity.el/gastown.polecat")
+                  (work_dir . "/wd") (session_name . "tm"))])
+    (summary . ((total . 9) (active . 9) (suspended . 0))))
+  "A `gc session list --json' payload: one live polecat, plus the counts.")
+
+(defun gascity-test--mount-status-dashboard (body)
+  "Mount the status dashboard on the parity payloads and call BODY in it.
+All three reads resolve synchronously, so BODY sees a fully-rendered
+dashboard; the buffer is killed afterwards."
+  (let ((vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback)
+                 (funcall callback
+                          (cond
+                           ((equal args '("status"))
+                            gascity-test--status-parity-payload)
+                           ((equal args '("session" "list"))
+                            gascity-test--status-parity-sessions)
+                           ((equal args '("agent" "list"))
+                            gascity-test--agent-list)
+                           (t (error "unexpected async args: %S" args))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (funcall body)))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
+(ert-deftest gascity-test-status-dashboard-parity ()
+  "The dashboard renders every `gc status' field the JSON exposes (gce-v4c).
+It used to show the city name, a flat agent list and the rig sections only —
+a fraction of what `gc status' prints.  Pin the rest: the city path, the
+controller's mode and PID, the suspended flag, the session counts, each
+rig's path, the store-health block, and pool members nested under their
+template with its bounds instead of masquerading as unrelated agents.
+
+Not asserted here because no `gc --json' payload carries them: the API URL
+and the \"Named sessions\" block (mode / awake state).  See the TODO in
+gascity-status.el."
+  (gascity-test--mount-status-dashboard
+   (lambda ()
+     ;; Header: city + path, controller mode/PID, health, suspended, counts.
+     (should (gascity-test--buffer-contains-p
+              "Gas City: bright-lights  /home/roman/bright-lights"))
+     (should (gascity-test--buffer-contains-p
+              "controller supervisor (PID 16949) · health ok · not suspended"))
+     (should (gascity-test--buffer-contains-p
+              "agents 9/25 running · sessions 9 active, 0 suspended"))
+     ;; A city pool groups its members under the template's bounds.
+     (should (gascity-test--buffer-contains-p "▼ bd.dog  scaled (min=0, max=2)"))
+     (should (gascity-test--buffer-contains-p "    ○ bd.dog-1"))
+     (should (gascity-test--buffer-contains-p "    ○ bd.dog-2"))
+     ;; …while a singleton stays a plain row at the outer indent.
+     (should (gascity-test--buffer-contains-p "  ● mayor"))
+     ;; The rig header carries its path, as `gc status''s "Rigs:" block does.
+     (should (gascity-test--buffer-contains-p
+              "▼ gascity.el  /home/roman/workspace/gascity.el"))
+     ;; Both polecats nest: the running one joins via its session template,
+     ;; the stopped one (no session at all) via its namespace.
+     (should (gascity-test--buffer-contains-p
+              "▼ gastown.polecat  scaled (min=0, max=5)"))
+     (should (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
+     (should (gascity-test--buffer-contains-p "    ○ gastown.nux"))
+     (should (gascity-test--buffer-contains-p "  ● witness"))
+     ;; Store health.
+     (should (gascity-test--buffer-contains-p "Store health"))
+     (should (gascity-test--buffer-contains-p "/home/roman/bright-lights/.beads/dolt"))
+     (should (gascity-test--buffer-contains-p
+              "227.1 MB · 1789 live rows · 0.13 MB/row (threshold 1.0 MB/row)")))))
+
+(ert-deftest gascity-test-status-pool-collapse ()
+  "A pool group collapses like a rig section, and the state survives a refresh.
+RET on the pool header hides its members; the collapse lives in the root
+component's state, so the stale-while-revalidate refresh keeps it."
+  (gascity-test--mount-status-dashboard
+   (lambda ()
+     (should (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
+     (gascity-test--press-header "gastown.polecat")
+     (should (gascity-test--buffer-contains-p "▶ gastown.polecat"))
+     (should-not (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
+     ;; The rig section around it is untouched.
+     (should (gascity-test--buffer-contains-p "▼ gascity.el"))
+     ;; A refresh re-resolves every read; the collapse survives it.
+     (gascity-status--refresh-instance (current-buffer))
+     (should (gascity-test--buffer-contains-p "▶ gastown.polecat"))
+     (should-not (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
+     ;; TAB toggles it back open — the same section toggle RET performs.
+     (gascity-test--press-header "gastown.polecat"
+                                 #'gascity-status-toggle-section)
+     (should (gascity-test--buffer-contains-p "▼ gastown.polecat"))
+     (should (gascity-test--buffer-contains-p "    ● gastown.furiosa")))))
+
+(ert-deftest gascity-test-status-pool-line-id ()
+  "A pool header has a semantic id, so point holds it across a re-render.
+Without one, `gascity-section--line-id' returned nil on the header and the
+cursor fell back to vui's positional restore — which drops point to the top
+of the buffer when the rows above it change."
+  (gascity-test--mount-status-dashboard
+   (lambda ()
+     (goto-char (point-min))
+     (should (search-forward "gastown.polecat" nil t))
+     (should (equal (gascity-section--line-id)
+                    '(pool . "gascity.el/gastown.polecat"))))))
 
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

@@ -185,18 +185,21 @@ property starts past its leading indent, not at column 0, so a bare
 (defun gascity-section--line-id ()
   "Return a semantic identifier for the row on the current line, or nil.
 Reuses the identity text properties the vui dashboards already stamp, most
-specific first: a `gascity-agent' object (by name), a `gascity-bead' id, then a
-`gascity-rig' name.  Returns a cons of (KIND . IDENTITY-STRING) — stable across
-a re-render even when rows are added, removed, or reordered, and comparable
-with `equal' — or nil on a line carrying no such identity (a blank line or a
-bare city/section header), which the caller leaves to vui's own restoration."
+specific first: a `gascity-agent' object (by name), a `gascity-bead' id, a
+`gascity-rig' name, then a `gascity-pool' template name.  Returns a cons of
+\(KIND . IDENTITY-STRING) — stable across a re-render even when rows are
+added, removed, or reordered, and comparable with `equal' — or nil on a line
+carrying no such identity (a blank line or a bare city/section header), which
+the caller leaves to vui's own restoration."
   (let ((agent (gascity-section--line-property 'gascity-agent))
         (bead (gascity-section--line-property 'gascity-bead))
-        (rig (gascity-section--line-property 'gascity-rig)))
+        (rig (gascity-section--line-property 'gascity-rig))
+        (pool (gascity-section--line-property 'gascity-pool)))
     (cond
      ((gascity-agent-p agent) (cons 'agent (or (gascity-agent-name agent) "")))
      ((and (stringp bead) (not (string-empty-p bead))) (cons 'bead bead))
-     ((and (stringp rig) (not (string-empty-p rig))) (cons 'rig rig)))))
+     ((and (stringp rig) (not (string-empty-p rig))) (cons 'rig rig))
+     ((and (stringp pool) (not (string-empty-p pool))) (cons 'pool pool)))))
 
 (defun gascity-section--restore-cursor-to-id (id col)
   "Move point to the first line whose semantic id is ID, then to column COL.
