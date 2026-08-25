@@ -1,5 +1,7 @@
 # gascity.el
 
+⚠️ Status: Experimental
+
 A [Gas City](https://github.com/gastownhall/gascity) porcelain inside Emacs,
 integrated with [beads.el](https://github.com/r0man/beads.el).
 
