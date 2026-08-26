@@ -113,6 +113,28 @@ shell will share this setting.)
                  (const :tag "Term mode (built-in)" term))
   :group 'gascity)
 
+(defcustom gascity-terminal-unshadow-minor-modes '(pixel-scroll-precision-mode)
+  "Global minor modes whose keymaps are neutralised in gascity terminals.
+A terminal buffer is a full-screen application, not text: every key the
+buffer does not need for Emacs itself belongs to the program on the far
+end of the pty.  The backends do bind those keys — ghostel's semi-char
+map and vterm's `vterm-mode-map' both forward `<prior>'/`<next>' to the
+terminal — but that is the buffer's LOCAL map, which every enabled
+minor-mode map outranks.  A global minor mode binding the same key
+therefore swallows it: with `pixel-scroll-precision-mode' on,
+PageUp/PageDown scroll the Emacs window instead of paging tmux's
+copy-mode — and the Emacs window has nothing to scroll, since a tmux
+client runs on the alternate screen and the buffer holds only the
+visible screen.
+
+Each mode named here is given an empty keymap in the terminal buffer's
+`minor-mode-overriding-map-alist': its bindings are suppressed in that
+buffer only, letting the backend's own forwarding win.  The mode stays
+enabled everywhere else, and an entry another package already made for
+the same mode is left alone.  Set to nil to touch no keymaps at all."
+  :type '(repeat symbol)
+  :group 'gascity)
+
 (defcustom gascity-tmux-socket nil
   "Name of the tmux server socket the city's agents run on (tmux -L).
 Gas City runs one tmux server per city, named after the city, so when

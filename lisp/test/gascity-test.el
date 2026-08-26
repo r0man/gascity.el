@@ -1625,6 +1625,78 @@ fresh terminal via `beads-terminal-spawn' and pops to the new buffer."
             (should (eq popped ret))))
       (when (get-buffer name) (kill-buffer name)))))
 
+(ert-deftest gascity-test-terminal-unshadow-keys ()
+  "`gascity-terminal--unshadow-keys' gives each configured minor mode an empty
+keymap in the buffer, is idempotent, never clobbers an entry another package
+made, and does nothing when the option is nil (gce-43c)."
+  (let ((buf (generate-new-buffer "*gc-unshadow*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buf
+            (let ((gascity-terminal-unshadow-minor-modes
+                   '(pixel-scroll-precision-mode)))
+              (gascity-terminal--unshadow-keys buf)
+              (let ((entry (assq 'pixel-scroll-precision-mode
+                                 minor-mode-overriding-map-alist)))
+                (should entry)
+                (should (keymapp (cdr entry)))
+                ;; An empty keymap: the mode binds nothing in this buffer.
+                (should (null (lookup-key (cdr entry) (kbd "<prior>")))))
+              ;; Idempotent — a second call adds no duplicate.
+              (gascity-terminal--unshadow-keys buf)
+              (should (= 1 (length (seq-filter
+                                    (lambda (c)
+                                      (eq (car c) 'pixel-scroll-precision-mode))
+                                    minor-mode-overriding-map-alist))))))
+          ;; An existing entry wins: gascity leaves it exactly as it found it.
+          (with-current-buffer buf
+            (let ((mine (make-sparse-keymap))
+                  (gascity-terminal-unshadow-minor-modes '(some-other-mode)))
+              (define-key mine (kbd "<prior>") #'ignore)
+              (setq-local minor-mode-overriding-map-alist
+                          (cons (cons 'some-other-mode mine)
+                                minor-mode-overriding-map-alist))
+              (gascity-terminal--unshadow-keys buf)
+              (should (eq (cdr (assq 'some-other-mode
+                                     minor-mode-overriding-map-alist))
+                          mine))))
+          ;; nil option: no keymaps touched at all.
+          (with-current-buffer buf
+            (kill-local-variable 'minor-mode-overriding-map-alist)
+            (let ((gascity-terminal-unshadow-minor-modes nil))
+              (gascity-terminal--unshadow-keys buf)
+              (should (null minor-mode-overriding-map-alist)))))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-run-unshadows-both-paths ()
+  "`gascity-terminal-run' unshadows the terminal buffer whether it spawned it
+or reused a live one (gce-43c)."
+  (let ((gascity-terminal-unshadow-minor-modes '(pixel-scroll-precision-mode))
+        (name "*gc-agent-unshadow*"))
+    (unwind-protect
+        (cl-letf (((symbol-function 'beads-terminal-spawn)
+                   (lambda (_term buffer-name &rest _)
+                     (get-buffer-create buffer-name)))
+                  ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+          ;; Spawn path.
+          (let ((buf (gascity-terminal-run '("echo" "hi") name)))
+            (with-current-buffer buf
+              (should (assq 'pixel-scroll-precision-mode
+                            minor-mode-overriding-map-alist))
+              (kill-local-variable 'minor-mode-overriding-map-alist))
+            ;; Reuse path: a live process makes `gascity-terminal-run' reuse
+            ;; this very buffer, and it must be unshadowed there too.
+            (let ((proc (make-pipe-process :name "gc-test-unshadow"
+                                           :buffer buf :noquery t)))
+              (unwind-protect
+                  (progn
+                    (should (eq (gascity-terminal-run '("echo" "hi") name) buf))
+                    (with-current-buffer buf
+                      (should (assq 'pixel-scroll-precision-mode
+                                    minor-mode-overriding-map-alist))))
+                (when (process-live-p proc) (delete-process proc))))))
+      (when (get-buffer name) (kill-buffer name)))))
+
 ;;; tmux status in the mode line (gce-hjj)
 
 (ert-deftest gascity-test-terminal-window-list ()

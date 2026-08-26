@@ -884,6 +884,43 @@ confirm first and stream their (long-running) output; a prefix argument to
 stop forces a hard, graceless shutdown.
 @end table
 
+@section Attached terminals
+
+@cindex attach
+@cindex scrolling a terminal
+@cindex copy-mode
+@kbd{t} on an agent (@code{gascity-tmux-at-point}) opens a terminal buffer
+holding a live @command{tmux} client.  A tmux client draws on the
+@dfn{alternate screen}, so the Emacs buffer contains only what is on
+screen right now: the history is tmux's, and the backend's own scrollback
+and copy commands have nothing to show.  Scrolling therefore goes through
+tmux:
+
+@table @asis
+@item @kbd{C-b [}
+Enter tmux's copy-mode.  @kbd{C-b} is the prefix on Gas City's per-city
+tmux servers; a personal @file{~/.tmux.conf} elsewhere may rebind it.
+@item @key{PageUp} / @key{PageDown}
+Page through the history once in copy-mode --- and @kbd{C-b @key{PageUp}}
+enters copy-mode a page back in one go.  @kbd{M-v} and @kbd{C-v} do the
+same, and the arrow keys move a line at a time.
+@item @kbd{q}
+Leave copy-mode and return to the live pane.
+@end table
+
+These keys only reach tmux because gascity suppresses the global minor
+modes named in @code{gascity-terminal-unshadow-minor-modes} inside its
+terminal buffers; a minor-mode map outranks the terminal backend's own
+keymap, so without that, @code{pixel-scroll-precision-mode} (for
+instance) swallows @key{PageUp} and @key{PageDown} and scrolls the Emacs
+window --- which has nothing above the visible screen to scroll to.
+
+The mouse wheel is a tmux setting, not an Emacs one: it scrolls the
+history only where the city's tmux server runs with @code{mouse on}
+(@code{set -g mouse on}), which is not the default.  How far back you can
+scroll is tmux's @code{history-limit} --- 2000 lines unless the city says
+otherwise.
+
 @c ====================================================================
 @node Customization
 @chapter Customization
@@ -924,6 +961,16 @@ The tmux server socket the city's agents run on (@code{tmux -L}).  When
 @code{nil} (default) it is auto-detected as the city name; a string
 overrides it, and the literal @code{"default"} means the default tmux
 server.
+@end defvr
+
+@defvr {User Option} gascity-terminal-unshadow-minor-modes
+Global minor modes whose keymaps gascity neutralises inside its terminal
+buffers, so keys the terminal should own are not swallowed before they
+reach it (default @code{(pixel-scroll-precision-mode)}; see @ref{Actions,,
+Attached terminals}).  Each mode listed is given an empty keymap in the
+buffer's @code{minor-mode-overriding-map-alist} --- buffer-locally, and
+never over an entry another package already made.  Set to @code{nil} to
+touch no keymaps.
 @end defvr
 
 @defvr {User Option} gascity-terminal-mode-line-status

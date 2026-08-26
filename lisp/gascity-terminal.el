@@ -34,6 +34,18 @@
 ;; context is carried buffer-locally (`gascity-terminal--status-directory')
 ;; and bound around every probe.
 ;;
+;; Keys belong to the pty: a terminal buffer is a full-screen program,
+;; and the backend's own keymap is only the buffer's LOCAL map, which
+;; every enabled minor-mode map outranks.  A global minor mode binding
+;; the same key wins and the program never sees it — with
+;; `pixel-scroll-precision-mode' on, PageUp/PageDown scroll the Emacs
+;; window (which shows only the visible screen, tmux being on the
+;; alternate screen) instead of paging tmux's copy-mode.
+;; `gascity-terminal--unshadow-keys' hands each mode in
+;; `gascity-terminal-unshadow-minor-modes' an empty keymap through the
+;; buffer's `minor-mode-overriding-map-alist', so the backend's
+;; forwarding wins in gascity's terminals and nowhere else.
+;;
 ;; Attaching is idempotent: when the agent's terminal buffer is already
 ;; open with a live process, `gascity-terminal-run' raises that window
 ;; instead of starting a second backend process in it (which would
@@ -86,6 +98,27 @@ worth reusing."
               (proc (get-buffer-process buf)))
     (and (process-live-p proc) buf)))
 
+(defun gascity-terminal--unshadow-keys (buffer)
+  "Suppress `gascity-terminal-unshadow-minor-modes' inside BUFFER.
+Gives each named minor mode an empty keymap in BUFFER's
+`minor-mode-overriding-map-alist', so keys the mode binds globally reach
+the terminal instead — the backend forwards them from the buffer's local
+map, which a minor-mode map would otherwise outrank.  Buffer-local, so
+the modes are untouched everywhere else.
+
+Idempotent, and conservative: an entry another package already made for
+the same mode is left as it found it.  A nil option, a dead BUFFER, or a
+non-symbol entry is a no-op."
+  (when (and (buffer-live-p buffer) gascity-terminal-unshadow-minor-modes)
+    (with-current-buffer buffer
+      (dolist (mode gascity-terminal-unshadow-minor-modes)
+        (when (and mode (symbolp mode)
+                   (not (assq mode minor-mode-overriding-map-alist)))
+          (setq-local minor-mode-overriding-map-alist
+                      (cons (cons mode (make-sparse-keymap))
+                            minor-mode-overriding-map-alist))))))
+  buffer)
+
 (defun gascity-terminal-run (argv buffer-name &optional dir)
   "Display the terminal buffer named BUFFER-NAME, spawning ARGV if needed.
 If a buffer named BUFFER-NAME already hosts a live process, reuse it: pop
@@ -100,17 +133,24 @@ ARGS) list run with no intervening shell via beads.el's
 `beads-terminal-spawn', using the backend from `gascity-terminal-backend'.
 beads sets the working directory from DIR (its WORKING-DIR contract); nil
 or a missing DIR falls back to the home directory.  Returns the buffer and
-pops to it."
+pops to it.
+
+Either way the buffer is unshadowed (`gascity-terminal--unshadow-keys')
+so keys the terminal should own are not swallowed by a global minor
+mode."
   (let ((existing (gascity-terminal--live-buffer buffer-name)))
     (if existing
         ;; Reuse the live terminal — raise its window, don't re-exec.
-        (progn (pop-to-buffer existing) existing)
+        (progn (gascity-terminal--unshadow-keys existing)
+               (pop-to-buffer existing)
+               existing)
       ;; No live terminal: spawn a fresh one.
       (let* ((default-dir (gascity-terminal--working-dir dir))
              (terminal (make-instance (gascity-terminal--backend-class)))
              (buf (beads-terminal-spawn terminal buffer-name argv default-dir
                                         '(("CLICOLOR_FORCE" . "1")))))
         (when (and buf (buffer-live-p buf))
+          (gascity-terminal--unshadow-keys buf)
           (pop-to-buffer buf))
         buf))))
 
