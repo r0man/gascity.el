@@ -125,8 +125,10 @@ name (neither maps onto one plain ssh invocation)."
 Only successful resolutions are cached — a miss is re-probed on the
 next call, so installing the program on the host heals itself.  The
 per-connection PATH fragment of `gascity-remote-path-assignment' lives
-here too, under the un-collidable key (REMOTE-PREFIX . :path).  Cleared
-by `gascity-remote-forget-executables' (via
+here too, under the un-collidable key (REMOTE-PREFIX . :path), as do
+positive terminfo probes of `gascity-remote-terminfo-p', under
+\(REMOTE-PREFIX . (:terminfo . TERM)).  Cleared by
+`gascity-remote-forget-executables' (via
 `gascity-context-clear-cache').")
 
 (defun gascity-remote-forget-executables ()
@@ -180,6 +182,66 @@ launch fails exactly where it always did — the remote shell's
               (when found
                 (puthash key found gascity-remote--executable-cache))
               (or found name)))))))
+
+;;; Terminfo on the host
+
+(defun gascity-remote--terminfo-candidates (term remote)
+  "Return TRAMP file names where TERM's terminfo entry may live on REMOTE.
+The compiled-entry locations ncurses consults: the user's ~/.terminfo
+first, then the common system databases, each keyed by TERM's first
+character (the Linux layout; the hex-keyed macOS layout is out of scope
+— cities are Linux hosts).  A pure function of its inputs; the `~' is
+left for the TRAMP handlers to expand host-side."
+  (let ((leaf (format "%s/%s" (substring term 0 1) term)))
+    (mapcar (lambda (dir) (format "%s%s/%s" remote dir leaf))
+            '("~/.terminfo" "/usr/share/terminfo" "/lib/terminfo"
+              "/etc/terminfo" "/usr/local/share/terminfo"))))
+
+(defun gascity-remote-terminfo-p (term &optional dir)
+  "Return non-nil when DIR's host likely has a terminfo entry for TERM.
+For a local DIR (default `default-directory') this is trivially t: the
+local terminal backend owns TERM and its terminfo (beads.el's env
+contract).  For a remote DIR the probe is best-effort, on the host:
+first `infocmp TERM' there (resolved like any remote executable; exit 0
+is authoritative — it searches the same ncurses paths a linked client
+does), then an existence sweep of the standard compiled-entry
+locations (`gascity-remote--terminfo-candidates').
+
+Heuristic by design: the exact search path of the host tmux's own
+ncurses (e.g. a Guix store database) cannot be read from here, so a
+present-but-unfound entry reports missing.  That failure mode is
+benign — the caller then forces `gascity-terminal-remote-term' onto
+the remote command, which narrows capabilities slightly but always
+attaches, where a missing entry kills the attach outright (gce-25q).
+Probe errors (a dropped connection) also report missing for the same
+reason.
+
+Positive results are cached per (connection × TERM) in
+`gascity-remote--executable-cache'; a miss is re-probed on the next
+call, so installing the entry on the host heals itself.  Clear with
+`gascity-context-clear-cache'."
+  (let ((remote (file-remote-p (or dir default-directory))))
+    (if (not remote)
+        t
+      (let ((key (cons remote (cons :terminfo term))))
+        (or (gethash key gascity-remote--executable-cache)
+            (let* ((default-directory (or dir default-directory))
+                   (found
+                    (condition-case nil
+                        (or (eq 0 (process-file
+                                   (gascity-remote-find-executable "infocmp")
+                                   nil nil nil term))
+                            (and (cl-some
+                                  #'file-exists-p
+                                  (gascity-remote--terminfo-candidates
+                                   term remote))
+                                 t))
+                      ;; A probe error must not kill the attach flow;
+                      ;; "missing" only forces the safe fallback TERM.
+                      (error nil))))
+              (when found
+                (puthash key t gascity-remote--executable-cache))
+              found))))))
 
 ;;; PATH export for gc's subprocesses
 

@@ -28,7 +28,13 @@
 ;; wrapped into a local `ssh -t HOST …' argv
 ;; (`gascity-terminal--attach-argv' via `gascity-remote-ssh-argv'),
 ;; carrying the same resolved tmux — `ssh HOST cmd' is no login shell,
-;; so profile PATHs may be absent there too.
+;; so profile PATHs may be absent there too.  ssh also forwards the
+;; TERM the local backend advertises (ghostel's xterm-ghostty, say);
+;; on a host without that terminfo entry the remote tmux client dies
+;; instantly with "missing or unsuitable terminal", so when the host
+;; appears to lack it (`gascity-remote-terminfo-p') the remote command
+;; forces `gascity-terminal-remote-term' via its env prefix — host-side
+;; only, the local terminal's TERM is never touched (gce-25q).
 ;; The status-mirror timer runs in the terminal buffer, whose
 ;; `default-directory' is LOCAL (it hosts a local ssh); the remote
 ;; context is carried buffer-locally (`gascity-terminal--status-directory')
@@ -64,6 +70,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'beads-terminal)
 (require 'gascity-custom)
 (require 'gascity-remote)
@@ -81,6 +88,50 @@ Maps the user's backend choice to a concrete beads terminal class, or
     ('eat   'beads-terminal-eat)
     ('term  'beads-terminal-term)
     (_      'beads-terminal-auto)))
+
+(defun gascity-terminal--client-term ()
+  "Return the TERM the selected terminal backend advertises, or nil.
+This is the value ssh forwards on a remote attach: the backend exports
+TERM to the processes it spawns, and beads.el's env contract keeps
+callers from overriding it locally.  The `auto' backend resolves to
+the first available concrete terminal exactly as `beads-terminal-spawn'
+would (priority order over `beads-terminal-list').  Each backend's
+TERM comes from its own variable when bound, else from its documented
+default — the package can be available yet not loaded.  Returns nil
+for a backend this map does not know; callers treat that as \"assume
+the host cannot render it\" and force the fallback."
+  (let* ((class (gascity-terminal--backend-class))
+         (terminal
+          (if (eq class 'beads-terminal-auto)
+              (cl-find-if (lambda (term)
+                            (and (not (cl-typep term 'beads-terminal-auto))
+                                 (beads-terminal-available-p term)))
+                          (beads-terminal-list))
+            (make-instance class))))
+    (pcase (and terminal (oref terminal name))
+      ("ghostel" (or (bound-and-true-p ghostel-term) "xterm-ghostty"))
+      ("vterm" (or (bound-and-true-p vterm-term-environment-variable)
+                   "xterm-256color"))
+      ("eat" (or (bound-and-true-p eat-term-name) "xterm-256color"))
+      ((or "term" "ansi-term") (or (bound-and-true-p term-term-name)
+                                   "eterm-color"))
+      (_ nil))))
+
+(defun gascity-terminal--remote-term (&optional dir)
+  "Return the TERM to force on DIR's host in a remote attach, or nil.
+Nil means keep the TERM ssh forwards natively, because the fallback is
+off (`gascity-terminal-remote-term' nil), the backend already
+advertises the fallback (forcing would change nothing — no probe is
+made), or DIR's host has terminfo for the backend's TERM
+\(`gascity-remote-terminfo-p').  An unknown backend TERM forces the
+fallback without probing — the safe default: a missing entry kills the
+attach outright (gce-25q), a needlessly forced fallback merely narrows
+the capabilities tmux sees."
+  (when-let* ((fallback gascity-terminal-remote-term))
+    (let ((client (gascity-terminal--client-term)))
+      (unless (or (equal client fallback)
+                  (and client (gascity-remote-terminfo-p client dir)))
+        fallback))))
 
 ;;; Running a command in a terminal
 
@@ -409,7 +460,8 @@ Idempotent: safe to re-run when reattaching to a live terminal."
       ;; Tear down when the terminal buffer is killed.
       (add-hook 'kill-buffer-hook #'gascity-terminal--status-teardown nil t))))
 
-(defun gascity-terminal--attach-argv (session socket &optional remote program)
+(defun gascity-terminal--attach-argv (session socket &optional remote
+                                              program term)
   "Return the local argv that attaches tmux SESSION on SOCKET.
 A pure function of its inputs.  The local shape is `env -u TMUX tmux
 [-L SOCKET] attach-session -t SESSION' — a clean argv, no shell: `env -u
@@ -421,8 +473,17 @@ city's host) the same command is wrapped into a local `ssh -t' argv via
 host, while the terminal backend only spawns local processes — which
 signals a `user-error' for non-ssh methods and multi-hop names.
 PROGRAM overrides the tmux program name; the remote attach passes the
-resolved host path so the ssh side runs the same tmux the probes did."
-  (let ((argv (append (list "env" "-u" "TMUX" (or program "tmux"))
+resolved host path so the ssh side runs the same tmux the probes did.
+TERM, when non-nil, is spliced into the env prefix as `TERM=TERM' —
+the remote attach passes `gascity-terminal--remote-term' so a host
+without terminfo for the client's TERM gets a name it can render
+instead of killing the attach (gce-25q).  The assignment runs
+host-side, after ssh, overriding the forwarded value; the local
+terminal's own TERM (owned by the backend) is never touched, and a
+local attach passes no TERM at all."
+  (let ((argv (append (list "env" "-u" "TMUX")
+                      (and term (list (concat "TERM=" term)))
+                      (list (or program "tmux"))
                       (gascity-terminal--socket-args socket)
                       (list "attach-session" "-t" session))))
     (if remote (gascity-remote-ssh-argv remote argv) argv)))
@@ -440,7 +501,11 @@ methods only, a `user-error' otherwise) with tmux resolved to the same
 host path the probes use (`gascity-remote-find-executable' — `ssh HOST
 cmd' runs no login shell, so a Guix profile tmux may be off its PATH),
 and the buffer name is host-qualified so local and remote attaches
-coexist.  DIR (a host-local path on the city) cannot be the spawn
+coexist.  When the host seems to lack terminfo for the TERM the local
+backend advertises, the remote command forces
+`gascity-terminal-remote-term' instead of dying with \"missing or
+unsuitable terminal\" (`gascity-terminal--remote-term').
+DIR (a host-local path on the city) cannot be the spawn
 directory — the backend spawns the local ssh from the local home — but
 the buffer's `default-directory' is then pinned remotely: to DIR
 re-prefixed for the host when that directory exists there, else to the
@@ -468,11 +533,15 @@ status bar is hidden and mirrored in the terminal buffer's mode line (see
                                  "tmux" (error-message-string err)))))
       (user-error "Can't find tmux session: %s (agent may have stopped)" session))
     ;; Method validated, session exists: swap in the host-resolved tmux
-    ;; for the ssh side (a cache hit — the probe above resolved it).
+    ;; for the ssh side (a cache hit — the probe above resolved it), and
+    ;; force a renderable TERM when the host lacks terminfo for the
+    ;; client's — probed now, on the warm connection, never during the
+    ;; validation pass above.
     (when remote
       (setq argv (gascity-terminal--attach-argv
                   session socket remote
-                  (gascity-remote-find-executable "tmux" remote))))
+                  (gascity-remote-find-executable "tmux" remote)
+                  (gascity-terminal--remote-term remote))))
     (when (fboundp 'gascity--log)
       (gascity--log 'info "tmux attach: %s" (mapconcat #'identity argv " ")))
     (let ((buf (gascity-terminal-run argv buf-name (if remote "~/" dir))))

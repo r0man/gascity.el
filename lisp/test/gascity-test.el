@@ -3535,7 +3535,84 @@ methods/names one plain ssh cannot reach."
                   "/home/user/.guix-home/profile/bin/tmux")
                  '("ssh" "-t" "-l" "u" "h"
                    "env" "-u" "TMUX" "/home/user/.guix-home/profile/bin/tmux"
+                   "attach-session" "-t" "sess")))
+  ;; A forced TERM lands in the env prefix, before the tmux program —
+  ;; host-side, overriding what ssh forwarded (gce-25q).
+  (should (equal (gascity-terminal--attach-argv
+                  "sess" "sock" nil nil "xterm-256color")
+                 '("env" "-u" "TMUX" "TERM=xterm-256color" "tmux"
+                   "-L" "sock" "attach-session" "-t" "sess")))
+  ;; Remote tokens pass through `shell-quote-argument' (the `=' gets a
+  ;; backslash the remote shell strips again).
+  (should (equal (gascity-terminal--attach-argv
+                  "sess" nil "/ssh:u@h:/city/" "/opt/tmux" "xterm-256color")
+                 `("ssh" "-t" "-l" "u" "h"
+                   "env" "-u" "TMUX"
+                   ,(shell-quote-argument "TERM=xterm-256color") "/opt/tmux"
                    "attach-session" "-t" "sess"))))
+
+(ert-deftest gascity-test-terminal-remote-term ()
+  "TERM fallback decision: forced only when the feature is on, the
+client's TERM differs from the fallback, and the host lacks (or gascity
+cannot name) that TERM's terminfo."
+  (let ((client "xterm-ghostty") (host-has nil) (probes 0))
+    (cl-letf (((symbol-function 'gascity-terminal--client-term)
+               (lambda () client))
+              ((symbol-function 'gascity-remote-terminfo-p)
+               (lambda (_term _dir) (cl-incf probes) host-has)))
+      (let ((gascity-terminal-remote-term "xterm-256color"))
+        ;; Host lacks the client's terminfo: force the fallback.
+        (should (equal (gascity-terminal--remote-term "/ssh:u@h:/c/")
+                       "xterm-256color"))
+        ;; Host has it: keep the native TERM.
+        (setq host-has t)
+        (should-not (gascity-terminal--remote-term "/ssh:u@h:/c/"))
+        ;; Client TERM equals the fallback: nothing to change, no probe.
+        (setq client "xterm-256color" probes 0)
+        (should-not (gascity-terminal--remote-term "/ssh:u@h:/c/"))
+        (should (= probes 0))
+        ;; Unknown client TERM: force the fallback, again without probing.
+        (setq client nil)
+        (should (equal (gascity-terminal--remote-term "/ssh:u@h:/c/")
+                       "xterm-256color"))
+        (should (= probes 0)))
+      ;; Feature off: never force.
+      (let ((gascity-terminal-remote-term nil))
+        (setq client "xterm-ghostty")
+        (should-not (gascity-terminal--remote-term "/ssh:u@h:/c/"))))))
+
+(ert-deftest gascity-test-remote-terminfo-p ()
+  "Terminfo probe: infocmp first, then the compiled-entry sweep;
+positive results cached per (connection × TERM); local trivially t."
+  ;; Local: the terminal backend owns TERM/terminfo.
+  (let ((default-directory "/"))
+    (should (gascity-remote-terminfo-p "xterm-ghostty")))
+  ;; The candidate list is pure: ~/.terminfo first, first-char keyed.
+  (should (equal (car (gascity-remote--terminfo-candidates
+                       "xterm-ghostty" "/ssh:u@h:"))
+                 "/ssh:u@h:~/.terminfo/x/xterm-ghostty"))
+  (clrhash gascity-remote--executable-cache)
+  (let ((infocmp-exit 1) (files nil) (sweeps 0))
+    (cl-letf (((symbol-function 'gascity-remote-find-executable)
+               (lambda (name &optional _dir) name))
+              ((symbol-function 'process-file)
+               (lambda (&rest _) infocmp-exit))
+              ((symbol-function 'file-exists-p)
+               (lambda (file) (cl-incf sweeps) (and (member file files) t))))
+      (let ((default-directory "/ssh:u@h:/city/"))
+        ;; Nowhere: reported missing, and NOT cached (installing heals).
+        (should-not (gascity-remote-terminfo-p "xterm-ghostty"))
+        ;; Installed under ~/.terminfo: the sweep finds it, cached.
+        (setq files '("/ssh:u@h:~/.terminfo/x/xterm-ghostty"))
+        (should (gascity-remote-terminfo-p "xterm-ghostty"))
+        (setq sweeps 0)
+        (should (gascity-remote-terminfo-p "xterm-ghostty"))
+        (should (= sweeps 0))           ; cache hit — no re-probe
+        ;; infocmp exit 0 is authoritative: no sweep at all.
+        (setq infocmp-exit 0 sweeps 0)
+        (should (gascity-remote-terminfo-p "tmux-256color"))
+        (should (= sweeps 0)))))
+  (clrhash gascity-remote--executable-cache))
 
 (ert-deftest gascity-test-remote-reader-run ()
   "`gascity-reader-run' on a remote directory runs on the host: stdout and

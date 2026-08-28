@@ -113,6 +113,26 @@ shell will share this setting.)
                  (const :tag "Term mode (built-in)" term))
   :group 'gascity)
 
+(defcustom gascity-terminal-remote-term "xterm-256color"
+  "Fallback TERM for the remote side of a tmux attach, or nil for none.
+A remote attach runs `ssh -t HOST … tmux attach …', and ssh forwards
+the TERM the local terminal backend advertises (e.g. ghostel's
+\"xterm-ghostty\").  A city host with no terminfo entry for that name
+makes the remote tmux client exit instantly with \"missing or
+unsuitable terminal\" (gce-25q).  When the host appears to lack the
+entry (a best-effort probe — `gascity-remote-terminfo-p'), gascity
+forces this TERM onto the remote command line instead; the default
+\"xterm-256color\" ships with every ncurses.  Purely local attaches
+never touch TERM — the terminal backend owns it (beads.el's env
+contract).
+
+Set to nil to never force a TERM; an exotic-terminal attach then fails
+on hosts missing its terminfo until the entry is installed there
+\(e.g. `infocmp -x $TERM | ssh HOST tic -x -')."
+  :type '(choice (const :tag "Never force a TERM" nil)
+                 (string :tag "TERM name"))
+  :group 'gascity)
+
 (defcustom gascity-terminal-unshadow-minor-modes '(pixel-scroll-precision-mode)
   "Global minor modes whose keymaps are neutralised in gascity terminals.
 A terminal buffer is a full-screen application, not text: every key the
