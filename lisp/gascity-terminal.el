@@ -375,15 +375,19 @@ nothing left to poll."
 
 (defun gascity-terminal--status-tick (buffer)
   "Timer callback: refresh BUFFER's tmux status while it is live.
-Skipped while TRAMP is mid-operation (`tramp-locked'): a timer can fire
-inside another TRAMP call's `accept-process-output', where a fresh
-remote probe signals \"Forbidden reentrant call of Tramp\" — which the
-probe layer would misread as the session being gone and stop the mirror
-for good.  The next tick simply retries."
-  (when (and (buffer-live-p buffer)
-             (not (bound-and-true-p tramp-locked)))
+Skipped while BUFFER's remote channel is mid-command
+\(`gascity-remote-connection-locked-p'): a timer can fire inside
+another TRAMP call's `accept-process-output', where a fresh remote
+probe signals \"Forbidden reentrant call of Tramp\" — which the probe
+layer would misread as the session being gone and stop the mirror for
+good.  (The old guard read `tramp-locked', a variable TRAMP >= 2.6
+no longer has; the lock lives on the connection process now.)  The
+next tick simply retries."
+  (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (gascity-terminal--status-refresh))))
+      (unless (gascity-remote-connection-locked-p
+               (or gascity-terminal--status-directory default-directory))
+        (gascity-terminal--status-refresh)))))
 
 (defun gascity-terminal--status-teardown ()
   "Tear down the tmux status mirror for the current buffer.

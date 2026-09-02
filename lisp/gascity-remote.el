@@ -82,6 +82,50 @@ terminal attach buffers)."
            (format "%s@%s*" (substring base 0 -1) remote))
           (t (format "%s@%s" base remote)))))
 
+;;; Channel hygiene
+
+(defun gascity-remote-connection-locked-p (&optional dir)
+  "Return non-nil when DIR's TRAMP channel is mid-command.
+DIR defaults to `default-directory'; a local DIR (or one with no
+established connection) returns nil.  This reads the per-connection
+\"locked\" property that TRAMP >= 2.6 sets around every channel
+roundtrip (`with-tramp-locked-connection') — the old global
+`tramp-locked' variable no longer exists there.  Timer code probing the
+same host must skip its probe while this is set: a fresh channel command
+from inside another one interleaves output on the shared connection
+process (or signals \"Forbidden reentrant call of Tramp\")."
+  (when-let* ((remote (file-remote-p (or dir default-directory)))
+              (vec (ignore-errors (tramp-dissect-file-name remote)))
+              (proc (tramp-get-connection-process vec)))
+    (tramp-get-connection-property proc "locked")))
+
+(defun gascity-remote-drain-connection (&optional dir)
+  "Best-effort: consume pending stale output on DIR's TRAMP channel.
+DIR defaults to `default-directory'; a local DIR is a no-op.  When a
+channel command is abandoned mid-flight (tramp-sh catches `C-g' inside
+`process-file' and returns -1, but the remote command keeps running),
+its output arrives on the shared connection later and the next
+channel command harvests it as its own stdout — the session list then
+tries to parse tmux status-probe chatter as `gc' JSON (gce parse-error
+\"Invalid number format\").  Draining reads the connection until it has
+been quiet for a moment, so a retried command starts on a clean
+channel.  Quits propagate (`with-local-quit') — the user can always
+abort the wait; errors are swallowed, draining is advisory."
+  (when-let* ((remote (file-remote-p (or dir default-directory)))
+              (vec (ignore-errors (tramp-dissect-file-name remote)))
+              (proc (tramp-get-connection-process vec)))
+    (when (process-live-p proc)
+      (ignore-error error
+        (with-local-quit
+          ;; Stop after a quiet tenth of a second; a still-running
+          ;; abandoned command keeps the loop alive while it talks.
+          ;; JUST-THIS-ONE: never dispatch other processes' output
+          ;; (filters running arbitrary code) from this cleanup path.
+          (let ((rounds 50))
+            (while (and (> rounds 0)
+                        (accept-process-output proc 0.1 nil t))
+              (setq rounds (1- rounds)))))))))
+
 ;;; Local ssh argv for a remote host
 
 (defconst gascity-remote-ssh-methods '("ssh" "sshx" "scp" "scpx")

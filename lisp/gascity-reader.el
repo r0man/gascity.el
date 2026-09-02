@@ -209,18 +209,12 @@ spawn time (it may be a connection-local value)."
     (format "gc %s failed (exit %s)"
             (mapconcat #'identity args " ") exit-code)))
 
-(defun gascity-reader-read (&rest args)
-  "Run `gc ARGS... --json' and return the parsed JSON payload.
-ARGS are the subcommand tokens and any flags; `--json' is appended
-unless already present.  Signals `gascity-command-error' on a
-non-zero exit and `gascity-json-parse-error' on malformed JSON.
-A 127/126 exit on a remote directory — the remote shell's \"command
-not found\" — signals with the remote setup hint (see
-`gascity-reader--exit-error-message')."
-  (let* ((full-args (if (member "--json" args)
-                        args
-                      (append args (list "--json"))))
-         (result (gascity-reader-run full-args))
+(defun gascity-reader--read-1 (args full-args)
+  "Run `gc' with FULL-ARGS once and return the parsed JSON payload.
+ARGS are the original tokens (for error messages), FULL-ARGS the argv
+including `--json'.  The single-attempt body of `gascity-reader-read',
+which retries it on a remote parse error."
+  (let* ((result (gascity-reader-run full-args))
          (exit-code (plist-get result :exit-code))
          (stdout (plist-get result :stdout))
          (stderr (plist-get result :stderr))
@@ -234,6 +228,40 @@ not found\" — signals with the remote setup hint (see
                                         (cons executable full-args) " ")
                     :exit-code exit-code :stdout stdout :stderr stderr)))
     (gascity-reader-parse-json stdout)))
+
+(defun gascity-reader-read (&rest args)
+  "Run `gc ARGS... --json' and return the parsed JSON payload.
+ARGS are the subcommand tokens and any flags; `--json' is appended
+unless already present.  Signals `gascity-command-error' on a
+non-zero exit and `gascity-json-parse-error' on malformed JSON.
+A 127/126 exit on a remote directory — the remote shell's \"command
+not found\" — signals with the remote setup hint (see
+`gascity-reader--exit-error-message').
+
+On a remote directory a parse error is retried once, after draining the
+TRAMP channel (`gascity-remote-drain-connection'): the sync read shares
+tramp-sh's connection channel with every other `process-file' user (the
+terminal status-mirror's tmux probes above all), and a channel command
+abandoned mid-flight by a quit leaves output behind that the next
+command harvests as its own stdout — gc's \"JSON\" is then tmux chatter
+\(\"Invalid number format\", gce-desync).  The channel self-heals after
+one bad read, so a drained retry returns the real payload; a second
+parse failure signals as usual — real malformed gc output is never
+masked, and a local parse error (no shared channel) never retries."
+  (let ((full-args (if (member "--json" args)
+                       args
+                     (append args (list "--json")))))
+    (if (not (file-remote-p default-directory))
+        (gascity-reader--read-1 args full-args)
+      (condition-case nil
+          (gascity-reader--read-1 args full-args)
+        (gascity-json-parse-error
+         (when (fboundp 'gascity--log)
+           (gascity--log 'error
+                         "Stale TRAMP channel output for gc %s; draining and retrying"
+                         (mapconcat #'identity args " ")))
+         (gascity-remote-drain-connection)
+         (gascity-reader--read-1 args full-args))))))
 
 ;;; Asynchronous reader
 

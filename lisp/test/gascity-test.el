@@ -3644,6 +3644,83 @@ non-zero-exit path of `gascity-reader-read' (gce-90t audit #6)."
       (should (string-match-p "gascity-remote-search-path" msg))
       (should (string-match-p "gascity-executable" msg)))))
 
+(ert-deftest gascity-test-remote-reader-read-retries-stale-channel ()
+  "A remote parse error drains the channel and retries once (gce-desync).
+The sync read shares tramp-sh's channel with other `process-file' users;
+a quit-abandoned command's late output gets harvested as gc's stdout —
+observed as the status-mirror's tmux probe chatter parsed as JSON.  The
+channel self-heals after one bad read, so the retry returns the real
+payload."
+  (gascity-test--with-mock-remote
+    (let ((runs 0) (drains 0))
+      (cl-letf (((symbol-function 'gascity-reader-run)
+                 (lambda (_args)
+                   (cl-incf runs)
+                   (list :exit-code 0
+                         ;; The observed bytes: the status-mirror's
+                         ;; list-windows + display-message output, the
+                         ;; probe's field TAB sanitized to "_" by the
+                         ;; channel pty.  json.el fails on it with
+                         ;; "Invalid number format: 2".
+                         :stdout (if (= runs 1)
+                                     "1_0:claude*\n[mayor] \n"
+                                   "{\"ok\":true}")
+                         :stderr "" :executable "gc")))
+                ((symbol-function 'gascity-remote-drain-connection)
+                 (lambda (&optional _dir) (cl-incf drains))))
+        (should (equal (gascity-reader-read "session" "list")
+                       '((ok . t))))
+        (should (= runs 2))
+        (should (= drains 1))))))
+
+(ert-deftest gascity-test-remote-reader-read-retry-failure-signals ()
+  "A parse error surviving the drained retry signals — never masked."
+  (gascity-test--with-mock-remote
+    (let ((runs 0))
+      (cl-letf (((symbol-function 'gascity-reader-run)
+                 (lambda (_args)
+                   (cl-incf runs)
+                   (list :exit-code 0 :stdout "not json" :stderr ""
+                         :executable "gc")))
+                ((symbol-function 'gascity-remote-drain-connection)
+                 (lambda (&optional _dir))))
+        (should-error (gascity-reader-read "status")
+                      :type 'gascity-json-parse-error)
+        (should (= runs 2))))))
+
+(ert-deftest gascity-test-local-reader-read-never-retries ()
+  "A local parse error signals immediately: no shared channel, no retry."
+  (let ((default-directory temporary-file-directory)
+        (runs 0))
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (_args)
+                 (cl-incf runs)
+                 (list :exit-code 0 :stdout "not json" :stderr ""
+                       :executable "gc"))))
+      (should-error (gascity-reader-read "status")
+                    :type 'gascity-json-parse-error)
+      (should (= runs 1)))))
+
+(ert-deftest gascity-test-remote-connection-locked-p ()
+  "`gascity-remote-connection-locked-p' is nil locally and tracks the
+per-connection \"locked\" property remotely (`tramp-locked' is gone in
+TRAMP >= 2.6, so the status-tick guard reads the property instead)."
+  (let ((default-directory temporary-file-directory))
+    (should-not (gascity-remote-connection-locked-p)))
+  (gascity-test--with-mock-remote
+    ;; Establish the connection, then flip the property both ways.
+    (file-directory-p default-directory)
+    (let* ((vec (tramp-dissect-file-name default-directory))
+           (proc (tramp-get-connection-process vec)))
+      (skip-unless proc)
+      (should-not (gascity-remote-connection-locked-p))
+      (unwind-protect
+          (progn
+            (tramp-set-connection-property proc "locked" t)
+            (should (gascity-remote-connection-locked-p)))
+        (tramp-flush-connection-property proc "locked"))
+      (should-not (gascity-remote-connection-locked-p)))))
+
 (ert-deftest gascity-test-remote-find-executable ()
   "Bare names resolve on the host with zero setup (gce-qke): a
 `tramp-remote-path' hit (`executable-find') wins, else the
