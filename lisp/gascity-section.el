@@ -728,6 +728,27 @@ clean `user-error' when neither is at point."
      ((gascity-rig-at-point) (gascity-rig-beads (gascity-rig-at-point)))
      (t (user-error "No agent or rig at point")))))
 
+;;;###autoload
+(defun gascity-bead-show-at-point ()
+  "Open the bead whose id is at point in beads.el, scoped to its store.
+The id comes from a vui row stamped with a bead (`gascity-bead-at-point')
+or, in plain text — an agent transcript in a tmux attach buffer
+\(`vterm-copy-mode' puts point on it), a shell buffer, a mail body —
+from beads.el's id detection (`beads-issue-id-at-point', honouring the
+buffer's `beads-issue-id-prefixes').  The store is the one owning the
+id's prefix, from the rig memo when warm
+\(`gascity-beads--bead-path-cached'); `gascity-bead-show' resolves it
+otherwise.  Bound to \[gascity-bead-show-at-point] in attach buffers."
+  (interactive)
+  (let ((id (or (gascity-bead-at-point)
+                (and (fboundp 'beads-issue-id-at-point)
+                     (beads-issue-id-at-point
+                      (and (boundp 'beads-issue-id-prefixes)
+                           beads-issue-id-prefixes))))))
+    (unless id (user-error "No bead id at point"))
+    (gascity-bead-show (substring-no-properties id)
+                       (gascity-beads--bead-path-cached id))))
+
 ;;; Rig at point
 
 (defun gascity-rig-at-point ()

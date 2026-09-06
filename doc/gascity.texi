@@ -908,6 +908,17 @@ same, and the arrow keys move a line at a time.
 Leave copy-mode and return to the live pane.
 @end table
 
+@cindex bead at point, terminal
+@findex gascity-bead-show-at-point
+Agent transcripts are full of bead ids.  Put point on one --- the
+backend's own copy mode, @kbd{C-c C-t} in vterm, frees point from the
+terminal cursor --- and Eldoc shows the bead's status and title
+(beads.el's @code{beads-eldoc-mode}, looked up asynchronously and scoped
+to the rig owning the id's prefix), while @kbd{C-c b}
+(@code{gascity-bead-show-at-point}) opens it in beads.el's detail view.
+The same command works in any text buffer, a shell or a mail body
+included.
+
 These keys only reach tmux because gascity suppresses the global minor
 modes named in @code{gascity-terminal-unshadow-minor-modes} inside its
 terminal buffers; a minor-mode map outranks the terminal backend's own

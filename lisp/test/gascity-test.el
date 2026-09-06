@@ -2642,6 +2642,48 @@ refresh — so it tracks the filter across `g' and clears with `/ c'."
     (should (equal mode-name "Things [1/1]"))
     (should (null gascity-tabulated--filter-description))))
 
+(ert-deftest gascity-test-bead-show-at-point-text ()
+  "`gascity-bead-show-at-point' opens the id under point in plain text,
+routed to the store owning its prefix from the rig memo — an agent
+transcript in an attach buffer, a shell buffer.  A vui row's stamped bead
+wins over the text; nothing at point is a clean `user-error'."
+  (let ((rigs (list (gascity-rig :name "bs-rig" :prefix "bs" :path "/r/bs")))
+        (opened nil))
+    (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) rigs))
+              ((symbol-function 'gascity-bead-show)
+               (lambda (id &optional dir) (setq opened (list id dir)))))
+      (with-temp-buffer
+        (insert "the mayor slung bs-xe3ge to a worker")
+        (goto-char (+ (point-min) 20))
+        (gascity-bead-show-at-point)
+        (should (equal opened (list "bs-xe3ge" "/r/bs/")))
+        ;; A stamped bead property takes precedence over the text.
+        (put-text-property (point-min) (point-max) 'gascity-bead "gce-abc")
+        (gascity-bead-show-at-point)
+        (should (equal (car opened) "gce-abc"))
+        (remove-text-properties (point-min) (point-max) '(gascity-bead nil))
+        ;; The buffer's prefix allowlist applies.
+        (setq-local beads-issue-id-prefixes '("gce"))
+        (should-error (gascity-bead-show-at-point) :type 'user-error)))))
+
+(ert-deftest gascity-test-terminal-install-keys ()
+  "The attach map is active in the buffer whatever the local map does.
+vterm's copy mode swaps the local map; an emulation map survives that."
+  (with-temp-buffer
+    (let ((backend (make-sparse-keymap)))
+      (define-key backend (kbd "C-c C-t") #'ignore)
+      (use-local-map backend)
+      (should-not (eq (key-binding (kbd "C-c b")) #'gascity-bead-show-at-point))
+      (gascity-terminal--install-keys (current-buffer))
+      (should (eq (key-binding (kbd "C-c b")) #'gascity-bead-show-at-point))
+      (should (eq (key-binding (kbd "C-c C-t")) #'ignore))
+      ;; A swapped local map (copy mode) keeps gascity's key.
+      (use-local-map (make-sparse-keymap))
+      (should (eq (key-binding (kbd "C-c b")) #'gascity-bead-show-at-point))
+      ;; Other buffers are untouched.
+      (with-temp-buffer
+        (should-not (eq (key-binding (kbd "C-c b")) #'gascity-bead-show-at-point))))))
+
 ;;; Asynchronous list refresh
 
 (defmacro gascity-test--with-async-list (spec &rest body)
@@ -4706,6 +4748,9 @@ user repro)."
                   (should (equal project-find-functions
                                  (list #'gascity-context-project-find-function)))
                   (should (null vc-handled-backends))
+                  ;; gascity's keys sit over the backend's map.
+                  (should (eq (key-binding (kbd "C-c b"))
+                              #'gascity-bead-show-at-point))
                   (cl-letf (((symbol-function 'locate-dominating-file)
                              (lambda (&rest _) (error "project walked TRAMP"))))
                     (should (equal (project-current)

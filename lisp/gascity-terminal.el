@@ -90,6 +90,7 @@
 ;; The spawn-free bead-store resolver lives in gascity-section (which
 ;; requires this module); it is only ever handed on as a function value.
 (declare-function gascity-beads--bead-path-cached "gascity-section" (id))
+(declare-function gascity-bead-show-at-point "gascity-section")
 
 ;; beads.el's buffer-local eldoc contract (Part A of gce-eldoc).  Both
 ;; are referenced by name and `boundp'-guarded, so this file
@@ -513,6 +514,33 @@ local attach passes no TERM at all."
                       (list "attach-session" "-t" session))))
     (if remote (gascity-remote-ssh-argv remote argv) argv)))
 
+(defvar-keymap gascity-terminal-attach-map
+  :doc "Keys gascity adds to its tmux attach buffers.
+Active wherever `gascity-terminal--attach-keys' is set (see
+`gascity-terminal--install-keys').  Only `C-c'-prefixed keys belong
+here: vterm forwards everything else to the pty
+\(`vterm-keymap-exceptions'), and the backends' copy modes own the
+plain keys."
+  "C-c b" #'gascity-bead-show-at-point)
+
+(defvar-local gascity-terminal--attach-keys nil
+  "Non-nil in a gascity attach buffer: activates `gascity-terminal-attach-map'.")
+
+;; An emulation map rather than a layer over the local map: vterm's
+;; copy mode swaps the buffer's local map for its own (and back), which
+;; would drop a local layer exactly when point can reach an id.
+;; `emulation-mode-map-alists' outranks local and minor-mode maps in
+;; every state, and the map binds so little that nothing is shadowed.
+(add-to-list 'emulation-mode-map-alists
+             `((gascity-terminal--attach-keys . ,gascity-terminal-attach-map)))
+
+(defun gascity-terminal--install-keys (buffer)
+  "Activate `gascity-terminal-attach-map' in BUFFER.  Returns BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq gascity-terminal--attach-keys t)))
+  buffer)
+
 (defun gascity-terminal--project-root (dir store)
   "Return the project root for an attach buffer pinned to DIR.
 STORE, when non-nil, is the agent's rig store directory; it is the root
@@ -642,6 +670,7 @@ status bar is hidden and mirrored in the terminal buffer's mode line (see
         (gascity-context-install-project
          buf (gascity-terminal--project-root
               (buffer-local-value 'default-directory buf) store))
+        (gascity-terminal--install-keys buf)
         (gascity-terminal--beads-integrate buf store))
       (when (and gascity-terminal-mode-line-status (buffer-live-p buf))
         (gascity-terminal--status-install buf session socket remote))
