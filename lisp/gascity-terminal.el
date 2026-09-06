@@ -40,6 +40,15 @@
 ;; context is carried buffer-locally (`gascity-terminal--status-directory')
 ;; and bound around every probe.
 ;;
+;; The attach buffer is also a place the user READS bead ids — agent
+;; transcripts are full of them — so it is wired for beads.el's eldoc
+;; (`gascity-terminal--beads-integrate'): the id-prefix allowlist and a
+;; store resolver, both from the rig memo, never a fresh gc.  And like
+;; every gascity buffer it gets the I/O-free project of
+;; `gascity-context-install-project', because its pinned remote
+;; `default-directory' would otherwise send `project-mode-line' up the
+;; host's directory tree on every redisplay.
+;;
 ;; Keys belong to the pty: a terminal buffer is a full-screen program,
 ;; and the backend's own keymap is only the buffer's LOCAL map, which
 ;; every enabled minor-mode map outranks.  A global minor mode binding
@@ -73,9 +82,21 @@
 (require 'cl-lib)
 (require 'beads-terminal)
 (require 'gascity-custom)
+(require 'gascity-context)          ; install-project, rig memo (no cycle)
 (require 'gascity-remote)
 
 (declare-function gascity--log "gascity")
+
+;; The spawn-free bead-store resolver lives in gascity-section (which
+;; requires this module); it is only ever handed on as a function value.
+(declare-function gascity-beads--bead-path-cached "gascity-section" (id))
+
+;; beads.el's buffer-local eldoc contract (Part A of gce-eldoc).  Both
+;; are referenced by name and `boundp'-guarded, so this file
+;; byte-compiles with `--warnings-as-errors' and runs against an older
+;; beads.el that lacks them (the wiring is then a no-op).
+(defvar beads-eldoc-directory)
+(defvar beads-issue-id-prefixes)
 
 ;;; Backend selection
 
@@ -492,11 +513,50 @@ local attach passes no TERM at all."
                       (list "attach-session" "-t" session))))
     (if remote (gascity-remote-ssh-argv remote argv) argv)))
 
-(defun gascity-terminal-attach-tmux (session &optional socket dir)
+(defun gascity-terminal--project-root (dir store)
+  "Return the project root for an attach buffer pinned to DIR.
+STORE, when non-nil, is the agent's rig store directory; it is the root
+when DIR sits under it (a polecat worktree inside the rig checkout), so
+`project-name' shows the rig, not the worktree leaf.  Otherwise DIR
+itself.  Both are directory names already; the comparison is a string
+prefix — no file access."
+  (let ((dir (file-name-as-directory dir)))
+    (if (and store (stringp store)
+             (string-prefix-p (file-name-as-directory store) dir))
+        (file-name-as-directory store)
+      dir)))
+
+(defun gascity-terminal--beads-integrate (buffer store)
+  "Wire beads.el's eldoc in the attach BUFFER to the agent's STORE.
+STORE is the agent's rig store directory (nil when unknown).  Sets,
+buffer-locally, `beads-eldoc-directory' — STORE when known, else the
+spawn-free per-id resolver `gascity-beads--bead-path-cached', so
+`bd show' runs against the store owning the id's prefix rather than
+the buffer's own directory (which for a remote attach is the city
+root, whose `bd' answers \"no issues found\" for a rig's bead) — and
+`beads-issue-id-prefixes' to the city's real prefixes from the rig
+memo, when it is warm, so a random hyphenated token in the transcript
+never costs a `bd show'.  Nothing here spawns gc: the memo is read,
+never filled.  A no-op when beads-eldoc is absent or predates the
+variables (soft `require', `boundp' guards)."
+  (when (buffer-live-p buffer)
+    (require 'beads-eldoc nil t)
+    (with-current-buffer buffer
+      (when (boundp 'beads-eldoc-directory)
+        (setq-local beads-eldoc-directory
+                    (or store #'gascity-beads--bead-path-cached)))
+      (when-let* (((boundp 'beads-issue-id-prefixes))
+                  (prefixes (gascity-rigs-cached-prefixes)))
+        (setq-local beads-issue-id-prefixes prefixes)))))
+
+(defun gascity-terminal-attach-tmux (session &optional socket dir store)
   "Attach to tmux SESSION in a terminal buffer.
 SOCKET selects a non-default tmux server when set.  DIR is the working
-directory for the spawned terminal.  Signals a `user-error' when SESSION
-is empty or does not exist (e.g. the agent has stopped).
+directory for the spawned terminal.  STORE is the agent's rig store
+directory when the caller knows it (`gascity-agent-attach-tmux' passes
+the memoized one); it scopes the buffer's project and beads eldoc.
+Signals a `user-error' when SESSION is empty or does not exist (e.g.
+the agent has stopped).
 
 When `default-directory' is remote (a view of a remote city), the
 existence probe runs on the city's host, the spawned terminal is a
@@ -517,6 +577,13 @@ remote `default-directory' the attach was invoked from.  The pin does
 not affect the running ssh; it makes `dired'/`find-file' from the
 attach buffer default to the agent's directory on the city's host
 instead of the local home.
+
+Pinned local or remote, the buffer then gets gascity's I/O-free
+`project' (`gascity-context-install-project', root = STORE when the
+pinned directory sits under it, else the pinned directory) — a remote
+pin would otherwise make `project-mode-line' walk the host's directory
+tree from every redisplay — and beads eldoc is wired to the agent's
+store (`gascity-terminal--beads-integrate').
 
 When `gascity-terminal-mode-line-status' is non-nil, the session's tmux
 status bar is hidden and mirrored in the terminal buffer's mode line (see
@@ -568,6 +635,14 @@ status bar is hidden and mirrored in the terminal buffer's mode line (see
                                     ((file-directory-p localized)))
                           (file-name-as-directory localized))))
                     remote))))
+      (when (buffer-live-p buf)
+        ;; Local or remote: the pinned directory (or the store above
+        ;; it) is the project, answered without I/O; and bead ids in
+        ;; the transcript resolve to the agent's store.
+        (gascity-context-install-project
+         buf (gascity-terminal--project-root
+              (buffer-local-value 'default-directory buf) store))
+        (gascity-terminal--beads-integrate buf store))
       (when (and gascity-terminal-mode-line-status (buffer-live-p buf))
         (gascity-terminal--status-install buf session socket remote))
       buf)))

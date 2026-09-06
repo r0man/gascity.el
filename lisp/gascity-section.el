@@ -281,7 +281,7 @@ then does a cold mount)."
 
 ;;; tmux socket resolution
 
-(defun gascity-resolve-tmux-socket (&optional city-name)
+(defun gascity-resolve-tmux-socket (&optional city-name no-probe)
   "Return the tmux -L socket name for the city's agents.
 Gas City runs one tmux server per city, named after the city.  Honours
 `gascity-tmux-socket' when set; otherwise uses CITY-NAME (e.g. from a
@@ -291,13 +291,20 @@ directory context, and finally a gc-backed lookup
 stay correct even when `default-directory' is outside the city tree.
 May return nil (no city found), meaning the default tmux server.
 
+With NO-PROBE the gc-backed step is skipped: the vui dashboards call
+this from their RENDER function, which must never run a synchronous
+`gc' — on a remote city that is a multi-second stall inside redisplay,
+and their payload already carries `city_name', so the step only ever
+fired when the payload lacked it.  Only a caller with no payload in
+hand (the session list) leaves NO-PROBE nil.
+
 The city-name step is a deliberate inference: gc does not expose the tmux
 server socket in `--json' (the old `gt' did).  When gc grows a stable
 socket field, read it here in preference to the inference (see gce-je4)."
   (or gascity-tmux-socket
       city-name
       (gascity-context-city-name)
-      (gascity-context-gc-city-name)))
+      (and (not no-probe) (gascity-context-gc-city-name))))
 
 ;;; State -> face
 
@@ -392,10 +399,16 @@ cwd), which signals a clean `user-error' when none can be resolved."
 (defun gascity-agent-attach-tmux (agent)
   "Attach to AGENT's tmux session in a terminal buffer.
 AGENT is a `gascity-agent'; its `session-name' (and optional `socket' and
-`work-dir') drive `gascity-terminal-attach-tmux'."
+`work-dir') drive `gascity-terminal-attach-tmux'.  The agent's rig store
+rides along as the fourth argument — from the rig memo only
+\(`gascity-beads--rig-store-cached'), never a fresh `gc rig list': it
+scopes the attach buffer's project and beads eldoc, and an attach must
+not stall on a synchronous remote read for that."
   (gascity-terminal-attach-tmux (gascity-agent-session-name agent)
                                 (gascity-agent-socket agent)
-                                (gascity-agent-work-dir agent)))
+                                (gascity-agent-work-dir agent)
+                                (gascity-beads--rig-store-cached
+                                 (gascity-agent-rig agent))))
 
 (defun gascity-rig-dired (name dir)
   "Open Dired on rig NAME's directory DIR.
@@ -518,9 +531,14 @@ own error surface.  Installed as `:filter-return' advice on
   "Return the city's rigs as a list of `gascity-rig' objects.
 Decodes `gc rig list''s `rigs' vector via `beads-from-json' (the single
 decode site for rig payloads).  Signals like `gascity-command-rig-list!' on
-failure; callers that tolerate absence wrap the call in `ignore-errors'."
-  (gascity-domain-decode-list 'gascity-rig
-                              (alist-get 'rigs (gascity-command-rig-list!))))
+failure; callers that tolerate absence wrap the call in `ignore-errors'.
+A successful read is memoized for this host (`gascity-rigs-remember'),
+so the spawn-free readers (`gascity-rigs-cached',
+`gascity-beads--rig-store-cached', `gascity-beads--bead-path-cached')
+answer from it afterwards."
+  (gascity-rigs-remember
+   (gascity-domain-decode-list 'gascity-rig
+                               (alist-get 'rigs (gascity-command-rig-list!)))))
 
 (defun gascity-beads--rig-path (rig)
   "Return the absolute store directory for RIG, or nil.
@@ -553,6 +571,36 @@ Failures degrade to nil so callers fall back to the ambient directory."
               (rig (ignore-errors
                      (seq-find (lambda (r) (equal (gascity-rig-prefix r) prefix))
                                (gascity-rigs)))))
+    (gascity-beads--rig-path rig)))
+
+;; The spawn-free twins of the two resolvers above.  They answer from the
+;; rig memo (`gascity-rigs-cached') alone, so the UI paths that call them —
+;; wiring an attach buffer's project and beads eldoc, resolving a bead's
+;; store from a terminal — never run a synchronous `gc rig list' (a
+;; multi-second stall on a remote city).  A cold memo degrades to nil, and
+;; the callers fall back to the ambient directory.
+
+(defun gascity-beads--rig-store-cached (name)
+  "Return the store directory of the memoized rig NAME, or nil.
+NAME is a rig name string; nil (a city-scoped agent) or an unknown or
+uncached rig gives nil.  Resolution via `gascity-beads--rig-path' from
+the `gascity-rigs-cached' list — no spawn."
+  (when-let* ((name (and (stringp name) name))
+              (rig (seq-find (lambda (r) (equal (gascity-rig-name r) name))
+                             (gascity-rigs-cached))))
+    (gascity-beads--rig-path rig)))
+
+(defun gascity-beads--bead-path-cached (id)
+  "Return the store directory owning bead ID from the rig memo, or nil.
+Like `gascity-beads--bead-path' — ID's prefix picks the owning rig —
+but resolved from `gascity-rigs-cached' alone, never `gc rig list'.
+The resolver an attach buffer hands beads eldoc as
+`beads-eldoc-directory' (a function of the id), so hovering an id in a
+terminal never spawns gc synchronously; a cold memo yields nil and
+beads falls back to the buffer's own directory."
+  (when-let* ((prefix (gascity-beads--id-prefix id))
+              (rig (seq-find (lambda (r) (equal (gascity-rig-prefix r) prefix))
+                             (gascity-rigs-cached))))
     (gascity-beads--rig-path rig)))
 
 (defun gascity-beads--show-in-store (id store)

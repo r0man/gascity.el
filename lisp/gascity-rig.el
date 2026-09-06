@@ -256,7 +256,8 @@ Open-bead counts belong to those sections, which read live `bd' data."
              (sessions (and (eq (plist-get sessions-res :status) 'ready)
                             (alist-get 'sessions (plist-get sessions-res :data))))
              (session-map (gascity-status--session-map (or sessions [])))
-             (socket (gascity-resolve-tmux-socket city-name))
+             ;; Render: no synchronous gc fallback (`no-probe').
+             (socket (gascity-resolve-tmux-socket city-name 'no-probe))
              (ready (and (eq (plist-get ready-res :status) 'ready)
                          (gascity-section-beads (plist-get ready-res :data))))
              (inprog (and (eq (plist-get inprog-res :status) 'ready)

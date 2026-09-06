@@ -74,6 +74,23 @@ or changing this path."
   :type '(repeat string)
   :group 'gascity)
 
+(defcustom gascity-remote-miss-ttl 60
+  "Seconds a failed remote executable lookup is remembered, 0 to disable.
+Resolving a bare program name on a remote host
+\(`gascity-remote-find-executable') costs one channel round trip per
+`gascity-remote-search-path' entry, all synchronous on the UI thread.
+A hit is cached until `gascity-context-clear-cache'; a definite miss
+\(every probe answered \"no\") used to be re-probed on every call, so a
+program absent from the host — `infocmp' on a minimal image, say —
+made each terminal status tick or attach pay the full walk again.  A
+miss is now remembered for this many seconds instead, then re-probed,
+so installing the program on the host still heals itself within the
+TTL.  Probe errors (a dropped connection) are never cached — the next
+call retries at once.  Set to 0 to restore the old re-probe-every-call
+behaviour."
+  :type 'natnum
+  :group 'gascity)
+
 ;;; Debug logging
 
 (defcustom gascity-enable-debug nil

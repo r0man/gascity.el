@@ -61,7 +61,7 @@
 
 ;;; Low-level invocation
 
-(defun gascity-reader--command (executable args &optional discard-stderr)
+(defun gascity-reader--command (executable args &optional stderr)
   "Return the argv running EXECUTABLE with ARGS where `default-directory' points.
 Locally that is (EXECUTABLE . ARGS) unchanged.  On a remote directory
 the command is wrapped as
@@ -77,23 +77,67 @@ enough, its children inherit the process PATH (gce-k5d).  The
 assignment must be evaluated by the remote shell, where $PATH expands
 to whatever the process actually inherited: every TRAMP handler
 forwards `process-environment' entries shell-quoted, so the env route
-would deliver a literal $PATH and lose the inherited tail.  With
-DISCARD-STDERR (the async runner) the wrapper also separates stderr ON
-the host, identically under tramp-sh and direct-async (gce-qke).
+would deliver a literal $PATH and lose the inherited tail.
 EXECUTABLE rides as $0, so exit codes, signals, and the remote
 \"command not found\" 127/126 are exactly the unwrapped ones.
+
+STDERR selects what the wrapper does with standard error on the host:
+
+- nil: leave it to the caller's `process-file' destination.
+- t (the async runner): `2>/dev/null' — separated ON the host,
+  identically under tramp-sh and direct-async (gce-qke).
+- a string DELIM (the sync runner): CAPTURE mode.  The command runs
+  with stderr redirected to a host-side `mktemp' file; afterwards the
+  wrapper prints a newline, DELIM, a newline, then that file, and exits
+  with the command's own status — so ONE stdout stream carries both,
+  and `gascity-reader--split-output' cuts it at the first
+  \"\\nDELIM\\n\".  When `mktemp' fails the wrapper degrades to the
+  discard form (no DELIM printed: the whole stream is stdout).  DELIM
+  must be printable ASCII — control characters do not survive the
+  tramp-sh pty (gce-m6k) — and unique per call.  This replaces the
+  `(BUFFER FILE)' destination of `process-file', whose remote FILE
+  costs a host-side temp file plus its readback and deletion: three
+  extra channel round trips per synchronous read (\"Renaming
+  /ssh:…/tramp.X to /tmp/gascity-stderr-Y\" in `*Messages*').
 
 Reads `default-directory' and (via the assignment) possibly
 connection-local variables — call it before any buffer switch, next to
 the `gascity-remote-find-executable' capture."
   (if (not (file-remote-p default-directory))
       (cons executable args)
-    (let ((assignment (gascity-remote-path-assignment)))
+    (let* ((assignment (gascity-remote-path-assignment))
+           (prefix (if assignment (concat assignment " ") "")))
       (append (list "/bin/sh" "-c"
-                    (concat (and assignment (concat assignment " "))
-                            "exec \"$0\" \"$@\""
-                            (and discard-stderr " 2>/dev/null")))
+                    (if (stringp stderr)
+                        (concat "t=$(mktemp) || " prefix
+                                "exec \"$0\" \"$@\" 2>/dev/null; "
+                                prefix "\"$0\" \"$@\" 2>\"$t\"; rc=$?; "
+                                "printf '\\n%s\\n' " stderr "; "
+                                "cat \"$t\"; rm -f \"$t\"; exit $rc")
+                      (concat prefix "exec \"$0\" \"$@\""
+                              (and stderr " 2>/dev/null"))))
               (cons executable args)))))
+
+(defun gascity-reader--stderr-delimiter ()
+  "Return a fresh stderr delimiter for one capture-mode remote command.
+Printable ASCII with a random 32-bit tag — a control character would
+not survive the tramp-sh pty (gce-m6k), and a fixed token could appear
+in gc's own output."
+  (format "GASCITY-STDERR-%08x" (random (ash 1 32))))
+
+(defun gascity-reader--split-output (output delimiter)
+  "Split OUTPUT of a capture-mode command into (STDOUT . STDERR).
+OUTPUT is the whole stream the wrapper of `gascity-reader--command'
+wrote; DELIMITER the token it was given.  Cut at the first
+\"\\nDELIMITER\\n\": before it is stdout, after it stderr.  With no
+marker (the `mktemp' fallback ran, or the command exec'd away) the
+whole OUTPUT is stdout and stderr is empty."
+  (let* ((marker (concat "\n" delimiter "\n"))
+         (at (string-search marker output)))
+    (if at
+        (cons (substring output 0 at)
+              (substring output (+ at (length marker))))
+      (cons output ""))))
 
 (defun gascity-reader-run (args)
   "Run the `gc' executable with ARGS, a list of strings.
@@ -106,21 +150,24 @@ applies).  This does not signal on a non-zero exit — callers inspect
 launched (e.g. `gc' is not installed, or — on a remote
 `default-directory' — not on `tramp-remote-path').
 
-Runs where `default-directory' points: on a remote TRAMP directory,
-`process-file' dispatches through TRAMP and gc runs on that host.  The
-stderr capture file is then created host-side (`make-nearby-temp-file')
-and its full name handed to `process-file' — TRAMP reduces a same-host
-name to its local part itself; handing it the local part instead would
-make TRAMP copy stderr back into a *local* file of that name, and the
-readback of the remote name would find nothing.  `gascity-executable'
-is resolved under `with-connection-local-variables', honouring a
-per-host connection-local value; a bare name on a remote directory is
-then resolved to an absolute host path by
-`gascity-remote-find-executable' (`tramp-remote-path', falling back
-to `gascity-remote-search-path').  A remote command runs through the
-/bin/sh wrapper of `gascity-reader--command', which exports the
-search-path directories on PATH so gc's own subprocesses (git, dolt)
-resolve too (gce-k5d)."
+Runs where `default-directory' points.  Locally, stderr is captured
+through a temp file handed to `process-file' as usual.  On a remote
+TRAMP directory `process-file' dispatches through TRAMP and gc runs on
+that host — and the temp-file route is NOT used there: a host-side
+capture file (`make-nearby-temp-file', its readback, its deletion) is
+three extra channel round trips per synchronous read, each a UI stall
+on a slow link.  Instead the command runs in the capture mode of
+`gascity-reader--command': stderr is diverted on the host and appended
+to stdout behind a per-call delimiter (`gascity-reader--stderr-delimiter'),
+the whole stream arrives in one `process-file', and
+`gascity-reader--split-output' separates the two — one round trip, no
+files.  `gascity-executable' is resolved under
+`with-connection-local-variables', honouring a per-host
+connection-local value; a bare name on a remote directory is then
+resolved to an absolute host path by `gascity-remote-find-executable'
+\(`tramp-remote-path', falling back to `gascity-remote-search-path').
+The remote wrapper also exports the search-path directories on PATH so
+gc's own subprocesses (git, dolt) resolve too (gce-k5d)."
   (with-connection-local-variables
    ;; Capture the executable and command HERE:
    ;; `with-connection-local-variables' applies a connection-local
@@ -128,8 +175,11 @@ resolve too (gce-k5d)."
    ;; `with-temp-buffer' below would silently fall back to the global
    ;; default.
    (let* ((executable (gascity-remote-find-executable gascity-executable))
-          (command (gascity-reader--command executable args))
-          (stderr-file (make-nearby-temp-file "gascity-stderr-")))
+          (delimiter (and (file-remote-p default-directory)
+                          (gascity-reader--stderr-delimiter)))
+          (command (gascity-reader--command executable args delimiter))
+          (stderr-file (and (not delimiter)
+                            (make-nearby-temp-file "gascity-stderr-"))))
      (when (fboundp 'gascity--log)
        (gascity--log 'info "Running: %s %s"
                      executable (mapconcat #'identity args " ")))
@@ -150,16 +200,21 @@ resolve too (gce-k5d)."
                                               #'identity
                                               (cons executable args) " ")
                                     :exit-code nil :stdout "" :stderr "")))))
-                  (stdout (buffer-string))
-                  (stderr (with-temp-buffer
-                            (insert-file-contents stderr-file)
-                            (buffer-string))))
+                  (output (if delimiter
+                              (gascity-reader--split-output
+                               (buffer-string) delimiter)
+                            (cons (buffer-string)
+                                  (with-temp-buffer
+                                    (insert-file-contents stderr-file)
+                                    (buffer-string)))))
+                  (stdout (car output))
+                  (stderr (cdr output)))
              (when (fboundp 'gascity--log)
                (gascity--log 'info "Exit code: %s" exit-code)
                (gascity--log 'verbose "Stdout: %s" stdout))
              (list :exit-code exit-code :stdout stdout :stderr stderr
                    :executable executable)))
-       (when (file-exists-p stderr-file)
+       (when (and stderr-file (file-exists-p stderr-file))
          (delete-file stderr-file))))))
 
 ;;; JSON parsing

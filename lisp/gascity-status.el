@@ -54,6 +54,7 @@
 (require 'vui)
 (require 'gascity-custom)
 (require 'gascity-context)            ; pin-directory (view keyed to its city)
+(require 'gascity-remote)             ; connection-locked-p (auto-refresh guard)
 (require 'gascity-domain)             ; typed session/agent objects
 (require 'gascity-reader)
 (require 'gascity-command)
@@ -443,9 +444,17 @@ section is told whether it is collapsed (lifted there so the keymap can
 toggle the section at point — see `gascity-status--toggle-rig' and
 `gascity-status--toggle-pool')."
   (let* ((session-map (gascity-status--session-map (or sessions [])))
-         (socket (gascity-resolve-tmux-socket (alist-get 'city_name status)))
+         ;; Render must never run a synchronous gc: the payload carries
+         ;; the city name, so the gc-backed fallback is off (`no-probe').
+         (socket (gascity-resolve-tmux-socket (alist-get 'city_name status)
+                                              'no-probe))
          (agents (alist-get 'agents status))
-         (rigs (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status)))
+         ;; Seed the rig memo from the payload already in hand, so the
+         ;; spawn-free paths (attach-buffer eldoc wiring, view id
+         ;; prefixes) know this host's rigs without a `gc rig list'.
+         (rigs (gascity-rigs-remember
+                (gascity-domain-decode-list 'gascity-rig
+                                            (alist-get 'rigs status))))
          (city-agents (seq-filter #'gascity-status--city-agent-p agents)))
     (vui-vstack
      :spacing 1
@@ -815,7 +824,13 @@ nothing."
              ;; call's `accept-process-output', where spawning the refresh
              ;; processes signals "Forbidden reentrant call of Tramp" and
              ;; needlessly errors the loads.  Skip; the next tick retries.
-             (not (bound-and-true-p tramp-locked))
+             ;; The lock is read off the dashboard's OWN connection
+             ;; (`gascity-remote-connection-locked-p', keyed by its pinned
+             ;; `default-directory' — the timer runs with whatever buffer
+             ;; is current); the old `tramp-locked' variable is gone in
+             ;; TRAMP >= 2.6, so that guard was silently always off.
+             (not (gascity-remote-connection-locked-p
+                   (buffer-local-value 'default-directory buffer)))
              (not (gascity-status--loads-pending-p buffer)))
     ;; `non-essential': a timer must never make TRAMP establish a NEW
     ;; connection — on a dropped link that is a multi-second freeze per

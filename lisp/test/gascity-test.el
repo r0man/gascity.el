@@ -3726,9 +3726,12 @@ TRAMP >= 2.6, so the status-tick guard reads the property instead)."
 `tramp-remote-path' hit (`executable-find') wins, else the
 `gascity-remote-search-path' profile directories are probed in order,
 first hit wins.  Hits are cached per (connection × name) until
-`gascity-context-clear-cache'; misses are NOT cached, so installing
-the program heals itself.  Local directories and names that already
-carry a directory pass through untouched."
+`gascity-context-clear-cache'; a definite miss is cached for
+`gascity-remote-miss-ttl' seconds (the walk is synchronous channel
+traffic on every status tick otherwise), so installing the program
+heals itself after the TTL, at once with a TTL of 0 or a cache clear;
+a probe ERROR is never cached.  Local directories and names that
+already carry a directory pass through untouched."
   ;; Local: untouched, no resolution.
   (let ((default-directory "/"))
     (should (equal (gascity-remote-find-executable "gc") "gc")))
@@ -3776,19 +3779,57 @@ carry a directory pass through untouched."
             ;; ...until invalidated — then the miss passes through
             ;; unchanged (the launch error path owns the hint).
             (gascity-context-clear-cache)
-            (should (equal (gascity-remote-find-executable
-                            "gascity-test-tool")
-                           "gascity-test-tool"))
-            ;; The miss was NOT cached: installing the tool (now in
-            ;; BOTH directories) is picked up with no cache clear, and
-            ;; the earlier entry wins.
-            (write-region "#!/bin/sh\n" nil (concat remote tool-a))
-            (set-file-modes (concat remote tool-a) #o755)
-            (write-region "#!/bin/sh\n" nil (concat remote tool-b))
-            (set-file-modes (concat remote tool-b) #o755)
-            (should (equal (gascity-remote-find-executable
-                            "gascity-test-tool")
-                           tool-a)))
+            (let ((probes 0)
+                  (gascity-remote-miss-ttl 60))
+              (cl-letf* ((real (symbol-function 'file-executable-p))
+                         ((symbol-function 'file-executable-p)
+                          (lambda (f) (cl-incf probes) (funcall real f))))
+                (should (equal (gascity-remote-find-executable
+                                "gascity-test-tool")
+                               "gascity-test-tool"))
+                (should (> probes 0))
+                ;; The miss IS cached: within the TTL a second lookup
+                ;; probes nothing, even though the tool is now installed
+                ;; (in BOTH directories).
+                (write-region "#!/bin/sh\n" nil (concat remote tool-a))
+                (set-file-modes (concat remote tool-a) #o755)
+                (write-region "#!/bin/sh\n" nil (concat remote tool-b))
+                (set-file-modes (concat remote tool-b) #o755)
+                (setq probes 0)
+                (should (equal (gascity-remote-find-executable
+                                "gascity-test-tool")
+                               "gascity-test-tool"))
+                (should (= probes 0))
+                ;; A TTL of 0 heals immediately — and the earlier
+                ;; directory wins — with no cache clear.
+                (let ((gascity-remote-miss-ttl 0))
+                  (should (equal (gascity-remote-find-executable
+                                  "gascity-test-tool")
+                                 tool-a)))
+                ;; That hit replaced the miss entry; and a fresh miss is
+                ;; dropped by the cache clear, not only by the TTL.
+                (should (equal (gascity-remote-find-executable
+                                "gascity-test-tool")
+                               tool-a))
+                (should (equal (gascity-remote-find-executable
+                                "gascity-test-absent")
+                               "gascity-test-absent"))
+                (should (eq (car (gethash (cons remote "gascity-test-absent")
+                                          gascity-remote--executable-cache))
+                            :miss))
+                (gascity-context-clear-cache)
+                (should-not (gethash (cons remote "gascity-test-absent")
+                                     gascity-remote--executable-cache))))
+            ;; A probe ERROR (a dropped link) is never cached as a miss:
+            ;; the very next call re-probes.
+            (gascity-context-clear-cache)
+            (cl-letf (((symbol-function 'executable-find)
+                       (lambda (&rest _) (error "link dropped"))))
+              (should (equal (gascity-remote-find-executable
+                              "gascity-test-absent")
+                             "gascity-test-absent")))
+            (should-not (gethash (cons remote "gascity-test-absent")
+                                 gascity-remote--executable-cache)))
         (delete-directory tmp t)
         (gascity-context-clear-cache)))))
 
@@ -4522,18 +4563,44 @@ user repro)."
             (progn
               ;; With a work dir that exists on the host: pinned to it.
               (gascity-terminal-attach-tmux "sess" nil workdir)
-              (let ((buf (get-buffer name)))
+              (let ((buf (get-buffer name))
+                    (pinned (file-name-as-directory
+                             (concat remote-prefix workdir))))
                 (should buf)
                 (should-not (file-remote-p spawn-dir))
                 (should (equal (buffer-local-value 'default-directory buf)
-                               (file-name-as-directory
-                                (concat remote-prefix workdir)))))
+                               pinned))
+                ;; The pinned directory is the buffer's I/O-free project
+                ;; (no store known): `project-current' answers from the
+                ;; buffer-local root with the VC walk stubbed to error.
+                (with-current-buffer buf
+                  (should (equal project-find-functions
+                                 (list #'gascity-context-project-find-function)))
+                  (should (null vc-handled-backends))
+                  (cl-letf (((symbol-function 'locate-dominating-file)
+                             (lambda (&rest _) (error "project walked TRAMP"))))
+                    (should (equal (project-current)
+                                   (cons 'gascity pinned))))))
               (kill-buffer name)
               ;; Without one: pinned to the invoking remote context.
               (gascity-terminal-attach-tmux "sess" nil nil)
               (should (equal (buffer-local-value
                               'default-directory (get-buffer name))
-                             remote-context)))
+                             remote-context))
+              (should (equal (buffer-local-value
+                              'gascity-context-project-root (get-buffer name))
+                             remote-context))
+              (kill-buffer name)
+              ;; With the agent's STORE above the work dir: the store is
+              ;; the project root, so `project-name' names the rig.
+              (let ((store (file-name-as-directory
+                            (concat remote-prefix
+                                    (file-name-directory
+                                     (directory-file-name workdir))))))
+                (gascity-terminal-attach-tmux "sess" nil workdir store)
+                (with-current-buffer (get-buffer name)
+                  (should (equal gascity-context-project-root store))
+                  (should (equal (project-root (project-current)) store)))))
           (when (get-buffer name) (kill-buffer name))
           (delete-directory (concat remote-prefix workdir) t))))))
 
@@ -4715,6 +4782,458 @@ of the buffer when the rows above it change."
      (should (search-forward "gastown.polecat" nil t))
      (should (equal (gascity-section--line-id)
                     '(pool . "gascity.el/gastown.polecat"))))))
+
+;;; ============================================================
+;;; Never block the UI on a remote city (gce-eldoc, Part B)
+;;; ============================================================
+;;
+;; The user-visible failure: with `project-mode-line' on, every redisplay
+;; of a remote view or attach buffer walked the host's directory tree
+;; over TRAMP (`project-try-vc' caches only successes, and a city root
+;; has no VCS root above it); the dashboard tick's reentrancy guard read
+;; a variable TRAMP no longer has; and several UI paths ran a
+;; synchronous remote `gc' or paid remote temp-file round trips.
+
+;;; B1 — an I/O-free project in every gascity buffer
+
+(ert-deftest gascity-test-context-project-instance ()
+  "A (gascity . ROOT) project answers `project-root' and `project-name'
+from the cons alone: the name is the root's basename."
+  (let ((project '(gascity . "/x/city/")))
+    (should (equal (project-root project) "/x/city/"))
+    (should (equal (project-name project) "city")))
+  ;; A remote root: still the basename, no TRAMP consultation.
+  (should (equal (project-name '(gascity . "/ssh:u@h:/home/u/town/"))
+                 "town")))
+
+(ert-deftest gascity-test-view-buffer-project-is-local-and-io-free ()
+  "A view buffer's project is buffer-local and touches no file:
+`project-find-functions' holds only the gascity finder (no trailing
+`t', so `project-try-vc' never runs here), `vc-handled-backends' is
+nil, and `project-current' / `project-mode-line-format' succeed with
+every directory probe stubbed to error."
+  (let* ((tmp (file-name-as-directory (make-temp-file "gascity-test-proj" t)))
+         (buf nil))
+    (unwind-protect
+        (let ((default-directory tmp))
+          (setq buf (gascity-view-get-buffer-create "*gascity-test-proj*"))
+          (with-current-buffer buf
+            (should (local-variable-p 'project-find-functions))
+            (should (equal project-find-functions
+                           (list #'gascity-context-project-find-function)))
+            (should (local-variable-p 'vc-handled-backends))
+            (should (null vc-handled-backends))
+            (should (equal gascity-context-project-root tmp))
+            ;; `file-exists-p' is stubbed LAST (`cl-letf' installs its
+            ;; bindings back to front): installing each stub may search
+            ;; the native-comp trampoline cache with it.
+            (cl-letf (((symbol-function 'file-exists-p)
+                       (lambda (&rest _) (error "project did I/O")))
+                      ((symbol-function 'directory-files)
+                       (lambda (&rest _) (error "project did I/O")))
+                      ((symbol-function 'locate-dominating-file)
+                       (lambda (&rest _) (error "project did I/O"))))
+              (should (equal (project-current) (cons 'gascity tmp)))
+              (should (equal (project-root (project-current)) tmp))
+              (when (fboundp 'project-mode-line-format)
+                (should (stringp (project-mode-line-format)))))
+            ;; Every view enables its major mode AFTER the factory; the
+            ;; mode's `kill-all-local-variables' must not undo the
+            ;; install (the root is permanent-local, the hook variables
+            ;; are re-installed from it).
+            (text-mode)
+            (should (equal gascity-context-project-root tmp))
+            (should (equal project-find-functions
+                           (list #'gascity-context-project-find-function)))
+            (should (null vc-handled-backends))
+            (should (equal (project-current) (cons 'gascity tmp)))))
+      (when (buffer-live-p buf) (kill-buffer buf))
+      (delete-directory tmp t))))
+
+(ert-deftest gascity-test-context-project-find-function-outside-root ()
+  "The finder is a string-prefix test on directory names: a directory
+under the root (with or without its slash) is the project, a sibling
+sharing the root's characters or a directory elsewhere is not — and
+then `project-current' is nil, never a VC walk."
+  (with-temp-buffer
+    (gascity-context-install-project (current-buffer) "/x/city")
+    (should (equal gascity-context-project-root "/x/city/"))
+    (should (equal (gascity-context-project-find-function "/x/city/deep")
+                   '(gascity . "/x/city/")))
+    (should (equal (gascity-context-project-find-function "/x/city")
+                   '(gascity . "/x/city/")))
+    (should-not (gascity-context-project-find-function "/x/cityscape/"))
+    (should-not (gascity-context-project-find-function "/elsewhere/"))
+    (should-not (gascity-context-project-find-function nil))
+    (cl-letf (((symbol-function 'locate-dominating-file)
+               (lambda (&rest _) (error "project did I/O"))))
+      (let ((default-directory "/elsewhere/"))
+        (should-not (project-current)))))
+  ;; Idempotent: reinstalling the same root changes nothing.
+  (with-temp-buffer
+    (gascity-context-install-project (current-buffer) "/x/city/")
+    (gascity-context-install-project (current-buffer) "/x/city/")
+    (should (equal project-find-functions
+                   (list #'gascity-context-project-find-function)))))
+
+;;; B2 — the dashboard tick reads the connection lock, not `tramp-locked'
+
+(ert-deftest gascity-test-status-tick-skips-locked-connection ()
+  "The auto-refresh tick skips while the DASHBOARD's connection is
+mid-command — read off the buffer's own `default-directory' (the timer
+runs with an unrelated buffer current) via
+`gascity-remote-connection-locked-p' — and refreshes once it clears.
+The old `tramp-locked' guard was always off under TRAMP >= 2.6."
+  (gascity-test--with-mock-remote
+    (file-directory-p default-directory)
+    (let* ((vec (tramp-dissect-file-name default-directory))
+           (proc (tramp-get-connection-process vec))
+           (dashboard (generate-new-buffer "*gascity-status-locked-test*"))
+           (refreshes 0))
+      (skip-unless proc)
+      (unwind-protect
+          (progn
+            (with-current-buffer dashboard
+              (setq default-directory gascity-test--mock-directory))
+            (cl-letf (((symbol-function 'get-buffer-window)
+                       (lambda (&rest _) t))
+                      ((symbol-function 'gascity-status--loads-pending-p)
+                       (lambda (&rest _) nil))
+                      ((symbol-function 'gascity-status--refresh-instance)
+                       (lambda (&rest _) (cl-incf refreshes) t)))
+              ;; Another, LOCAL buffer is current when the timer fires.
+              (with-temp-buffer
+                (let ((default-directory temporary-file-directory))
+                  (unwind-protect
+                      (progn
+                        (tramp-set-connection-property proc "locked" t)
+                        (gascity-status--auto-refresh-tick dashboard)
+                        (should (= refreshes 0)))
+                    (tramp-flush-connection-property proc "locked"))
+                  (gascity-status--auto-refresh-tick dashboard)
+                  (should (= refreshes 1))))))
+        (kill-buffer dashboard)))))
+
+;;; B3 — sync remote-path hardening
+
+(ert-deftest gascity-test-context-city-root-memoized ()
+  "The city-root walk is memoized per start directory — nil included,
+that being the full walk to `/' — until `gascity-context-clear-cache';
+the `gascity-context-city' override is honoured first and never cached."
+  (gascity-context-clear-cache)
+  (let* ((tmp (make-temp-file "gascity-test-root" t))
+         (dir (file-name-as-directory tmp))
+         (walks 0))
+    (unwind-protect
+        (cl-letf* ((real (symbol-function 'locate-dominating-file))
+                   ((symbol-function 'locate-dominating-file)
+                    (lambda (&rest args) (cl-incf walks) (apply real args))))
+          (let ((gascity-context-city nil))
+            (should-not (gascity-context-city-root dir))
+            (should (= walks 1))
+            (should-not (gascity-context-city-root dir))
+            (should (= walks 1))            ; nil cached too
+            ;; A city created afterwards is invisible until the cache
+            ;; is cleared — then the walk runs once more and sticks.
+            (write-region "" nil (expand-file-name "city.toml" tmp))
+            (should-not (gascity-context-city-root dir))
+            (gascity-context-clear-cache)
+            (should (equal (gascity-context-city-root dir) dir))
+            (should (= walks 2))
+            (should (equal (gascity-context-city-root dir) dir))
+            (should (= walks 2)))
+          (let ((gascity-context-city "/x/city"))
+            (should (equal (gascity-context-city-root dir) "/x/city/"))
+            (should (= walks 2))))
+      (delete-directory tmp t)
+      (gascity-context-clear-cache))))
+
+(ert-deftest gascity-test-resolve-tmux-socket-no-probe ()
+  "With NO-PROBE the gc-backed fallback never runs: the render callers
+pass it (a synchronous gc inside redisplay is a remote stall), the
+session list — with no payload in hand — still probes."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (let ((gascity-tmux-socket nil) (probes 0))
+        (cl-letf (((symbol-function 'gascity-context-city-name)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'gascity-context-gc-city-name)
+                   (lambda (&rest _) (cl-incf probes) "bright-lights")))
+          (should-not (gascity-resolve-tmux-socket nil 'no-probe))
+          (should (= probes 0))
+          (should (equal (gascity-resolve-tmux-socket "city" 'no-probe) "city"))
+          (should (= probes 0))
+          (should (equal (gascity-resolve-tmux-socket) "bright-lights"))
+          (should (= probes 1))))
+    (gascity-context-clear-cache)))
+
+(ert-deftest gascity-test-status-render-never-reads-sync ()
+  "Mounting and refreshing the dashboard runs no synchronous gc read,
+even on a payload without `city_name' and outside any city tree — the
+socket resolution used to fall through to `gc status' from render."
+  (gascity-context-clear-cache)
+  (let ((vui-render-delay nil)
+        (payload '((ok . t)
+                   (rigs . [((name . "gascity.el") (prefix . "gce")
+                             (path . "/p/gascity.el"))])
+                   (agents . [((name . "mayor") (qualified_name . "mayor")
+                               (scope . "city") (running . t))]))))
+    (cl-letf (((symbol-function 'gascity-reader-read)
+               (lambda (&rest args) (error "sync read from render: %S" args)))
+              ((symbol-function 'gascity-reader-run)
+               (lambda (&rest args) (error "sync run from render: %S" args)))
+              ((symbol-function 'gascity-context-city-name)
+               (lambda (&rest _) nil))
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback)
+                 (funcall callback
+                          (cond ((equal args '("status")) payload)
+                                ((equal args '("session" "list"))
+                                 '((sessions . [])))
+                                ((equal args '("agent" "list"))
+                                 '((agents . [])))
+                                (t (error "unexpected async args: %S" args))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app)
+                         "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (should (gascity-test--buffer-contains-p "gascity.el"))
+                (should (gascity-test--buffer-contains-p "mayor"))
+                (gascity-status--refresh-instance (current-buffer))
+                (should (gascity-test--buffer-contains-p "gascity.el"))
+                ;; The payload seeded the rig memo for this host.
+                (should (equal (gascity-rigs-cached-prefixes) '("gce")))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*"))
+          (gascity-context-clear-cache))))))
+
+(ert-deftest gascity-test-remote-reader-run-no-temp-file ()
+  "A remote `gascity-reader-run' captures stderr with NO temp file on
+either side: no `make-nearby-temp-file', no readback, no deletion —
+each was a channel round trip.  stdout and stderr still separate, the
+exit code is the command's own."
+  (gascity-test--with-mock-remote
+    (cl-letf (((symbol-function 'make-nearby-temp-file)
+               (lambda (&rest _) (error "temp file for stderr")))
+              ((symbol-function 'insert-file-contents)
+               (lambda (&rest _) (error "stderr readback")))
+              ((symbol-function 'delete-file)
+               (lambda (&rest _) (error "stderr file deletion"))))
+      (let* ((gascity-executable "/bin/sh")
+             (result (gascity-reader-run
+                      '("-c" "printf OUT; echo ERR >&2; exit 3"))))
+        (should (equal (plist-get result :exit-code) 3))
+        (should (equal (plist-get result :stdout) "OUT"))
+        (should (equal (plist-get result :stderr) "ERR\n"))
+        ;; Empty stdout, and a multi-line stderr, split cleanly too.
+        (setq result (gascity-reader-run
+                      '("-c" "echo one >&2; echo two >&2; exit 0")))
+        (should (equal (plist-get result :exit-code) 0))
+        (should (equal (plist-get result :stdout) ""))
+        (should (equal (plist-get result :stderr) "one\ntwo\n")))))
+  ;; A local directory keeps the temp-file path (its stderr is a file).
+  (let ((default-directory temporary-file-directory)
+        (gascity-executable "/bin/sh"))
+    (let ((result (gascity-reader-run '("-c" "echo OUT; echo ERR >&2; exit 3"))))
+      (should (equal (plist-get result :exit-code) 3))
+      (should (equal (plist-get result :stdout) "OUT\n"))
+      (should (equal (plist-get result :stderr) "ERR\n")))))
+
+(ert-deftest gascity-test-remote-reader-run-split-without-delimiter ()
+  "The stream splits at the first \"\\nDELIM\\n\"; without a marker the
+whole stream is stdout and stderr is empty — which is also what the
+wrapper's `mktemp' fallback (stderr discarded on the host) produces."
+  (let ((delim "GASCITY-STDERR-0000abcd"))
+    (should (equal (gascity-reader--split-output "OUT\n" delim)
+                   '("OUT\n" . "")))
+    (should (equal (gascity-reader--split-output
+                    (concat "OUT\n\n" delim "\nERR\n") delim)
+                   '("OUT\n" . "ERR\n")))
+    (should (equal (gascity-reader--split-output
+                    (concat "OUT\n" delim "\nERR\n") delim)
+                   '("OUT" . "ERR\n")))
+    (should (equal (gascity-reader--split-output
+                    (concat "\n" delim "\nERR\n") delim)
+                   '("" . "ERR\n")))
+    ;; A delimiter is printable ASCII (control chars die on the pty,
+    ;; gce-m6k) and unique per call.
+    (let ((a (gascity-reader--stderr-delimiter))
+          (b (gascity-reader--stderr-delimiter)))
+      (should (string-match-p "\\`GASCITY-STDERR-[0-9a-f]\\{8\\}\\'" a))
+      (should-not (equal a b))))
+  ;; End to end: `mktemp' failing on the host (TMPDIR unusable) degrades
+  ;; to the discard form — all stdout, empty stderr, exit code intact.
+  (gascity-test--with-mock-remote
+    (let* ((gascity-executable "/bin/sh")
+           (process-environment
+            (cons "TMPDIR=/nonexistent/gascity-test" process-environment))
+           (result (gascity-reader-run
+                    '("-c" "echo OUT; echo ERR >&2; exit 3"))))
+      (should (equal (plist-get result :exit-code) 3))
+      (should (equal (plist-get result :stdout) "OUT\n"))
+      (should (equal (plist-get result :stderr) "")))))
+
+;;; B4 — beads eldoc wiring from the rig memo, never a spawn
+
+(defun gascity-test--rigs (&rest specs)
+  "Decode SPECS, alists shaped like `gc rig list' rows, into `gascity-rig's."
+  (gascity-domain-decode-list 'gascity-rig (vconcat specs)))
+
+(ert-deftest gascity-test-rigs-cached-never-spawns ()
+  "The rig memo answers cold with nil and warm from the last decoded
+list — never through `gc rig list'; `gascity-rigs' fills it, a status
+payload seeds it, a prefix-less list never blanks a prefixed one, and
+the memo is keyed per host."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (cl-letf (((symbol-function 'gascity-reader-run)
+                 (lambda (&rest _) (error "spawned gc"))))
+        (let ((default-directory "/"))
+          (cl-letf (((symbol-function 'gascity-command-rig-list!)
+                     (lambda (&rest _) (error "spawned gc rig list"))))
+            ;; Cold: nil everywhere, no spawn.
+            (should-not (gascity-rigs-cached))
+            (should-not (gascity-rigs-cached-prefixes))
+            (should-not (gascity-beads--rig-store-cached "gascity.el"))
+            (should-not (gascity-beads--rig-store-cached nil))
+            (should-not (gascity-beads--bead-path-cached "gce-abc"))
+            ;; Seeded (as the status dashboard does): resolved from it.
+            (let ((rigs (gascity-test--rigs
+                         '((name . "gascity.el") (prefix . "gce")
+                           (path . "/p/gascity.el"))
+                         '((name . "beads.el") (prefix . "bde")
+                           (path . "/p/beads.el")))))
+              (should (eq (gascity-rigs-remember rigs) rigs))
+              (should (eq (gascity-rigs-cached) rigs))
+              (should (equal (gascity-rigs-cached-prefixes) '("gce" "bde")))
+              (should (equal (gascity-beads--rig-store-cached "gascity.el")
+                             "/p/gascity.el/"))
+              (should (equal (gascity-beads--bead-path-cached "bde-x1")
+                             "/p/beads.el/"))
+              (should-not (gascity-beads--bead-path-cached "zzz-x1"))
+              (should-not (gascity-beads--bead-path-cached "no-hyphen-prefix-"))
+              ;; A payload variant without prefixes keeps the prefixed map
+              ;; — but is still returned, so a view renders what it read.
+              (let ((bare (gascity-test--rigs
+                           '((name . "gascity.el") (path . "/p/gascity.el")))))
+                (should (eq (gascity-rigs-remember bare) bare))
+                (should (eq (gascity-rigs-cached) rigs)))
+              ;; Per host: a remote context is cold.
+              (let ((default-directory "/ssh:u@h:/city/"))
+                (should-not (gascity-rigs-cached))
+                (should-not (gascity-beads--bead-path-cached "gce-abc")))))
+          ;; `gascity-rigs' fills the memo from a real read.
+          (cl-letf (((symbol-function 'gascity-command-rig-list!)
+                     (lambda (&rest _)
+                       '((rigs . [((name . "solo") (prefix . "so")
+                                   (path . "/p/solo"))])))))
+            (let ((rigs (gascity-rigs)))
+              (should (equal (mapcar #'gascity-rig-name rigs) '("solo")))
+              (should (eq (gascity-rigs-cached) rigs))
+              (should (equal (gascity-rigs-cached-prefixes) '("so")))))
+          ;; Cleared with everything else.
+          (gascity-context-clear-cache)
+          (should-not (gascity-rigs-cached))))
+    (gascity-context-clear-cache)))
+
+(ert-deftest gascity-test-agent-attach-passes-rig-store ()
+  "`gascity-agent-attach-tmux' hands the agent's rig store to the
+terminal as the fourth argument — from the memo (`gc rig list' stubbed
+to error), nil for a city-scoped agent or a cold memo."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (let ((default-directory "/") captured)
+        (cl-letf (((symbol-function 'gascity-terminal-attach-tmux)
+                   (lambda (&rest args) (setq captured args)))
+                  ((symbol-function 'gascity-command-rig-list!)
+                   (lambda (&rest _) (error "spawned gc rig list"))))
+          ;; Cold memo: no store, no spawn.
+          (gascity-agent-attach-tmux
+           (gascity-test--agent :session-name "s" :socket "k"
+                                :work-dir "/wd" :rig "gascity.el"))
+          (should (equal captured '("s" "k" "/wd" nil)))
+          (gascity-rigs-remember
+           (gascity-test--rigs '((name . "gascity.el") (prefix . "gce")
+                                 (path . "/p/gascity.el"))))
+          (gascity-agent-attach-tmux
+           (gascity-test--agent :session-name "s" :socket "k"
+                                :work-dir "/wd" :rig "gascity.el"))
+          (should (equal captured '("s" "k" "/wd" "/p/gascity.el/")))
+          ;; A city-scoped agent has no rig.
+          (gascity-agent-attach-tmux
+           (gascity-test--agent :session-name "mayor" :socket "k"))
+          (should (equal captured '("mayor" "k" nil nil)))))
+    (gascity-context-clear-cache)))
+
+(ert-deftest gascity-test-terminal-beads-integrate ()
+  "The attach buffer gets beads eldoc's buffer-local contract: the store
+as `beads-eldoc-directory' (the spawn-free per-id resolver when the
+store is unknown) and the memo's prefixes as `beads-issue-id-prefixes'
+\(untouched when the memo is cold) — and it is a no-op, not an error,
+when beads.el lacks the variables."
+  (gascity-context-clear-cache)
+  ;; Load beads-eldoc NOW (when available), so the function's own soft
+  ;; `require' below can no longer re-define the variables the
+  ;; "without the contract" branch unbinds.
+  (require 'beads-eldoc nil t)
+  (let* ((vars '(beads-eldoc-directory beads-issue-id-prefixes))
+         (bound (seq-filter #'boundp vars))
+         (saved (mapcar (lambda (v) (cons v (default-value v))) bound)))
+    (unwind-protect
+        (progn
+          ;; With the contract present (bind the variables ourselves
+          ;; when this beads.el predates them).
+          (dolist (v vars)
+            (unless (boundp v) (set-default v nil)))
+          (let ((default-directory "/"))
+            (with-temp-buffer
+              (gascity-terminal--beads-integrate (current-buffer) "/p/gascity.el/")
+              (should (equal (buffer-local-value 'beads-eldoc-directory
+                                                 (current-buffer))
+                             "/p/gascity.el/"))
+              ;; Cold memo: the allowlist is left alone.
+              (should-not (local-variable-p 'beads-issue-id-prefixes)))
+            (gascity-rigs-remember
+             (gascity-test--rigs '((name . "gascity.el") (prefix . "gce")
+                                   (path . "/p/gascity.el"))
+                                 '((name . "hq") (path . "/p/hq"))))
+            (with-temp-buffer
+              (gascity-terminal--beads-integrate (current-buffer) nil)
+              (should (eq (buffer-local-value 'beads-eldoc-directory
+                                              (current-buffer))
+                          #'gascity-beads--bead-path-cached))
+              (should (equal (buffer-local-value 'beads-issue-id-prefixes
+                                                 (current-buffer))
+                             '("gce")))
+              ;; The resolver it installed answers from the memo.
+              (should (equal (funcall beads-eldoc-directory "gce-abc")
+                             "/p/gascity.el/")))
+            ;; A view buffer gets the allowlist too when the memo is warm.
+            (let ((buf (gascity-view-get-buffer-create "*gascity-test-eldoc*")))
+              (unwind-protect
+                  (should (equal (buffer-local-value 'beads-issue-id-prefixes buf)
+                                 '("gce")))
+                (kill-buffer buf))))
+          ;; Without the contract: nothing set, nothing signalled.  Both
+          ;; variables are automatically buffer-local in beads.el, so
+          ;; `makunbound' voids them in THIS buffer only (a void local
+          ;; binding, gone with the buffer) — hence the check runs here:
+          ;; a `setq-local' would have re-bound them.
+          (with-temp-buffer
+            (dolist (v vars) (makunbound v))
+            (should-not (boundp 'beads-eldoc-directory))
+            (gascity-terminal--beads-integrate (current-buffer) "/p/gascity.el/")
+            (should-not (boundp 'beads-eldoc-directory))
+            (should-not (boundp 'beads-issue-id-prefixes))))
+      ;; Restore: defaults for what was bound, void for what we bound.
+      (dolist (v vars)
+        (if (assq v saved)
+            (set-default v (cdr (assq v saved)))
+          (makunbound v)))
+      (gascity-context-clear-cache))))
 
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

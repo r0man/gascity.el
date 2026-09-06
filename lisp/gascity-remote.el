@@ -166,11 +166,17 @@ name (neither maps onto one plain ssh invocation)."
 
 (defvar gascity-remote--executable-cache (make-hash-table :test 'equal)
   "Cache mapping (REMOTE-PREFIX . NAME) to a resolved host-local path.
-Only successful resolutions are cached — a miss is re-probed on the
-next call, so installing the program on the host heals itself.  The
-per-connection PATH fragment of `gascity-remote-path-assignment' lives
-here too, under the un-collidable key (REMOTE-PREFIX . :path), as do
-positive terminfo probes of `gascity-remote-terminfo-p', under
+A successful resolution is cached as the path string until the cache
+is cleared.  A definite miss (every probe answered \"no\") is cached as
+\(:miss . TIME) and honoured for `gascity-remote-miss-ttl' seconds —
+the probe walk is a chain of synchronous channel round trips, and a
+program absent from the host would otherwise cost the full walk on
+every status tick and attach.  After the TTL the miss is re-probed, so
+installing the program on the host still heals itself; a probe ERROR
+\(dropped connection) is never cached at all.  The per-connection PATH
+fragment of `gascity-remote-path-assignment' lives here too, under the
+un-collidable key (REMOTE-PREFIX . :path), as do positive terminfo
+probes of `gascity-remote-terminfo-p', under
 \(REMOTE-PREFIX . (:terminfo . TERM)).  Cleared by
 `gascity-remote-forget-executables' (via
 `gascity-context-clear-cache').")
@@ -196,36 +202,62 @@ absolute host-local path (`file-local-name' form, valid in
    The defaults cover Guix profiles with zero configuration.
 
 Successful resolutions are cached per (connection × NAME); clear with
-`gascity-context-clear-cache'.  An unresolvable NAME (and any probe
-error, e.g. a dropped connection) returns NAME unchanged, so the
-launch fails exactly where it always did — the remote shell's
-\"command not found\" (exit 127) — and
-`gascity-remote-spawn-error-hint' names the setup paths."
+`gascity-context-clear-cache'.  An unresolvable NAME returns NAME
+unchanged, so the launch fails exactly where it always did — the
+remote shell's \"command not found\" (exit 127) — and
+`gascity-remote-spawn-error-hint' names the setup paths.  That miss
+is remembered for `gascity-remote-miss-ttl' seconds (the walk is all
+synchronous channel traffic), then re-probed.  A probe error (a
+dropped connection) also returns NAME unchanged but is never cached,
+so the next call retries at once."
   (let ((remote (file-remote-p (or dir default-directory))))
     (if (or (not remote) (file-name-absolute-p name))
         name
-      (let ((key (cons remote name)))
-        (or (gethash key gascity-remote--executable-cache)
-            (let* ((default-directory (or dir default-directory))
-                   (found
-                    (condition-case nil
-                        (or (executable-find name t)
-                            (cl-some
-                             (lambda (entry)
-                               (let ((candidate
-                                      (expand-file-name
-                                       name (expand-file-name
-                                             (concat remote entry)))))
-                                 (and (file-executable-p candidate)
-                                      (file-local-name candidate))))
-                             gascity-remote-search-path))
-                      ;; A probe error (unreachable host, dead
-                      ;; connection) must surface as the launch failure
-                      ;; the callers already handle, not here.
-                      (error nil))))
-              (when found
-                (puthash key found gascity-remote--executable-cache))
-              (or found name)))))))
+      (let* ((key (cons remote name))
+             (cached (gethash key gascity-remote--executable-cache)))
+        (cond
+         ((stringp cached) cached)
+         ((gascity-remote--miss-fresh-p cached) name)
+         (t
+          (let* ((default-directory (or dir default-directory))
+                 (errored nil)
+                 (found
+                  (condition-case nil
+                      (or (executable-find name t)
+                          (cl-some
+                           (lambda (entry)
+                             (let ((candidate
+                                    (expand-file-name
+                                     name (expand-file-name
+                                           (concat remote entry)))))
+                               (and (file-executable-p candidate)
+                                    (file-local-name candidate))))
+                           gascity-remote-search-path))
+                    ;; A probe error (unreachable host, dead
+                    ;; connection) must surface as the launch failure
+                    ;; the callers already handle, not here — and must
+                    ;; not be mistaken for a definite miss below.
+                    (error (setq errored t) nil))))
+            (cond (found
+                   (puthash key found gascity-remote--executable-cache))
+                  ((not errored)
+                   (puthash key (cons :miss (float-time))
+                            gascity-remote--executable-cache))
+                  (t (remhash key gascity-remote--executable-cache)))
+            (or found name))))))))
+
+(defun gascity-remote--miss-fresh-p (entry)
+  "Return non-nil when cache ENTRY is a miss still inside its TTL.
+ENTRY is a `gascity-remote--executable-cache' value; only a
+\(:miss . TIME) pair younger than `gascity-remote-miss-ttl' seconds
+counts.  A TTL of 0 (or a non-number) never honours a miss, restoring
+the re-probe-every-call behaviour."
+  (and (consp entry)
+       (eq (car entry) :miss)
+       (numberp (cdr entry))
+       (numberp gascity-remote-miss-ttl)
+       (> gascity-remote-miss-ttl 0)
+       (< (- (float-time) (cdr entry)) gascity-remote-miss-ttl)))
 
 ;;; Terminfo on the host
 
