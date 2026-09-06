@@ -2642,6 +2642,135 @@ refresh — so it tracks the filter across `g' and clears with `/ c'."
     (should (equal mode-name "Things [1/1]"))
     (should (null gascity-tabulated--filter-description))))
 
+;;; Asynchronous list refresh
+
+(defmacro gascity-test--with-async-list (spec &rest body)
+  "Run BODY in a tabulated buffer with `gascity-reader-read-async' stubbed.
+SPEC is (CALLS): a variable bound to the list of captured
+\(ARGS CALLBACK ERRBACK) triples, newest first, so BODY can settle a
+refresh whenever it likes.  The stub returns a live `cat' process so the
+supersede path has something to kill; every process is deleted on exit."
+  (declare (indent 1))
+  (let ((calls (car spec)))
+    `(with-temp-buffer
+       (tabulated-list-mode)
+       (setq-local tabulated-list-format [("Col" 10 t)])
+       (tabulated-list-init-header)
+       (let ((,calls nil) (procs nil))
+         (unwind-protect
+             (cl-letf (((symbol-function 'gascity-reader-read-async)
+                        (lambda (args callback &optional errback)
+                          (push (list args callback errback) ,calls)
+                          (car (push (make-process :name "gascity-test-cat"
+                                                   :command '("cat")
+                                                   :noquery t)
+                                     procs)))))
+               ,@body)
+           (dolist (p procs) (ignore-errors (delete-process p))))))))
+
+(ert-deftest gascity-test-tabulated-refresh-async-settles-rows ()
+  "An async refresh shows a loading mode line, then the rows, and never blocks.
+The gc argv is the command's own line minus the executable, `--json'
+included; DECODE-FN runs on the payload; the entries land through the
+paging path exactly as the synchronous refresh would put them."
+  (gascity-test--with-async-list (calls)
+    (let ((cmd (gascity-command-rig-list)))
+      (gascity-tabulated--refresh-async
+       "Rigs" cmd
+       (lambda (payload)
+         (mapcar (lambda (r) (list (alist-get 'name r)
+                                   (vector (alist-get 'name r))))
+                 (append (alist-get 'rigs payload) nil))))
+      (should (= (length calls) 1))
+      (should (equal (car (car calls)) '("rig" "list" "--json")))
+      (should (equal mode-name "Rigs [loading…]"))
+      (should (null tabulated-list-entries))
+      (funcall (nth 1 (car calls)) '((rigs . [((name . "a")) ((name . "b"))])))
+      (should (equal (mapcar #'car tabulated-list-entries) '("a" "b")))
+      (should (equal mode-name "Rigs [1/1]"))
+      (should (null gascity-tabulated--refresh-process)))))
+
+(ert-deftest gascity-test-tabulated-refresh-async-error-is-clean ()
+  "A failed async read echoes one clean line and leaves the list empty (gce-dfe)."
+  (gascity-test--with-async-list (calls)
+    (let (msgs)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+        (setq gascity-tabulated--all-entries '((old ["old"])))
+        (gascity-tabulated--refresh-async "Rigs" (gascity-command-rig-list)
+                                          (lambda (_) (error "not reached")))
+        (funcall (nth 2 (car calls)) "gc rig list failed: boom"))
+      (should (equal msgs '("gascity: gc rig list failed: boom")))
+      (should (null gascity-tabulated--all-entries))
+      (should (equal mode-name "Rigs [1/1]")))))
+
+(ert-deftest gascity-test-tabulated-refresh-async-supersedes ()
+  "A newer refresh kills the in-flight read and ignores its late result.
+Two `g' in a row must show the second read's rows even when the first
+completes afterwards — and the killed first read's failure report is
+swallowed rather than echoed."
+  (gascity-test--with-async-list (calls)
+    (let (msgs)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+        (gascity-tabulated--refresh-async "Rigs" (gascity-command-rig-list)
+                                          (lambda (p) (list (list (alist-get 'v p) (vector "x")))))
+        (let ((first (nth 1 (car calls)))
+              (first-err (nth 2 (car calls)))
+              (first-proc gascity-tabulated--refresh-process))
+          (gascity-tabulated--refresh-async "Rigs" (gascity-command-rig-list)
+                                            (lambda (p) (list (list (alist-get 'v p) (vector "y")))))
+          (should (= (length calls) 2))
+          (should-not (process-live-p first-proc))
+          ;; The superseded read reports its death; nobody listens.
+          (funcall first-err "gc rig list failed: killed")
+          (should (null msgs))
+          (should (equal mode-name "Rigs [loading…]"))
+          ;; Its late success is dropped too.
+          (funcall first '((v . stale)))
+          (should (equal mode-name "Rigs [loading…]"))
+          (should (null gascity-tabulated--all-entries))
+          ;; The current read lands.
+          (funcall (nth 1 (car calls)) '((v . fresh)))
+          (should (equal (mapcar #'car tabulated-list-entries) '(fresh))))))))
+
+(ert-deftest gascity-test-tabulated-refresh-async-dead-buffer ()
+  "A result arriving after the list buffer was killed is ignored."
+  (let (cb)
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (_args callback &optional _errback) (setq cb callback) nil)))
+      (with-temp-buffer
+        (tabulated-list-mode)
+        (setq-local tabulated-list-format [("Col" 10 t)])
+        (tabulated-list-init-header)
+        (gascity-tabulated--refresh-async "Rigs" (gascity-command-rig-list)
+                                          (lambda (_) (error "not reached")))))
+    ;; No error, no buffer switch: the settle guard sees a dead buffer.
+    (funcall cb '((rigs . [])))))
+
+(ert-deftest gascity-test-list-refreshes-are-async ()
+  "Every list's `g' goes through the async reader, never `gascity-reader-run'.
+The remote-city dogfood stall: a synchronous `gc session list' took
+seconds per `g' over TRAMP."
+  (dolist (spec '((gascity-rig-list-refresh ("rig" "list" "--json"))
+                  (gascity-session-list-refresh ("session" "list" "--json"))
+                  (gascity-convoy-list-refresh ("convoy" "list" "--json"))
+                  (gascity-mail-inbox-refresh ("mail" "inbox" "--json"))
+                  (gascity-order-list-refresh ("order" "list" "--json"))
+                  (gascity-dolt-list-refresh ("dolt" "health" "--json"))))
+    (gascity-test--with-async-list (calls)
+      (cl-letf (((symbol-function 'gascity-reader-run)
+                 (lambda (&rest _) (error "synchronous gc read from %s" (car spec))))
+                ((symbol-function 'gascity-resolve-tmux-socket)
+                 (lambda (&rest _) "sock")))
+        (funcall (car spec))
+        (should (= (length calls) 1))
+        (should (equal (car (car calls)) (cadr spec)))
+        (should (string-suffix-p "[loading…]" mode-name))
+        ;; An empty payload settles to an empty list without error.
+        (funcall (nth 1 (car calls)) nil)
+        (should (null gascity-tabulated--all-entries))))))
+
 ;;; gce-xkr — N/P jump between top-level sections (city/rig/…)
 
 (defun gascity-test--section-labels (vnode)

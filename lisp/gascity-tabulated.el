@@ -44,6 +44,7 @@
 (require 'gascity-remote)             ; host-qualified names + path localization
 (require 'gascity-section)
 (require 'gascity-command)
+(require 'gascity-reader)             ; read-async (non-blocking list refresh)
 (require 'gascity-types)
 
 ;; Bead delegation (convoy `RET' -> beads.el) goes through
@@ -326,6 +327,95 @@ sort key (no active sort) leaves the gc-return order untouched."
       (setq gascity-tabulated--all-entries
             (sort gascity-tabulated--all-entries sorter)))))
 
+(defvar-local gascity-tabulated--refresh-process nil
+  "The gc process of the refresh in flight for this buffer, or nil.
+Set by `gascity-tabulated--refresh-async'; a newer refresh kills it.")
+
+(defvar-local gascity-tabulated--refresh-generation 0
+  "Counter stamping each refresh request of this buffer.
+A fetch that completes after a newer request was issued is discarded
+\(`gascity-tabulated--refresh-async'), so a slow remote read can never
+overwrite the rows of a later `g'.")
+
+(defun gascity-tabulated--set-loading ()
+  "Show the fetch in progress in the mode line.
+`gascity-tabulated--update-mode-name' replaces it when rows arrive."
+  (setq mode-name (format "%s [loading…]%s"
+                          gascity-tabulated--base-name
+                          (if gascity-tabulated--filter-description
+                              (format " (%s)" gascity-tabulated--filter-description)
+                            "")))
+  (force-mode-line-update))
+
+(defun gascity-tabulated--refresh-async (base-name command decode-fn
+                                                   &optional filter)
+  "Fetch COMMAND asynchronously and repaint the current tabulated buffer.
+The non-blocking counterpart of `gascity-tabulated--refresh', and what
+every list's `g' runs: COMMAND is a `gascity-command' read (its argv
+via `gascity-command-line', its validation as in
+`gascity-command-execute'), spawned through `gascity-reader-read-async'
+so a slow link — a remote `gc session list' takes seconds — never
+stalls the UI.  DECODE-FN receives the decoded JSON payload (what
+`gascity-command-parse' would have produced) and returns the
+`(ID . [COLUMNS])' entries.  While the read runs the mode line reads
+\"BASE [loading…]\" and the previous rows stay put.
+
+A refresh issued while one is in flight kills the older process and
+supersedes it: each request bumps `gascity-tabulated--refresh-generation'
+and a result is applied only if its stamp is still current and the
+buffer is alive, so out-of-order completion cannot show stale rows.  A
+failure — launch error, non-zero exit, malformed JSON — is echoed as
+one clean line and leaves the list empty, exactly like the synchronous
+path (gce-dfe).  BASE-NAME and FILTER as for `gascity-tabulated--refresh'.
+Returns the process, or nil when none could be started."
+  (when-let ((error-msg (gascity-command-validate command)))
+    (signal 'gascity-validation-error
+            (list (format "Command validation failed: %s" error-msg)
+                  :command command
+                  :error error-msg)))
+  (setq gascity-tabulated--filter-description
+        (gascity-tabulated--format-filter filter)
+        gascity-tabulated--base-name base-name)
+  (when (process-live-p gascity-tabulated--refresh-process)
+    (delete-process gascity-tabulated--refresh-process))
+  (let* ((buffer (current-buffer))
+         (generation (cl-incf gascity-tabulated--refresh-generation))
+         ;; The argv tail: `gascity-command-line' leads with the
+         ;; executable, which the reader adds itself.
+         (args (cdr (gascity-command-line command)))
+         (current-p (lambda ()
+                      (and (buffer-live-p buffer)
+                           (= generation
+                              (buffer-local-value
+                               'gascity-tabulated--refresh-generation buffer)))))
+         ;; ENTRIES-FN runs in the list buffer (its `default-directory'
+         ;; scopes the rig memo and any decode-time context) and only
+         ;; while this request is still the current one.
+         (settle (lambda (entries-fn)
+                   (when (funcall current-p)
+                     (with-current-buffer buffer
+                       (setq gascity-tabulated--refresh-process nil)
+                       (gascity-tabulated--init-paged
+                        base-name (funcall entries-fn)))))))
+    (gascity-tabulated--set-loading)
+    (setq gascity-tabulated--refresh-process
+          (gascity-reader-read-async
+           args
+           (lambda (payload)
+             (funcall settle
+                      (lambda ()
+                        (condition-case err
+                            (funcall decode-fn payload)
+                          (gascity-error
+                           (message "gascity: %s" (gascity-error-detail err))
+                           nil)))))
+           (lambda (msg)
+             ;; A superseded fetch is killed by its successor and reports
+             ;; that as a failure: only the current one gets to speak.
+             (when (funcall current-p)
+               (message "gascity: %s" msg)
+               (funcall settle #'ignore)))))))
+
 (defun gascity-tabulated--refresh-display ()
   "Slice the current page into `tabulated-list-entries' and redraw.
 The full entry list is first ordered by the active sort key across every
@@ -492,20 +582,22 @@ is re-prefixed so Dired opens it on the city's host."
       (user-error "No rig directory at point"))))
 
 (defun gascity-rig-list-refresh ()
-  "Refresh the rig list, applying the current filter."
+  "Refresh the rig list, applying the current filter.
+Asynchronous (`gascity-tabulated--refresh-async'): the list stays
+responsive while `gc rig list' runs, remotely too."
   (interactive)
-  (gascity-tabulated--refresh
-   "Rigs"
-   (lambda ()
-     (let* ((cmd (apply #'gascity-command-rig-list gascity-rig-list--filter))
-            (rigs (gascity-domain-decode-list
-                   'gascity-rig
-                   (alist-get 'rigs (oref (gascity-command-execute cmd) result)))))
-       (mapcar #'gascity-rig-list--entry
-               (seq-filter (lambda (r)
-                             (gascity-rig-list--match-p r (oref cmd status)))
-                           rigs))))
-   gascity-rig-list--filter))
+  (let ((cmd (apply #'gascity-command-rig-list gascity-rig-list--filter)))
+    (gascity-tabulated--refresh-async
+     "Rigs" cmd
+     (lambda (payload)
+       (let ((rigs (gascity-rigs-remember
+                    (gascity-domain-decode-list 'gascity-rig
+                                                (alist-get 'rigs payload)))))
+         (mapcar #'gascity-rig-list--entry
+                 (seq-filter (lambda (r)
+                               (gascity-rig-list--match-p r (oref cmd status)))
+                             rigs))))
+     gascity-rig-list--filter)))
 
 (transient-define-prefix gascity-rig-list-filter ()
   "Filter the rig list."
@@ -609,24 +701,26 @@ substring of its `rig'."
 (defun gascity-session-list-refresh ()
   "Refresh the session list, applying the current filter.
 The `state' filter is sent to `gc' (`--state'); the `rig' filter is
-applied client-side to the decoded rows."
+applied client-side to the decoded rows.  Asynchronous
+\(`gascity-tabulated--refresh-async'), so the seconds a remote `gc
+session list' takes never freeze the UI."
   (interactive)
-  (gascity-tabulated--refresh
-   "Sessions"
-   (lambda ()
-     ;; Resolve the tmux socket once per refresh — it is constant across
-     ;; rows, and `gc session list' does not carry the city name.
-     (let* ((cmd (apply #'gascity-command-session-list gascity-session-list--filter))
-            (socket (gascity-resolve-tmux-socket))
-            (sessions (gascity-domain-decode-list
-                       'gascity-session
-                       (alist-get 'sessions
-                                  (oref (gascity-command-execute cmd) result)))))
-       (mapcar (lambda (s) (gascity-session-list--entry s socket))
-               (seq-filter (lambda (s)
-                             (gascity-session-list--match-p s (oref cmd rig)))
-                           sessions))))
-   gascity-session-list--filter))
+  (let ((cmd (apply #'gascity-command-session-list gascity-session-list--filter))
+        ;; Resolve the tmux socket once per refresh — it is constant across
+        ;; rows, and `gc session list' does not carry the city name.
+        ;; Resolved up front (cached after the first call) rather than in
+        ;; the callback, which runs with the process buffer current.
+        (socket (gascity-resolve-tmux-socket)))
+    (gascity-tabulated--refresh-async
+     "Sessions" cmd
+     (lambda (payload)
+       (let ((sessions (gascity-domain-decode-list
+                        'gascity-session (alist-get 'sessions payload))))
+         (mapcar (lambda (s) (gascity-session-list--entry s socket))
+                 (seq-filter (lambda (s)
+                               (gascity-session-list--match-p s (oref cmd rig)))
+                             sessions))))
+     gascity-session-list--filter)))
 
 (transient-define-prefix gascity-session-list-filter ()
   "Filter the session list."
@@ -754,21 +848,20 @@ would misroute the working directory to another database (gce-bhr)."
       (user-error "No convoy at point"))))
 
 (defun gascity-convoy-list-refresh ()
-  "Refresh the convoy list, applying the current filter."
+  "Refresh the convoy list, applying the current filter.
+Asynchronous (`gascity-tabulated--refresh-async')."
   (interactive)
-  (gascity-tabulated--refresh
-   "Convoys"
-   (lambda ()
-     (let* ((cmd (apply #'gascity-command-convoy-list gascity-convoy-list--filter))
-            (convoys (gascity-domain-decode-list
-                      'gascity-convoy
-                      (alist-get 'convoys
-                                 (oref (gascity-command-execute cmd) result)))))
-       (mapcar #'gascity-convoy-list--entry
-               (seq-filter (lambda (c)
-                             (gascity-convoy-list--match-p c (oref cmd status)))
-                           convoys))))
-   gascity-convoy-list--filter))
+  (let ((cmd (apply #'gascity-command-convoy-list gascity-convoy-list--filter)))
+    (gascity-tabulated--refresh-async
+     "Convoys" cmd
+     (lambda (payload)
+       (let ((convoys (gascity-domain-decode-list
+                       'gascity-convoy (alist-get 'convoys payload))))
+         (mapcar #'gascity-convoy-list--entry
+                 (seq-filter (lambda (c)
+                               (gascity-convoy-list--match-p c (oref cmd status)))
+                             convoys))))
+     gascity-convoy-list--filter)))
 
 (transient-define-prefix gascity-convoy-list-filter ()
   "Filter the convoy list."
@@ -883,21 +976,20 @@ remote city's message view carries that host's `default-directory'."
       (user-error "No message at point"))))
 
 (defun gascity-mail-inbox-refresh ()
-  "Refresh the mail inbox, applying the current filter."
+  "Refresh the mail inbox, applying the current filter.
+Asynchronous (`gascity-tabulated--refresh-async')."
   (interactive)
-  (gascity-tabulated--refresh
-   "Mail"
-   (lambda ()
-     (let* ((cmd (apply #'gascity-command-mail-inbox gascity-mail-inbox--filter))
-            (messages (gascity-domain-decode-list
-                       'gascity-mail
-                       (alist-get 'messages
-                                  (oref (gascity-command-execute cmd) result)))))
-       (mapcar #'gascity-mail-inbox--entry
-               (seq-filter (lambda (m)
-                             (gascity-mail-inbox--match-p m (oref cmd unread)))
-                           messages))))
-   gascity-mail-inbox--filter))
+  (let ((cmd (apply #'gascity-command-mail-inbox gascity-mail-inbox--filter)))
+    (gascity-tabulated--refresh-async
+     "Mail" cmd
+     (lambda (payload)
+       (let ((messages (gascity-domain-decode-list
+                        'gascity-mail (alist-get 'messages payload))))
+         (mapcar #'gascity-mail-inbox--entry
+                 (seq-filter (lambda (m)
+                               (gascity-mail-inbox--match-p m (oref cmd unread)))
+                             messages))))
+     gascity-mail-inbox--filter)))
 
 (transient-define-prefix gascity-mail-inbox-filter ()
   "Filter the mail inbox."
@@ -1008,22 +1100,21 @@ is re-prefixed so the file opens on the city's host."
       (user-error "No order at point"))))
 
 (defun gascity-order-list-refresh ()
-  "Refresh the order list, applying the current filter."
+  "Refresh the order list, applying the current filter.
+Asynchronous (`gascity-tabulated--refresh-async')."
   (interactive)
-  (gascity-tabulated--refresh
-   "Orders"
-   (lambda ()
-     (let* ((cmd (apply #'gascity-command-order-list gascity-order-list--filter))
-            (orders (gascity-domain-decode-list
-                     'gascity-order
-                     (alist-get 'orders
-                                (oref (gascity-command-execute cmd) result)))))
-       (mapcar #'gascity-order-list--entry
-               (seq-filter (lambda (o)
-                             (gascity-order-list--match-p
-                              o (oref cmd enabled) (oref cmd type)))
-                           orders))))
-   gascity-order-list--filter))
+  (let ((cmd (apply #'gascity-command-order-list gascity-order-list--filter)))
+    (gascity-tabulated--refresh-async
+     "Orders" cmd
+     (lambda (payload)
+       (let ((orders (gascity-domain-decode-list
+                      'gascity-order (alist-get 'orders payload))))
+         (mapcar #'gascity-order-list--entry
+                 (seq-filter (lambda (o)
+                               (gascity-order-list--match-p
+                                o (oref cmd enabled) (oref cmd type)))
+                             orders))))
+     gascity-order-list--filter)))
 
 (transient-define-prefix gascity-order-list-filter ()
   "Filter the order list."
@@ -1108,14 +1199,15 @@ row of zeros.  Dropped here (gce-x72) as it was from the rig dashboard
              (gascity-tabulated--str (alist-get 'commits db)))))
 
 (defun gascity-dolt-list-refresh ()
-  "Refresh the Dolt database list (from `gc dolt health')."
+  "Refresh the Dolt database list (from `gc dolt health').
+Asynchronous (`gascity-tabulated--refresh-async')."
   (interactive)
-  (gascity-tabulated--refresh
-   "Dolt"
-   (lambda ()
+  (gascity-tabulated--refresh-async
+   "Dolt" (gascity-command-dolt-health)
+   (lambda (payload)
      (mapcar #'gascity-dolt-list--entry
              (gascity-tabulated--vector->list
-              (alist-get 'databases (gascity-command-dolt-health!)))))))
+              (alist-get 'databases payload))))))
 
 (defvar-keymap gascity-dolt-list-mode-map
   :doc "Keymap for `gascity-dolt-list-mode'.
