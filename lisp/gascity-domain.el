@@ -7,8 +7,9 @@
 ;;; Commentary:
 
 ;; Typed EIEIO domain objects for the read-only `gc … --json' payloads the
-;; porcelain renders: rigs, sessions, agents, convoys, mail messages, and
-;; orders (plan §3.1 / §1G).  Before this module the views threaded raw
+;; porcelain renders: rigs, sessions, agents, convoys, mail messages,
+;; orders, and the formula catalog/recipe payloads the formula-aware sling
+;; UI consumes (plan §3.1 / §1G).  Before this module the views threaded raw
 ;; `alist'/`plist' values through every row mapper and at-point handler,
 ;; re-typing the same JSON keys at each call site (`(alist-get 'work_dir s)`,
 ;; `(plist-get agent :name)`, …).  Here each entity is a class whose slots
@@ -304,6 +305,99 @@ negation (gc decodes `false' to nil)."))
     :accessor gascity-order-source
     :documentation "Path to the order's source file (for `RET')."))
   :documentation "An order (scheduled/cooldown job) as reported by `gc order list'.")
+
+;;; Formula — `gc formula catalog' / `gc formula show' -> `formulas'/recipe
+;;
+;; The payload classes the formula-aware sling UI (the transient in
+;; `gascity-formula') decodes its reads into.  The catalog entry and the
+;; var carry the shapes observed live (`gc formula catalog --json';
+;; `gc formula show <name> --json'): a catalog entry is `name' plus a
+;; one-line `description'; a var declares `description'/`default' and
+;; optionally `required'/`enum'/`pattern' — no shipped formula declares
+;; enum/pattern yet, so those slots degrade to nil and the UI treats an
+;; absent field as "no constraint".  A compiled recipe keeps `steps' and
+;; `deps' as raw alists: only the preview renderer reads them, and their
+;; step shape (id/title/metadata) is presentation, not a join key.
+
+(defclass gascity-formula-catalog-entry ()
+  ((name
+    :initarg :name :initform nil :type (or null string) :json-key name
+    :accessor gascity-formula-catalog-entry-name
+    :documentation "Formula name, e.g. \"implement\" — the sling arg and
+`gc formula show' operand.")
+   (description
+    :initarg :description :initform nil :type (or null string)
+    :json-key description :accessor gascity-formula-catalog-entry-description
+    :documentation "One-line description for completion annotation."))
+  :documentation "One formula as reported by `gc formula catalog --json'.")
+
+(defclass gascity-formula-var ()
+  ((name
+    :initarg :name :initform nil :type (or null string) :json-key name
+    :accessor gascity-formula-var-name
+    :documentation "Variable name — the `--var name=value' key and the
+`{{name}}' placeholder in the recipe's steps.")
+   (description
+    :initarg :description :initform nil :type (or null string)
+    :json-key description :accessor gascity-formula-var-description
+    :documentation "What the variable means; the infix prompt/description.")
+   (default
+    :initarg :default :initform nil :type (or null string) :json-key default
+    :accessor gascity-formula-var-default
+    :documentation "Default value as a string; nil when the var has none.")
+   (required
+    :initarg :required :initform nil :type (or null boolean) :json-key required
+    :accessor gascity-formula-var-required
+    :documentation "Non-nil when dispatch must refuse to run without a
+value.  Typed nullable: a decoded `false' stays nil.")
+   (enum
+    :initarg :enum :initform nil :type (or null (list-of string))
+    :json-key enum :accessor gascity-formula-var-enum
+    :documentation "Allowed values when the formula declares an enum var;
+nil otherwise.  When present it wins over the metadata-derived choice
+lists.")
+   (pattern
+    :initarg :pattern :initform nil :type (or null string) :json-key pattern
+    :accessor gascity-formula-var-pattern
+    :documentation "Regexp the value must match, when declared; nil
+otherwise.  Compiled as an Emacs regexp; a pattern that does not compile
+degrades to no validation."))
+  :documentation "One declared variable of a compiled formula recipe.
+Optional slots are `(or null …)' because gascity's JSON reader decodes
+both `false' and `null' to nil: an absent field must read as "unset",
+never as a typed zero value.")
+
+(defclass gascity-formula ()
+  ((name
+    :initarg :name :initform nil :type (or null string) :json-key name
+    :accessor gascity-formula-name
+    :documentation "Formula name.")
+   (description
+    :initarg :description :initform nil :type (or null string)
+    :json-key description :accessor gascity-formula-description
+    :documentation "Formula description.")
+   (metadata
+    :initarg :metadata :initform nil :type (or null list) :json-key metadata
+    :accessor gascity-formula-metadata
+    :documentation "Raw formula metadata alist (e.g.
+`gc.methodology' choice lists the enum mapping consults).")
+   (vars
+    :initarg :vars :initform nil :type (or null (list-of gascity-formula-var))
+    :json-key vars :accessor gascity-formula-vars
+    :documentation "Declared variables, decoded into `gascity-formula-var's.")
+   (steps
+    :initarg :steps :initform nil :type (or null (list-of list)) :json-key steps
+    :accessor gascity-formula-steps
+    :documentation "Raw recipe steps (id/title/description/metadata alist),
+coerced from gc's JSON array into a list — rendered by the recipe
+preview, never joined on here.")
+   (deps
+    :initarg :deps :initform nil :type (or null (list-of list)) :json-key deps
+    :accessor gascity-formula-deps
+    :documentation "Raw dependency edges (`step_id'/`depends_on_id') between
+the recipe's steps, as a list of alists."))
+  :documentation "A compiled formula recipe as reported by
+`gc formula show <name> --json'.")
 
 ;;; ============================================================
 ;;; Decoding

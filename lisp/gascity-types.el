@@ -281,6 +281,31 @@ drained).  Nil defers to gc's default (suspended)."))
 \(`gc session prune [--before …] [--state …]').  City-wide cleanup, so the
 porcelain confirms; active sessions are never pruned.")
 
+;;; Formula reads
+
+(gascity-defcommand gascity-command-formula-catalog (gascity-command-global-options)
+  ()
+  :documentation "List the formulas available in the city.
+Payload: an envelope with a `formulas' vector (each entry a `name' and a
+one-line `description', suitable for completion annotation) and a
+`summary'.  No filter flags exist; the catalog is small.  Backs the
+formula-aware sling transient's picker (`gascity-formula').")
+
+(gascity-defcommand gascity-command-formula-show (gascity-command-global-options)
+  ((name
+    :initarg :name :type string :initform "" :positional 1
+    :documentation "Formula name to show the compiled recipe of.")
+   (var
+    :initarg :var :initform nil
+    :long-option "var" :option-type :list
+    :documentation "Variable substitutions, each a \"key=value\" string.
+Emitted as a repeated `--var' (gc's stringArray flag): the recipe preview
+re-runs this read with the current infix values so gc substitutes them
+server-side, mirroring `gascity-command-sling''s `:var' slot."))
+  :documentation "Show a formula's compiled recipe.
+Payload: an envelope with `name', `description', `metadata', `vars',
+`steps' and `deps'.  Decodes into a `gascity-formula'.")
+
 ;;; Dispatch
 
 (gascity-defcommand gascity-command-sling (gascity-command-action)
@@ -291,6 +316,12 @@ porcelain confirms; active sessions are never pruned.")
    (formula :initarg :formula :type boolean :initform nil
             :long-option "formula" :option-type :boolean
             :documentation "Treat ARG as a formula name.")
+   (on :initarg :on :initform nil
+       :long-option "on" :option-type :string
+       :documentation "Targeted convoy-first formula shape: route ARG (a
+bead/convoy id) with the formula named here (`gc sling <target> <bead>
+--on <formula>').  The counterpart of `--formula', whose targetless shape
+treats ARG as the formula name itself.")
    (nudge :initarg :nudge :type boolean :initform nil
           :long-option "nudge" :option-type :boolean
           :documentation "Nudge the target after routing.")
@@ -546,6 +577,10 @@ buffer (`gascity-compose').")
 (cl-defmethod gascity-command-validate ((command gascity-command-order-run))
   "Require an order name."
   (and (gascity-command--blank-p command 'name) "an order name is required"))
+
+(cl-defmethod gascity-command-validate ((command gascity-command-formula-show))
+  "Require a formula name."
+  (and (gascity-command--blank-p command 'name) "a formula name is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-peek))
   "Require a session target."

@@ -944,11 +944,14 @@ With a prefix argument, capture that many trailing LINES instead of the
   "Parse flat transient ARGS into a `gascity-command-sling' initarg plist.
 ARGS is the list `transient-args' returns — switch strings (\"--formula\")
 and `option=value' strings (\"--merge=direct\").  Repeated \"--var=k=v\"
-entries collect into a single `:var' list.  Unknown entries are ignored."
+entries collect into a single `:var' list; \"--on=F\" carries the targeted
+formula shape.  Unknown entries are ignored."
   (let (plist vars)
     (dolist (a args)
       (cond
        ((equal a "--formula")   (setq plist (plist-put plist :formula t)))
+       ((string-prefix-p "--on=" a)
+        (setq plist (plist-put plist :on (substring a (length "--on=")))))
        ((equal a "--nudge")     (setq plist (plist-put plist :nudge t)))
        ((equal a "--no-convoy") (setq plist (plist-put plist :no-convoy t)))
        ((equal a "--reassign")  (setq plist (plist-put plist :reassign t)))

@@ -560,6 +560,73 @@ Exercises `beads-from-json''s recursion into a nested EIEIO class."
   (should (null (gascity-domain-decode-list 'gascity-rig nil)))
   (should (null (gascity-domain-decode-list 'gascity-rig []))))
 
+(ert-deftest gascity-test-domain-decode-formula-catalog-entry ()
+  "A catalog entry decodes into a typed `gascity-formula-catalog-entry'."
+  (let ((e (gascity-domain-decode
+            'gascity-formula-catalog-entry
+            '((name . "implement") (description . "Full lifecycle implementation")))))
+    (should (gascity-formula-catalog-entry-p e))
+    (should (equal (gascity-formula-catalog-entry-name e) "implement"))
+    (should (equal (gascity-formula-catalog-entry-description e)
+                   "Full lifecycle implementation")))
+  ;; An absent description reads as nil, not an empty string.
+  (let ((e (gascity-domain-decode 'gascity-formula-catalog-entry '((name . "x")))))
+    (should (null (gascity-formula-catalog-entry-description e)))))
+
+(ert-deftest gascity-test-domain-decode-formula-var ()
+  "A formula var decodes with every declared field; absent fields are nil.
+Pins the `(or null boolean)' coercion on `required' (a decoded `false'
+stays nil) and the absent-field degradation REQ-016 relies on."
+  (let ((v (gascity-domain-decode
+            'gascity-formula-var
+            '((name . "drain_policy") (description . "How to drain")
+              (default . "separate") (required . t)
+              (enum . ["separate" "same-session"])
+              (pattern . "\\`[a-z-]+\\'")))))
+    (should (gascity-formula-var-p v))
+    (should (equal (gascity-formula-var-name v) "drain_policy"))
+    (should (equal (gascity-formula-var-description v) "How to drain"))
+    (should (equal (gascity-formula-var-default v) "separate"))
+    (should (eq (gascity-formula-var-required v) t))
+    (should (equal (gascity-formula-var-enum v) '("separate" "same-session")))
+    (should (equal (gascity-formula-var-pattern v) "\\`[a-z-]+\\'")))
+  ;; A `false' required, and absent optional fields, degrade to nil.
+  (let ((v (gascity-domain-decode 'gascity-formula-var '((name . "x") (required . nil)))))
+    (should (null (gascity-formula-var-required v)))
+    (should (null (gascity-formula-var-default v)))
+    (should (null (gascity-formula-var-enum v)))
+    (should (null (gascity-formula-var-pattern v)))))
+
+(ert-deftest gascity-test-domain-decode-formula-recipe ()
+  "A compiled recipe decodes: vars nest into typed classes, steps/deps stay raw."
+  (let ((f (gascity-domain-decode
+            'gascity-formula
+            '((name . "implement") (description . "Implement work")
+              (metadata . ((gc . ((methodology . ((review_modes . ["agent"])))))))
+              (vars . [((name . "summary_path") (required . t))
+                       ((name . "context_path"))])
+              (steps . [((id . "implement") (title . "Implement owned work")
+                         (type . "task"))])
+              (deps . [((step_id . "review") (depends_on_id . "implement")
+                        (type . "blocks"))])))))
+    (should (gascity-formula-p f))
+    (should (equal (gascity-formula-name f) "implement"))
+    (should (equal (gascity-formula-description f) "Implement work"))
+    (should (equal (gascity-formula-metadata f)
+                   '((gc . ((methodology . ((review_modes . ["agent"]))))))))
+    (should (= (length (gascity-formula-vars f)) 2))
+    (should (seq-every-p #'gascity-formula-var-p (gascity-formula-vars f)))
+    (should (equal (gascity-formula-var-name (car (gascity-formula-vars f)))
+                   "summary_path"))
+    (should (eq (gascity-formula-var-required (car (gascity-formula-vars f))) t))
+    (should (null (gascity-formula-var-required (cadr (gascity-formula-vars f)))))
+    (should (equal (gascity-formula-steps f)
+                   '(((id . "implement") (title . "Implement owned work")
+                      (type . "task")))))
+    (should (equal (gascity-formula-deps f)
+                   '(((step_id . "review") (depends_on_id . "implement")
+                      (type . "blocks")))))))
+
 (ert-deftest gascity-test-at-point-visit-dispatch ()
   "`gascity-at-point-visit' dispatches the right action per object class."
   ;; agent -> attach its tmux terminal
@@ -3299,7 +3366,45 @@ take a value; the booleans are absent unless set."
                   (apply #'gascity-command-sling :target "t" :arg "b"
                          (gascity-sling--parse-transient-args
                           '("--formula" "--merge=local" "--var=x=1"))))
-                 '("gc" "sling" "t" "b" "--formula" "--merge" "local" "--var" "x=1"))))
+                 '("gc" "sling" "t" "b" "--formula" "--merge" "local" "--var" "x=1")))
+  ;; The targeted convoy-first shape parses and emits `--on'.
+  (let ((p (gascity-sling--parse-transient-args '("--on=do-work"))))
+    (should (equal (plist-get p :on) "do-work")))
+  (should (equal (gascity-command-line
+                  (apply #'gascity-command-sling :target "t" :arg "gce-1"
+                         (gascity-sling--parse-transient-args
+                          '("--on=do-work" "--var=x=1"))))
+                 '("gc" "sling" "t" "gce-1" "--on" "do-work" "--var" "x=1"))))
+
+(ert-deftest gascity-test-sling-on-command-line ()
+  "The `:on' slot emits the targeted convoy-first sling shape.
+`gc sling <target> <bead> --on <formula>' (DESIGN-write-actions §5.2)."
+  (should (equal (gascity-command-line
+                  (gascity-command-sling :target "t" :arg "gce-1" :on "do-work"))
+                 '("gc" "sling" "t" "gce-1" "--on" "do-work")))
+  (should (equal (gascity-command-line
+                  (gascity-command-sling :target "t" :arg "gce-1"
+                                         :on "do-work" :var '("a=1" "b=2")))
+                 '("gc" "sling" "t" "gce-1" "--on" "do-work"
+                   "--var" "a=1" "--var" "b=2")))
+  ;; Unset, no flag is emitted.
+  (should-not (member "--on" (gascity-command-line
+                              (gascity-command-sling :target "t" :arg "b")))))
+
+(ert-deftest gascity-test-formula-command-lines ()
+  "The formula read commands build their lines; show requires a name."
+  (should (equal (gascity-command-line (gascity-command-formula-catalog))
+                 '("gc" "formula" "catalog" "--json")))
+  (should (equal (gascity-command-line (gascity-command-formula-show :name "implement"))
+                 '("gc" "formula" "show" "implement" "--json")))
+  ;; `--var' repeats like the sling class's stringArray flag.
+  (should (equal (gascity-command-line
+                  (gascity-command-formula-show :name "implement"
+                                                :var '("a=1" "b=2")))
+                 '("gc" "formula" "show" "implement" "--json" "--var" "a=1" "--var" "b=2")))
+  (should (gascity-command-validate (gascity-command-formula-show)))
+  (should (gascity-command-validate (gascity-command-formula-show :name " ")))
+  (should-not (gascity-command-validate (gascity-command-formula-show :name "do-work"))))
 
 (ert-deftest gascity-test-order-run-rig ()
   "Order run emits `--rig' only when a rig is supplied (DESIGN §11 #9)."
