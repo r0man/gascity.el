@@ -200,3 +200,61 @@ screen text.
 - F4: investigate the TRAMP `ssh`-method hang on this host.
 - F5: guard the auto-refresh tick against in-flight *synchronous* TRAMP reads
   (the busy-spin repro above).
+
+## Follow-up pass — formula-dispatch acceptance closure (fix-loop ga-aif, FIX-3)
+
+- Date: 2026-09-12 (same day, after the fix-loop's FIX-1/FIX-2 landed on main)
+- Item: F3/C2 closure — re-run the formula-dispatch half of the acceptance pass.
+
+### Root cause of F3 (resolved, gc semantics — not a broken city)
+
+`gc sling mayor review --formula …` fails in bright-lights with
+`step review.validate-context: unknown formulas v2 target "gc.run-operator"`,
+but the *same command fails identically in the local emacs-city*
+(`gc sling mayor --formula review …` → same error), while targeting a
+rig-scoped session succeeds in both cities. The v2 pack formulas route
+their steps at the `gc.run-operator` pack role, which is imported
+**per rig** (`hello-world/gc.run-operator`, `gascity.el/gc.run-operator`)
+— there is no city-level `gc.run-operator` in either city, so a
+city-level target (`mayor`) cannot instantiate them. bright-lights'
+agent/pack import state was never broken (pack versions identical:
+`sha:3b3b89f`); the earlier pass had simply only tried `mayor` as the
+target. `gc doctor` passing 89 ✓ was consistent all along.
+
+### Re-run and live store confirmation
+
+Fresh `emacs -nw -Q` inside tmux (`gce-fix`), package loaded from main
+(5595181), city `/sshx:localhost:/home/roman/bright-lights`, auto-refresh
+off (F5 workaround still in effect):
+
+1. `gascity-status` renders the remote dashboard (unchanged from the
+   first pass).
+2. `S` → `-f` → target `hello-world/gc.implementation-worker` (rig-scoped,
+   per the root cause) → the formula transient shows the new
+   `g Refresh catalog` binding (FIX-2, live).
+3. Pick `review` from the remote catalog; Variables section generates the
+   five infixes; `e` sets
+   `report_path=plans/formula-sling-ui/build/review-report-ga-aif.md`,
+   `u` sets
+   `subject_path=plans/formula-sling-ui/build/implementation-summary.md`.
+4. `s` dispatches — echo area:
+
+   `gc sling: Started workflow hw-470 (formula "review") → hello-world/gc.implementation-worker`
+
+5. Remote store confirmation (plain gc over ssh):
+
+   ```
+   ◐ hw-470 · review  [● P2 · IN_PROGRESS]
+     subject_path: plans/formula-sling-ui/build/implementation-summary.md
+     report_path: plans/formula-sling-ui/build/review-report-ga-aif.md
+     gc.formula_contract: graph.v2
+   ```
+
+The workflow root appears in the remote store, created from the remote
+city through the transient, with gc-side server substitution of the
+entered vars. The gc-side "unknown formulas v2 target" error no longer
+occurs for rig-scoped targets (gc had been fixed/clarified between the
+passes: v2 run targets resolve per rig).
+
+**AC-6 / REQ-018: covered.** The whole acceptance protocol (both halves)
+has now run against `/sshx:localhost:/home/roman/bright-lights`.
