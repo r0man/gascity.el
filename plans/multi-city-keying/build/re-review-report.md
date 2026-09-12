@@ -9,7 +9,7 @@ methodology:
 producer:
   formula: review
   stage: re-review
-  attempt: 1
+  attempt: 2
 status: approved
 trace:
   upstream:
@@ -49,7 +49,20 @@ trace:
 
 # Re-review report — multi-city-keying fix loop (review iteration 2)
 
+Attempt log: attempt 1 (`ga-okfo`) wrote this report with the verdict and
+verification below, but the dispatcher-side validator run failed
+environmentally — `gc bd show ga-okfo` died on a locked-but-uncached
+remote pack import (`rig "beads.el" import "gc"` not cached under
+`/home/roman/emacs-city/.gc/cache/repos/…`), not on the artifact. The
+repair was `gc import install` (4 remote imports installed); attempt 2
+(`ga-mgti`) re-ran the check gate
+(`.gc/scripts/checks/build-artifact-valid.sh`, `GC_BEAD_ID=ga-mgti`) and
+it passes: `build artifact valid: schema=gc.build.review.v1`. No schema
+error was ever raised against the report; the report was repaired in
+place per the re-review contract (attempt bump + this log only).
+
 Re-reviewed subject: the fix-loop commits on `main` that resolve review
+iteration 1's findings the fix-loop commits on `main` that resolve review
 iteration 1's findings — the landed chain (FIX-1: `7ef649c` → `6519fcb`
 → `599e0b7` → `1a78f7a`, artifacts `24f9523`) and the C1 re-keying
 (FIX-2 `45ff9fb`, FIX-3 `1725234`), per
