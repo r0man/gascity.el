@@ -9,7 +9,7 @@ methodology:
 producer:
   formula: review
   stage: re-review
-  attempt: 2
+  attempt: 3
 status: approved
 trace:
   upstream:
@@ -164,9 +164,9 @@ affect this verdict.
 ## Verification
 
 - `scripts/gate.sh` on main at `96727cd8` — **PASS**: compile clean
-  over the whole package, 268/268 tests (this re-review's own run,
-  2026-09-12 19:08; the +1 test vs iteration 1 is the FIX-2 wiring
-  test).
+  over the whole package, 268/268 tests (re-run by attempt 3 of this
+  re-review, 2026-09-12 19:12; the +1 test vs iteration 1 is the FIX-2
+  wiring test).
 - `git status -sb`: main in sync with `origin/main`; `git cherry` /
   `git diff` evidence above confirms delivery (F1).
 - `5595181` audit: suffix is `:transient t` (menu stays open), reserved
@@ -177,6 +177,15 @@ affect this verdict.
   `gc.build.fix_plan_hash`; all three FIX items verified as landed.
 - This artifact validated with `validate_build_artifact.py --schema
   gc.build.review.v1` before recording.
+- **Attempt 3 note:** producer attempts 1 (`ga-vd9`) and 2 (`ga-aui`)
+  wrote and committed this report unchanged but their dispatcher-side
+  validator runs failed environmentally — the city's locked `beads.el`
+  pack import (`gascity/roles`) was not cached. The environment was
+  repaired with `gc import install`; attempt 3 re-verified the report
+  against schema `gc.build.review.v1` (passes), confirmed the fix-plan
+  hash still matches the workflow root, and re-ran the gate above. No
+  report defect was ever recorded; the verdict and findings are
+  unchanged from attempt 1.
 
 ## Drift observations
 
