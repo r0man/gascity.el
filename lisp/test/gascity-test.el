@@ -6137,5 +6137,220 @@ when beads.el lacks the variables."
           (makunbound v)))
       (gascity-context-clear-cache))))
 
+;;; ============================================================
+;;; Suite completion — cross-cutting per-city keying
+;;; (multi-city-keying Step 6; REQ-005/006/007/008/011/014)
+;;; ============================================================
+
+(ert-deftest gascity-test-rigs-memo-per-city ()
+  "The rig memo (`gascity-rigs-remember' + `gascity-rigs-cached')
+keys per CITY, not per host: two local cities and two cities under
+one TRAMP prefix keep distinct keys and distinct values, identical
+rig lists in both cities never evict each other, a prefix-less list
+in city A blanks neither city B's prefixed entry nor A's own, the
+bead-store path resolves per city from the memo, and a third city
+stays cold (REQ-005, REQ-006, REQ-007, REQ-014)."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (cl-letf (((symbol-function 'gascity-reader-run)
+                 (lambda (&rest _) (error "spawned gc")))
+                ((symbol-function 'gascity-command-rig-list!)
+                 (lambda (&rest _) (error "spawned gc rig list"))))
+        ;; Two local cities, plus a third that stays cold: real temp
+        ;; cities, the walk is free.
+        (let* ((tmp (make-temp-file "gascity-test-memo" t))
+               (city-a (file-name-as-directory (expand-file-name "a" tmp)))
+               (city-b (file-name-as-directory (expand-file-name "b" tmp)))
+               (city-c (file-name-as-directory (expand-file-name "c" tmp)))
+               (rigs-a (gascity-test--rigs
+                        '((name . "a-rig") (prefix . "gce") (path . "/p/a"))))
+               (rigs-b (gascity-test--rigs
+                        '((name . "b-rig") (prefix . "bde") (path . "/p/b"))))
+               (twin-a (gascity-test--rigs
+                        '((name . "a-rig") (prefix . "gce") (path . "/p/a"))))
+               (bare-a (gascity-test--rigs
+                        '((name . "a-rig") (path . "/p/a")))))
+          (unwind-protect
+              (progn
+                (dolist (city '("a" "b" "c"))
+                  (make-directory (expand-file-name city tmp) t)
+                  (write-region "" nil
+                                (expand-file-name (concat city "/city.toml")
+                                                  tmp)))
+                ;; Distinct keys: each city's governing root.
+                (should-not (equal (gascity-context--rigs-key city-a)
+                                   (gascity-context--rigs-key city-b)))
+                ;; City A warms; the bead-store path resolves from the
+                ;; memo under city A's own default-directory.
+                (should (eq (gascity-rigs-remember rigs-a city-a) rigs-a))
+                (should (eq (gascity-rigs-cached city-a) rigs-a))
+                (should (equal (gascity-rigs-cached-prefixes city-a)
+                               '("gce")))
+                (let ((default-directory city-a))
+                  (should (equal (gascity-beads--rig-store-cached "a-rig")
+                                 "/p/a/")))
+                ;; An identical list remembered for city B does not
+                ;; evict city A's entry — the keys partition the memo.
+                (should (eq (gascity-rigs-remember twin-a city-b) twin-a))
+                (should (eq (gascity-rigs-cached city-b) twin-a))
+                (should (eq (gascity-rigs-cached city-a) rigs-a))
+                ;; Distinct values: B's own list replaces the twin
+                ;; under B's key, A keeps its list and its prefixes.
+                (should (eq (gascity-rigs-remember rigs-b city-b) rigs-b))
+                (should (eq (gascity-rigs-cached city-a) rigs-a))
+                (should-not (eq (gascity-rigs-cached city-a)
+                                (gascity-rigs-cached city-b)))
+                (let ((default-directory city-b))
+                  (should (equal (gascity-beads--rig-store-cached "b-rig")
+                                 "/p/b/"))
+                  (should-not (gascity-beads--rig-store-cached "a-rig")))
+                ;; A prefix-less list in city A blanks neither B's
+                ;; prefixed entry nor A's own — the guard is per key,
+                ;; not global.
+                (should (eq (gascity-rigs-remember bare-a city-a) bare-a))
+                (should (eq (gascity-rigs-cached city-a) rigs-a))
+                (should (eq (gascity-rigs-cached city-b) rigs-b))
+                (should (equal (gascity-rigs-cached-prefixes city-a)
+                               '("gce")))
+                ;; A third city stays cold: nil everywhere, no spawn.
+                (let ((default-directory city-c))
+                  (should-not (gascity-rigs-cached))
+                  (should-not (gascity-rigs-cached-prefixes))
+                  (should-not (gascity-beads--bead-path-cached "gce-abc"))))
+            (delete-directory tmp t)))
+        ;; Two cities under ONE TRAMP prefix (same host, same
+        ;; connection): the city root still partitions the memo.  The
+        ;; fictitious host must never be contacted — the walk is
+        ;; stubbed, everything else is string surgery.
+        (let* ((rigs-a (gascity-test--rigs
+                        '((name . "a-rig") (prefix . "gce") (path . "/p/a"))))
+               (rigs-b (gascity-test--rigs
+                        '((name . "b-rig") (prefix . "bde") (path . "/p/b"))))
+               (bare-a (gascity-test--rigs
+                        '((name . "a-rig") (path . "/p/a")))))
+          (cl-letf (((symbol-function 'locate-dominating-file)
+                     (lambda (dir _file)
+                       (cond
+                        ((string-prefix-p "/ssh:u@h:/c/a/" dir)
+                         "/ssh:u@h:/c/a/")
+                        ((string-prefix-p "/ssh:u@h:/c/b/" dir)
+                         "/ssh:u@h:/c/b/")
+                        (t nil)))))
+            (let ((dir-a "/ssh:u@h:/c/a/")
+                  (dir-b "/ssh:u@h:/c/b/")
+                  (dir-c "/ssh:u@h:/c/c/"))
+              ;; Distinct keys under one prefix; the third city stays
+              ;; cold.
+              (should (equal (gascity-context--rigs-key dir-a)
+                             "/ssh:u@h:/c/a/"))
+              (should (equal (gascity-context--rigs-key dir-b)
+                             "/ssh:u@h:/c/b/"))
+              (should-not (equal (gascity-context--rigs-key dir-a)
+                                 (gascity-context--rigs-key dir-b)))
+              (should-not (gascity-rigs-cached dir-c))
+              ;; City A warms; the bead-store path is re-prefixed for
+              ;; the city's host — from the memo, per city.
+              (should (eq (gascity-rigs-remember rigs-a dir-a) rigs-a))
+              (let ((default-directory dir-a))
+                (should (equal (gascity-beads--rig-store-cached "a-rig")
+                               "/ssh:u@h:/p/a/")))
+              ;; City B warms independently; no eviction either way.
+              (should (eq (gascity-rigs-remember rigs-b dir-b) rigs-b))
+              (should (eq (gascity-rigs-cached dir-a) rigs-a))
+              (should (eq (gascity-rigs-cached dir-b) rigs-b))
+              (should-not (eq (gascity-rigs-cached dir-a)
+                              (gascity-rigs-cached dir-b)))
+              ;; A prefix-less list in A blanks neither B's entry nor
+              ;; A's own; the prefix maps stay per city.
+              (should (eq (gascity-rigs-remember bare-a dir-a) bare-a))
+              (should (eq (gascity-rigs-cached dir-a) rigs-a))
+              (should (eq (gascity-rigs-cached dir-b) rigs-b))
+              (should (equal (gascity-rigs-cached-prefixes dir-a) '("gce")))
+              (should (equal (gascity-rigs-cached-prefixes dir-b) '("bde")))))))
+    (gascity-context-clear-cache)))
+
+(ert-deftest gascity-test-clear-cache-cities ()
+  "`gascity-context-clear-cache' forgets every city's key: after rigs
+are remembered for a local city and for a remote city under one TRAMP
+prefix, one clear leaves both cold — rig lists, root walk and all
+(REQ-008)."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (let* ((tmp (make-temp-file "gascity-test-clear" t))
+             (city-a (file-name-as-directory (expand-file-name "a" tmp)))
+             (dir-b "/ssh:u@h:/c/b/")
+             (rigs-a (gascity-test--rigs
+                      '((name . "a-rig") (prefix . "gce") (path . "/p/a"))))
+             (rigs-b (gascity-test--rigs
+                      '((name . "b-rig") (prefix . "bde") (path . "/p/b"))))
+             (walk (symbol-function 'locate-dominating-file)))
+        ;; The local city walks the disk for real; the fictitious
+        ;; remote host is dispatched by the stub, never contacted.
+        (cl-letf (((symbol-function 'locate-dominating-file)
+                   (lambda (dir file)
+                     (if (string-prefix-p "/ssh:u@h:" dir)
+                         (when (string-prefix-p dir-b dir) dir-b)
+                       (funcall walk dir file)))))
+          (unwind-protect
+              (progn
+                (make-directory (expand-file-name "a" tmp) t)
+                (write-region "" nil (expand-file-name "a/city.toml" tmp))
+                (should (eq (gascity-rigs-remember rigs-a city-a) rigs-a))
+                (should (eq (gascity-rigs-remember rigs-b dir-b) rigs-b))
+                (should (eq (gascity-rigs-cached city-a) rigs-a))
+                (should (eq (gascity-rigs-cached dir-b) rigs-b))
+                ;; One clear empties both cities' keys.
+                (gascity-context-clear-cache)
+                (should-not (gascity-rigs-cached city-a))
+                (should-not (gascity-rigs-cached dir-b)))
+            (delete-directory tmp t))))
+    (gascity-context-clear-cache)))
+
+(ert-deftest gascity-test-override-keys-by-overridden-root ()
+  "A `gascity-context-city' override re-keys the view factory: with
+the override bound to city B's root, a view opened from a directory
+that naturally resolves to city A is keyed under B — its own buffer,
+B's root in the name and pinned as its `default-directory' — while
+the naturally-resolved A buffer is left untouched (REQ-011, REQ-012)."
+  (gascity-context-clear-cache)
+  (let* ((tmp (make-temp-file "gascity-test-override" t))
+         (city-a (file-name-as-directory (expand-file-name "emacs-city" tmp)))
+         (city-b (file-name-as-directory
+                  (expand-file-name "bright-lights" tmp)))
+         bufs)
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "emacs-city" tmp) t)
+          (make-directory (expand-file-name "bright-lights" tmp) t)
+          (write-region "" nil (expand-file-name "emacs-city/city.toml" tmp))
+          (write-region "" nil
+                        (expand-file-name "bright-lights/city.toml" tmp))
+          ;; A opens naturally, keyed under its own root.
+          (let ((buf-a (gascity-view-get-buffer-create "*gascity-status*"
+                                                       city-a)))
+            (push buf-a bufs)
+            (should (equal (buffer-name buf-a)
+                           (format "*gascity-status@%s*" city-a)))
+            ;; The override wins over the walk: the same call is keyed
+            ;; under B — distinct buffer, B's root pinned — and A's
+            ;; buffer is not re-pinned or renamed.
+            (let ((gascity-context-city (directory-file-name city-b)))
+              (let ((buf-b (gascity-view-get-buffer-create
+                            "*gascity-status*" city-a)))
+                (push buf-b bufs)
+                (should-not (eq buf-b buf-a))
+                (should (equal (buffer-name buf-b)
+                               (format "*gascity-status@%s*" city-b)))
+                (should (equal (buffer-local-value 'default-directory buf-b)
+                               city-b))
+                (should (equal (buffer-name buf-a)
+                               (format "*gascity-status@%s*" city-a)))
+                (should (equal (buffer-local-value 'default-directory buf-a)
+                               city-a))))))
+      (dolist (buf bufs)
+        (when (buffer-live-p buf) (kill-buffer buf)))
+      (delete-directory tmp t)
+      (gascity-context-clear-cache))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here
