@@ -21,9 +21,10 @@
 ;; context (e.g. for a switch-rig command, arriving in later phases).
 ;;
 ;; `gascity-view-get-buffer-create' composes this resolution with the
-;; remote buffer-naming scheme of `gascity-remote' into the single
-;; view-buffer factory: every buffer a gascity view opens gets a
-;; host-qualified name and a `default-directory' pinned to its city.
+;; buffer-naming scheme of `gascity-remote' into the single view-buffer
+;; factory: every buffer a gascity view opens gets a city-qualified
+;; name (the governing city root, host-only outside any city) and a
+;; `default-directory' pinned to its city.
 ;;
 ;; Every such buffer also gets an I/O-free `project' instance
 ;; (`gascity-context-install-project').  project.el's default backend,
@@ -161,19 +162,30 @@ The one factory behind every buffer a gascity view opens — dashboards,
 lists, detail views, mail message/body views, peek and dry-run output,
 compose drafts.  BASE is the buffer's base name (\"*gascity-status*\");
 DIR defaults to `default-directory' (the view or action context).  The
-buffer's name is host-qualified for a remote city
-\(`gascity-remote-buffer-name', so a local and a remote view of the same
-kind coexist instead of one stealing the other's buffer) and its
+buffer's name is city-qualified for a directory inside a city — the
+governing city root spliced in, local cities included, so two cities on
+one host get distinct names (`gascity-remote-buffer-name' with the root
+as QUALIFIER) — and outside any city it degrades to the host-only
+qualification (remote prefix, unchanged locally).  The buffer's
 `default-directory' is pinned to the city root governing DIR
 \(`gascity-context-pin-directory') — re-pinned on every call, healing a
 buffer that survived from another context.  So refresh timers, at-point
 actions, and gc invocations keep resolving the city the view was opened
 for, and `dired'/`find-file'/`shell' from any such buffer default to
-that city's host.  Creating view buffers with a bare
+that city's host.  The city root is computed once here and reused for
+both the pin and the name — one memoized walk, one keying decision.
+This is the one naming entry point; the terminal attach buffer goes
+through the same scheme (`gascity-terminal-attach-tmux' derives the
+same qualifier), though not through this factory, since attach buffers
+pin their own `default-directory' and install their own
+project/eldoc wiring.  Creating view buffers with a bare
 `get-buffer-create' instead is what let a remote city's mail view open
 with a local `default-directory' — new views must come through here."
-  (let* ((dir (gascity-context-pin-directory dir))
-         (buf (get-buffer-create (gascity-remote-buffer-name base dir))))
+  (let* ((root (gascity-context-city-root dir))
+         (dir (or root (gascity-context-pin-directory dir)))
+         (buf (get-buffer-create
+               (gascity-remote-buffer-name
+                base dir (or root (file-remote-p dir))))))
     (with-current-buffer buf
       (setq default-directory dir))
     ;; project.el must never do I/O from this buffer's redisplay: the

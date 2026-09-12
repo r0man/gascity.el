@@ -15,10 +15,16 @@
 ;;   Opening one locally is wrong; `gascity-remote-localize-path'
 ;;   re-prefixes it with the view's TRAMP prefix.
 ;;
-;; - Buffer identity.  A local and a remote dashboard must coexist, so
-;;   `gascity-remote-buffer-name' qualifies a view's buffer name with
-;;   the remote prefix — the single keying scheme for every gascity
-;;   buffer (status, lists, rig dashboard, agent detail, terminal).
+;; - Buffer identity.  A local and a remote dashboard must coexist, and
+;;   so must two cities on one host, so `gascity-remote-buffer-name'
+;;   qualifies a view's buffer name with one qualifier segment — the
+;;   single keying scheme for every gascity buffer (status, lists, rig
+;;   dashboard, agent detail, terminal).  The view factory passes the
+;;   governing city root as the qualifier (`gascity-context-scope-key'
+;;   is the scheme's owner: the city root embeds the remote prefix, so
+;;   same-host cities differ in the path part); without a qualifier the
+;;   name degrades to today's host-only shape — the remote prefix,
+;;   unchanged for a local directory.
 ;;
 ;; - Interactive attach.  `gc' reads run remotely through the TRAMP
 ;;   process primitives (`process-file' / `make-process :file-handler'),
@@ -67,20 +73,23 @@ or already-remote PATH — returns PATH unchanged."
 
 ;;; Buffer identity
 
-(defun gascity-remote-buffer-name (base &optional dir)
-  "Return BASE qualified by DIR's remote prefix, so views key per host.
-BASE is a gascity buffer name (\"*gascity-status*\").  For a local DIR
-\(default `default-directory') BASE is returned unchanged; for a remote
-DIR the TRAMP prefix is spliced in before the trailing `*', e.g.
-\"*gascity-status@/ssh:user@host:*\" — so a local and a remote view of
-the same kind coexist.  This is the one buffer-keying scheme for every
-gascity view (status dashboard, lists, rig dashboard, agent detail, and
-terminal attach buffers)."
-  (let ((remote (file-remote-p (or dir default-directory))))
-    (cond ((not remote) base)
+(defun gascity-remote-buffer-name (base &optional dir qualifier)
+  "Return BASE qualified by QUALIFIER, or by DIR's remote prefix.
+QUALIFIER, when non-nil, is spliced in verbatim before the trailing
+`*' — the view factory passes the governing city root
+\(`gascity-context-scope-key'), so two cities on one host get distinct
+buffer names and a remote city's name carries host and city path.
+Without QUALIFIER the behavior is the host-only qualification: DIR's
+TRAMP prefix spliced before the trailing `*' (e.g.
+\"*gascity-status@/ssh:user@host:*\"), and a local DIR (default
+`default-directory') returns BASE unchanged.  This is the one
+buffer-keying scheme for every gascity view (status dashboard, lists,
+rig dashboard, agent detail, and terminal attach buffers)."
+  (let ((qualifier (or qualifier (file-remote-p (or dir default-directory)))))
+    (cond ((not qualifier) base)
           ((string-suffix-p "*" base)
-           (format "%s@%s*" (substring base 0 -1) remote))
-          (t (format "%s@%s" base remote)))))
+           (format "%s@%s*" (substring base 0 -1) qualifier))
+          (t (format "%s@%s" base qualifier)))))
 
 ;;; Channel hygiene
 

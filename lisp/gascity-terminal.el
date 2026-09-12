@@ -592,9 +592,10 @@ LOCAL ssh running tmux there (`gascity-terminal--attach-argv' — ssh
 methods only, a `user-error' otherwise) with tmux resolved to the same
 host path the probes use (`gascity-remote-find-executable' — `ssh HOST
 cmd' runs no login shell, so a Guix profile tmux may be off its PATH),
-and the buffer name is host-qualified so local and remote attaches
-coexist.  When the host seems to lack terminfo for the TERM the local
-backend advertises, the remote command forces
+and the buffer name is city-qualified so local and remote attaches —
+and two same-host cities' attaches — coexist.  When the host seems to
+lack terminfo for the TERM the local backend advertises, the remote
+command forces
 `gascity-terminal-remote-term' instead of dying with \"missing or
 unsuitable terminal\" (`gascity-terminal--remote-term').
 DIR (a host-local path on the city) cannot be the spawn
@@ -623,8 +624,17 @@ status bar is hidden and mirrored in the terminal buffer's mode line (see
          ;; should fail with its clear `user-error', not after a remote
          ;; round trip — so this validation pass stays unresolved.
          (argv (gascity-terminal--attach-argv session socket remote))
+         ;; The attach buffer keys by city, like every other gascity
+         ;; view: the governing city root of `default-directory' as the
+         ;; qualifier (the factory's derivation), falling back to the
+         ;; remote prefix.  The attach buffer does NOT go through
+         ;; `gascity-view-get-buffer-create': it pins its own
+         ;; `default-directory' and installs its own project/eldoc
+         ;; wiring below.
          (buf-name (gascity-remote-buffer-name
-                    (format "*gc-agent-%s*" session))))
+                    (format "*gc-agent-%s*" session) nil
+                    (or (gascity-context-city-root)
+                        (file-remote-p default-directory)))))
     (unless (condition-case err
                 (gascity-terminal-tmux-session-exists-p session socket)
               (file-error

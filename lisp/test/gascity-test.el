@@ -4211,7 +4211,80 @@ Return BOX's car."
     (should (equal (gascity-remote-buffer-name "*gascity-status*")
                    "*gascity-status@/ssh:u@h:*"))
     ;; A base without the trailing star still gets qualified.
-    (should (equal (gascity-remote-buffer-name "plain") "plain@/ssh:u@h:"))))
+    (should (equal (gascity-remote-buffer-name "plain") "plain@/ssh:u@h:"))
+    ;; An explicit QUALIFIER is spliced in verbatim — the factory's
+    ;; city-root form, local city included.
+    (should (equal (gascity-remote-buffer-name "*gascity-status*" nil
+                                               "/home/roman/emacs-city/")
+                   "*gascity-status@/home/roman/emacs-city/*"))
+    (should (equal (gascity-remote-buffer-name "plain" nil "/x/c")
+                   "plain@/x/c"))))
+
+(ert-deftest gascity-test-buffer-name-per-city ()
+  "View buffer names key per CITY, not per host (the plan's D1 shapes):
+the factory qualifies a directory inside a city with the governing
+city root — two local cities get distinct names, a remote city's name
+carries the full city root and is distinguishable from a local one —
+while outside any city today's host-only shapes still hold
+(REQ-001, REQ-002, REQ-013)."
+  (gascity-context-clear-cache)
+  (let* ((tmp (make-temp-file "gascity-test-bname" t))
+         (city-a (file-name-as-directory (expand-file-name "emacs-city" tmp)))
+         (city-b (file-name-as-directory (expand-file-name "bright-lights" tmp)))
+         bufs)
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "emacs-city" tmp) t)
+          (make-directory (expand-file-name "bright-lights" tmp) t)
+          (write-region "" nil (expand-file-name "emacs-city/city.toml" tmp))
+          (write-region "" nil (expand-file-name "bright-lights/city.toml" tmp))
+          ;; Two local cities: distinct city-root-qualified names, and
+          ;; the buffer is pinned to its own city root.
+          (let ((buf-a (gascity-view-get-buffer-create "*gascity-status*"
+                                                       city-a))
+                (buf-b (gascity-view-get-buffer-create "*gascity-status*"
+                                                       city-b)))
+            (setq bufs (list buf-a buf-b))
+            (should (equal (buffer-name buf-a)
+                           (format "*gascity-status@%s*" city-a)))
+            (should (equal (buffer-name buf-b)
+                           (format "*gascity-status@%s*" city-b)))
+            (should-not (equal (buffer-name buf-a) (buffer-name buf-b)))
+            (should (equal (buffer-local-value 'default-directory buf-a)
+                           city-a))
+            (should (equal (buffer-local-value 'default-directory buf-b)
+                           city-b)))
+          ;; A remote city under /ssh:u@h: carries the full city root
+          ;; (host AND city path) and never collides with a local city
+          ;; name.  The city-root walk is stubbed — the fictitious host
+          ;; must never be contacted.
+          (cl-letf (((symbol-function 'locate-dominating-file)
+                     (lambda (&rest _) "/ssh:u@h:/city/")))
+            (let ((buf-r (gascity-view-get-buffer-create
+                          "*gascity-status*" "/ssh:u@h:/city/")))
+              (push buf-r bufs)
+              (should (equal (buffer-name buf-r)
+                             "*gascity-status@/ssh:u@h:/city/*"))
+              (should-not (equal (buffer-name buf-r)
+                                 (format "*gascity-status@%s*" city-a)))))
+          ;; Outside any city, the 2-arg host-only shapes hold: the
+          ;; remote prefix for a remote directory, bare locally.
+          (cl-letf (((symbol-function 'locate-dominating-file)
+                     (lambda (&rest _) nil)))
+            (let ((default-directory "/ssh:u@h:/elsewhere/"))
+              (should (equal (buffer-name
+                              (gascity-view-get-buffer-create
+                               "*gascity-status*"))
+                             "*gascity-status@/ssh:u@h:*")))
+            (let ((default-directory temporary-file-directory))
+              (should (equal (buffer-name
+                              (gascity-view-get-buffer-create
+                               "*gascity-status*"))
+                             "*gascity-status*")))))
+      (dolist (buf bufs)
+        (when (buffer-live-p buf) (kill-buffer buf)))
+      (delete-directory tmp t)
+      (gascity-context-clear-cache))))
 
 (ert-deftest gascity-test-remote-ssh-argv ()
   "The local ssh argv carries user/port, quotes remote tokens, and rejects
