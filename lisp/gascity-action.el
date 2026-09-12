@@ -937,8 +937,9 @@ With a prefix argument, capture that many trailing LINES instead of the
 ;; (`gascity-sling-dispatch', §5.2): infixes collect the flags, two
 ;; suffixes act — one slings for real, one previews gc's routing plan with
 ;; `--dry-run' (the preview affordance, §8).  The bead/text and target are
-;; read in the suffix (seeded from the bead at point); formula vars are
-;; prompted only when `--formula' is set.
+;; read in the suffix (seeded from the bead at point); the formula flow
+;; (`gascity-sling-formula', `gascity-formula') is entered from the `-f'
+;; toggle and collects its variables through its own generated infixes.
 
 (defun gascity-sling--parse-transient-args (args)
   "Parse flat transient ARGS into a `gascity-command-sling' initarg plist.
@@ -965,15 +966,6 @@ formula shape.  Unknown entries are ignored."
     (when vars (setq plist (plist-put plist :var (nreverse vars))))
     plist))
 
-(defun gascity-sling--read-vars ()
-  "Read zero or more formula vars (key=value) from the minibuffer.
-Reads until an empty entry; returns the list of \"k=v\" strings, or nil."
-  (let (vars (v (read-string "Formula var (key=value, RET to finish): ")))
-    (while (not (string-empty-p (string-trim v)))
-      (push (string-trim v) vars)
-      (setq v (read-string "Formula var (key=value, RET to finish): ")))
-    (nreverse vars)))
-
 (defun gascity-sling--show-plan (command)
   "Execute COMMAND (a `--dry-run' sling) and show gc's routing plan.
 Pops a read-only view buffer with gc's captured stdout; a validation or gc
@@ -997,18 +989,17 @@ error surfaces as a clean `user-error'."
 
 (defun gascity-sling--run (args preview)
   "Build and run a sling from transient ARGS (its flag list).
-Reads the bead/text and target (the bead at point seeds the arg), prompts
-for formula vars when `--formula' is present, then acts.  With PREVIEW
-non-nil, forces `--dry-run' and shows gc's routing plan instead of
-executing; otherwise acts and refreshes the originating view."
+Reads the bead/text and target (the bead at point seeds the arg), then
+acts.  With PREVIEW non-nil, forces `--dry-run' and shows gc's routing
+plan instead of executing; otherwise acts and refreshes the originating
+view.  Formula slings leave for `gascity-sling-formula' — their
+variables flow through that transient's generated infixes."
   (let* ((plist (gascity-sling--parse-transient-args args))
          (arg (read-string "Bead id or task text: " (gascity-bead-at-point)))
          (target (gascity-action--read-session "Sling to target: "))
-         (vars (when (plist-get plist :formula) (gascity-sling--read-vars)))
          (command (apply #'gascity-command-sling
                          :target target :arg arg
-                         (append (when vars (list :var vars))
-                                 (when preview (list :dry-run t))
+                         (append (when preview (list :dry-run t))
                                  plist))))
     (if preview
         (gascity-sling--show-plan command)
@@ -1027,9 +1018,11 @@ executing; otherwise acts and refreshes the originating view."
 
 ;;;###autoload (autoload 'gascity-sling-dispatch "gascity-action" nil t)
 (transient-define-prefix gascity-sling-dispatch ()
-  "Sling a bead/text with flags; preview shows gc's routing plan (`--dry-run')."
+  "Sling a bead/text with flags; preview shows gc's routing plan (`--dry-run').
+`-f' leaves for the formula flow (`gascity-sling-formula'), which keeps
+this transient's other bindings untouched (REQ-015)."
   ["Routing flags"
-   ("-f" "Treat arg as a formula" "--formula")
+   ("-f" "Formula sling…" gascity-sling-formula)
    ("-c" "Skip auto-convoy" "--no-convoy")
    ("-a" "Reassign (clear human assignee)" "--reassign")
    ("-n" "Nudge target after routing" "--nudge")

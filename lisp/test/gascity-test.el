@@ -823,6 +823,217 @@ sharing a variable name."
   (should (eq (gascity-formula--history-var "do.work!2" "a b")
               'gascity-formula-history-do-work-2-a-b)))
 
+;;; gascity-sling-formula (formula sling transient, plan WI-3)
+
+(defun gascity-test--formula-with-vars (vars)
+  "Decode a minimal `gascity-formula' whose VARS are the raw var alist list."
+  (gascity-domain-decode 'gascity-formula `((name . "do-work") (vars . ,vars))))
+
+(ert-deftest gascity-test-formula-sling-var-children-shapes ()
+  "The pure children generation matches `vars[]' (REQ-004..009): one infix
+per var, class per shape, self-documenting description, unique keys
+avoiding the transient's static suffix keys.  A formula without vars
+renders no Variables section."
+  (let ((formula (gascity-test--formula-with-vars
+                  (vector '((name . "drain_policy") (enum . ["separate" "same-session"]))
+                           '((name . "verbose") (default . "false"))
+                           '((name . "summary_path") (required . t)
+                             (description . "Where the summary goes")
+                             (default . "build/summary.md"))
+                           '((name . "branch") (pattern . "\\`[a-z-]+\\'"))))))
+    (let ((children (gascity-sling-formula--var-children formula)))
+      (should (vectorp children))
+      (should (equal (aref children 0) "Variables"))
+      (should (= (length children) 5))            ; header + 4 var infixes
+      (let ((specs (seq-subseq children 1)))
+        ;; Keys are unique tokens avoiding the static suffix keys.
+        (let ((keys (mapcar #'car specs)))
+          (should (equal keys (delete-dups (copy-sequence keys))))
+          (dolist (key keys)
+            (should-not (member key '("p" "s" "r" "q")))))
+        ;; The enum var is a fixed-choices option: illegal values
+        ;; unrepresentable by construction (REQ-005).
+        (let ((enum (seq-find
+                     (lambda (spec)
+                       (eq (plist-get (nthcdr 3 spec) :class)
+                           'gascity-sling-formula--enum-option))
+                     specs)))
+          (should enum)
+          (should (equal (plist-get (nthcdr 3 enum) :argument) "--var drain_policy="))
+          (should (equal (plist-get (nthcdr 3 enum) :var-choices)
+                         '("separate" "same-session"))))
+        ;; The "false"-defaulted var is a toggle (REQ-006).
+        (should (seq-find
+                 (lambda (spec)
+                   (eq (plist-get (nthcdr 3 spec) :class)
+                       'gascity-sling-formula--bool-option))
+                 specs))
+        ;; The plain var is a string option carrying the var's payload,
+        ;; with a required mark, its description and default (REQ-007/008).
+        (let ((string-spec (seq-find
+                            (lambda (spec)
+                              (equal (plist-get (nthcdr 3 spec) :var-name)
+                                     "summary_path"))
+                            specs)))
+          (should string-spec)
+          (should (eq (plist-get (nthcdr 3 string-spec) :class)
+                      'gascity-sling-formula--string-option))
+          (should (equal (plist-get (nthcdr 3 string-spec) :var-required) t))
+          (should (string-match-p "(required)" (nth 1 string-spec)))
+          (should (string-match-p "Where the summary goes" (nth 1 string-spec)))
+          (should (string-match-p "default: build/summary.md" (nth 1 string-spec)))))))
+  ;; A formula without vars renders no Variables section (REQ-004).
+  (should-not (gascity-sling-formula--var-children
+               (gascity-test--formula-with-steps nil))))
+
+(ert-deftest gascity-test-formula-sling-var-key-degenerates ()
+  "Var key generation never collides and always yields a key (REQ-016
+degradation): name letters first, then digits."
+  (should (equal (gascity-sling-formula--var-key "drain_policy" '()) "d"))
+  ;; "d" taken: the next alphanumeric character of the name is tried.
+  (should (equal (gascity-sling-formula--var-key "drain_policy" '("d")) "r"))
+  ;; A name with no usable characters still gets a digit key.
+  (should (member (gascity-sling-formula--var-key "___" '())
+                  '("1" "2" "3" "4" "5" "6" "7" "8" "9" "0"))))
+
+(ert-deftest gascity-test-formula-sling-check-pattern ()
+  "The infix reader's pattern check (REQ-009): a mismatch is a
+`user-error' naming var and pattern; an unparseable pattern degrades to
+no validation (REQ-016)."
+  (should-error (gascity-sling-formula--check-pattern
+                 "branch" "\\`[a-z-]+\\'" "Bad_Branch")
+                :type 'user-error)
+  (gascity-sling-formula--check-pattern "branch" "\\`[a-z-]+\\'" "main")
+  ;; A pattern that does not compile degrades to no validation.
+  (gascity-sling-formula--check-pattern "branch" "[unclosed" "anything goes"))
+
+(ert-deftest gascity-test-formula-sling-current-values ()
+  "`gascity-sling-formula--current-values' parses the transient's `--var
+name=value' args into an alist, keeping only the scoped formula's vars
+and dropping blank values (REQ-008)."
+  (let ((recipe (gascity-test--formula-with-vars
+                 (vector '((name . "summary_path"))
+                          '((name . "drain_policy"))))))
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work")))
+              ((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_name) recipe))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix)
+                 '("--var summary_path=plans/build.md"
+                   "--var stale=x"
+                   "--var drain_policy="
+                   "--merge" "local"))))
+      (should (equal (gascity-sling-formula--current-values)
+                     '(("summary_path" . "plans/build.md")))))))
+
+(ert-deftest gascity-test-formula-sling-dispatch-shapes ()
+  "Dispatch (REQ-008/013): validation runs first — missing required vars
+refuse with no gc call — then the shape follows
+`gascity-formula--needs-convoy': targetless `--formula', targeted
+`--on', both carrying the collected `--var' list; acting refreshes the
+originating view."
+  (let ((plain (gascity-test--formula-with-vars
+                (vector '((name . "summary_path") (required . t)))))
+        (targeted (gascity-test--formula-with-steps
+                   (vector '((id . "s") (title . "Drain unit")
+                             (metadata . ((gc.kind . "drain"))))))))
+    ;; Targetless shape: `gc sling <target> do-work --formula --var …'.
+    (let (acted refreshed)
+      (cl-letf (((symbol-function 'gascity-command-act)
+                 (lambda (command) (push command acted)))
+                ((symbol-function 'gascity--refresh-current-view)
+                 (lambda () (setq refreshed t))))
+        (let ((command (gascity-sling-formula--dispatch
+                        plain "sess-1" nil '(("summary_path" . "p")))))
+          (should (= (length acted) 1))
+          (should (eq refreshed t))
+          (should (equal (gascity-command-line command)
+                         '("gc" "sling" "sess-1" "do-work" "--formula"
+                           "--var" "summary_path=p"))))))
+    ;; Targeted shape: `gc sling <target> <bead> --on do-work --var …'.
+    (let (acted)
+      (cl-letf (((symbol-function 'gascity-command-act)
+                 (lambda (command) (push command acted)))
+                ((symbol-function 'gascity--refresh-current-view)
+                 (lambda () nil)))
+        (let ((command (gascity-sling-formula--dispatch
+                        targeted "sess-1" "gce-abc" '(("a" . "1")))))
+          (should (= (length acted) 1))
+          (should (equal (gascity-command-line command)
+                         '("gc" "sling" "sess-1" "gce-abc" "--on" "do-work"
+                           "--var" "a=1"))))))
+    ;; A missing required var refuses before any gc invocation (REQ-008).
+    (let (acted)
+      (cl-letf (((symbol-function 'gascity-command-act)
+                 (lambda (_command) (push t acted)))
+                ((symbol-function 'gascity--refresh-current-view)
+                 (lambda () nil)))
+        (let ((err (should-error
+                    (gascity-sling-formula--dispatch plain "sess-1" nil nil)
+                    :type 'user-error)))
+          (should (string-match-p "summary_path" (error-message-string err))))
+        (should-not acted)))
+    ;; A convoy-requiring formula with nothing at point refuses too.
+    (let (acted)
+      (cl-letf (((symbol-function 'gascity-command-act)
+                 (lambda (_command) (push t acted)))
+                ((symbol-function 'gascity--refresh-current-view)
+                 (lambda () nil)))
+        (should-error (gascity-sling-formula--dispatch targeted "sess-1" nil nil)
+                      :type 'user-error)
+        (should-not acted)))))
+
+(ert-deftest gascity-test-formula-sling-preview-fresh-show ()
+  "The recipe preview re-runs `gc formula show' with the current values
+as repeated `--var k=v' flags (REQ-012, F-1) and renders gc's compiled
+steps and dependency edges into a host-qualified view buffer.  A gc
+failure surfaces as a clean `user-error'."
+  (let ((default-directory (make-temp-file "gascity-formula-preview-" t))
+        show-args)
+    (cl-letf (((symbol-function 'gascity-command-formula-show!)
+               (lambda (&rest args)
+                 (setq show-args args)
+                 '((name . "do-work") (description . "Full lifecycle")
+                   (steps . [((id . "implement") (title . "Implement {{step}}"))
+                             ((id . "review") (title . "Review it"))])
+                   (deps . [((step_id . "review")
+                             (depends_on_id . "implement"))])))))
+      (gascity-sling-formula--show-recipe
+       "do-work" '(("step" . "implement") ("mode" . "fast")))
+      ;; The fresh read carries the values as repeated `--var' flags.
+      (should (equal show-args
+                     '(:name "do-work" :var ("step=implement" "mode=fast"))))
+      (let* ((buf (get-buffer "*gc-formula: do-work*"))
+             (text (and buf (with-current-buffer buf (buffer-string)))))
+        (should buf)
+        (should (string-match-p "Implement {{step}}" text))
+        (should (string-match-p "review depends on implement" text))))
+    ;; A gc failure is a `user-error', not a backtrace.
+    (cl-letf (((symbol-function 'gascity-command-formula-show!)
+               (lambda (&rest _)
+                 (signal 'gascity-command-error
+                         (list "gc formula show failed" :stderr "gc: nope")))))
+      (let ((err (should-error (gascity-sling-formula--show-recipe
+                                "do-work" nil)
+                               :type 'user-error)))
+        (should (string-match-p "gc: nope" (error-message-string err)))))))
+
+(ert-deftest gascity-test-formula-sling-wiring ()
+  "Wiring (REQ-015): the prefix and its entry exist, and
+`gascity-sling-dispatch''s `-f' binding now enters the formula flow
+instead of collecting a `--formula' flag."
+  (should (commandp 'gascity-sling-formula-dispatch))
+  (should (commandp 'gascity-sling-formula))
+  ;; Transient's normalized suffix spec: (transient-suffix :key "-f"
+  ;; :description … :command gascity-sling-formula).
+  (let ((suffix (transient-get-suffix 'gascity-sling-dispatch [0 0])))
+    (should (eq (nth 0 suffix) 'transient-suffix))
+    (should (equal (nth 2 suffix) "-f"))
+    (should (eq (nth 6 suffix) 'gascity-sling-formula)))
+  ;; The old minibuffer var reader is gone — its job is the infixes' now.
+  (should-not (fboundp 'gascity-sling--read-vars)))
+
 (ert-deftest gascity-test-at-point-visit-dispatch ()
   "`gascity-at-point-visit' dispatches the right action per object class."
   ;; agent -> attach its tmux terminal
