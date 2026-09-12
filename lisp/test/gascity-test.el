@@ -5080,6 +5080,11 @@ is host-qualified."
                  (concat "/opt/bin/" name)))
               ((symbol-function 'gascity-terminal--status-install)
                (lambda (&rest _) nil))
+              ;; The re-keyed rig memo resolves its city root first;
+              ;; the fictitious host must never be contacted (the walk
+              ;; is nil here — no city, remote-prefix key).
+              ((symbol-function 'locate-dominating-file)
+               (lambda (&rest _) nil))
               ((symbol-function 'beads-terminal-spawn)
                (lambda (_term buffer-name argv dir _env)
                  (setq spawn (list buffer-name argv dir))
@@ -5805,11 +5810,57 @@ wrapper's `mktemp' fallback (stderr discarded on the host) produces."
   "Decode SPECS, alists shaped like `gc rig list' rows, into `gascity-rig's."
   (gascity-domain-decode-list 'gascity-rig (vconcat specs)))
 
+(ert-deftest gascity-test-scope-key-per-city ()
+  "`gascity-context-scope-key' is the ONE city-scoped keying identity:
+the governing city root for a directory inside a city — distinct for
+two local cities — the remote prefix for a remote directory outside
+any city (\"\" for a local one), and the `gascity-context-city'
+override wins over the walk and is never cached
+(REQ-005, REQ-009/010, REQ-011, REQ-014)."
+  (gascity-context-clear-cache)
+  (let* ((tmp (make-temp-file "gascity-test-scope" t))
+         (city-a (file-name-as-directory (expand-file-name "city-a" tmp)))
+         (city-b (file-name-as-directory (expand-file-name "city-b" tmp))))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "city-a/deep" tmp) t)
+          (make-directory (expand-file-name "city-b/deep" tmp) t)
+          (write-region "" nil (expand-file-name "city-a/city.toml" tmp))
+          (write-region "" nil (expand-file-name "city-b/city.toml" tmp))
+          ;; Two local cities: the governing city root — the deep dir
+          ;; resolves to the same root as the city itself, and the two
+          ;; cities never share a key.
+          (should (equal (gascity-context-scope-key city-a) city-a))
+          (should (equal (gascity-context-scope-key
+                          (file-name-as-directory
+                           (expand-file-name "city-a/deep" tmp)))
+                         city-a))
+          (should (equal (gascity-context-scope-key city-b) city-b))
+          (should-not (equal (gascity-context-scope-key city-a)
+                             (gascity-context-scope-key city-b)))
+          ;; Outside any city: the remote-prefix fallback — \"\" for a
+          ;; local directory (the walk stubbed: no disk, no connection).
+          (cl-letf (((symbol-function 'locate-dominating-file)
+                     (lambda (&rest _) nil)))
+            (should (equal (gascity-context-scope-key "/ssh:u@h:/elsewhere/")
+                           "/ssh:u@h:"))
+            (let ((default-directory temporary-file-directory))
+              (should (equal (gascity-context-scope-key) ""))))
+          ;; The override wins over the walk, wherever DIR points.
+          (let ((gascity-context-city "/x/override-city"))
+            (should (equal (gascity-context-scope-key city-a)
+                           "/x/override-city/"))
+            (should (equal (gascity-context-scope-key "/ssh:u@h:/elsewhere/")
+                           "/x/override-city/"))))
+      (delete-directory tmp t)
+      (gascity-context-clear-cache))))
+
 (ert-deftest gascity-test-rigs-cached-never-spawns ()
   "The rig memo answers cold with nil and warm from the last decoded
 list — never through `gc rig list'; `gascity-rigs' fills it, a status
 payload seeds it, a prefix-less list never blanks a prefixed one, and
-the memo is keyed per host."
+the memo is keyed per city (`gascity-context-scope-key') — a cold city
+stays cold, a warm city's entry is never touched by another's."
   (gascity-context-clear-cache)
   (unwind-protect
       (cl-letf (((symbol-function 'gascity-reader-run)
@@ -5844,10 +5895,65 @@ the memo is keyed per host."
                            '((name . "gascity.el") (path . "/p/gascity.el")))))
                 (should (eq (gascity-rigs-remember bare) bare))
                 (should (eq (gascity-rigs-cached) rigs)))
-              ;; Per host: a remote context is cold.
-              (let ((default-directory "/ssh:u@h:/city/"))
-                (should-not (gascity-rigs-cached))
-                (should-not (gascity-beads--bead-path-cached "gce-abc")))))
+              ;; Outside any city: the remote prefix is the key, and
+              ;; the context is cold.  The city-root walk is stubbed —
+              ;; the fictitious host must never be contacted.
+              (cl-letf (((symbol-function 'locate-dominating-file)
+                         (lambda (&rest _) nil)))
+                (let ((default-directory "/ssh:u@h:/city/"))
+                  (should-not (gascity-rigs-cached))
+                  (should-not (gascity-beads--bead-path-cached "gce-abc")))))
+            ;; Per city: two local cities keep separate memo entries, the
+            ;; prefix protection holds per city, the cold city spawns
+            ;; nothing, and one clear empties every city's key
+            ;; (REQ-005/006/007/008, REQ-014).
+            (let* ((tmp (make-temp-file "gascity-test-rigs-cities" t))
+                   (city-a (file-name-as-directory (expand-file-name "a" tmp)))
+                   (city-b (file-name-as-directory (expand-file-name "b" tmp)))
+                   (rigs-a (gascity-test--rigs
+                            '((name . "a-rig") (prefix . "gce")
+                              (path . "/p/a"))))
+                   (rigs-b (gascity-test--rigs
+                            '((name . "b-rig") (prefix . "bde")
+                              (path . "/p/b"))))
+                   (bare-b (gascity-test--rigs
+                            '((name . "b-rig") (path . "/p/b")))))
+              (unwind-protect
+                  (progn
+                    (make-directory (expand-file-name "a" tmp) t)
+                    (make-directory (expand-file-name "b" tmp) t)
+                    (write-region "" nil (expand-file-name "a/city.toml" tmp))
+                    (write-region "" nil (expand-file-name "b/city.toml" tmp))
+                    ;; City A warms; city B stays cold — no spawn.
+                    (let ((default-directory city-a))
+                      (should (eq (gascity-rigs-remember rigs-a) rigs-a))
+                      (should (eq (gascity-rigs-cached) rigs-a)))
+                    (let ((default-directory city-b))
+                      (should-not (gascity-rigs-cached))
+                      (should-not (gascity-rigs-cached-prefixes))
+                      (should-not (gascity-beads--rig-store-cached "a-rig"))
+                      (should-not (gascity-beads--bead-path-cached "gce-abc")))
+                    ;; City B warms independently; city A keeps its list.
+                    (let ((default-directory city-b))
+                      (should (eq (gascity-rigs-remember rigs-b) rigs-b))
+                      (should (eq (gascity-rigs-cached) rigs-b))
+                      ;; A prefix-less payload never blanks city B's
+                      ;; prefixed map — the guard is per key, not global.
+                      (should (eq (gascity-rigs-remember bare-b) bare-b))
+                      (should (eq (gascity-rigs-cached) rigs-b))
+                      (should (equal (gascity-rigs-cached-prefixes)
+                                     '("bde"))))
+                    (let ((default-directory city-a))
+                      (should (eq (gascity-rigs-cached) rigs-a))
+                      (should (equal (gascity-rigs-cached-prefixes)
+                                     '("gce"))))
+                    ;; One clear forgets every city key.
+                    (gascity-context-clear-cache)
+                    (let ((default-directory city-a))
+                      (should-not (gascity-rigs-cached)))
+                    (let ((default-directory city-b))
+                      (should-not (gascity-rigs-cached))))
+                (delete-directory tmp t))))
           ;; `gascity-rigs' fills the memo from a real read.
           (cl-letf (((symbol-function 'gascity-command-rig-list!)
                      (lambda (&rest _)

@@ -35,10 +35,22 @@
 ;; The gascity project answers from a buffer-local root by string
 ;; prefix and touches no file, remote or local.
 ;;
+;; City-scoped state is keyed by ONE identity, `gascity-context-scope-key':
+;; the governing city root (which embeds the remote prefix) when DIR is
+;; inside a city, the bare remote prefix ("" for local) otherwise.  The
+;; rig-list memo (`gascity-context--rigs-cache') keys by it, so two cities
+;; on one host keep separate rig lists; `gascity-remote-buffer-name'
+;; takes the same value as its qualifier from the view factory.  Any
+;; future city-scoped cache MUST key by `gascity-context-scope-key' too —
+;; one keying scheme, one API (next consumer: the formula catalog/recipe
+;; caches of the formula-sling-ui work, plans/formula-sling-ui; REQ-010
+;; of plans/multi-city-keying/requirements.md).
+;;
 ;; The rig-list memo (`gascity-rigs-cached') serves the paths that must
 ;; never spawn gc synchronously — a terminal buffer wiring beads eldoc
 ;; to a rig's store, a dashboard tagging its id prefixes — from the
-;; last `gc rig list' or `gc status' payload any view decoded.
+;; last `gc rig list' or `gc status' payload any view decoded, kept per
+;; city by `gascity-context-scope-key'.
 
 ;;; Code:
 
@@ -80,8 +92,11 @@ channel round trip.  Every view open and re-pin walks from its
 `default-directory', so an uncached miss repeated on each refresh.")
 
 (defvar gascity-context--rigs-cache (make-hash-table :test 'equal)
-  "Cache mapping a remote prefix (\"\" for local) to the city's rigs.
-The last `gascity-rig' list any view decoded for that host — from `gc
+  "Cache mapping a `gascity-context-scope-key' to the city's rigs.
+The key is the governing city root (which embeds the remote prefix,
+so two cities on one host never share an entry); \"\" — the bare
+remote prefix — only for a directory outside any city.  The value is
+the last `gascity-rig' list any view decoded for that city — from `gc
 rig list' (`gascity-rigs') or a `gc status' payload
 \(`gascity-rigs-remember').  Read by `gascity-rigs-cached', which never
 spawns gc: the callers that consult it (terminal attach, view
@@ -250,13 +265,29 @@ does not own (the root is nil there)."
 
 (add-hook 'after-change-major-mode-hook #'gascity-context--reinstall-project)
 
+;;; City-scoped keying — the one identity for per-city caches
+
+(defun gascity-context-scope-key (&optional dir)
+  "Return the city-scoped key for DIR (default `default-directory').
+The governing city root when DIR is inside a city (a TRAMP-qualified
+absolute directory string), else DIR's remote prefix (\"\" for local).
+Never spawns gc — the city-root walk is the memoized
+`gascity-context--root-cache' lookup.  This is the ONE keying identity
+for city-scoped caches and buffer names; document any new cache keyed
+by it here in this commentary (first consumer outside this file: the
+formula catalog/recipe caches, plans/formula-sling-ui)."
+  (or (gascity-context-city-root dir)
+      (file-remote-p (or dir default-directory)) ""))
+
 ;;; Rig-list memo — the rigs without a spawn
 
 (defun gascity-context--rigs-key (&optional dir)
-  "Return the `gascity-context--rigs-cache' key for DIR's host.
-The remote prefix of DIR (default `default-directory'), or \"\" for a
-local directory."
-  (or (file-remote-p (or dir default-directory)) ""))
+  "Return the `gascity-context--rigs-cache' key for DIR's city.
+`gascity-context-scope-key' of DIR (default `default-directory'): the
+governing city root — which embeds the remote prefix, so the key is
+per city on a host, not just per host — or the remote prefix (\"\" for
+local) outside any city."
+  (gascity-context-scope-key dir))
 
 (defun gascity-rigs-remember (rigs &optional dir)
   "Memoize RIGS, a list of `gascity-rig', as DIR's host's rig list.
