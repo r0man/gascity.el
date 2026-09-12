@@ -530,8 +530,10 @@ toggle, everything else a string option (REQ-005..007)."
 (defun gascity-sling-formula--var-infixes (formula)
   "Return the raw transient infix specs for FORMULA's vars, or nil.
 Pure: no transient state, no gc.  One infix per declared var — the
-count `gascity-test-formula-var-infixes-match-vars' pins (REQ-004)."
-  (let ((vars (gascity-formula-vars formula)))
+count `gascity-test-formula-var-infixes-match-vars' pins (REQ-004).
+A nil FORMULA (no formula picked yet — the transient's initial setup)
+degrades to no Variables section (REQ-016)."
+  (let ((vars (and formula (gascity-formula-vars formula))))
     (when vars
       (let ((keys (gascity-sling-formula--var-keys vars)))
         (cl-mapcar (lambda (var key)
@@ -750,14 +752,17 @@ a remote preview coexist (REQ-014)."
                       (or (plist-get scope :target) "(none)"))))
 
 (defun gascity-sling-formula--static-children (scope)
-  "Return the raw \"Formula\" column: the SCOPE info line and actions."
+  "Return the raw \"Formula\" column: the SCOPE info line and actions.
+The info line is the `(:info DESCRIPTION)' suffix form, passed
+unwrapped — a nested `((:info …))' parses as an argument spec and
+crashes setup (founded in the tmux-Emacs TRAMP e2e pass)."
   (list
-   (apply #'vector "Formula"
-          (list (gascity-sling-formula--scope-info scope))
-          '("-f" "Pick formula…" gascity-sling-formula-pick)
-          '("s" "Sling…" gascity-sling-formula-run)
-          '("r" "Preview recipe…" gascity-sling-formula-preview)
-          '("q" "Quit" transient-quit-one))))
+   (vector "Formula"
+           (gascity-sling-formula--scope-info scope)
+           '("-f" "Pick formula…" gascity-sling-formula-pick)
+           '("s" "Sling…" gascity-sling-formula-run)
+           '("r" "Preview recipe…" gascity-sling-formula-preview)
+           '("q" "Quit" transient-quit-one))))
 
 (defun gascity-sling-formula--setup-children (_children)
   "Generate `gascity-sling-formula-dispatch''s layout per setup.

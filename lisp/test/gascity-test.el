@@ -886,6 +886,13 @@ renders no Variables section."
   (should-not (gascity-sling-formula--var-children
                (gascity-test--formula-with-steps nil))))
 
+(ert-deftest gascity-test-formula-sling-var-children-nil-formula-degrades ()
+  "The transient's initial setup (no formula picked yet) degrades to no
+Variables section instead of crashing on the nil recipe (REQ-016;
+founded in the tmux-Emacs TRAMP e2e pass: `-f' from the sling dispatch
+opened the transient with scope :formula nil and signalled\n`No applicable method: gascity-formula-vars, nil')."
+  (should-not (gascity-sling-formula--var-children nil)))
+
 (ert-deftest gascity-test-formula-sling-var-key-degenerates ()
   "Var key generation never collides and always yields a key (REQ-016
 degradation): name letters first, then digits."
