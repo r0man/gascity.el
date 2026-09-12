@@ -21,9 +21,13 @@
 ;; remote host's gc, transparently.
 ;;
 ;; Caches (plan decision D3): the catalog and the per-formula compiled
-;; recipes are memoized for the Emacs session, keyed by the city identity
-;; `(concat (file-remote-p dir) dir)' — a local city and
-;; /ssh:localhost:/home/roman/bright-lights never share an entry.  Nothing
+;; recipes are memoized for the Emacs session, keyed by the ONE
+;; city-scoped identity `gascity-context-scope-key' — the governing city
+;; root (which embeds the remote prefix), so a local city and
+;; /ssh:localhost:/home/roman/bright-lights never share an entry, a rig
+;; repo inside a city shares its city's entry, and
+;; `gascity-context-city' overrides are honoured (REQ-009/REQ-003: one
+;; keying scheme across the package).  Nothing
 ;; re-reads gc from redisplay-time code: the caches are consulted only
 ;; from user-initiated transient setup and previews.  Invalidation is
 ;; explicit, via `gascity-formula-invalidate'.
@@ -66,6 +70,7 @@
 (require 'gascity-error)
 (require 'gascity-domain)   ; typed payload classes + decode
 (require 'gascity-types)    ; formula-catalog/formula-show bang executors
+(require 'gascity-context)  ; the shared city-scoped cache key
 
 ;; Action verbs are wired across files: this module is loaded before
 ;; `gascity-action' (which carries the sling entry and runners) and
@@ -84,22 +89,17 @@
   "Per-city formula catalog memo.
 An alist of (CITY-KEY . ENTRIES), ENTRIES a list of
 `gascity-formula-catalog-entry'.  CITY-KEY is
-`gascity-formula--city-key''s remote-qualified directory, so a local
-and a remote city never cross-contaminate.  Session-lifetime; cleared
-per city by `gascity-formula-invalidate'.")
+`gascity-context-scope-key' of the calling directory — the governing
+city root, which embeds the remote prefix — so a local and a remote
+city never cross-contaminate.  Session-lifetime; cleared per city by
+`gascity-formula-invalidate'.")
 
 (defvar gascity-formula-recipe-cache nil
   "Per-(city, formula) compiled-recipe memo.
 An alist of ((CITY-KEY . FORMULA-NAME) . RECIPE), RECIPE a
-`gascity-formula'.  Session-lifetime; cleared per city by
-`gascity-formula-invalidate'.")
-
-(defun gascity-formula--city-key (&optional dir)
-  "Return the cache identity of DIR's city.
-DIR defaults to `default-directory'.  The remote prefix is prepended so
-a local city and the same city over TRAMP never share a cache entry."
-  (let ((dir (expand-file-name (or dir default-directory))))
-    (concat (file-remote-p dir) dir)))
+`gascity-formula'.  CITY-KEY is `gascity-context-scope-key' — the one
+city-scoped keying identity (REQ-009/REQ-003).  Session-lifetime;
+cleared per city by `gascity-formula-invalidate'.")
 
 ;;; ============================================================
 ;;; Catalog and recipe reads (REQ-001/002/003)
@@ -130,10 +130,10 @@ blank completion list (REQ-002)."
   "Return the current city's formula catalog, through the session cache.
 A cache hit is returned as-is; a miss reads through
 `gascity-formula-catalog' (which signals `user-error' on an empty or
-broken catalog) and memoizes under `gascity-formula--city-key'.  Only
+broken catalog) and memoizes under `gascity-context-scope-key'.  Only
 user-initiated code — transient setup and previews — may call this;
 nothing on a redisplay path re-reads gc."
-  (let ((key (gascity-formula--city-key)))
+  (let ((key (gascity-context-scope-key)))
     (or (cdr (assoc key gascity-formula-catalog-cache))
         (let ((entries (gascity-formula-catalog)))
           (push (cons key entries) gascity-formula-catalog-cache)
@@ -151,13 +151,13 @@ formula does not exist or the read fails."
 
 (defun gascity-formula-recipe-cached (name)
   "Return formula NAME's compiled recipe, through the session cache.
-Cache entries are keyed (city-key . NAME) under
+Cache entries are keyed ((`gascity-context-scope-key' . NAME)) under
 `gascity-formula-recipe-cache'; a miss reads through
 `gascity-formula-recipe' and memoizes.  The cached read carries no
 `--var' substitutions — defaults only; the recipe preview re-runs the
 uncached `gascity-command-formula-show!' when it wants current values
 applied server-side."
-  (let ((key (cons (gascity-formula--city-key) name)))
+  (let ((key (cons (gascity-context-scope-key) name)))
     (or (cdr (assoc key gascity-formula-recipe-cache))
         (let ((recipe (gascity-formula-recipe name)))
           (push (cons key recipe) gascity-formula-recipe-cache)
@@ -165,11 +165,11 @@ applied server-side."
 
 (defun gascity-formula-invalidate ()
   "Forget this city's cached formula catalog and recipes.
-Clears the entries keyed by `gascity-formula--city-key' from both
+Clears the entries keyed by `gascity-context-scope-key' from both
 caches, leaving other cities' entries untouched.  Called by the formula
 transient's refresh binding (`gascity-sling-formula-refresh') so a
 catalog edited mid-session is re-read from gc on the next pick."
-  (let ((key (gascity-formula--city-key)))
+  (let ((key (gascity-context-scope-key)))
     (setq gascity-formula-catalog-cache
           (seq-filter (lambda (entry) (not (equal (car entry) key)))
                       gascity-formula-catalog-cache))
