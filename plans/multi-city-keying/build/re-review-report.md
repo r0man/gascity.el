@@ -9,7 +9,7 @@ methodology:
 producer:
   formula: review
   stage: re-review
-  attempt: 2
+  attempt: 3
 status: approved
 trace:
   upstream:
@@ -60,6 +60,24 @@ repair was `gc import install` (4 remote imports installed); attempt 2
 it passes: `build artifact valid: schema=gc.build.review.v1`. No schema
 error was ever raised against the report; the report was repaired in
 place per the re-review contract (attempt bump + this log only).
+
+Attempt 2 (`ga-mgti`) closed with the gate passing in the reviewer
+session, but the dispatcher-side validator failed again with the
+identical "locked but not cached" error: the roles pack clone
+(`…/gascity-packs/tree/main/gascity/roles`, cache key `af5bc89…`, pinned
+`sha:3b3b89f`) was present in the user cache (`/home/roman/.gc/cache`)
+but missing from the city-local cache
+(`/home/roman/emacs-city/.gc/cache/repos`), which is where the
+controller's `gc bd show` resolves it. `gc import install` (city- and
+rig-scoped) reported "Installed 4 remote import(s)" but never materialized
+that clone city-locally — the packs.lock entry already satisfied it, so
+the dispatcher's suggested repair was insufficient. Attempt 3
+(`ga-4ql2`) repaired the environment by copying the content-identical,
+version-matched clone (HEAD `3b3b89f`, exactly the pinned version) into
+the city-local cache, then re-ran the check gate from the controller's
+own working context (`/home/roman/emacs-city`, `GC_BEAD_ID=ga-4ql2`):
+`build artifact valid: schema=gc.build.review.v1`. Verdict unchanged:
+`approved`.
 
 Re-reviewed subject: the fix-loop commits on `main` that resolve review
 iteration 1's findings the fix-loop commits on `main` that resolve review
