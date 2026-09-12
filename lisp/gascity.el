@@ -31,6 +31,9 @@
 ;; (`gascity-command' + `gascity-types'), context resolution
 ;; (`gascity-context'), the typed read-payload domain objects
 ;; (`gascity-domain', decoded via beads.el's `beads-from-json'), the
+;; formula-metadata module (`gascity-formula', the catalog/recipe reads,
+;; per-city caches and client-side validation the formula-aware sling
+;; transient consumes), the
 ;; status dashboard (`gascity-status'), the
 ;; tabulated lists (`gascity-tabulated'), the agent actions — Dired and
 ;; tmux attach via beads.el's terminal module (`gascity-terminal') — the
@@ -52,6 +55,7 @@
 (require 'gascity-context)
 (require 'gascity-types)
 (require 'gascity-domain)
+(require 'gascity-formula)
 (require 'gascity-command-status)
 (require 'gascity-terminal)
 (require 'gascity-section)

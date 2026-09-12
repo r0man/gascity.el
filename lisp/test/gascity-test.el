@@ -627,6 +627,202 @@ stays nil) and the absent-field degradation REQ-016 relies on."
                    '(((step_id . "review") (depends_on_id . "implement")
                       (type . "blocks")))))))
 
+;;; gascity-formula (formula metadata, plan WI-2)
+
+(defun gascity-test--formula-with-steps (steps)
+  "Decode a minimal `gascity-formula' whose STEPS are the raw step alist list."
+  (gascity-domain-decode 'gascity-formula `((name . "do-work") (steps . ,steps))))
+
+(ert-deftest gascity-test-formula-catalog-cached-memoizes-and-isolates-cities ()
+  "The catalog cache memoizes per city; invalidate clears only its own city.
+A local directory and a stubbed TRAMP directory never share an entry
+(REQ-003/REQ-014): the reads run through the bang executor where
+`default-directory' points."
+  (let ((gascity-formula-catalog-cache nil)
+        (gascity-formula-recipe-cache nil)
+        (local (make-temp-file "gascity-formula-local-" t))
+        (remote "/ssh:localhost:/tmp/gascity-formula-remote")
+        (calls 0))
+    (cl-letf (((symbol-function 'gascity-command-formula-catalog!)
+               (lambda (&rest _)
+                 (setq calls (1+ calls))
+                 '((formulas . [((name . "do-work"))])))))
+      ;; Local city first, then the remote identity: two independent reads.
+      (let ((default-directory local))
+        (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                               (gascity-formula-catalog-cached))
+                       '("do-work"))))
+      (let ((default-directory remote))
+        (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                               (gascity-formula-catalog-cached))
+                       '("do-work"))))
+      (should (= calls 2))
+      ;; Both cities are warm: re-reading touches gc no more.
+      (let ((default-directory local))
+        (gascity-formula-catalog-cached))
+      (let ((default-directory remote))
+        (gascity-formula-catalog-cached))
+      (should (= calls 2))
+      ;; Invalidation in the local city leaves the remote entry warm.
+      (let ((default-directory local))
+        (gascity-formula-invalidate)
+        (gascity-formula-catalog-cached))
+      (should (= calls 3))
+      (let ((default-directory remote))
+        (gascity-formula-catalog-cached))
+      (should (= calls 3)))))
+
+(ert-deftest gascity-test-formula-recipe-cached-and-invalidate ()
+  "Recipe cache entries are keyed by (city . formula); invalidate per city.
+The cached read substitutes nothing (`--var' defaults only)."
+  (let ((gascity-formula-catalog-cache nil)
+        (gascity-formula-recipe-cache nil)
+        (local (make-temp-file "gascity-formula-local-" t))
+        (calls 0))
+    (cl-letf (((symbol-function 'gascity-command-formula-show!)
+               (lambda (&rest _)
+                 (setq calls (1+ calls))
+                 '((name . "do-work") (vars . [((name . "drain_policy"))])))))
+      (let ((default-directory local))
+        (should (gascity-formula-p (gascity-formula-recipe-cached "do-work")))
+        ;; Same (city, formula) again: a cache hit, no gc round trip.
+        (gascity-formula-recipe-cached "do-work")
+        (should (= calls 1))
+        ;; A different formula name is a different entry.
+        (gascity-formula-recipe-cached "review")
+        (should (= calls 2))
+        (gascity-formula-invalidate)
+        (gascity-formula-recipe-cached "do-work")
+        (should (= calls 3))))))
+
+(ert-deftest gascity-test-formula-catalog-empty-and-broken ()
+  "An empty or unreadable catalog degrades to a clear user message (REQ-002)."
+  (let ((gascity-formula-catalog-cache nil)
+        (gascity-formula-recipe-cache nil)
+        (local (make-temp-file "gascity-formula-local-" t)))
+    (let ((default-directory local))
+      (cl-letf (((symbol-function 'gascity-command-formula-catalog!)
+                 (lambda (&rest _) nil)))
+        (should-error (gascity-formula-catalog) :type 'user-error))
+      (cl-letf (((symbol-function 'gascity-command-formula-catalog!)
+                 (lambda (&rest _)
+                   (signal 'gascity-command-error '("gc: not a city")))))
+        (should-error (gascity-formula-catalog) :type 'user-error)))))
+
+(ert-deftest gascity-test-formula-enum-choices ()
+  "Enum resolution (plan D1): explicit `vars[].enum' wins; known var names
+map to `metadata.gc.methodology' choice lists; anything else is nil."
+  (let ((formula (gascity-domain-decode
+                  'gascity-formula
+                  '((name . "do-work")
+                    (metadata . ((gc . ((methodology .
+                                          ((allowed_drain_policies .
+                                            ["separate" "same-session"])
+                                           (review_modes . ["agent"])))))))))))
+    (let ((v (gascity-domain-decode 'gascity-formula-var '((name . "drain_policy")))))
+      (should (equal (gascity-formula--enum-choices v formula)
+                     '("separate" "same-session"))))
+    ;; A var with no mapping and no methodology entry degrades to nil.
+    (let ((v (gascity-domain-decode 'gascity-formula-var '((name . "context_path")))))
+      (should (null (gascity-formula--enum-choices v formula))))
+    ;; An explicit `vars[].enum' wins over the methodology mapping.
+    (let ((v (gascity-domain-decode
+              'gascity-formula-var
+              '((name . "drain_policy") (enum . ["same-session"])))))
+      (should (equal (gascity-formula--enum-choices v formula) '("same-session"))))
+    ;; A formula without metadata has no methodology choices at all.
+    (let ((v (gascity-domain-decode 'gascity-formula-var '((name . "drain_policy"))))
+          (bare (gascity-domain-decode 'gascity-formula '((name . "do-work")))))
+      (should (null (gascity-formula--enum-choices v bare))))))
+
+(ert-deftest gascity-test-formula-needs-convoy ()
+  "Shape detection (plan D2): a drain-kind step or a `{{convoy_id}}'
+literal anywhere in a step needs the targeted sling shape; a plain
+formula does not."
+  ;; A drain step metadata hit.
+  (should (gascity-formula--needs-convoy
+           (gascity-test--formula-with-steps
+            (vector '((id . "s") (title . "Drain unit")
+                      (metadata . ((gc.kind . "drain"))))))))
+  ;; A `{{convoy_id}}' literal in a step description.
+  (should (gascity-formula--needs-convoy
+           (gascity-test--formula-with-steps
+            (vector '((id . "s") (title . "Implement")
+                      (description . "Resolve {{convoy_id}} first"))))))
+  ;; ...and nested inside step metadata values (recursive scan).
+  (should (gascity-formula--needs-convoy
+           (gascity-test--formula-with-steps
+            (vector '((id . "s") (title . "Implement")
+                      (metadata . ((note . "see {{convoy_id}}"))))))))
+  ;; A plain targetless formula misses on all counts.
+  (should-not (gascity-formula--needs-convoy
+               (gascity-test--formula-with-steps
+                (vector '((id . "s") (title . "Implement owned work")
+                          (metadata . ((gc.kind . "workflow"))))))))
+  ;; A formula without steps misses too.
+  (should-not (gascity-formula--needs-convoy
+               (gascity-test--formula-with-steps nil))))
+
+(ert-deftest gascity-test-formula-validate-values ()
+  "Client-side validation (REQ-008/009): missing required vars are named
+all together; pattern failures name var and pattern; a non-compiling
+pattern and absent fields degrade to no check.  Nothing runs gc."
+  (let ((formula (gascity-domain-decode
+                  'gascity-formula
+                  '((name . "do-work")
+                    (vars . [((name . "summary_path") (required . t))
+                             ((name . "issue") (required . t))
+                             ((name . "branch") (pattern . "\\`[a-z0-9-]+\\'"))
+                             ((name . "bad") (pattern . "[unclosed"))])))))
+    ;; Both missing required vars are named in one message.
+    (should-error (gascity-formula--validate-values formula nil) :type 'user-error)
+    (let ((err (should-error (gascity-formula--validate-values
+                              formula '(("summary_path" . "")))
+                             :type 'user-error)))
+      (should (string-prefix-p "Missing required formula vars"
+                               (error-message-string err)))
+      (should (string-match-p "issue" (error-message-string err))))
+    ;; Satisfying the required vars passes the required half...
+    (should (equal (gascity-formula--validate-values
+                    formula '(("summary_path" . "p") ("issue" . "ga-1")))
+                   nil))
+    ;; ...but a pattern mismatch names the var and the pattern.
+    (let ((err (should-error (gascity-formula--validate-values
+                              formula '(("summary_path" . "p")
+                                         ("issue" . "ga-1")
+                                         ("branch" . "Bad_Branch")))
+                             :type 'user-error)))
+      (should (string-match-p "branch" (error-message-string err)))
+      (should (string-match-p "a-z0-9" (error-message-string err))))
+    ;; A pattern that does not compile degrades to no validation.
+    (should (equal (gascity-formula--validate-values
+                    formula '(("summary_path" . "p") ("issue" . "ga-1")
+                              ("bad" . "anything goes")))
+                   nil))
+    ;; A blank value is the required check's business, not the pattern's.
+    (should (equal (gascity-formula--validate-values
+                    formula '(("summary_path" . "p") ("issue" . "ga-1")
+                              ("branch" . "")))
+                   nil)))
+  ;; A formula with no vars validates anything.
+  (should (equal (gascity-formula--validate-values
+                  (gascity-test--formula-with-steps nil)
+                  '(("whatever" . "x")))
+                 nil)))
+
+(ert-deftest gascity-test-formula-history-var ()
+  "History naming (REQ-010/011): one ordinary history symbol per
+(formula, var), non-word characters sanitized, distinct across formulas
+sharing a variable name."
+  (should (eq (gascity-formula--history-var "do-work" "drain_policy")
+              'gascity-formula-history-do-work-drain_policy))
+  ;; Same var name in a different formula: a different symbol.
+  (should-not (eq (gascity-formula--history-var "review" "drain_policy")
+                  (gascity-formula--history-var "do-work" "drain_policy")))
+  ;; Non-word characters collapse to hyphens.
+  (should (eq (gascity-formula--history-var "do.work!2" "a b")
+              'gascity-formula-history-do-work-2-a-b)))
+
 (ert-deftest gascity-test-at-point-visit-dispatch ()
   "`gascity-at-point-visit' dispatches the right action per object class."
   ;; agent -> attach its tmux terminal
