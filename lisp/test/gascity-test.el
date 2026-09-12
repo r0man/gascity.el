@@ -637,16 +637,22 @@ stays nil) and the absent-field degradation REQ-016 relies on."
   "The catalog cache memoizes per city; invalidate clears only its own city.
 A local directory and a stubbed TRAMP directory never share an entry
 (REQ-003/REQ-014): the reads run through the bang executor where
-`default-directory' points."
+`default-directory' points.  Keys are the ONE city-scoped identity
+`gascity-context-scope-key'; the city-root walk is stubbed so the
+fictitious TRAMP directory is never contacted."
+  (gascity-context-clear-cache)
   (let ((gascity-formula-catalog-cache nil)
         (gascity-formula-recipe-cache nil)
         (local (make-temp-file "gascity-formula-local-" t))
         (remote "/ssh:localhost:/tmp/gascity-formula-remote")
         (calls 0))
-    (cl-letf (((symbol-function 'gascity-command-formula-catalog!)
-               (lambda (&rest _)
-                 (setq calls (1+ calls))
-                 '((formulas . [((name . "do-work"))])))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'gascity-command-formula-catalog!)
+                   (lambda (&rest _)
+                     (setq calls (1+ calls))
+                     '((formulas . [((name . "do-work"))]))))
+                  ((symbol-function 'locate-dominating-file)
+                   (lambda (&rest _) nil)))
       ;; Local city first, then the remote identity: two independent reads.
       (let ((default-directory local))
         (should (equal (mapcar #'gascity-formula-catalog-entry-name
@@ -670,10 +676,115 @@ A local directory and a stubbed TRAMP directory never share an entry
       (should (= calls 3))
       (let ((default-directory remote))
         (gascity-formula-catalog-cached))
-      (should (= calls 3)))))
+      (should (= calls 3))))
+    (delete-directory local t)
+    (gascity-context-clear-cache)))
+
+(ert-deftest gascity-test-formula-cache-keys-by-scope-key ()
+  "The catalog and recipe caches share `gascity-context-scope-key' as
+their keying identity (REQ-009/REQ-003): a rig repo inside a city
+shares the city-root entry (the convergence FIX-2 delivers), two cities
+under one TRAMP prefix stay distinct (the fictitious host is never
+contacted), and a `gascity-context-city' override lands under the
+override's key without disturbing the natural city's warm entry
+(REQ-011, REQ-014).  No live `gc': the bang executors and the TRAMP
+leg's marker walk are stubbed."
+  (gascity-context-clear-cache)
+  (let* ((tmp (make-temp-file "gascity-test-formula-key" t))
+         (city-a (file-name-as-directory (expand-file-name "emacs-city" tmp)))
+         (city-a-rig (file-name-as-directory
+                      (expand-file-name "emacs-city/rig" tmp)))
+         (city-b (file-name-as-directory
+                  (expand-file-name "bright-lights" tmp)))
+         (gascity-formula-catalog-cache nil)
+         (gascity-formula-recipe-cache nil)
+         (catalog-calls 0)
+         (recipe-calls 0))
+    (unwind-protect
+        (progn
+          (make-directory city-a-rig t)
+          (make-directory (expand-file-name "bright-lights/rig" tmp) t)
+          (write-region "" nil (expand-file-name "emacs-city/city.toml" tmp))
+          (write-region "" nil (expand-file-name "bright-lights/city.toml" tmp))
+          (cl-letf (((symbol-function 'gascity-command-formula-catalog!)
+                     (lambda (&rest _)
+                       (setq catalog-calls (1+ catalog-calls))
+                       `((formulas . [((name
+                                        . ,(file-name-nondirectory
+                                           (directory-file-name
+                                            default-directory))))]))))
+                    ((symbol-function 'gascity-command-formula-show!)
+                     (lambda (&rest _)
+                       (setq recipe-calls (1+ recipe-calls))
+                       `((name . "do-work")
+                         (city . ,(file-name-nondirectory
+                                   (directory-file-name
+                                    default-directory)))))))
+            ;; A rig repo inside a city shares the city-root entry: the
+            ;; deep read is a cache hit, no second gc call.
+            (let ((default-directory city-a-rig))
+              (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                                     (gascity-formula-catalog-cached))
+                             '("rig"))))
+            (let ((default-directory city-a))
+              (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                                     (gascity-formula-catalog-cached))
+                             '("rig"))))
+            (should (= catalog-calls 1))
+            ;; A second local city keeps its own entry.
+            (let ((default-directory city-b))
+              (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                                     (gascity-formula-catalog-cached))
+                             '("bright-lights"))))
+            (should (= catalog-calls 2))
+            ;; Recipes isolate per city under the same identity: the
+            ;; second city's read misses, the first city stays warm.
+            (let ((default-directory city-a))
+              (should (gascity-formula-p
+                       (gascity-formula-recipe-cached "do-work")))
+              (should (= recipe-calls 1)))
+            (let ((default-directory city-b))
+              (should (gascity-formula-p
+                       (gascity-formula-recipe-cached "do-work")))
+              (should (= recipe-calls 2)))
+            (let ((default-directory city-a))
+              (gascity-formula-recipe-cached "do-work")
+              (should (= recipe-calls 2)))
+            ;; Two cities under ONE TRAMP prefix stay distinct; the walk
+            ;; is stubbed per directory, the host never contacted.
+            (cl-letf (((symbol-function 'locate-dominating-file)
+                       (lambda (dir &rest _)
+                         (if (string-prefix-p "/ssh:u@h:/b" dir)
+                             "/ssh:u@h:/bright-lights/"
+                           "/ssh:u@h:/emacs-city/"))))
+              (let ((default-directory "/ssh:u@h:/emacs-city/rig/"))
+                (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                                       (gascity-formula-catalog-cached))
+                               '("rig")))
+                (should (= catalog-calls 3)))
+              (let ((default-directory "/ssh:u@h:/bright-lights/"))
+                (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                                       (gascity-formula-catalog-cached))
+                               '("bright-lights")))
+                (should (= catalog-calls 4))))
+            ;; The `gascity-context-city' override keys by the override:
+            ;; the read misses (a fifth gc call) and lands under the
+            ;; override's key, leaving the natural city's warm entry
+            ;; untouched (REQ-011).
+            (let ((default-directory city-a)
+                  (gascity-context-city "/x/override-city"))
+              (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                                     (gascity-formula-catalog-cached))
+                             '("emacs-city")))
+              (should (= catalog-calls 5)))
+            (let ((default-directory city-a))
+              (gascity-formula-catalog-cached)
+              (should (= catalog-calls 5)))))
+      (delete-directory tmp t)
+      (gascity-context-clear-cache))))
 
 (ert-deftest gascity-test-formula-recipe-cached-and-invalidate ()
-  "Recipe cache entries are keyed by (city . formula); invalidate per city.
+  "Recipe cache entries are keyed by (scope-key . formula); invalidate per city.
 The cached read substitutes nothing (`--var' defaults only)."
   (let ((gascity-formula-catalog-cache nil)
         (gascity-formula-recipe-cache nil)
