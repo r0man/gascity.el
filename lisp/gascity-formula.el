@@ -166,8 +166,9 @@ applied server-side."
 (defun gascity-formula-invalidate ()
   "Forget this city's cached formula catalog and recipes.
 Clears the entries keyed by `gascity-formula--city-key' from both
-caches, leaving other cities' entries untouched.  Called by an explicit
-refresh binding and by re-picking \"refresh catalog\" in the picker."
+caches, leaving other cities' entries untouched.  Called by the formula
+transient's refresh binding (`gascity-sling-formula-refresh') so a
+catalog edited mid-session is re-read from gc on the next pick."
   (let ((key (gascity-formula--city-key)))
     (setq gascity-formula-catalog-cache
           (seq-filter (lambda (entry) (not (equal (car entry) key)))
@@ -331,7 +332,7 @@ persistence machinery (REQ-010/011)."
   "Minibuffer history of `gascity-sling-formula--read-formula' picks.
 An ordinary history variable: savehist tracks it like any other.")
 
-(defconst gascity-sling-formula--reserved-keys '("p" "s" "r" "q")
+(defconst gascity-sling-formula--reserved-keys '("p" "s" "r" "g" "q")
   "Static suffix keys of `gascity-sling-formula-dispatch' the generated
 variable infix keys must avoid.")
 
@@ -623,6 +624,20 @@ variable the two formulas share keeps its value."
                                        :formula name)
                      :value (transient-args 'gascity-sling-formula-dispatch))))
 
+(transient-define-suffix gascity-sling-formula-refresh ()
+  "Invalidate this city's formula caches and rebuild the menu (F-M1).
+`gascity-formula-invalidate' clears the catalog and recipe memos for
+the current city, so the next pick and the Variables section read gc
+fresh — a formula edited mid-session is no longer served stale.  Set
+infix values are carried into the re-setup, like a re-pick.  The menu
+stays open."
+  :transient t
+  (interactive)
+  (gascity-formula-invalidate)
+  (transient-setup 'gascity-sling-formula-dispatch nil nil
+                   :scope (transient-scope)
+                   :value (transient-args 'gascity-sling-formula-dispatch)))
+
 (transient-define-suffix gascity-sling-formula-run ()
   "Sling the chosen formula with the collected var values (REQ-013).
 Validation runs first: a missing required var refuses with no gc call
@@ -760,6 +775,7 @@ crashes setup (founded in the tmux-Emacs TRAMP e2e pass)."
    (vector "Formula"
            (gascity-sling-formula--scope-info scope)
            '("-f" "Pick formula…" gascity-sling-formula-pick)
+           '("g" "Refresh catalog" gascity-sling-formula-refresh)
            '("s" "Sling…" gascity-sling-formula-run)
            '("r" "Preview recipe…" gascity-sling-formula-preview)
            '("q" "Quit" transient-quit-one))))

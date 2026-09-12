@@ -1041,6 +1041,36 @@ instead of collecting a `--formula' flag."
   ;; The old minibuffer var reader is gone — its job is the infixes' now.
   (should-not (fboundp 'gascity-sling--read-vars)))
 
+(ert-deftest gascity-test-formula-sling-refresh-wiring ()
+  "Refresh (review F-M1): the formula transient exposes a refresh suffix
+bound to `g', the generated var keys avoid it, and invoking the suffix
+clears the current city's caches and re-runs setup with the scope and
+set values intact."
+  ;; The static Formula column carries the binding.
+  (let ((group (car (gascity-sling-formula--static-children (list :formula nil)))))
+    (should (equal (aref group 0) "Formula"))
+    (should (member '("g" "Refresh catalog" gascity-sling-formula-refresh)
+                    (append group nil))))
+  ;; Generated infix keys never collide with the refresh key.
+  (should (member "g" gascity-sling-formula--reserved-keys))
+  ;; Invoking it invalidates and re-setups, carrying scope and values.
+  (let (invalidated setup)
+    (cl-letf (((symbol-function 'gascity-formula-invalidate)
+               (lambda () (setq invalidated t)))
+              ((symbol-function 'transient-setup)
+               (lambda (prefix _name _specs &rest args)
+                 (setq setup (cons prefix args))))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work")))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) '("--var a=1"))))
+      (call-interactively #'gascity-sling-formula-refresh)
+      (should (eq invalidated t))
+      (should (eq (car setup) 'gascity-sling-formula-dispatch))
+      (should (equal (plist-get (cdr setup) :scope)
+                     (list :formula "do-work")))
+      (should (equal (plist-get (cdr setup) :value) '("--var a=1"))))))
+
 (ert-deftest gascity-test-at-point-visit-dispatch ()
   "`gascity-at-point-visit' dispatches the right action per object class."
   ;; agent -> attach its tmux terminal
