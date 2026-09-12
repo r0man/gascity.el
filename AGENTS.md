@@ -131,6 +131,25 @@ beads eldoc wired from the rig memo. `gascity-compose.el` is the one new UI
 primitive: a git-commit-style buffer that collects a multi-line body and calls
 a finish closure; it knows nothing about gc.
 
+## Remote test city & end-to-end testing
+
+`bright-lights` is a real second city at `/home/roman/bright-lights`, kept as
+the TRAMP test target. Open it from a local Emacs as the remote file name
+`/ssh:localhost:/home/roman/bright-lights` (the default user) — every gascity view must
+work identically there (status dashboard, rig dashboards, lists, sling,
+formula dispatch, mail). When a feature touches anything gc-invocation or
+path related, verify it against that city over TRAMP, not only locally.
+
+The end-to-end test protocol for user-facing features (e.g. the formula
+sling UI) is interactive, not ERT: launch a **fresh Emacs inside tmux**
+(`tmux new-session -d -s gce-e2e 'emacs'`, or `emacs -Q` with `lisp/` on the
+`load-path`), connect it to `/ssh:localhost:/home/roman/bright-lights`,
+and exercise the real flow — dispatch a sling with a formula, set its vars
+through the transient, confirm the workflow root appears in the store. Do not
+call the feature "done" until this pass has run; record the result in a
+`docs/qa/` dogfood report. ERT covers the mocked units; the tmux-Emacs
+TRAMP session is the acceptance gate.
+
 ## Conventions
 
 - Everything is prefixed `gascity-`; one `gascity-command-<domain>.el` per gc
