@@ -384,8 +384,14 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    `gc session list`/`gc status --json` still carry no socket field, so the
    read-side fix is blocked on an upstream `gc` change to expose it (or a stable
    accessor); the inference stays a deliberate fallback until then.
-7. **Dashboard refresh ergonomics.** Optional auto-refresh/watch and semantic
-   cursor preservation across re-renders (gastown has both).
+7. **Dashboard refresh ergonomics.** Auto-refresh landed for the status
+   dashboard (`gascity-status-auto-refresh`, `G` toggle; gce-pt6) and the
+   session list (`gascity-session-list-auto-refresh`, `W` toggle; both
+   tick only while visible and no load is in flight).  Remaining: the
+   other tabulated lists (rigs, convoys, mail, orders, dolt — same shape,
+   so hoisting the timer into `gascity-tabulated.el` is the natural next
+   step) and semantic cursor preservation across re-renders (gastown has
+   both).
 8. **Richer sling infixes (P1 follow-up).** The `gascity-command-sling` class
    already models `--formula`/`--nudge`/`--dry-run`; the interactive
    `gascity-sling` only prompts target + bead/text. Add a sling sub-transient

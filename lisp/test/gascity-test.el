@@ -6463,5 +6463,178 @@ the naturally-resolved A buffer is left untouched (REQ-011, REQ-012)."
       (delete-directory tmp t)
       (gascity-context-clear-cache))))
 
+;;; Session-list auto-refresh (ga-fxa3) — timer, visible-only tick,
+;;; in-flight and TRAMP-lock guards, teardown, mode wiring, W toggle
+
+(ert-deftest gascity-test-session-list-auto-refresh-creates-timer-when-on ()
+  "`gascity-session-list--auto-refresh-setup' starts a repeating timer when
+`gascity-session-list-auto-refresh' is on and the interval is positive."
+  (let ((buf (generate-new-buffer "*gascity-sessions-auto-on*"))
+        (gascity-session-list-auto-refresh t)
+        (gascity-session-list-auto-refresh-interval 3600)) ; never fires in-test
+    (unwind-protect
+        (progn
+          (gascity-session-list--auto-refresh-setup buf)
+          (should (timerp (buffer-local-value
+                           'gascity-session-list--refresh-timer buf))))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-no-timer-when-off ()
+  "No timer is created when `gascity-session-list-auto-refresh' is nil."
+  (let ((buf (generate-new-buffer "*gascity-sessions-auto-off*"))
+        (gascity-session-list-auto-refresh nil)
+        (gascity-session-list-auto-refresh-interval 3600))
+    (unwind-protect
+        (progn
+          (gascity-session-list--auto-refresh-setup buf)
+          (should-not (buffer-local-value
+                       'gascity-session-list--refresh-timer buf)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-no-timer-when-interval-nonpositive ()
+  "A non-positive interval disables the timer even with auto-refresh on."
+  (let ((buf (generate-new-buffer "*gascity-sessions-auto-zero*"))
+        (gascity-session-list-auto-refresh t)
+        (gascity-session-list-auto-refresh-interval 0))
+    (unwind-protect
+        (progn
+          (gascity-session-list--auto-refresh-setup buf)
+          (should-not (buffer-local-value
+                       'gascity-session-list--refresh-timer buf)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-tick-noop-when-buried ()
+  "The timer tick does nothing when the list is not displayed.
+A buried buffer must not refresh — and therefore must not fetch from `gc'."
+  (let ((buf (generate-new-buffer "*gascity-sessions-buried*"))
+        (refreshed nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'get-buffer-window) (lambda (&rest _) nil))
+                  ((symbol-function 'gascity-session-list-refresh)
+                   (lambda (&rest _) (setq refreshed t))))
+          (gascity-session-list--auto-refresh-tick buf)
+          (should-not refreshed))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-tick-refreshes-when-visible ()
+  "The timer tick re-runs the async session-list refresh when visible."
+  (let ((buf (generate-new-buffer "*gascity-sessions-visible*"))
+        (refreshed nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'get-buffer-window)
+                   (lambda (b &rest _) (and (eq b buf) 'a-window)))
+                  ((symbol-function 'gascity-session-list-refresh)
+                   (lambda (&rest _) (setq refreshed t))))
+          (gascity-session-list--auto-refresh-tick buf)
+          (should refreshed))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-tick-skips-while-in-flight ()
+  "The tick skips while an async refresh is still in flight.
+Starting one would delete and supersede the pending fetch
+(`gascity-tabulated--refresh-async'), so a link slower than the interval
+would never complete a read."
+  (let ((buf (generate-new-buffer "*gascity-sessions-inflight*"))
+        (refreshed nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq gascity-tabulated--refresh-process 'fake-live-process)
+          (cl-letf (((symbol-function 'get-buffer-window)
+                     (lambda (&rest _) 'a-window))
+                    ((symbol-function 'process-live-p)
+                     (lambda (proc) (eq proc 'fake-live-process)))
+                    ((symbol-function 'gascity-session-list-refresh)
+                     (lambda (&rest _) (setq refreshed t))))
+            (gascity-session-list--auto-refresh-tick buf)
+            (should-not refreshed)
+            (setq gascity-tabulated--refresh-process nil)
+            (gascity-session-list--auto-refresh-tick buf)
+            (should refreshed)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-tick-skips-locked-connection ()
+  "The session-list tick skips while its connection is mid-command —
+read off the buffer's own `default-directory' via
+`gascity-remote-connection-locked-p' (the timer runs with an unrelated
+buffer current) — and refreshes once it clears."
+  (gascity-test--with-mock-remote
+    (file-directory-p default-directory)
+    (let* ((vec (tramp-dissect-file-name default-directory))
+           (proc (tramp-get-connection-process vec))
+           (sessions (generate-new-buffer "*gascity-sessions-locked-test*"))
+           (refreshes 0))
+      (skip-unless proc)
+      (unwind-protect
+          (progn
+            (with-current-buffer sessions
+              (setq default-directory gascity-test--mock-directory))
+            (cl-letf (((symbol-function 'get-buffer-window)
+                       (lambda (&rest _) t))
+                      ((symbol-function 'gascity-session-list-refresh)
+                       (lambda (&rest _) (cl-incf refreshes))))
+              ;; Another, LOCAL buffer is current when the timer fires.
+              (with-temp-buffer
+                (let ((default-directory temporary-file-directory))
+                  (unwind-protect
+                      (progn
+                        (tramp-set-connection-property proc "locked" t)
+                        (gascity-session-list--auto-refresh-tick sessions)
+                        (should (= refreshes 0)))
+                    (tramp-flush-connection-property proc "locked"))
+                  (gascity-session-list--auto-refresh-tick sessions)
+                  (should (= refreshes 1))))))
+        (kill-buffer sessions)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-teardown-cancels-timer ()
+  "Killing the list cancels its auto-refresh timer via `kill-buffer-hook'
+— no leaked timers."
+  (let ((buf (generate-new-buffer "*gascity-sessions-teardown*"))
+        (gascity-session-list-auto-refresh t)
+        (gascity-session-list-auto-refresh-interval 3600)
+        timer)
+    (unwind-protect
+        (progn
+          (gascity-session-list--auto-refresh-setup buf)
+          (setq timer (buffer-local-value
+                       'gascity-session-list--refresh-timer buf))
+          (should (timerp timer))
+          (should (memq timer timer-list))
+          (kill-buffer buf)
+          (should-not (memq timer timer-list)))
+      (when (timerp timer) (cancel-timer timer))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-mode-starts-timer ()
+  "Enabling `gascity-session-list-mode' starts the auto-refresh timer when
+`gascity-session-list-auto-refresh' is on — the mode is the wiring point."
+  (let ((buf (generate-new-buffer "*gascity-sessions-mode*"))
+        (gascity-session-list-auto-refresh t)
+        (gascity-session-list-auto-refresh-interval 3600))
+    (unwind-protect
+        (with-current-buffer buf
+          (gascity-session-list-mode)
+          (should (timerp gascity-session-list--refresh-timer)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-toggle ()
+  "`W' is bound to the auto-refresh toggle, which flips the variable and
+restarts/cancels the buffer's timer to match."
+  (should (eq (keymap-lookup gascity-session-list-mode-map "W")
+              #'gascity-session-list-toggle-auto-refresh))
+  (let ((buf (generate-new-buffer "*gascity-sessions-toggle*"))
+        (gascity-session-list-auto-refresh nil)
+        (gascity-session-list-auto-refresh-interval 3600))
+    (unwind-protect
+        (with-current-buffer buf
+          ;; Off -> on: a timer appears.
+          (gascity-session-list-toggle-auto-refresh)
+          (should gascity-session-list-auto-refresh)
+          (should (timerp gascity-session-list--refresh-timer))
+          ;; On -> off: the timer is cancelled.
+          (gascity-session-list-toggle-auto-refresh)
+          (should-not gascity-session-list-auto-refresh)
+          (should-not (timerp gascity-session-list--refresh-timer)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

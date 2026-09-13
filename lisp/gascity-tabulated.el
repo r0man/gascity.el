@@ -722,6 +722,87 @@ session list' takes never freeze the UI."
                              sessions))))
      gascity-session-list--filter)))
 
+;;; Auto-refresh timer
+;;
+;; Mirrors the status dashboard's auto-refresh (gascity-status.el): a
+;; buffer-local repeating timer re-runs `gascity-session-list-refresh'
+;; on an interval, but only while the buffer is displayed in a visible
+;; window and no async read is already in flight — a buried list must
+;; not poll `gc', and a tick during an in-flight read would delete and
+;; restart that fetch (`gascity-tabulated--refresh-async' supersedes),
+;; so a link slower than the interval would never complete a read.  The
+;; TRAMP guards match the dashboard tick exactly.
+
+(defvar-local gascity-session-list--refresh-timer nil
+  "Repeating timer auto-refreshing this session-list buffer, or nil.")
+
+(defun gascity-session-list--auto-refresh-tick (buffer)
+  "Refresh the session list in BUFFER, but only while it is visible and idle.
+Timer callback.  Skips when BUFFER is buried or its frame invisible, when
+its TRAMP connection is mid-operation (`gascity-remote-connection-locked-p'
+— a timer firing inside another TRAMP call's `accept-process-output' would
+signal \"Forbidden reentrant call of Tramp\"; the lock is read off the
+list's OWN pinned `default-directory', since the timer runs with whatever
+buffer is current), or when an async refresh is still in flight (the live
+`gascity-tabulated--refresh-process'; starting one supersedes the pending
+fetch).  `non-essential' is bound so the timer can never make TRAMP
+establish a NEW connection — after a dropped link the tick degrades to an
+error line and a manual `g' reconnects."
+  (when (and (buffer-live-p buffer)
+             (get-buffer-window buffer 'visible)
+             (not (gascity-remote-connection-locked-p
+                   (buffer-local-value 'default-directory buffer)))
+             (not (process-live-p
+                   (buffer-local-value 'gascity-tabulated--refresh-process buffer))))
+    (let ((non-essential t))
+      (with-current-buffer buffer
+        (gascity-session-list-refresh)))))
+
+(defun gascity-session-list--auto-refresh-teardown ()
+  "Cancel the current buffer's auto-refresh timer.
+Run from `kill-buffer-hook' so a killed list leaves no live timer."
+  (when (timerp gascity-session-list--refresh-timer)
+    (cancel-timer gascity-session-list--refresh-timer))
+  (setq gascity-session-list--refresh-timer nil))
+
+(defun gascity-session-list--auto-refresh-setup (&optional buffer)
+  "Start BUFFER's auto-refresh timer per `gascity-session-list-auto-refresh'.
+BUFFER defaults to the current buffer.  Idempotent: cancels any existing
+timer first, so re-running never leaks a second one.  Creates a repeating
+timer only when `gascity-session-list-auto-refresh' is non-nil and
+`gascity-session-list-auto-refresh-interval' is a positive number;
+otherwise the list stays manual-refresh only.  When a timer is created,
+arrange teardown on `kill-buffer-hook' so it dies with the buffer."
+  (with-current-buffer (or buffer (current-buffer))
+    (when (timerp gascity-session-list--refresh-timer)
+      (cancel-timer gascity-session-list--refresh-timer))
+    (setq gascity-session-list--refresh-timer nil)
+    (when (and gascity-session-list-auto-refresh
+               (numberp gascity-session-list-auto-refresh-interval)
+               (> gascity-session-list-auto-refresh-interval 0))
+      (setq gascity-session-list--refresh-timer
+            (run-with-timer gascity-session-list-auto-refresh-interval
+                            gascity-session-list-auto-refresh-interval
+                            #'gascity-session-list--auto-refresh-tick
+                            (current-buffer)))
+      (add-hook 'kill-buffer-hook
+                #'gascity-session-list--auto-refresh-teardown nil t))))
+
+(defun gascity-session-list-toggle-auto-refresh ()
+  "Toggle automatic refresh of the GC-Sessions list.
+Flips `gascity-session-list-auto-refresh' and (re)starts or cancels the
+current buffer's refresh timer to match.  While on, the list re-reads
+`gc session list' every `gascity-session-list-auto-refresh-interval'
+seconds whenever its buffer is visible."
+  (interactive)
+  (setq gascity-session-list-auto-refresh (not gascity-session-list-auto-refresh))
+  (gascity-session-list--auto-refresh-setup)
+  (message "Session list auto-refresh %s"
+           (if gascity-session-list-auto-refresh
+               (format "on (every %ss while visible)"
+                       gascity-session-list-auto-refresh-interval)
+             "off")))
+
 (transient-define-prefix gascity-session-list-filter ()
   "Filter the session list."
   ["Filter sessions"
@@ -752,6 +833,10 @@ session list' takes never freeze the UI."
   :doc "Keymap for `gascity-session-list-mode'."
   :parent gascity-tabulated-base-map
   "g"   #'gascity-session-list-refresh
+  ;; `W' (watch) toggles auto-refresh; `G' is taken by pagination
+  ;; (goto-page on `gascity-tabulated-base-map'), unlike the status
+  ;; dashboard where `G' is free for the toggle.
+  "W"   #'gascity-session-list-toggle-auto-refresh
   "/"   #'gascity-session-list-filter
   "d"   #'gascity-dired-at-point
   "t"   #'gascity-tmux-at-point
@@ -781,7 +866,10 @@ session list' takes never freeze the UI."
 action; `i' opens the session/polecat detail view; `d' opens its
 worktree in Dired.  `M' nudges (sends a message), `s' suspends, `K'
 force-kills the runtime of, `w' wakes, `D' drains, and `v' peeks at the
-output of the session at point.  `n'/`p' move by line.
+output of the session at point.  `n'/`p' move by line.  When
+`gascity-session-list-auto-refresh' is on (the default), the list
+re-reads `gc' every `gascity-session-list-auto-refresh-interval' seconds
+while visible; `W' toggles that live.
 \\{gascity-session-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
@@ -789,7 +877,8 @@ output of the session at point.  `n'/`p' move by line.
          ("Provider" 9 t) ("Working dir" 40 t)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Agent" nil))
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (gascity-session-list--auto-refresh-setup))
 
 ;;;###autoload
 (defun gascity-session-list ()

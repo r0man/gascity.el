@@ -740,6 +740,16 @@ Peek at recent output.
 @kindex / @r{(session list)}
 Filter by state (active, suspended, closed, all --- server-side) and rig
 (client-side substring).
+@item W
+@kindex W @r{(session list)}
+@findex gascity-session-list-toggle-auto-refresh
+Toggle automatic refresh.  When
+@code{gascity-session-list-auto-refresh} is on (the default), the list
+re-reads @code{gc session list} every
+@code{gascity-session-list-auto-refresh-interval} seconds (5 by default)
+--- but only while its buffer is displayed in a visible window: a buried
+list does nothing, and a tick is skipped while a previous read is still
+in flight, so a slow remote link is never perpetually restarted.
 @end table
 
 @node Convoys
