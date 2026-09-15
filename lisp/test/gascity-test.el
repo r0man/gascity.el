@@ -69,6 +69,20 @@ A concise stand-in for the action object a real view builds and stamps."
   (should-error (gascity-reader-parse-json "{not json")
                 :type 'gascity-json-parse-error))
 
+(ert-deftest gascity-test-parse-json-skips-transport-chatter ()
+  "Leading non-JSON transport chatter is skipped (founded in the TRAMP
+e2e: the sshx pty prepends the ssh client's xauth warning to gc's
+stdout).  The payload still parses; genuinely malformed input with no
+JSON still signals."
+  (let* ((payload (gascity-reader-parse-json
+                   "Warning: No xauth data; using fake authentication data
+{\"city_name\": \"bright-lights\"}")))
+    (should (equal (cdr (assq 'city_name payload)) "bright-lights")))
+  (let* ((payload (gascity-reader-parse-json "\n  [1, 2]")))
+    (should (equal payload [1 2])))
+  (should-error (gascity-reader-parse-json "tmux chatter, no JSON at all")
+                :type 'gascity-json-parse-error))
+
 ;;; gascity-command-line / subcommand
 
 (ert-deftest gascity-test-status-command-line ()
@@ -952,16 +966,18 @@ renders no Variables section."
                              (description . "Where the summary goes")
                              (default . "build/summary.md"))
                            '((name . "branch") (pattern . "\\`[a-z-]+\\'"))))))
-    (let ((children (gascity-sling-formula--var-children formula)))
+    (let ((children (gascity-sling-formula--var-children
+                     formula gascity-sling--reserved-keys)))
       (should (vectorp children))
-      (should (equal (aref children 0) "Variables"))
+      (should (equal (aref children 0) "Variables — do-work"))
       (should (= (length children) 5))            ; header + 4 var infixes
       (let ((specs (seq-subseq children 1)))
-        ;; Keys are unique tokens avoiding the static suffix keys.
+        ;; Keys are unique tokens avoiding the unified prefix's
+        ;; static single-letter bindings.
         (let ((keys (mapcar #'car specs)))
           (should (equal keys (delete-dups (copy-sequence keys))))
           (dolist (key keys)
-            (should-not (member key '("p" "s" "r" "q")))))
+            (should-not (member key gascity-sling--reserved-keys))))
         ;; The enum var is a fixed-choices option: illegal values
         ;; unrepresentable by construction (REQ-005).
         (let ((enum (seq-find
@@ -995,24 +1011,133 @@ renders no Variables section."
           (should (string-match-p "default: build/summary.md" (nth 1 string-spec)))))))
   ;; A formula without vars renders no Variables section (REQ-004).
   (should-not (gascity-sling-formula--var-children
-               (gascity-test--formula-with-steps nil))))
+               (gascity-test--formula-with-steps nil)
+               gascity-sling--reserved-keys)))
 
 (ert-deftest gascity-test-formula-sling-var-children-nil-formula-degrades ()
   "The transient's initial setup (no formula picked yet) degrades to no
 Variables section instead of crashing on the nil recipe (REQ-016;
 founded in the tmux-Emacs TRAMP e2e pass: `-f' from the sling dispatch
 opened the transient with scope :formula nil and signalled\n`No applicable method: gascity-formula-vars, nil')."
-  (should-not (gascity-sling-formula--var-children nil)))
+  (should-not (gascity-sling-formula--var-children
+               nil gascity-sling--reserved-keys)))
 
-(ert-deftest gascity-test-formula-sling-var-key-degenerates ()
-  "Var key generation never collides and always yields a key (REQ-016
-degradation): name letters first, then digits."
-  (should (equal (gascity-sling-formula--var-key "drain_policy" '()) "d"))
-  ;; "d" taken: the next alphanumeric character of the name is tried.
-  (should (equal (gascity-sling-formula--var-key "drain_policy" '("d")) "r"))
-  ;; A name with no usable characters still gets a digit key.
-  (should (member (gascity-sling-formula--var-key "___" '())
-                  '("1" "2" "3" "4" "5" "6" "7" "8" "9" "0"))))
+(ert-deftest gascity-test-sling-var-key-deterministic ()
+  "REQ-D: per-formula keys are deterministic and collision-free —
+the name's first alphanumeric character, then two-letter combos from
+the name's own characters (1+2, 1+3, …) whose first character is
+itself unbound (transient binds keys with `kbd'; a combo under a
+bound first character is an unrepresentable prefix chain), then
+positional `<first-char><n>' keys.  (F-3: the degradation the old
+algorithm made was name-char based, e.g. `description' -> \"e\" when
+`d' was taken — the new combo stage is exactly what replaces it; the
+test comments must not enshrine that old behavior as the design.)"
+  (let ((reserved '("f" "g" "s" "p" "r" "q" "c" "a" "n" "m" "t" "T")))
+    ;; First alphanumeric character of the name wins.
+    (should (equal (gascity-sling-formula--var-key "drain_policy" reserved)
+                   "d"))
+    ;; First char taken: a two-letter combo from the name's own chars,
+    ;; positionally — but a combo whose first character is the already
+    ;; assigned `d' would be an unrepresentable prefix chain under the
+    ;; bound `d' (founded in the TRAMP e2e pass), so `description' with
+    ;; `d' taken lands on the first combo starting with a FREE letter:
+    ;; `es', not a stray later character of the name.
+    (should (equal (gascity-sling-formula--var-key
+                    "description" (cons "d" reserved))
+                   "es"))
+    ;; Combos continue positionally among FREE first characters:
+    ;; `drain_policy' with the full reserved set plus `d' and `dr' taken
+    ;; skips every d-, r- and reserved-initial candidate and gets `in'.
+    (should (equal (gascity-sling-formula--var-key
+                    "drain_policy" (append reserved '("d" "dr")))
+                   "in"))
+    ;; A combo whose FIRST character is a bound key is an unrepresentable
+    ;; prefix chain (transient binds keys with `kbd'): `report_path' with
+    ;; the statically bound `r' reserved skips every r-initial candidate
+    ;; and lands on the first combo starting with a free letter.
+    (should (equal (gascity-sling-formula--var-key "report_path" reserved)
+                   "ep"))
+    ;; A single-character candidate is refused when an assigned
+    ;; multi-character key starts with it (`d' is gone, `de' assigned).
+    (should (equal (gascity-sling-formula--var-key
+                    "diff" (append reserved '("d" "de")))
+                   "if"))
+    ;; Exhausted name chars: positional `<first-free-char><n>' keys —
+    ;; the prefix itself must be an unbound letter (the used `a' can't
+    ;; be a prefix chain), so `b' carries the counter.
+    (should (equal (gascity-sling-formula--var-key
+                    "ab" (append reserved '("a" "ab" "x" "y")))
+                   "b1"))
+    (should (equal (gascity-sling-formula--var-key
+                    "ab" (append reserved '("a" "ab" "b1" "x" "y")))
+                   "b2"))
+    ;; A name with no usable characters degrades to `v'-prefixed keys.
+    (should (equal (gascity-sling-formula--var-key "___" reserved) "v1"))
+    (should (equal (gascity-sling-formula--var-key
+                    "___" (append reserved '("v1")))
+                   "v2"))))
+
+(ert-deftest gascity-test-sling-var-keys-stable-and-unique ()
+  "REQ-D/AC-4: one key per var, all unique against the reserved set,
+and the same var list always yields the same keys — across shared
+first letters and more vars than free letters."
+  (let* ((reserved gascity-sling--reserved-keys)
+         (names '("drain_policy" "description" "deployment" "docs"
+                  "summary_path" "sweep" "verbose"))
+         (keys (gascity-test--sling-var-keys-for names reserved)))
+    (should (= (length keys) (length names)))
+    ;; Unique and collision-free against reserved + each other.
+    (should (equal keys (delete-dups (copy-sequence keys))))
+    (dolist (key keys)
+      (should-not (member key reserved)))
+    ;; Deterministic across rebuilds (no state, pure function of
+    ;; reserved + names).
+    (should (equal keys
+                   (gascity-test--sling-var-keys-for names reserved)))
+    ;; Same first letter still never collides (`de' under the bound `d'
+    ;; would be an unrepresentable prefix chain, so `description' falls
+    ;; to the first combo starting with a free letter).
+    (should (equal (gascity-test--sling-var-keys-for
+                    '("drain_policy" "description") reserved)
+                   '("d" "es")))))
+
+(defun gascity-test--sling-var-keys-for (names reserved)
+  "Assign keys as `gascity-sling-formula--var-keys' would for NAMES.
+Works over plain strings so the exhaustion cases need no recipe
+objects."
+  (let ((used (copy-sequence reserved))
+        keys)
+    (dolist (name names)
+      (let ((key (gascity-sling-formula--var-key name used)))
+        (push key keys)
+        (cl-pushnew key used :test #'equal)))
+    (nreverse keys)))
+
+(ert-deftest gascity-test-sling-reserved-keys-complete ()
+  "OQ-2: `gascity-sling--reserved-keys' names exactly the
+single-letter static bindings of `gascity-sling-dispatch''s generated
+layout — a static re-binding cannot silently collide."
+  (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+             (lambda (_name) nil))
+            ((symbol-function 'gascity-context-city-name)
+             (lambda (&optional _dir) "testcity")))
+    (let ((bound nil))
+      (dolist (group (gascity-sling--children-specs
+                      (list :formula nil :target nil :arg nil)))
+        (when (vectorp group)
+          (dolist (spec (append group nil))
+            (when (and (consp spec) (stringp (car spec)))
+              (let ((key (car spec)))
+                (when (string-prefix-p "-" key)
+                  (setq key (substring key 1)))
+                (when (= (length key) 1)
+                  (push key bound)))))))
+      ;; Every bound single letter is reserved, and every reserved
+      ;; letter is actually bound.
+      (dolist (key bound)
+        (should (member key gascity-sling--reserved-keys)))
+      (dolist (key gascity-sling--reserved-keys)
+        (should (member key bound))))))
 
 (ert-deftest gascity-test-formula-sling-check-pattern ()
   "The infix reader's pattern check (REQ-009): a mismatch is a
@@ -1137,34 +1262,95 @@ failure surfaces as a clean `user-error'."
                                :type 'user-error)))
         (should (string-match-p "gc: nope" (error-message-string err)))))))
 
-(ert-deftest gascity-test-formula-sling-wiring ()
-  "Wiring (REQ-015): the prefix and its entry exist, and
-`gascity-sling-dispatch''s `-f' binding now enters the formula flow
-instead of collecting a `--formula' flag."
-  (should (commandp 'gascity-sling-formula-dispatch))
-  (should (commandp 'gascity-sling-formula))
-  ;; Transient's normalized suffix spec: (transient-suffix :key "-f"
-  ;; :description … :command gascity-sling-formula).
-  (let ((suffix (transient-get-suffix 'gascity-sling-dispatch [0 0])))
-    (should (eq (nth 0 suffix) 'transient-suffix))
-    (should (equal (nth 2 suffix) "-f"))
-    (should (eq (nth 6 suffix) 'gascity-sling-formula)))
+(ert-deftest gascity-test-sling-unified-wiring ()
+  "REQ-A/REQ-H: the two-transient split is gone — the absorbed formula
+prefix, its entry command and its suffixes no longer exist, and the
+unified prefix carries the formula suffixes in place."
+  (should (commandp 'gascity-sling-dispatch))
+  (should (commandp 'gascity-sling-dispatch-pick))
+  (should (commandp 'gascity-sling-dispatch-refresh))
+  (should (commandp 'gascity-sling-dispatch-target))
+  (should (commandp 'gascity-sling-dispatch-recipe))
+  (should (commandp 'gascity-sling-dispatch-run))
+  (should (commandp 'gascity-sling-dispatch-preview))
+  (should-not (fboundp 'gascity-sling-formula))
+  (should-not (fboundp 'gascity-sling-formula-dispatch))
+  (should-not (fboundp 'gascity-sling-formula-pick))
+  (should-not (fboundp 'gascity-sling-formula-refresh))
+  (should-not (fboundp 'gascity-sling-formula-run))
+  (should-not (fboundp 'gascity-sling-formula-preview))
   ;; The old minibuffer var reader is gone — its job is the infixes' now.
-  (should-not (fboundp 'gascity-sling--read-vars)))
+  (should-not (fboundp 'gascity-sling--read-vars))
+  ;; The reserved set lives beside the prefix now (F-2).
+  (should-not (boundp 'gascity-sling-formula--reserved-keys)))
 
-(ert-deftest gascity-test-formula-sling-refresh-wiring ()
-  "Refresh (review F-M1): the formula transient exposes a refresh suffix
-bound to `g', the generated var keys avoid it, and invoking the suffix
-clears the current city's caches and re-runs setup with the scope and
-set values intact."
-  ;; The static Formula column carries the binding.
-  (let ((group (car (gascity-sling-formula--static-children (list :formula nil)))))
-    (should (equal (aref group 0) "Formula"))
-    (should (member '("g" "Refresh catalog" gascity-sling-formula-refresh)
-                    (append group nil))))
-  ;; Generated infix keys never collide with the refresh key.
-  (should (member "g" gascity-sling-formula--reserved-keys))
-  ;; Invoking it invalidates and re-setups, carrying scope and values.
+(ert-deftest gascity-test-sling-unified-layout ()
+  "AC-2/OQ-3: the unified prefix stacks the sections vertically —
+header info, Formula, Destination, Routing flags, Actions, then the
+Variables section last, full width — and the info line is a raw
+unwrapped `(:info …)' spec (nested `((:info …))' crashes setup).  With
+no formula picked there is no Variables section and the header hints
+at `-f'."
+  (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+             (lambda (_n)
+               (gascity-test--formula-with-vars
+                (vector '((name . "drain_policy"))))))
+            ((symbol-function 'gascity-context-city-name)
+             (lambda (&optional _dir) "testcity")))
+    (let ((groups (gascity-sling--children-specs
+                   (list :formula "do-work" :target "sess-1"
+                         :arg "gce-1"))))
+      (should (= (length groups) 6))
+      ;; The header group is titled with the city; the scope info line
+      ;; is a raw unwrapped `(:info …)' spec, not the group's first
+      ;; element (a leading `(:info …)' parses as a group argument and
+      ;; breaks setup — founded in the TRAMP e2e pass).
+      (should (equal (aref (nth 0 groups) 0) "Sling — testcity"))
+      (let ((info (aref (nth 0 groups) 1)))
+        (should (eq (car info) :info))
+        (should (stringp (cadr info)))
+        (should (string-match-p "Target: sess-1" (cadr info))))
+      (should (equal (aref (nth 1 groups) 0) "Formula"))
+      (should (equal (aref (nth 2 groups) 0) "Destination"))
+      (should (equal (aref (nth 3 groups) 0) "Routing flags"))
+      (should (equal (aref (nth 4 groups) 0) "Actions"))
+      (should (string-prefix-p "Variables — do-work"
+                               (aref (nth 5 groups) 0)))))
+  ;; No formula picked: five groups, no Variables section, header hint.
+  (cl-letf (((symbol-function 'gascity-context-city-name)
+             (lambda (&optional _dir) "testcity")))
+    (let ((groups (gascity-sling--children-specs
+                   (list :formula nil :target nil :arg nil))))
+      (should (= (length groups) 5))
+      (should (string-match-p "-f to pick"
+                              (cadr (aref (nth 0 groups) 1)))))))
+
+(ert-deftest gascity-test-sling-pick-re-setups-in-place ()
+  "AC-1: `-f' reads a formula once and re-settles THIS prefix with the
+picked formula in the scope and the current args carried as :value —
+no second menu, no second prefix (REQ-A).  A `-T'-set target survives
+the re-setup."
+  (let (read setup)
+    (cl-letf (((symbol-function 'gascity-sling-formula--read-formula)
+               (lambda () (setq read t) "do-work"))
+              ((symbol-function 'transient-setup)
+               (lambda (prefix _sfx _lay &rest args)
+                 (setq setup (cons prefix args))))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :formula nil :target "sess-1" :arg "gce-1")))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) '("--var a=1"))))
+      (call-interactively #'gascity-sling-dispatch-pick)
+      (should read)
+      (should (eq (car setup) 'gascity-sling-dispatch))
+      (should (equal (plist-get (cdr setup) :scope)
+                     (list :formula "do-work" :target "sess-1"
+                           :arg "gce-1")))
+      (should (equal (plist-get (cdr setup) :value) '("--var a=1"))))))
+
+(ert-deftest gascity-test-sling-refresh-re-setups-in-place ()
+  "Refresh: invoking `g' invalidates the current city's caches and
+re-runs setup on the SAME prefix, carrying scope and set values."
   (let (invalidated setup)
     (cl-letf (((symbol-function 'gascity-formula-invalidate)
                (lambda () (setq invalidated t)))
@@ -1175,12 +1361,160 @@ set values intact."
                (lambda () (list :formula "do-work")))
               ((symbol-function 'transient-args)
                (lambda (_prefix) '("--var a=1"))))
-      (call-interactively #'gascity-sling-formula-refresh)
+      (call-interactively #'gascity-sling-dispatch-refresh)
       (should (eq invalidated t))
-      (should (eq (car setup) 'gascity-sling-formula-dispatch))
+      (should (eq (car setup) 'gascity-sling-dispatch))
       (should (equal (plist-get (cdr setup) :scope)
                      (list :formula "do-work")))
       (should (equal (plist-get (cdr setup) :value) '("--var a=1"))))))
+
+(ert-deftest gascity-test-sling-target-set-and-header ()
+  "AC-3/REQ-B: `-T' reads the target once with session completion,
+re-settles in place with it in the scope, and the header shows it; an
+unset target renders `Target: (none)'."
+  ;; The header reflects the scope's target.
+  (should (string-match-p
+           "Target: (none)"
+           (nth 1 (gascity-sling--scope-info
+                   (list :formula nil :target nil :arg nil)))))
+  (should (string-match-p
+           "Target: sess-7"
+           (nth 1 (gascity-sling--scope-info
+                   (list :formula nil :target "sess-7" :arg nil)))))
+
+  ;; Pressing -T re-settles with the read target in the scope.
+  (let (reads setup)
+    (cl-letf (((symbol-function 'gascity-action--read-session)
+               (lambda (_prompt) (setq reads (1+ (or reads 0))) "sess-7"))
+              ((symbol-function 'transient-setup)
+               (lambda (prefix _sfx _lay &rest args)
+                 (setq setup (cons prefix args))))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work" :target nil :arg nil)))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) nil)))
+      (call-interactively #'gascity-sling-dispatch-target)
+      (should (= reads 1))
+      (should (equal (plist-get (cdr setup) :scope)
+                     (list :formula "do-work" :target "sess-7"
+                           :arg nil))))))
+
+(ert-deftest gascity-test-sling-dispatch-target-fallback ()
+  "AC-3: dispatch with an unset target reads it exactly once via
+`gascity-action--read-session' (the dispatch fallback, OQ-1/F-4); a
+`-T'-set target suppresses the read entirely."
+  ;; Unset target: the fallback reads once and the formula dispatch
+  ;; receives it.
+  (let (reads dispatched)
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work" :target nil
+                                :arg "gce-1")))
+              ((symbol-function 'transient-args)
+               (lambda (_p) nil))
+              ((symbol-function 'gascity-action--read-session)
+               (lambda (_prompt) (setq reads (1+ (or reads 0))) "sess-1"))
+              ((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_n) (gascity-test--formula-with-vars nil)))
+              ((symbol-function 'gascity-sling-formula--current-values)
+               (lambda () nil))
+              ((symbol-function 'gascity-sling-formula--dispatch)
+               (lambda (_recipe target _arg _values &optional _dry)
+                 (setq dispatched target))))
+      (call-interactively #'gascity-sling-dispatch-run)
+      (should (= reads 1))
+      (should (equal dispatched "sess-1"))))
+  ;; A set target wins: no read at all.
+  (let (reads dispatched)
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work" :target "set-sess"
+                                :arg "gce-1")))
+              ((symbol-function 'transient-args)
+               (lambda (_p) nil))
+              ((symbol-function 'gascity-action--read-session)
+               (lambda (_prompt) (cl-incf reads) "nope"))
+              ((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_n) (gascity-test--formula-with-vars nil)))
+              ((symbol-function 'gascity-sling-formula--current-values)
+               (lambda () nil))
+              ((symbol-function 'gascity-sling-formula--dispatch)
+               (lambda (_recipe target _arg _values &optional _dry)
+                 (setq dispatched target))))
+      (call-interactively #'gascity-sling-dispatch-run)
+      (should (null reads))
+      (should (equal dispatched "set-sess")))))
+
+(ert-deftest gascity-test-sling-plain-path-unchanged ()
+  "AC-7/REQ-G: with no formula picked, `s' prompts bead/text then
+target in the shipped order and builds the same plain
+`gascity-command-sling' (the routing flags flow through the plain
+parser)."
+  (let (order acted)
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula nil :target nil :arg nil)))
+              ((symbol-function 'transient-args)
+               (lambda (_p) '("--nudge" "--merge=direct")))
+              ((symbol-function 'gascity-bead-at-point)
+               (lambda () "gce-abc"))
+              ((symbol-function 'read-string)
+               (lambda (prompt &rest _)
+                 (push prompt order)
+                 (if (string-prefix-p "Bead" prompt)
+                     "gce-abc" "sess-9")))
+              ((symbol-function 'gascity-action--read-session)
+               (lambda (_prompt)
+                 (push "Sling to target: " order)
+                 "sess-9"))
+              ((symbol-function 'gascity-command-act)
+               (lambda (command) (push command acted)))
+              ((symbol-function 'gascity--refresh-current-view)
+               (lambda () nil)))
+      (call-interactively #'gascity-sling-dispatch-run)
+      (should (equal (nreverse order)
+                     '("Bead id or task text: " "Sling to target: ")))
+      (let ((command (car acted)))
+        (should (equal (oref command :target) "sess-9"))
+        (should (equal (oref command :arg) "gce-abc"))
+        (should (oref command :nudge))
+        (should (equal (oref command :merge) "direct"))))))
+
+(ert-deftest gascity-test-sling-preview-dry-run-paths ()
+  "`p' previews gc's routing plan in both paths: the plain path forces
+`--dry-run' through the plain parser; the formula path builds the same
+command with `--dry-run' via the formula dispatch."
+  ;; Plain path preview: shown, not acted.
+  (let (shown acted)
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula nil :target nil :arg nil)))
+              ((symbol-function 'transient-args)
+               (lambda (_p) nil))
+              ((symbol-function 'read-string)
+               (lambda (_p &rest _) "gce-1"))
+              ((symbol-function 'gascity-action--read-session)
+               (lambda (_p) "sess-1"))
+              ((symbol-function 'gascity-sling--show-plan)
+               (lambda (command) (setq shown command)))
+              ((symbol-function 'gascity-command-act)
+               (lambda (_c) (push t acted))))
+      (call-interactively #'gascity-sling-dispatch-preview)
+      (should shown)
+      (should-not acted)
+      (should (equal (gascity-command-line shown)
+                     '("gc" "sling" "sess-1" "gce-1" "--dry-run")))))
+  ;; Formula path preview: same command with --dry-run, plan shown.
+  (let ((formula (gascity-test--formula-with-vars
+                  (vector '((name . "summary_path")))))
+        shown acted)
+    (cl-letf (((symbol-function 'gascity-sling--show-plan)
+               (lambda (command) (setq shown command)))
+              ((symbol-function 'gascity-command-act)
+               (lambda (_c) (push t acted))))
+      (gascity-sling-formula--dispatch formula "sess-1" nil
+                                       '(("summary_path" . "p")) t)
+      (should shown)
+      (should-not acted)
+      (should (equal (gascity-command-line shown)
+                     '("gc" "sling" "sess-1" "do-work" "--formula"
+                       "--var" "summary_path=p" "--dry-run"))))))
 
 (ert-deftest gascity-test-at-point-visit-dispatch ()
   "`gascity-at-point-visit' dispatches the right action per object class."

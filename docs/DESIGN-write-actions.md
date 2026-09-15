@@ -406,6 +406,22 @@ send · `a` archive · `u` unread. Main `gascity` transient gains a
 **“Bead/Mail”** group entry for each dispatcher. (Exact letters are the
 proposal; final assignment is fixed in each phase’s review.)
 
+### Unified sling transient (supersedes the two-menu sling flow)
+
+`gascity-sling-dispatch` is the **single** sling menu — the separate
+formula prefix (`gascity-sling-formula-dispatch`) and its up-front target
+prompt are absorbed. Sections stack vertically: header info (city, Arg,
+Formula, Target), Formula, Destination, Routing flags, Actions, then the
+picked formula’s full-width Variables section once `-f` has picked in
+place. Inner keys: `-f` pick formula (re-renders the same menu) · `g`
+refresh catalog · `-T` target session (visible in the header; never
+prompted up front) · `-c -a -n -m -t` routing flags · `s` sling · `p`
+preview (`--dry-run`) · `r` preview recipe · `q` quit. **Routing flags are
+consumed only by the plain path** — a picked formula’s sling ignores them
+(its command is built from target/arg/formula/`--on`/vars only). Generated
+variable keys are deterministic and avoid every single-letter static
+binding (`f g T c a n m t s p r q`).
+
 ---
 
 ## 11. Testing strategy

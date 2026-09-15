@@ -225,14 +225,24 @@ JSON objects become alists keyed by symbols and arrays become
 vectors.  Both `null' and `false' decode to nil, so ordinary Elisp
 truth tests work directly on decoded booleans — convenient for a
 porcelain that renders flags like \"running\" and \"suspended\".
-Signals `gascity-json-parse-error' on malformed input."
+Leading non-JSON content is skipped: on a remote directory the TRAMP
+transport can prepend chatter to gc's stdout (an ssh client warning
+such as \"Warning: No xauth data …\", a login banner) before the JSON
+payload, so parsing starts at the first `{'/`[' instead of failing on
+unrelated transport output.  Signals `gascity-json-parse-error' on
+malformed input."
   (condition-case err
       (let ((json-object-type 'alist)
             (json-array-type 'vector)
             (json-key-type 'symbol)
             (json-null nil)
             (json-false nil))
-        (json-read-from-string string))
+        (json-read-from-string
+         (if (memq (aref (string-trim-left string) 0) '(?{ ?\[))
+             string
+           (or (and (string-match "[{\\[]" string)
+                    (substring string (match-beginning 0)))
+               string))))
     (error
      (signal 'gascity-json-parse-error
              (list (format "Failed to parse gc JSON output: %s"

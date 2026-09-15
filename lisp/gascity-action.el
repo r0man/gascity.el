@@ -52,6 +52,19 @@
 (declare-function gascity-rig-dashboard-refresh "gascity-rig")
 (declare-function gascity-polecat-detail-refresh "gascity-session")
 
+;; The formula sling's machinery lives in gascity-formula, which loads
+;; before this module; the unified sling prefix drives it from here
+;; (cross-file verb wiring — a missing declaration is only caught by the
+;; `--warnings-as-errors' compile gate).
+(declare-function gascity-sling-formula--bead-or-convoy-at-point "gascity-formula")
+(declare-function gascity-sling-formula--read-formula "gascity-formula")
+(declare-function gascity-sling-formula--current-values "gascity-formula")
+(declare-function gascity-sling-formula--dispatch "gascity-formula")
+(declare-function gascity-sling-formula--show-recipe "gascity-formula")
+(declare-function gascity-sling-formula--var-children "gascity-formula")
+(declare-function gascity-formula-recipe-cached "gascity-formula")
+(declare-function gascity-formula-invalidate "gascity-formula")
+
 ;;; ============================================================
 ;;; Synchronous action runner
 ;;; ============================================================
@@ -930,23 +943,31 @@ With a prefix argument, capture that many trailing LINES instead of the
                               gascity-session-peek-lines))
 
 ;;; ============================================================
-;;; Sling — richer flag dispatch (the one transient-backed command)
+;;; Sling — the one unified transient-backed command
 ;;; ============================================================
 ;;
-;; Sling is the lone flag-heavy verb, so it gets a transient
-;; (`gascity-sling-dispatch', §5.2): infixes collect the flags, two
-;; suffixes act — one slings for real, one previews gc's routing plan with
-;; `--dry-run' (the preview affordance, §8).  The bead/text and target are
-;; read in the suffix (seeded from the bead at point); the formula flow
-;; (`gascity-sling-formula', `gascity-formula') is entered from the `-f'
-;; toggle and collects its variables through its own generated infixes.
+;; Sling is the lone flag-heavy verb, so it gets one transient
+;; (`gascity-sling-dispatch', DESIGN-write-actions §10): sections stack
+;; vertically — header, Formula, Destination, Routing flags, Actions,
+;; then the picked formula's full-width Variables section.  `-f' picks a
+;; formula in place (the same prefix re-setups with the new scope); `-T'
+;; sets a visible target session; `s'/`p' sling or preview.  With a
+;; formula picked the formula path runs (validated vars, shape via
+;; `gascity-formula--needs-convoy', routing flags ignored — they are
+;; consumed only by the plain path); without one the plain flag path
+;; runs as before.  The generated variable keys avoid the single-letter
+;; static bindings collected in `gascity-sling--reserved-keys'.
 
 (defun gascity-sling--parse-transient-args (args)
   "Parse flat transient ARGS into a `gascity-command-sling' initarg plist.
 ARGS is the list `transient-args' returns — switch strings (\"--formula\")
-and `option=value' strings (\"--merge=direct\").  Repeated \"--var=k=v\"
-entries collect into a single `:var' list; \"--on=F\" carries the targeted
-formula shape.  Unknown entries are ignored."
+and `option=value' strings (\"--merge=direct\").  This is the PLAIN path's
+parser: its routing flags only.  It matches the equals form
+\"--var=\" which no infix currently emits — the formula Variables
+infixes set the space form and their values flow through
+`gascity-sling-formula--current-values' instead (F-1: the two formats
+are deliberately not unified; the plain path never receives var
+args).  Unknown entries are ignored."
   (let (plist vars)
     (dolist (a args)
       (cond
@@ -989,22 +1010,37 @@ error surfaces as a clean `user-error'."
 
 (defun gascity-sling--run (args preview)
   "Build and run a sling from transient ARGS (its flag list).
-Reads the bead/text and target (the bead at point seeds the arg), then
-acts.  With PREVIEW non-nil, forces `--dry-run' and shows gc's routing
-plan instead of executing; otherwise acts and refreshes the originating
-view.  Formula slings leave for `gascity-sling-formula' — their
-variables flow through that transient's generated infixes."
-  (let* ((plist (gascity-sling--parse-transient-args args))
-         (arg (read-string "Bead id or task text: " (gascity-bead-at-point)))
-         (target (gascity-action--read-session "Sling to target: "))
-         (command (apply #'gascity-command-sling
-                         :target target :arg arg
-                         (append (when preview (list :dry-run t))
-                                 plist))))
-    (if preview
-        (gascity-sling--show-plan command)
-      (gascity-command-act command)
-      (gascity--refresh-current-view))))
+With a formula picked in the scope, the formula path runs: the
+collected var values are validated client-side and the sling shape
+`gascity-formula--needs-convoy' detects is chosen; the routing flags
+are ignored there — they are consumed only by the plain path (F-5).
+Otherwise the plain path runs unchanged: prompt bead/text (seeded from
+the bead at point) then target, parse the flags and act or preview.
+A target set through `-T' wins; with none set, the formula path reads
+it once via `gascity-action--read-session' (REQ-B's dispatch
+fallback).  With PREVIEW non-nil, force `--dry-run' and show gc's
+routing plan instead of executing."
+  (let* ((scope (transient-scope))
+         (formula (plist-get scope :formula)))
+    (if formula
+        (gascity-sling-formula--dispatch
+         (gascity-formula-recipe-cached formula)
+         (or (plist-get scope :target)
+             (gascity-action--read-session "Sling to target: "))
+         (plist-get scope :arg)
+         (gascity-sling-formula--current-values)
+         preview)
+      (let* ((plist (gascity-sling--parse-transient-args args))
+             (arg (read-string "Bead id or task text: " (gascity-bead-at-point)))
+             (target (gascity-action--read-session "Sling to target: "))
+             (command (apply #'gascity-command-sling
+                             :target target :arg arg
+                             (append (when preview (list :dry-run t))
+                                     plist))))
+        (if preview
+            (gascity-sling--show-plan command)
+          (gascity-command-act command)
+          (gascity--refresh-current-view))))))
 
 (transient-define-suffix gascity-sling-dispatch-run (args)
   "Sling for real using the dispatch flags ARGS."
@@ -1016,21 +1052,141 @@ variables flow through that transient's generated infixes."
   (interactive (list (transient-args 'gascity-sling-dispatch)))
   (gascity-sling--run args t))
 
+(defconst gascity-sling--reserved-keys
+  '("f" "g" "T" "c" "a" "n" "m" "t" "s" "p" "r" "q")
+  "Every single letter statically bound in `gascity-sling-dispatch':
+the Formula group (`-f' pick, `g' refresh), the Destination `-T', the
+routing flags `-c -a -n -m -t' and the Actions (`s', `p', `r', `q').
+The generated variable infix keys avoid exactly this list; it lives
+beside the layout it keys so a re-binding cannot silently collide
+(OQ-2), and a test asserts the two stay in sync.")
+
+(defun gascity-sling--scope-info (scope)
+  "Return the raw info spec describing SCOPE — the menu's header line.
+The `(:info …)' suffix form is passed unwrapped; nesting it as
+`((:info …))' parses as an argument spec and crashes setup (founded in
+the tmux-Emacs TRAMP e2e pass).  A leading `(:info …)' as the FIRST
+element of its group vector also breaks setup — it parses as a group
+argument — so the group title carries the city name and this spec
+carries the scope.  With no formula picked the header hints at `-f'
+(OQ-3)."
+  (list :info
+        (format "Arg: %s · Formula: %s · Target: %s"
+                (or (plist-get scope :arg)
+                    "(none — point at a bead or convoy)")
+                (or (plist-get scope :formula) "(none — -f to pick)")
+                (or (plist-get scope :target) "(none)"))))
+
+(defun gascity-sling--children-specs (scope)
+  "Return the raw stacked layout specs for SCOPE (REQ-C).
+The sections are sibling groups — no `transient-columns' anywhere, so
+each renders full width and stacks vertically: the header info line,
+Formula, Destination, Routing flags, Actions, then the picked
+formula's Variables section last (absent until a formula with vars is
+picked, REQ-A/REQ-B).  The generated infix keys avoid
+`gascity-sling--reserved-keys' (REQ-D)."
+  (let* ((recipe (and (plist-get scope :formula)
+                      (gascity-formula-recipe-cached
+                       (plist-get scope :formula)))))
+    (append
+     (list
+      (vector (format "Sling — %s" (gascity-context-city-name))
+              (gascity-sling--scope-info scope))
+      (vector "Formula"
+              '("-f" "Pick formula…" gascity-sling-dispatch-pick)
+              '("g" "Refresh catalog" gascity-sling-dispatch-refresh))
+      (vector "Destination"
+              '("-T" "Target session…" gascity-sling-dispatch-target))
+      (vector "Routing flags"
+              '("-c" "Skip auto-convoy" "--no-convoy")
+              '("-a" "Reassign (clear human assignee)" "--reassign")
+              '("-n" "Nudge target after routing" "--nudge")
+              '("-m" "Merge strategy" "--merge=" :choices ("direct" "mr" "local"))
+              '("-t" "Wisp root title" "--title="))
+      (vector "Actions"
+              '("s" "Sling…" gascity-sling-dispatch-run)
+              '("p" "Preview (dry-run)…" gascity-sling-dispatch-preview)
+              '("r" "Preview recipe…" gascity-sling-dispatch-recipe)
+              '("q" "Quit" transient-quit-one)))
+     (when-let* ((group (gascity-sling-formula--var-children
+                         recipe gascity-sling--reserved-keys)))
+       (list group)))))
+
+(defun gascity-sling--setup-children (_children)
+  "Parse `gascity-sling--children-specs' for the live scope."
+  (transient-parse-suffixes
+   'gascity-sling-dispatch
+   (gascity-sling--children-specs (transient-scope))))
+
+(transient-define-suffix gascity-sling-dispatch-pick ()
+  "Pick a formula from the cached catalog; rebuild this menu in place.
+One transient, one `-f' press (REQ-A): the same prefix re-setups with
+the picked formula in the scope and the current infix values carried
+over, so a variable the previous and new formulas share keeps its
+value (vars absent from the new formula drop with their infixes)."
+  (interactive)
+  (let ((name (gascity-sling-formula--read-formula)))
+    (transient-setup 'gascity-sling-dispatch nil nil
+                     :scope (plist-put (copy-sequence (transient-scope))
+                                       :formula name)
+                     :value (transient-args 'gascity-sling-dispatch))))
+
+(transient-define-suffix gascity-sling-dispatch-refresh ()
+  "Invalidate this city's formula caches and rebuild the menu in place.
+`gascity-formula-invalidate' clears the catalog and recipe memos for
+the current city (per `gascity-context-scope-key'), so the next pick
+and the Variables section read gc fresh — a formula edited mid-session
+is no longer served stale.  Set infix values carry into the re-setup,
+like a re-pick.  The menu stays open."
+  :transient t
+  (interactive)
+  (gascity-formula-invalidate)
+  (transient-setup 'gascity-sling-dispatch nil nil
+                   :scope (transient-scope)
+                   :value (transient-args 'gascity-sling-dispatch)))
+
+(transient-define-suffix gascity-sling-dispatch-target ()
+  "Read the sling target with session completion; the header shows it.
+The read is synchronous but strictly user-initiated — it runs only on
+this binding press (OQ-1, F-4), never during setup or redisplay.  The
+set target wins at dispatch; an unset one is read once there."
+  :transient t
+  (interactive)
+  (let ((target (gascity-action--read-session "Sling to target: ")))
+    (transient-setup 'gascity-sling-dispatch nil nil
+                     :scope (plist-put (copy-sequence (transient-scope))
+                                       :target target)
+                     :value (transient-args 'gascity-sling-dispatch))))
+
+(transient-define-suffix gascity-sling-dispatch-recipe ()
+  "Preview the picked formula's recipe with the current var values.
+Re-runs `gc formula show' with the currently-set values so gc
+substitutes server-side — never a client-side `{{var}}' substitution.
+The menu stays open."
+  :transient t
+  (interactive)
+  (let ((name (plist-get (transient-scope) :formula)))
+    (unless name
+      (user-error "No formula chosen — pick one first (-f)"))
+    (gascity-sling-formula--show-recipe
+     name (gascity-sling-formula--current-values))))
+
 ;;;###autoload (autoload 'gascity-sling-dispatch "gascity-action" nil t)
 (transient-define-prefix gascity-sling-dispatch ()
-  "Sling a bead/text with flags; preview shows gc's routing plan (`--dry-run').
-`-f' leaves for the formula flow (`gascity-sling-formula'), which keeps
-this transient's other bindings untouched (REQ-015)."
-  ["Routing flags"
-   ("-f" "Formula sling…" gascity-sling-formula)
-   ("-c" "Skip auto-convoy" "--no-convoy")
-   ("-a" "Reassign (clear human assignee)" "--reassign")
-   ("-n" "Nudge target after routing" "--nudge")
-   ("-m" "Merge strategy" "--merge=" :choices ("direct" "mr" "local"))
-   ("-t" "Wisp root title" "--title=")]
-  ["Sling"
-   ("s" "Sling…" gascity-sling-dispatch-run)
-   ("p" "Preview (dry-run)…" gascity-sling-dispatch-preview)])
+  "Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+The scope plist `(formula target arg)' is seeded at entry: arg from
+the bead or convoy at point, target nil — never prompted up front
+(set it with `-T'; REQ-B) — and formula nil (`-f' picks in place and
+re-renders this menu with a full-width Variables section, REQ-A).
+`s'/`p' dispatch: with a formula picked the formula path runs
+(validated vars, shape via `gascity-formula--needs-convoy', routing
+flags ignored); without one the plain flag path runs as before
+(REQ-G)."
+  [ :class transient-subgroups :setup-children gascity-sling--setup-children ]
+  (interactive)
+  (transient-setup 'gascity-sling-dispatch nil nil
+                   :scope (list :formula nil :target nil
+                                :arg (gascity-sling-formula--bead-or-convoy-at-point))))
 
 ;;; ============================================================
 ;;; Mail — send / reply via the compose buffer (gascity-compose §6)
