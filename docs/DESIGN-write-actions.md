@@ -415,12 +415,13 @@ Formula, Target), Formula, Destination, Routing flags, Actions, then the
 picked formula’s full-width Variables section once `-f` has picked in
 place. Inner keys: `-f` pick formula (re-renders the same menu) · `g`
 refresh catalog · `-T` target session (visible in the header; never
-prompted up front) · `-c -a -n -m -t` routing flags · `s` sling · `p`
+prompted up front) · `A` edit the sling arg (bead id / task text; in
+place, shown in the header) · `-c -a -n -m -t` routing flags · `s` sling · `p`
 preview (`--dry-run`) · `r` preview recipe · `q` quit. **Routing flags are
 consumed only by the plain path** — a picked formula’s sling ignores them
 (its command is built from target/arg/formula/`--on`/vars only). Generated
 variable keys are deterministic and avoid every single-letter static
-binding (`f g T c a n m t s p r q`).
+binding (`f g T A c a n m t s p r q`).
 
 ---
 

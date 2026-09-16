@@ -1270,6 +1270,7 @@ unified prefix carries the formula suffixes in place."
   (should (commandp 'gascity-sling-dispatch-pick))
   (should (commandp 'gascity-sling-dispatch-refresh))
   (should (commandp 'gascity-sling-dispatch-target))
+  (should (commandp 'gascity-sling-dispatch-arg))
   (should (commandp 'gascity-sling-dispatch-recipe))
   (should (commandp 'gascity-sling-dispatch-run))
   (should (commandp 'gascity-sling-dispatch-preview))
@@ -1398,6 +1399,63 @@ unset target renders `Target: (none)'."
       (should (equal (plist-get (cdr setup) :scope)
                      (list :formula "do-work" :target "sess-7"
                            :arg nil))))))
+
+(ert-deftest gascity-test-sling-arg-edit-re-setups-in-place ()
+  "`A' reads the bead id / task text, re-settles THIS prefix with the
+edited arg in the scope and the current infix values carried as
+:value — the header reflects it immediately and a formula dispatch
+uses the edited arg without quitting and re-seeding via point.  The
+edited arg lives in scope, so it survives a formula re-pick (-f)."
+  ;; The header renders the unset arg's hint and an edited arg.
+  (should (string-match-p
+           "Arg: (none — point at a bead or convoy)"
+           (nth 1 (gascity-sling--scope-info
+                   (list :formula nil :target nil :arg nil)))))
+  (should (string-match-p
+           "Arg: gce-9"
+           (nth 1 (gascity-sling--scope-info
+                   (list :formula nil :target nil :arg "gce-9")))))
+  ;; Pressing A re-settles with the read arg in the scope, values
+  ;; carried.
+  (let (prompts setup)
+    (cl-letf (((symbol-function 'read-string)
+               (lambda (prompt &optional init _hist _def _inh)
+                 (setq prompts (list prompt init)) "gce-9"))
+              ((symbol-function 'transient-setup)
+               (lambda (prefix _sfx _lay &rest args)
+                 (setq setup (cons prefix args))))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work" :target "sess-1"
+                                :arg nil)))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) '("--var a=1"))))
+      (call-interactively #'gascity-sling-dispatch-arg)
+      (should (equal prompts
+                     '("Bead id or task text: " nil)))
+      (should (eq (car setup) 'gascity-sling-dispatch))
+      (should (equal (plist-get (cdr setup) :scope)
+                     (list :formula "do-work" :target "sess-1"
+                           :arg "gce-9")))
+      (should (equal (plist-get (cdr setup) :value) '("--var a=1")))))
+  ;; The edited arg is scope state: an -f re-pick re-setups with it
+  ;; intact (the dispatch then sees the edited arg, not the stale
+  ;; at-point seed).
+  (let (read setup)
+    (cl-letf (((symbol-function 'gascity-sling-formula--read-formula)
+               (lambda () (setq read t) "do-work"))
+              ((symbol-function 'transient-setup)
+               (lambda (prefix _sfx _lay &rest args)
+                 (setq setup (cons prefix args))))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :formula nil :target "sess-1"
+                                :arg "gce-9")))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) nil)))
+      (call-interactively #'gascity-sling-dispatch-pick)
+      (should read)
+      (should (equal (plist-get (cdr setup) :scope)
+                     (list :formula "do-work" :target "sess-1"
+                           :arg "gce-9"))))))
 
 (ert-deftest gascity-test-sling-dispatch-target-fallback ()
   "AC-3: dispatch with an unset target reads it exactly once via

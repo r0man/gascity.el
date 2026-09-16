@@ -951,7 +951,8 @@ With a prefix argument, capture that many trailing LINES instead of the
 ;; vertically — header, Formula, Destination, Routing flags, Actions,
 ;; then the picked formula's full-width Variables section.  `-f' picks a
 ;; formula in place (the same prefix re-setups with the new scope); `-T'
-;; sets a visible target session; `s'/`p' sling or preview.  With a
+;; sets a visible target session; `A' edits the sling arg (bead id or
+;; task text) in place; `s'/`p' sling or preview.  With a
 ;; formula picked the formula path runs (validated vars, shape via
 ;; `gascity-formula--needs-convoy', routing flags ignored — they are
 ;; consumed only by the plain path); without one the plain flag path
@@ -1053,10 +1054,11 @@ routing plan instead of executing."
   (gascity-sling--run args t))
 
 (defconst gascity-sling--reserved-keys
-  '("f" "g" "T" "c" "a" "n" "m" "t" "s" "p" "r" "q")
+  '("f" "g" "T" "A" "c" "a" "n" "m" "t" "s" "p" "r" "q")
   "Every single letter statically bound in `gascity-sling-dispatch':
-the Formula group (`-f' pick, `g' refresh), the Destination `-T', the
-routing flags `-c -a -n -m -t' and the Actions (`s', `p', `r', `q').
+the Formula group (`-f' pick, `g' refresh), the Destination `-T' and
+`A' (arg edit), the routing flags `-c -a -n -m -t' and the Actions
+(`s', `p', `r', `q').
 The generated variable infix keys avoid exactly this list; it lives
 beside the layout it keys so a re-binding cannot silently collide
 (OQ-2), and a test asserts the two stay in sync.")
@@ -1096,7 +1098,8 @@ picked, REQ-A/REQ-B).  The generated infix keys avoid
               '("-f" "Pick formula…" gascity-sling-dispatch-pick)
               '("g" "Refresh catalog" gascity-sling-dispatch-refresh))
       (vector "Destination"
-              '("-T" "Target session…" gascity-sling-dispatch-target))
+              '("-T" "Target session…" gascity-sling-dispatch-target)
+              '("A" "Edit arg (bead/text)…" gascity-sling-dispatch-arg))
       (vector "Routing flags"
               '("-c" "Skip auto-convoy" "--no-convoy")
               '("-a" "Reassign (clear human assignee)" "--reassign")
@@ -1145,6 +1148,25 @@ like a re-pick.  The menu stays open."
                    :scope (transient-scope)
                    :value (transient-args 'gascity-sling-dispatch)))
 
+(transient-define-suffix gascity-sling-dispatch-arg ()
+  "Read the bead id / task text; show it in the header.
+The sling arg is seeded once at entry from the bead or convoy at
+point and is often nil (empty area under point) — this suffix sets it
+in place, so a formula dispatch can use the edited arg without
+quitting and re-invoking on the right row.  The set arg lives in the
+scope, so it also survives a formula re-pick; set var values carry
+across the re-setup like re-pick/refresh.  The plain path keeps its
+own read-string fallback — this is purely scope editing, not
+dispatch."
+  :transient t
+  (interactive)
+  (let ((arg (read-string "Bead id or task text: "
+                          (plist-get (transient-scope) :arg))))
+    (transient-setup 'gascity-sling-dispatch nil nil
+                     :scope (plist-put (copy-sequence (transient-scope))
+                                       :arg arg)
+                     :value (transient-args 'gascity-sling-dispatch))))
+
 (transient-define-suffix gascity-sling-dispatch-target ()
   "Read the sling target with session completion; the header shows it.
 The read is synchronous but strictly user-initiated — it runs only on
@@ -1176,7 +1198,8 @@ The menu stays open."
   "Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 The scope plist `(formula target arg)' is seeded at entry: arg from
 the bead or convoy at point, target nil — never prompted up front
-(set it with `-T'; REQ-B) — and formula nil (`-f' picks in place and
+(set it with `-T', or edit the arg in place with `A'; REQ-B) — and
+formula nil (`-f' picks in place and
 re-renders this menu with a full-width Variables section, REQ-A).
 `s'/`p' dispatch: with a formula picked the formula path runs
 (validated vars, shape via `gascity-formula--needs-convoy', routing
