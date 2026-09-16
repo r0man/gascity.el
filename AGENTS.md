@@ -150,6 +150,13 @@ call the feature "done" until this pass has run; record the result in a
 `docs/qa/` dogfood report. ERT covers the mocked units; the tmux-Emacs
 TRAMP session is the acceptance gate.
 
+Run the pass through `scripts/e2e-harness.sh` (`. scripts/e2e-harness.sh`
+from the pass's shell, see `docs/qa/2026-09-16-e2e-harness-hardening.md`):
+its helpers wrap every emacs/emacsclient/tmux call in `timeout(1)`, verify
+`tmux has-session` before `send-keys`/`capture-pane`, and prefer batch emacs
+with hard iteration caps — a worker must never again hang 17h+ on an
+unbounded blocking call.
+
 ## Conventions
 
 - Everything is prefixed `gascity-`; one `gascity-command-<domain>.el` per gc
