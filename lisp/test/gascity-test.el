@@ -553,6 +553,66 @@ that keeps a decoded `false' (which gascity reads as nil) from becoming t."
     (should (equal (gascity-agent-socket a) "sock"))
     (should (eq (gascity-agent-running a) t))))
 
+(ert-deftest gascity-test-domain-named-sessions-derivation ()
+  "Named sessions derive from city-scoped, canonical `session list' rows.
+A named session is city-scoped (`rig' nil) and canonical (`name' equals
+`template'); awake is the session's running state; `mode' stays nil while
+gc exposes no mode in JSON.  Pool members (numbered names), rig sessions
+(rig-prefixed), and non-canonical rows are excluded."
+  (let* ((rows (gascity-domain-decode-list
+                'gascity-session
+                (vector
+                 ;; The materialized mayor: city-scoped, canonical, active.
+                 '((agent_name . "mayor") (name . "mayor") (template . "mayor")
+                   (state . "active") (work_dir . "/city") (session_name . "mayor"))
+                 ;; Rig-scoped: excluded even though name == template.
+                 '((agent_name . "gascity.el/gastown.nux") (name . "gastown.nux")
+                   (rig . "gascity.el") (template . "gastown.nux")
+                   (state . "active"))
+                 ;; Numbered pool member: template differs from name.
+                 '((agent_name . "bd.dog-1") (name . "bd.dog-1")
+                   (template . "bd.dog") (state . "active"))
+                 ;; City-scoped but non-canonical (renamed/suspended row).
+                 '((agent_name . "city-renamed") (name . "tm-xyz")
+                   (template . "mayor") (state . "suspended"))
+                 ;; The suspended-but-canonical named session: derived, asleep.
+                 '((agent_name . "sleeper") (name . "sleeper")
+                   (template . "sleeper") (state . "suspended")))))
+         (named (gascity-domain-named-sessions-from-sessions rows)))
+    (should (= (length named) 2))
+    (let ((mayor (nth 0 named)))
+      (should (gascity-named-session-p mayor))
+      (should (equal (gascity-named-session-identity mayor) "mayor"))
+      (should (gascity-named-session-awake mayor))
+      (should (equal (gascity-named-session-label mayor) "awake"))
+      (should (null (gascity-named-session-mode mayor)))
+      (should (equal (gascity-session-work-dir
+                      (gascity-named-session-session mayor))
+                     "/city")))
+    (let ((sleeper (nth 1 named)))
+      (should (equal (gascity-named-session-identity sleeper) "sleeper"))
+      (should-not (gascity-named-session-awake sleeper))
+      (should (equal (gascity-named-session-label sleeper) "asleep")))))
+
+(ert-deftest gascity-test-domain-named-sessions-empty ()
+  "An empty (or nil) decoded session list yields no named sessions."
+  (should (null (gascity-domain-named-sessions-from-sessions nil)))
+  (should (null (gascity-domain-named-sessions-from-sessions
+                 (gascity-domain-decode-list 'gascity-session [])))))
+
+(ert-deftest gascity-test-domain-named-sessions-no-second-decode ()
+  "The derivation consumes the already-decoded typed rows it is given.
+A synthesized object references the original row (no payload detour),
+and a mode in no way invented: the slot stays nil until gc fills it."
+  (let* ((session (gascity-domain-decode
+                   'gascity-session
+                   '((name . "mayor") (template . "mayor")
+                     (state . "active"))))
+         (named (car (gascity-domain-named-sessions-from-sessions
+                      (list session)))))
+    (should (eq (gascity-named-session-session named) session))
+    (should (null (gascity-named-session-mode named)))))
+
 (ert-deftest gascity-test-domain-decode-convoy-nested-progress ()
   "A convoy's nested `progress' object decodes into a `gascity-progress'.
 Exercises `beads-from-json''s recursion into a nested EIEIO class."
