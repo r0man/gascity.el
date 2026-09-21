@@ -59,6 +59,34 @@
 ;; consults; `fboundp'-guarded at the call site for older TRAMPs.
 (declare-function tramp-direct-async-process-p "tramp" (&rest args))
 
+;;; City targeting
+
+(defvar gascity-reader-city-args-function nil
+  "Function producing the leading city-targeting argv tokens, or nil.
+When non-nil, a function of no arguments returning a list of strings
+that both runners prepend to the argv of every gc invocation, or nil
+to leave gc's own auto-discovery in place (the default).
+
+The reader cannot `require' `gascity-context.el' (load-order cycle:
+context requires reader), so the value is installed by `gascity.el'
+after both modules load — normally `gascity-context-city-args'.  It
+is called in the CALLING buffer, whose `default-directory' the view
+factory pinned to the city root, before any buffer switch — the same
+discipline the executable capture already follows — and must never
+spawn gc: it runs on every UI path, timers and eldoc included.
+
+The tokens LEAD the argv: gc parses the global flag before the
+subcommand, and the error text built from the argv then names the
+real invocation.")
+
+(defun gascity-reader--city-args ()
+  "Return the city-targeting argv tokens for the current buffer, or nil.
+Calls `gascity-reader-city-args-function' — nil when unset or the
+function answers nil.  Both runners call this in the calling buffer
+before any buffer switch, next to the executable capture."
+  (let ((f gascity-reader-city-args-function))
+    (and f (funcall f))))
+
 ;;; Low-level invocation
 
 (defun gascity-reader--command (executable args &optional stderr)
@@ -312,10 +340,22 @@ command harvests as its own stdout — gc's \"JSON\" is then tmux chatter
 \(\"Invalid number format\", gce-desync).  The channel self-heals after
 one bad read, so a drained retry returns the real payload; a second
 parse failure signals as usual — real malformed gc output is never
-masked, and a local parse error (no shared channel) never retries."
-  (let ((full-args (if (member "--json" args)
-                       args
-                     (append args (list "--json")))))
+masked, and a local parse error (no shared channel) never retries.
+
+When `gascity-reader-city-args-function' is installed (gascity.el wires
+`gascity-context-city-args' into it), its tokens are prepended to ARGS
+first: the read explicitly targets the calling buffer's pinned city,
+and the error text below names that real argv
+(plans/sessions-list-city-targeting, D1/D2/D3)."
+  ;; The city-targeting tokens are captured HERE, in the calling
+  ;; buffer, before any buffer switch: `default-directory' is the
+  ;; pinned city root, and the drain/retry wrapper's error messages
+  ;; below are built from the prepended ARGS so they show the real
+  ;; argv (plans/sessions-list-city-targeting, D1/D3).
+  (let* ((args (append (gascity-reader--city-args) args))
+         (full-args (if (member "--json" args)
+                        args
+                      (append args (list "--json")))))
     (if (not (file-remote-p default-directory))
         (gascity-reader--read-1 args full-args)
       (condition-case nil
@@ -387,6 +427,11 @@ wedged channel process (gce-q84).  Locally the spawn itself signals
 below.  A directory probe error (unreachable host, dead connection)
 falls through to the spawn, whose own failure carries the real reason.
 
+The city-targeting tokens (see `gascity-reader-city-args-function')
+lead the argv here too, computed in the calling buffer before any
+buffer switch — the sentinel's error messages close over the prepended
+ARGS (D1/D2/D3).
+
 Runs where `default-directory' points: `:file-handler t' dispatches
 through TRAMP on a remote directory, so gc runs on that host
 \(`gascity-executable' resolved connection-locally, as in
@@ -408,7 +453,11 @@ through TRAMP on a remote directory, so gc runs on that host
                                    default-directory)))
         nil)
     (with-connection-local-variables
-     (let* ((full-args (if (member "--json" args)
+     ;; `args' is shadowed with the city-targeting tokens prepended: the
+     ;; sentinel's error text (which closes over this binding) then shows
+     ;; the real argv, and `full-args' is built from it (D1).
+     (let* ((args (append (gascity-reader--city-args) args))
+            (full-args (if (member "--json" args)
                            args
                          (append args (list "--json"))))
             (output "")

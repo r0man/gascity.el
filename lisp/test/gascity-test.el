@@ -83,6 +83,96 @@ JSON still signals."
   (should-error (gascity-reader-parse-json "tmux chatter, no JSON at all")
                 :type 'gascity-json-parse-error))
 
+;;; reader city targeting (plans/sessions-list-city-targeting, step 1)
+
+(defun gascity-test--reader-ok-run (_args)
+  "A `gascity-reader-run' stub answering a minimal successful payload."
+  (list :exit-code 0 :stdout "{\"ok\":true}" :stderr "" :executable "gc"))
+
+(ert-deftest gascity-test-reader-city-args-pinned-buffer ()
+  "A city-pinned buffer's sync read leads with --city <root> (AC-1)."
+  (let (argv)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (args) (setq argv args)
+                 (list :exit-code 0 :stdout "{\"ok\":true}" :stderr ""
+                       :executable "gc")))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (should (equal (gascity-reader-read "status") '((ok . t)))))
+    (should (equal argv '("--city" "/tmp/fake-city/" "status" "--json"))))))
+
+(ert-deftest gascity-test-reader-city-args-outside-city ()
+  "Outside any city the read is unchanged: no --city tokens (D3)."
+  (let (argv)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (args) (setq argv args)
+                 (list :exit-code 0 :stdout "{\"ok\":true}" :stderr ""
+                       :executable "gc")))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) nil)))
+      (with-temp-buffer
+        (should (equal (gascity-reader-read "status") '((ok . t)))))
+    (should (equal argv '("status" "--json"))))))
+
+(ert-deftest gascity-test-reader-city-args-flag-leads-json-once ()
+  "The city flag leads the argv; --json is appended exactly once (AC-1)."
+  (let (argv)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (args) (setq argv args)
+                 (list :exit-code 0 :stdout "{\"ok\":true}" :stderr ""
+                       :executable "gc")))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (should (equal (gascity-reader-read "session" "list") '((ok . t))))
+      ;; The flag leads, whatever the caller passed...
+      (should (equal argv '("--city" "/tmp/fake-city/"
+                            "session" "list" "--json")))
+      ;; ...and a caller-supplied --json is not duplicated.
+      (setq argv nil)
+      (should (equal (gascity-reader-read "status" "--json") '((ok . t))))
+      (should (equal argv '("--city" "/tmp/fake-city/" "status" "--json")))))))
+
+(ert-deftest gascity-test-reader-city-args-remote-host-local-form ()
+  "Over TRAMP the --city argument is the host-local form (AC-5, D2).
+The flag's consumer is the host-side gc process, so the TRAMP prefix
+is stripped via `file-local-name'."
+  (let ((root "/ssh:fakehost:/home/roman/fake-city/")
+        (argv nil))
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (args) (setq argv args)
+                 (list :exit-code 0 :stdout "{\"ok\":true}" :stderr ""
+                       :executable "gc")))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) root)))
+      (let ((default-directory root))
+        (should (equal (gascity-reader-read "status") '((ok . t)))))
+      (should (equal argv '("--city" "/home/roman/fake-city/"
+                            "status" "--json"))))))
+
+(ert-deftest gascity-test-reader-city-args-async ()
+  "The async runner prepends the city tokens to its argv too (AC-2).
+The spawn is stubbed (it signals), so the test only inspects the argv
+`gascity-reader--command' was handed."
+  (let (argv)
+    (cl-letf (((symbol-function 'gascity-remote-find-executable)
+               (lambda (&optional _) "gc"))
+              ((symbol-function 'gascity-reader--command)
+               (lambda (_exe args &optional _stderr)
+                 (setq argv args)
+                 (list "/bin/true")))
+              ((symbol-function 'make-process)
+               (lambda (&rest _) (error "stubbed spawn")))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (should (null (gascity-reader-read-async
+                       '("status") #'ignore
+                       (lambda (_msg) t)))))
+      (should (equal argv '("--city" "/tmp/fake-city/"
+                            "status" "--json"))))))
+
 ;;; gascity-command-line / subcommand
 
 (ert-deftest gascity-test-status-command-line ()
