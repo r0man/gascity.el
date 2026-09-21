@@ -187,7 +187,10 @@ as QUALIFIER) — and outside any city it degrades to the host-only
 qualification (remote prefix, unchanged locally).  The buffer's
 `default-directory' is pinned to the city root governing DIR
 \(`gascity-context-pin-directory') — re-pinned on every call, healing a
-buffer that survived from another context.  So refresh timers, at-point
+buffer that survived from another context — and on a remote city the
+buffer gets the HISTFILE=/dev/null shell-history override
+\(`gascity-remote-silence-shell-history'), so TRAMP's inner shells stop
+appending to the host's ~/.tramp_history.  So refresh timers, at-point
 actions, and gc invocations keep resolving the city the view was opened
 for, and `dired'/`find-file'/`shell' from any such buffer default to
 that city's host.  The city root is computed once here and reused for
@@ -205,7 +208,13 @@ with a local `default-directory' — new views must come through here."
                (gascity-remote-buffer-name
                 base dir (or root (file-remote-p dir))))))
     (with-current-buffer buf
-      (setq default-directory dir))
+      (setq default-directory dir)
+      ;; Remote shells spawned from this view must not append to the
+      ;; host's ~/.tramp_history (plans/tramp-history-flood, W3):
+      ;; buffer-locally append HISTFILE=/dev/null to the environment
+      ;; TRAMP reads for spawns from this buffer.  Re-applied on every
+      ;; call, healing a buffer re-pinned from another context.
+      (gascity-remote-silence-shell-history buf))
     ;; project.el must never do I/O from this buffer's redisplay: the
     ;; pinned root is the project (see `gascity-context-install-project').
     (gascity-context-install-project buf dir)

@@ -47,6 +47,15 @@
 ;;   splices before the command, prepending the same profile
 ;;   directories to the PATH gc's children resolve against.
 ;;
+;; - History.  Every shell TRAMP opens on the host appends to the
+;;   growing ~/.tramp_history (`tramp-histfile-override').
+;;   `gascity-remote-silence-shell-history' — wired from the view
+;;   buffer factory — points HISTFILE at /dev/null in the buffers
+;;   gascity owns, by appending one entry to the buffer-local
+;;   `tramp-remote-process-environment' (gascity-remote.el's history
+;;   hygiene section documents the user-run truncation command for an
+;;   already-bloated file).
+;;
 ;; This module depends only on `gascity-custom' (the defcustom home),
 ;; so every other module can require it.
 
@@ -134,6 +143,58 @@ abort the wait; errors are swallowed, draining is advisory."
             (while (and (> rounds 0)
                         (accept-process-output proc 0.1 nil t))
               (setq rounds (1- rounds)))))))))
+
+;;; History hygiene
+
+(defconst gascity-remote-history-silencer "HISTFILE=/dev/null"
+  "The environment entry gascity appends to `tramp-remote-process-environment'.
+TRAMP overrides HISTFILE itself (`tramp-histfile-override', by default
+\"~/.tramp_history\"), so every shell it opens on the remote host — the
+connection's login shell and the inner shells spawned for the\n`make-process :file-handler' reads behind the auto-refreshing views —
+appends its history to a growing ~/.tramp_history.  Pointing HISTFILE
+at the null device silences those shells.  The override is applied
+buffer-locally in the buffers gascity owns
+\(`gascity-remote-silence-shell-history', wired from the view-buffer
+factory), never globally: the user's other TRAMP usage outside
+gascity.el buffers keeps the untouched global
+`tramp-remote-process-environment'.
+
+An existing ~/.tramp_history is left alone by this override — shrinking
+it is a USER-run command (never executed by this package, and never by
+any workflow or agent on the user's behalf):
+
+  : > ~/.tramp_history")
+
+(defun gascity-remote-history-environment (&optional environment)
+  "Return ENVIRONMENT (default the current `tramp-remote-process-environment')
+with `gascity-remote-history-silencer' appended.  The append — never a
+wholesale rebind — preserves every entry already present, including
+TRAMP's own defaults (\"HISTORY=\", \"ENV=''\", …), and is idempotent: a
+value that already carries the silencer passes through unchanged.  The
+result is the environment TRAMP reads when spawning a remote process
+from the calling buffer (its connection-local machinery applies the
+variable buffer-locally, exactly where gascity's views pin their
+`default-directory')."
+  (let ((environment (or environment tramp-remote-process-environment)))
+    (if (member gascity-remote-history-silencer environment)
+        environment
+      (append environment (list gascity-remote-history-silencer)))))
+
+(defun gascity-remote-silence-shell-history (&optional buffer)
+  "Silence remote shell history in BUFFER (default the current one).
+No-op for a local BUFFER.  Buffer-locally extends
+`tramp-remote-process-environment' with the HISTFILE silencer
+\(`gascity-remote-history-environment'): TRAMP reads that variable in
+the buffer a remote process is spawned from, so the override governs
+every inner shell gascity starts from its own view buffers — and only
+those.  A buffer-local value never reaches the user's other TRAMP
+buffers (a criteria-registered connection-local profile would: file
+visits apply those to every remote buffer on the host), and the global
+default keeps TRAMP's own entries untouched."
+  (with-current-buffer (or buffer (current-buffer))
+    (when (file-remote-p default-directory)
+      (setq-local tramp-remote-process-environment
+                  (gascity-remote-history-environment)))))
 
 ;;; Local ssh argv for a remote host
 

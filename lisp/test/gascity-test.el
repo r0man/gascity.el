@@ -6215,6 +6215,43 @@ timers keep hitting the same host and a local view coexists."
                              remote-prefix)))
           (when (buffer-live-p buf) (kill-buffer buf)))))))
 
+(ert-deftest gascity-test-remote-connection-local-histfile-override ()
+  "The HISTFILE=/dev/null override reaches TRAMP's remote process
+environment where gascity owns the buffer (REQ-004, plans/
+tramp-history-flood W3).  The view factory applies
+`gascity-remote-silence-shell-history' to every buffer it creates, so
+on a remote city the environment TRAMP reads when spawning — the
+buffer-local `tramp-remote-process-environment' — carries the
+silencer, appended and never rebound: every TRAMP default entry
+(\"HISTORY=\", \"ENV=''\", …) survives.  The global value — the
+user's other TRAMP usage — stays untouched, and a local buffer gets
+no override at all."
+  (let ((defaults (default-value 'tramp-remote-process-environment)))
+    ;; The pure append: TRAMP's defaults survive, and it is idempotent.
+    (should (equal (gascity-remote-history-environment defaults)
+                   (append defaults (list "HISTFILE=/dev/null"))))
+    (should (equal (gascity-remote-history-environment
+                    (gascity-remote-history-environment defaults))
+                   (gascity-remote-history-environment defaults)))
+    (gascity-test--with-mock-remote
+      ;; Applied where gascity owns a remote buffer — via the view
+      ;; factory, the one install site.
+      (let ((buf (gascity-view-get-buffer-create "*gascity-test-histfile*")))
+        (unwind-protect
+            (with-current-buffer buf
+              (should (member "HISTFILE=/dev/null"
+                              tramp-remote-process-environment))
+              ;; Append semantics: every default entry is still there.
+              (dolist (entry defaults)
+                (should (member entry tramp-remote-process-environment))))
+          (when (buffer-live-p buf) (kill-buffer buf))))
+      ;; The global value — the user's other TRAMP usage — is untouched.
+      (should (equal (default-value 'tramp-remote-process-environment)
+                     defaults))
+      ;; …and a local buffer gets no buffer-local override at all.
+      (let ((default-directory "/"))
+        (should-not (local-variable-p 'tramp-remote-process-environment))))))
+
 (ert-deftest gascity-test-remote-attach-spawns-local-ssh ()
   "Attaching from a remote view spawns a LOCAL ssh argv in a local dir.
 `beads-terminal-spawn' keeps its local-argv contract (gce-90t audit #4):

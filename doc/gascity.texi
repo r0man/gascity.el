@@ -1042,6 +1042,45 @@ A failed or errored state (error).
 Secondary, de-emphasized text (shadow).
 @end table
 
+@section TRAMP shell history hygiene
+
+@cindex TRAMP, remote shell history
+@cindex @file{~/.tramp_history}
+@cindex @code{tramp-remote-process-environment}
+Every shell TRAMP opens on a remote host records its history into
+@file{~/.tramp_history} on that host: TRAMP overrides @code{HISTFILE}
+itself (@code{tramp-histfile-override}, by default
+@file{~/.tramp_history}), so the connection's login shell and every
+inner shell spawned for the reads behind the auto-refreshing remote
+views append to the same file.  With several cities watched over TRAMP
+this can grow to hundreds of kilobytes.
+
+gascity.el points @code{HISTFILE} at the null device for its own remote
+buffers: the view buffer factory appends the entry
+@code{HISTFILE=/dev/null} to the buffer-local
+@code{tramp-remote-process-environment} of every buffer it creates
+(the environment TRAMP consults when spawning a remote process from
+that buffer).  The entry is appended, never rebound wholesale, so
+TRAMP's own default environment entries survive; and the override is
+scoped to gascity.el's buffers --- your other TRAMP usage outside
+gascity.el keeps the untouched global value.  If you want the
+silencing everywhere, set the same entry yourself:
+
+@example
+(with-eval-after-load 'tramp
+  (add-to-list 'tramp-remote-process-environment
+               "HISTFILE=/dev/null"))
+@end example
+
+The override does not shrink a @file{~/.tramp_history} that has already
+grown.  Truncating it is a user-run command on the remote host ---
+never something gascity.el (or any agent or workflow) executes for
+you:
+
+@example
+: > ~/.tramp_history
+@end example
+
 @c ====================================================================
 @node Contributing
 @chapter Contributing
