@@ -5574,6 +5574,44 @@ reaches the echo area when stderr is empty (plan D4)."
   (let ((err (list 'gascity-command-error "envelope text")))
     (should (equal (gascity-error-detail err) "envelope text"))))
 
+(ert-deftest gascity-test-remote-async-reads-pool-connections ()
+  "Ten async remote reads complete and leave at most two new live
+TRAMP connection processes behind (REQ-005 / AC-2's connection-count
+bound, automated over the mock-remote boundary where no ssh is
+involved: the pooled one-connection behavior is what the `make-process'
+:file-handler dispatch must not break).  This is the automation half of
+the W5 verification; the live-city manual procedure it proxies is
+documented in the README's remote-cities section."
+  (gascity-test--with-mock-remote
+    (skip-unless (executable-find "gc"))
+    (let* ((gascity-executable (executable-find "gc"))
+           ;; Live connection processes TRAMP owns for this Emacs.
+           (tramp-procs
+            (lambda ()
+              (cl-count-if
+               (lambda (p)
+                 (and (process-live-p p)
+                      (string-match-p "\\` *tramp/" (process-name p))))
+               (process-list))))
+           (before (funcall tramp-procs))
+           (done 0)
+           (pending 10))
+      (dotimes (_ 10)
+        ;; `cities' works from any directory -- no city context needed.
+        (gascity-reader-read-async '("cities")
+          (lambda (_payload) (setq done (1+ done) pending (1- pending)))
+          (lambda (_err) (setq pending (1- pending)))))
+      (let ((deadline (+ (float-time) 30)))
+        (while (and (> pending 0) (< (float-time) deadline))
+          (accept-process-output nil 0.1)))
+      ;; Every read completed through its callback, none errored.
+      (should (= pending 0))
+      (should (= done 10))
+      ;; Let transient spawns exit, then apply the AC bound: at most two
+      ;; new connection processes after a 10-read burst.
+      (sleep-for 2)
+      (should (<= (- (funcall tramp-procs) before) 2)))))
+
 (ert-deftest gascity-test-remote-connection-locked-p ()
   "`gascity-remote-connection-locked-p' is nil locally and tracks the
 per-connection \"locked\" property remotely (`tramp-locked' is gone in

@@ -156,6 +156,17 @@ Notes:
   connection, and the dashboard skips an auto-refresh tick while a load is
   still in flight; raise `gascity-status-auto-refresh-interval` on slow
   links.
+- Connection-count verification (live city): to confirm pooling on your
+  host, note the number of ssh connections first — `last | head`, the
+  sshd log, or simply `ps -eo args | grep -c '[s]sh'` — then open a
+  dashboard over `/ssh:HOST:…` and let it auto-refresh for at least 10
+  ticks, then count again. Expect **at most 2 new ssh connections**
+  total (normally zero: the burst rides the one connection Emacs opened
+  at setup). A fresh ssh login per refresh tick means TRAMP's
+  direct-async handler (which spawns a fresh ssh per read instead of
+  pooling) got enabled connection-locally. The same bound is asserted
+  in ERT over the mock-remote boundary
+  (`gascity-test-remote-async-reads-pool-connections`).
 
 ## Customization
 
