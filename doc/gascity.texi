@@ -1017,6 +1017,59 @@ path or @code{gascity-context-rig} to a rig name to override that
 resolution, and run @kbd{M-x gascity-context-clear-cache} to forget cached
 resolutions.
 
+@section Host-side shell history guard
+
+@cindex TRAMP, host shell history pollution
+@cindex shell history guard
+@cindex @file{~/.bashrc}
+Every connection TRAMP opens spawns a login shell on the remote host, and
+@command{sshd} sources @file{~/.bashrc} for non-interactive commands too
+(on many setups even @kbd{ssh host true} appends a line to
+@file{~/.bash_history}).  When @file{~/.bashrc} contains a multi-window
+@code{PROMPT_COMMAND} history trick (an @code{shopt -s histappend} block
+that runs @code{history -a} after every prompt), each of those shells also
+writes the login command into the history files.  With gascity.el's
+auto-refreshing remote views this can mean an entry per refresh tick.
+gascity.el does not write the history itself; this is host-side shell
+behavior, so the fix lives in your @file{~/.bashrc} and works regardless
+of gascity.el.
+
+Put the following guard at the very top of @file{~/.bashrc} on the host,
+before anything else --- before profile sourcing and in particular before
+the @code{PROMPT_COMMAND} history block:
+
+@example
+# Non-interactive shells spawned over ssh (one-shot @command{ssh}
+# commands, Emacs/TRAMP plumbing, remote cron, ...): record no history.
+if [[ $- != *i* && -n $SSH_CONNECTION ]]; then
+    unset HISTFILE
+    return 2>/dev/null || exit
+fi
+@end example
+
+@table @asis
+@item @code{$- != *i*}
+True for any shell without interactive mode: @command{sshd} runs one-shot
+commands and remote process execution through exactly such shells, and
+they source @file{~/.bashrc} even though they never show a prompt.
+@item @code{unset HISTFILE}
+With no history file recorded, nothing the shell runs is written to
+@file{~/.bash_history} (or anywhere else) when it exits.
+@item @code{return 2>/dev/null || exit}
+@file{~/.bashrc} is being @emph{sourced}, so @code{return} skips the rest
+of the file --- including the interactive multi-window
+@code{PROMPT_COMMAND} history trick further down.  The @code{|| exit}
+fallback covers the corner case of the file being executed rather than
+sourced.  Interactive shells ($- contains @code{i}) are unaffected and
+keep their normal history behavior.
+@end table
+
+You can verify the guard without Emacs: run @kbd{ssh localhost true} a few
+times and confirm @file{~/.bash_history} stops growing.  The guard does
+not touch existing history files; truncating a @file{~/.tramp_history}
+that has already grown is a user-run command, never something this package
+executes for you.
+
 @section Faces
 
 @cindex faces
