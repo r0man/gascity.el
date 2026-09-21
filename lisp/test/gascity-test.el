@@ -172,6 +172,44 @@ The spawn is stubbed (it signals), so the test only inspects the argv
                        (lambda (_msg) t)))))
       (should (equal argv '("--city" "/tmp/fake-city/"
                             "status" "--json"))))))
+;;; gascity-reader--failure-message (envelope + exit 9 characterization)
+
+(ert-deftest gascity-test-exit-error-message-exit-9-hinted ()
+  "Exit 9 — the signal status Emacs reports for a SIGKILLed process —\ngets the characterization, never a bare `failed (exit 9)'."
+  (let ((msg (gascity-reader--failure-message
+              "gc" '("session" "list" "--json") 9 nil nil nil)))
+    (should (string-prefix-p "gc session list --json failed (exit 9 — " msg))
+    (should (string-match-p "SIGKILL" msg))
+    ;; The characterization names the leading cause and the remedy.
+    (should (string-match-p "auto-refresh superseded this read" msg))
+    (should (string-match-p "refresh to retry" msg))))
+
+(ert-deftest gascity-test-exit-error-message-exit-9-envelope-wins ()
+  "The exit-9 characterization is wording only: an envelope message on
+stdout outranks it (plan D5 — the hint applies when no envelope exists)."
+  (should (equal (gascity-reader--failure-message
+                  "gc" '("session" "list") 9
+                  "{\"ok\":false,\"message\":\"table not found: leases\"}"
+                  nil nil)
+                 "gc session list failed: table not found: leases (exit 9)")))
+
+(ert-deftest gascity-test-exit-error-message-other-codes-unchanged ()
+  "Exit codes other than 9 keep the plain failure text (no envelope, no
+stderr — the informational rungs contribute nothing)."
+  (should (equal (gascity-reader--failure-message
+                  "gc" '("session" "list") 1 nil nil nil)
+                 "gc session list failed (exit 1)"))
+  (should (equal (gascity-reader--failure-message
+                  "gc" '("status") 137 nil nil nil)
+                 "gc status failed (exit 137)")))
+
+(ert-deftest gascity-test-exit-error-message-remote-127-still-hinted ()
+  "The remote 126/127 setup hint keeps precedence over the exit-9 hint
+shape (127 is a shell exit, never a signal status)."
+  (let ((msg (gascity-reader--failure-message
+              "gc" '("session" "list") 127 nil "command not found" "/ssh:h:")))
+    (should (string-match-p "command not found" msg))
+    (should-not (string-match-p "exit 9" msg))))
 
 ;;; gascity-command-line / subcommand
 
@@ -5086,6 +5124,127 @@ payload."
       (should-error (gascity-reader-read "status")
                     :type 'gascity-json-parse-error)
       (should (= runs 1)))))
+
+;;; gc's JSON error envelope on failure (plan D4, AC-3)
+
+(defun gascity-test--read-1-failure (stdout &optional stderr)
+  "Signal through `gascity-reader--read-1' with a stubbed gc run.
+`gascity-reader-run' is stubbed to a nonzero exit carrying STDOUT and
+STDERR; return the signalled error data (SYMBOL MESSAGE . PLIST)."
+  (let ((default-directory temporary-file-directory))
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (_args)
+                 (list :exit-code 1 :stdout stdout :stderr (or stderr "")
+                       :executable "gc"))))
+      (should-error (gascity-reader--read-1
+                     '("session" "list") '("session" "list" "--json"))
+                    :type 'gascity-command-error))))
+
+(ert-deftest gascity-test-reader-envelope-top-level-message ()
+  "A top-level envelope message becomes the failure text and :message."
+  (let ((err (gascity-test--read-1-failure
+              "{\"ok\":false,\"message\":\"table not found: leases\"}")))
+    (should (equal (cadr err)
+                   "gc session list failed: table not found: leases (exit 1)"))
+    (should (equal (plist-get (cddr err) :message)
+                   "table not found: leases"))
+    ;; gascity-error-detail falls back to the condition message when the
+    ;; stderr is empty — the envelope text surfaces verbatim.
+    (should (equal (gascity-error-detail err)
+                   "gc session list failed: table not found: leases (exit 1)"))))
+
+(ert-deftest gascity-test-reader-envelope-nested-error-message ()
+  "The reproduced envelope nests the message under an `error' object.
+That nested message drives the failure text the same way (plan D4)."
+  (let ((err (gascity-test--read-1-failure
+              "{\"ok\":false,\"error\":{\"code\":\"command_failed\",
+\"message\":\"not a city directory: /x\",\"exit_code\":1}}")))
+    (should (equal (cadr err)
+                   "gc session list failed: not a city directory: /x (exit 1)"))
+    (should (equal (plist-get (cddr err) :message)
+                   "not a city directory: /x"))))
+
+(ert-deftest gascity-test-reader-envelope-generic-message-stderr-wins ()
+  "A generic envelope message loses to a specific stderr.
+gc nests its sentinel phrase (\"command failed; see stderr for
+diagnostics\") in the envelope while the actionable text goes to
+stderr (plan D4): the message shows the stderr, but :message still
+records the envelope text (gascity-error-detail keeps its stderr-first
+preference either way)."
+  (let ((err (gascity-test--read-1-failure
+              "{\"ok\":false,\"error\":{\"code\":\"command_failed\",
+\"message\":\"command failed; see stderr for diagnostics\"}}"
+              "not a city directory: /x")))
+    (should (equal (cadr err)
+                   "gc session list failed: not a city directory: /x (exit 1)"))
+    (should (equal (plist-get (cddr err) :message)
+                   "command failed; see stderr for diagnostics"))
+    (should (equal (gascity-error-detail err) "not a city directory: /x"))))
+
+(ert-deftest gascity-test-reader-envelope-non-string-and-garbage ()
+  "Non-string envelope values and non-JSON stdout degrade to bare exit text.
+Both `message' and `error' carrying non-strings, a vector payload, and
+garbage stdout must never crash the failure path (plan D4)."
+  (dolist (stdout (list "{\"ok\":false,\"error\":3,\"message\":\"\"}"
+                        "{\"ok\":false,\"error\":[1,2]}"
+                        "[1,2]"
+                        "not json at all"
+                        ""))
+    (let ((err (gascity-test--read-1-failure stdout)))
+      (should (equal (cadr err) "gc session list failed (exit 1)"))
+      (should (null (plist-get (cddr err) :message))))))
+
+(ert-deftest gascity-test-reader-envelope-empty-message ()
+  "An empty envelope message is not a message: bare exit text stays."
+  (let ((err (gascity-test--read-1-failure
+              "{\"ok\":false,\"message\":\"\",\"error\":{\"message\":\"\"}}")))
+    (should (equal (cadr err) "gc session list failed (exit 1)"))
+    (should (null (plist-get (cddr err) :message)))))
+
+(ert-deftest gascity-test-reader-envelope-extraction-direct ()
+  "`gascity-reader--error-envelope-message' extracts without a process.
+Top-level and nested messages return; generic, empty, and absent
+messages return nil, as do vector payloads and parse failures."
+  (should (equal (gascity-reader--error-envelope-message
+                  "{\"ok\":false,\"message\":\"m\"}")
+                 "m"))
+  (should (equal (gascity-reader--error-envelope-message
+                  "{\"error\":{\"message\":\"n\"}}")
+                 "n"))
+  (should (null (gascity-reader--error-envelope-message "{\"error\":3}")))
+  (should (null (gascity-reader--error-envelope-message "{nope")))
+  (should (null (gascity-reader--error-envelope-message "[1,2]")))
+  (should (null (gascity-reader--error-envelope-message ""))))
+
+(ert-deftest gascity-test-local-reader-read-async-envelope-error ()
+  "The async sentinel reports the envelope message in its errback text.
+A local run that exits nonzero with an envelope on stdout produces the
+same `gc <args> failed: <msg> (exit N)' text the sync path builds
+(plan D4)."
+  (let ((default-directory temporary-file-directory)
+        (gascity-executable "/bin/sh")
+        (result (list nil)))
+    (gascity-reader-read-async
+     '("-c" "echo '{\"ok\":false,\"message\":\"table not found: leases\"}'; exit 1"
+       "--json")
+     (lambda (_data) (setcar result :called))
+     (lambda (msg) (setcar result msg)))
+    (should (equal (gascity-test--wait-for result)
+                   "gc -c echo '{\"ok\":false,\"message\":\"table not found: leases\"}'; exit 1 --json failed: table not found: leases (exit 1)"))))
+
+(ert-deftest gascity-test-error-detail-preference ()
+  "`gascity-error-detail' prefers non-empty :stderr over the message.
+An empty or missing :stderr falls through to the condition message,
+which is how a failure text that embeds the envelope message still
+reaches the echo area when stderr is empty (plan D4)."
+  (let ((err (list 'gascity-command-error "envelope text"
+                   :stderr "specific stderr\n")))
+    (should (equal (gascity-error-detail err) "specific stderr")))
+  (let ((err (list 'gascity-command-error "envelope text"
+                   :stderr "\n")))
+    (should (equal (gascity-error-detail err) "envelope text")))
+  (let ((err (list 'gascity-command-error "envelope text")))
+    (should (equal (gascity-error-detail err) "envelope text"))))
 
 (ert-deftest gascity-test-remote-connection-locked-p ()
   "`gascity-remote-connection-locked-p' is nil locally and tracks the
