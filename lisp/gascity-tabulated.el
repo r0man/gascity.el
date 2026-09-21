@@ -873,7 +873,7 @@ while visible; `W' toggles that live.
 \\{gascity-session-list-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
-        [("Agent" 26 t) ("Rig" 14 t) ("State" 9 t)
+        [("Agent" 40 t) ("Rig" 14 t) ("State" 9 t)
          ("Provider" 9 t) ("Working dir" 40 t)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Agent" nil))
