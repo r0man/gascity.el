@@ -375,8 +375,14 @@ output.  Signals `gascity-validation-error' when validation fails and
   (let* ((cmd-line (gascity-command-line command))
          (cmd-string (mapconcat #'shell-quote-argument cmd-line " "))
          ;; cmd-line starts with the executable; gascity-reader-run
-         ;; re-adds it, so hand it only the argument tail.
-         (run (gascity-reader-run (cdr cmd-line)))
+         ;; re-adds it, so hand it only the argument tail — prepended
+         ;; with the explicit city-targeting tokens: this is the one
+         ;; call site outside the two reader wrappers, and action verbs
+         ;; run in the city-pinned calling buffer, so the hook answers
+         ;; here exactly as it does for the read paths (a bang function
+         ;; must never silently hit a co-hosted city's store).
+         (run (gascity-reader-run (append (gascity-reader--city-args)
+                                          (cdr cmd-line))))
          (exit-code (plist-get run :exit-code))
          (execution (gascity-command-execution
                      :command command

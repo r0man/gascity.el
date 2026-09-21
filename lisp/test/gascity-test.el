@@ -172,6 +172,41 @@ The spawn is stubbed (it signals), so the test only inspects the argv
                        (lambda (_msg) t)))))
       (should (equal argv '("--city" "/tmp/fake-city/"
                             "status" "--json"))))))
+
+(ert-deftest gascity-test-command-execute-city-args ()
+  "A bang-function sync read through the command layer leads with
+--city too (RF1): `gascity-command-execute' is the one call site
+outside the two reader wrappers, and action verbs run in the
+city-pinned calling buffer, so it must inherit the targeting."
+  (let (argv)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (args) (setq argv args)
+                 (list :exit-code 0 :stdout "{}" :stderr ""
+                       :executable "gc")))
+              ((symbol-function 'gascity-command-parse)
+               (lambda (_command _execution) 'parsed))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (gascity-command-execute (gascity-command-reload)))
+      (should (equal argv '("--city" "/tmp/fake-city/" "reload"))))))
+
+(ert-deftest gascity-test-command-execute-no-city-unchanged ()
+  "Outside any city the command-layer read is unchanged: no --city
+tokens (D3, RF1's non-city boundary)."
+  (let (argv)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (lambda (args) (setq argv args)
+                 (list :exit-code 0 :stdout "{}" :stderr ""
+                       :executable "gc")))
+              ((symbol-function 'gascity-command-parse)
+               (lambda (_command _execution) 'parsed))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) nil)))
+      (with-temp-buffer
+        (gascity-command-execute (gascity-command-reload)))
+      (should (equal argv '("reload"))))))
+
 ;;; gascity-reader--failure-message (envelope + exit 9 characterization)
 
 (ert-deftest gascity-test-exit-error-message-exit-9-hinted ()
