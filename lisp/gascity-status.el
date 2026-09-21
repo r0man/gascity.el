@@ -18,7 +18,11 @@
 ;;   `gc session list --json'  each agent's worktree (`work_dir', for
 ;;                             Dired), tmux target (`session_name', for
 ;;                             attach), pool `template', and the
-;;                             active/suspended session counts;
+;;                             active/suspended session counts — and the
+;;                             raw rows the named-session derivation
+;;                             (`gascity-domain-named-sessions-from-sessions')
+;;                             consumes, decoded once and shared with the
+;;                             join map;
 ;;   `gc agent list --json'    the *configured* agents — the only surface
 ;;                             carrying each pool's {min,max}, which turns
 ;;                             a flat run of members into a group.
@@ -30,13 +34,15 @@
 ;; view — sessions are trusted independently — and a failed `gc agent
 ;; list' costs only the grouping, not the rows.
 ;;
-;; TODO (gc-side JSON gap, gce-8ey): `gc status' also prints an API URL
-;; and a \"Named sessions\" block (each named agent's mode — always /
-;; on_demand — and its awake state).  Neither is reachable from `--json':
-;; the API URL appears in no payload, and `gc agent list --json' reports
-;; `mode', `wake_mode' and `idle_timeout' as null.  Both render here as
-;; soon as gc exposes them; hand-parsing city.toml or .gc/system/packs is
-;; not an option — the reconciler owns and rewrites those files.
+;; TODO (gc-side JSON gap, gce-8ey): the named-sessions half of this gap
+;; is closed via derived data — the dashboard renders named sessions from
+;; the `gc session list' rows it already fetches
+;; (`gascity-status--named-sessions-vnode'), and the `(mode)' suffix
+;; renders the moment gc exposes a mode in a JSON payload (absent
+;; outright in gc 1.4.2).  The API URL half remains: it appears in no
+;; payload and cannot be derived; it renders here as soon as gc exposes
+;; it.  Hand-parsing city.toml or .gc/system/packs is not an option — the
+;; reconciler owns and rewrites those files.
 ;;
 ;; Rig sections and pool groups are collapsible (their collapse state
 ;; lifted to the root component, so it survives an in-place refresh).
@@ -112,12 +118,26 @@ SESSIONS is the vector (or list) from `gc session list'; each row is decoded
 into a `gascity-session' and keyed on its qualified name
 \(`gascity-session-qualified-name', which prefers `agent_name' — always the
 qualified name — over the volatile `name').  The qualified name is the
-reliable join key against a status agent's `qualified_name'."
+reliable join key against a status agent's `qualified_name'.
+
+Thin wrapper over `gascity-status--session-map-rows': callers that already
+hold the decoded `gascity-session' rows (the dashboard, which decodes once
+for the map and the named-session derivation alike) use that directly."
+  (gascity-status--session-map-rows
+   (gascity-domain-decode-list 'gascity-session sessions)))
+
+(defun gascity-status--session-map-rows (session-rows)
+  "Return the join map for already-decoded SESSION-ROWS.
+Same map `gascity-status--session-map' builds, but over the typed
+`gascity-session' list a caller decoded once — the dashboard decodes the
+`gc session list' payload a single time and feeds both this map and the
+named-session derivation (no double decode, no plist detour; plan-review
+finding F2)."
   (let ((map (make-hash-table :test 'equal)))
     (seq-do (lambda (s)
               (let ((key (gascity-session-qualified-name s)))
                 (when key (puthash key s map))))
-            (gascity-domain-decode-list 'gascity-session sessions))
+            session-rows)
     map))
 
 (defun gascity-status--agent (agent rig-name session-map socket)
@@ -442,8 +462,23 @@ describe the `gc session list' load so a one-line hint can warn that
 COLLAPSED-POOLS are the app's lists of collapsed rig and pool names; each
 section is told whether it is collapsed (lifted there so the keymap can
 toggle the section at point — see `gascity-status--toggle-rig' and
-`gascity-status--toggle-pool')."
-  (let* ((session-map (gascity-status--session-map (or sessions [])))
+`gascity-status--toggle-pool').
+
+The session rows are decoded ONCE here: the typed list feeds both the
+qualified-name join map and the named-session derivation
+(`gascity-domain-named-sessions-from-sessions'), so the named-sessions
+section renders from the same read the header counts come from.  When the
+session load is pending or failed with no snapshot in hand, SESSIONS is nil
+and both the map and the derivation come up empty — the sessions note says
+why and the named-sessions section simply does not render."
+  (let* (;; Decode the `gc session list' rows once: the typed objects feed
+         ;; the session map (worktree/tmux enrichment) and the named-session
+         ;; derivation alike (plan-review finding F2).
+         (session-rows
+          (gascity-domain-decode-list 'gascity-session (or sessions [])))
+         (session-map (gascity-status--session-map-rows session-rows))
+         (named-sessions
+          (gascity-domain-named-sessions-from-sessions session-rows))
          ;; Render must never run a synchronous gc: the payload carries
          ;; the city name, so the gc-backed fallback is off (`no-probe').
          (socket (gascity-resolve-tmux-socket (alist-get 'city_name status)
@@ -466,6 +501,10 @@ toggle the section at point — see `gascity-status--toggle-rig' and
         (gascity-status--agent-group-vnodes
          (gascity-status--group-agents city-agents templates session-map)
          nil session-map socket collapsed-pools)))
+     ;; The CLI's "Named sessions" block sits between the city agents and
+     ;; the rigs; nil (nothing derived, or no session data yet) renders
+     ;; nothing, so the section never blanks or unmounts its neighbors.
+     (gascity-status--named-sessions-vnode named-sessions socket)
      ;; `:spacing 1' renders a blank line between rig groups for visual
      ;; separation; the keyed `vui-list' still reconciles each rig in place,
      ;; so collapse state and point survive a refresh.
@@ -504,6 +543,54 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
     ('pending
      (vui-text "  Sessions loading — d/t available once ready"
                :face 'gascity-dim))))
+
+(defun gascity-status--named-session-row (named socket)
+  "Return a row vnode for NAMED, a `gascity-named-session'.
+Mirrors `gc status''s \"mayor                   awake (always)\": the
+identity, the CLI-shaped awake/asleep token
+(`gascity-named-session-label'), and the mode in parentheses when gc
+exposes it in JSON (absent outright in gc 1.4.2, so usually nothing).
+The row is stamped with the action `gascity-agent' — enriched from
+NAMED's own `gascity-session' row (always set by the derivation) plus
+the tmux SOCKET — so the standard text
+properties and action keys (`d'/`t'/RET/`i'/`M'/`s'/`K'/`w'/`D') act on
+it like on any agent row."
+  (let* ((identity (gascity-named-session-identity named))
+         (session (gascity-named-session-session named))
+         (awake (gascity-named-session-awake named))
+         (mode (gascity-named-session-mode named))
+         ;; The action object: the derivation guarantees the session slot,
+         ;; so the row always carries an actionable object at point.
+         (obj (gascity-agent-from-session session socket)))
+    (vui-text (format "  %s %s%s"
+                      identity
+                      (gascity-named-session-label named)
+                      (if mode (format " (%s)" mode) ""))
+              :face (gascity-section-state-face awake)
+              'gascity-agent obj)))
+
+(defun gascity-status--named-sessions-vnode (named-sessions socket)
+  "Return the named-sessions section vnode, or nil when there is nothing to show.
+NAMED-SESSIONS is the `gascity-domain-named-sessions-from-sessions'
+derivation over the dashboard's decoded `gc session list' rows.  A nil or
+empty derivation — no canonical city-scoped row, which is also what a
+pending or failed session load with no snapshot in hand yields — returns
+nil, so nothing unmounts (the stale-while-revalidate rule: the section's
+absence must never blank its neighbors).  Otherwise this is a dim
+\"Named sessions\" header, one row per derived object, and — while any row
+lacks a mode, i.e. while gc exposes none in JSON — the single gap
+footnote the CLI's `(always)' suffix hangs on (gce-8ey)."
+  (when named-sessions
+    (vui-vstack
+     (vui-text "Named sessions" :face 'gascity-dim 'gascity-section t)
+     (vui-list named-sessions
+               (lambda (named)
+                 (gascity-status--named-session-row named socket))
+               (lambda (named)
+                 (or (gascity-named-session-identity named) "?")))
+     (unless (seq-every-p #'gascity-named-session-mode named-sessions)
+       (vui-text "  mode unavailable from gc JSON (gce-8ey)"
+                 :face 'gascity-dim)))))
 
 ;;; Components
 

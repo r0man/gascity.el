@@ -32,13 +32,16 @@
 ;; through unchanged, whereas the bare-boolean coercion `(not (eq v :json-false))'
 ;; would turn gascity's nil (a decoded `false') into t.
 ;;
-;; `gascity-agent' is the one synthesized type.  An "agent" as the views act
-;; on it (open its worktree, attach its tmux) is not a single `gc' payload: it
-;; merges a `gc session list' row (worktree, tmux name) with, on the
-;; dashboards, a `gc status' agent entry (running state) plus the resolved tmux
-;; socket.  So it is assembled by builders (`gascity-agent-from-session' and
-;; the status board's join) rather than decoded directly; its slots still
-;; carry the contract so the type is uniform with the rest.
+;; Two types here are synthesized, never decoded from a single payload.  An
+;; "agent" as the views act on it (open its worktree, attach its tmux) merges
+;; a `gc session list' row (worktree, tmux name) with, on the dashboards, a
+;; `gc status' agent entry (running state) plus the resolved tmux socket — so
+;; `gascity-agent' is assembled by builders (`gascity-agent-from-session' and
+;; the status board's join).  For the same reason a city's named session (a
+;; configured `[[named_session]]') has no dedicated `gc --json' payload: it
+;; is derived from the already-decoded `gc session list' rows by
+;; `gascity-domain-named-sessions-from-sessions'.  Both still carry the slot
+;; contract so the types are uniform with the rest.
 ;;
 ;; The "object at point" is one of these typed instances (or a bead-id string,
 ;; whose detail view belongs to beads.el).  `gascity-at-point-visit' is the
@@ -196,6 +199,37 @@ its tmux session, open its detail view.  Synthesized — it merges a
 agent entry (running) plus the resolved tmux socket — so it is built by
 `gascity-agent-from-session' and the status board's join rather than decoded
 from a single payload.")
+
+;;; Named session — synthesized from `gc session list' rows
+
+(defclass gascity-named-session ()
+  ((identity
+    :initarg :identity :initform nil :type (or null string) :json-key identity
+    :accessor gascity-named-session-identity
+    :documentation "The configured named session's block name — the
+identity the CLI prints in its `Named sessions:' block, which a
+materialized row carries as its canonical `name'.")
+   (awake
+    :initarg :awake :initform nil :type (or null boolean)
+    :accessor gascity-named-session-awake
+    :documentation "Non-nil when the materialized session is active.")
+   (mode
+    :initarg :mode :initform nil :type (or null string) :json-key mode
+    :accessor gascity-named-session-mode
+    :documentation "\"always\"/\"on_demand\" when gc exposes the mode in a
+JSON payload.  Absent outright in gc 1.4.2, so nil today; the slot renders
+the moment gc fills it (gce-8ey).")
+   (session
+    :initarg :session :initform nil :type (or null gascity-session)
+    :accessor gascity-named-session-session
+    :documentation "The materialized `gascity-session' row this object was
+derived from, when one exists.  A never-materialized named session has no
+row and cannot be seen from any JSON surface."))
+  :documentation "A city's named session: a configured `[[named_session]]'
+that gc materializes as an always-on/on-demand agent.  Synthesized — like
+`gascity-agent', never decoded directly from a payload — by the pure
+derivation `gascity-domain-named-sessions-from-sessions' over the
+dashboard's already-decoded `gc session list' rows.")
 
 ;;; Convoy — `gc convoy list' -> `convoys' vector (with nested progress)
 
@@ -456,6 +490,33 @@ SOCKET (the city's tmux -L socket) is recorded for attach."
                  :session-name (gascity-session-session-name session)
                  :socket socket
                  :running (gascity-session-running-p session)))
+
+(defun gascity-domain-named-sessions-from-sessions (sessions)
+  "Derive the city's named sessions from the decoded SESSIONS rows.
+SESSIONS is a list of typed `gascity-session' objects (the `gc session
+list' payload, already decoded — no second decode, no payload detour).
+A row names a named session when it is city-scoped (`rig' nil) and
+canonical (`name' equals `template': the identity a configured
+`[[named_session]]' materializes under; pool members carry numbered
+names and rig sessions rig-prefixed ones, so both are excluded).  Each
+hit becomes a `gascity-named-session' with its identity, `awake'
+\(`gascity-session-running-p'), a nil `mode' until gc exposes the field
+in JSON, and the originating row.  A never-materialized named session
+has no row and cannot be seen from any JSON surface."
+  (cl-loop for session in sessions
+           for name = (gascity-session-name session)
+           when (and (null (gascity-session-rig session))
+                     (stringp name)
+                     (equal name (gascity-session-template session)))
+           collect (make-instance
+                    'gascity-named-session
+                    :identity name
+                    :awake (gascity-session-running-p session)
+                    :session session)))
+
+(cl-defmethod gascity-named-session-label ((named gascity-named-session))
+  "Return NAMED's CLI-shaped state token: \"awake\" or \"asleep\"."
+  (if (gascity-named-session-awake named) "awake" "asleep"))
 
 ;;; ============================================================
 ;;; At-point dispatch
