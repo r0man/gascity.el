@@ -252,8 +252,37 @@ malformed input."
 
 ;;; High-level reader
 
-(defun gascity-reader--exit-error-message (executable args exit-code stderr
-                                                      remote)
+(defconst gascity-reader--generic-envelope-message
+  "command failed; see stderr for diagnostics"
+  "gc's sentinel envelope message: the envelope's own text when the
+actionable diagnostic went to stderr instead (plan decision D4).  A
+specific stderr therefore outranks it in the failure message.")
+
+(defun gascity-reader--error-envelope-message (stdout)
+  "Return gc's JSON error envelope message from STDOUT, or nil.
+STDOUT is the standard output of a failed `gc' run.  When it parses as
+an error envelope — an object with a top-level `message' or a nested
+`error' object carrying `message' (the reproduced shape:
+\n{\"ok\":false,\"error\":{\"code\":…,\"message\":…}}) — return that
+message as a string, nil otherwise.  Every decoding accident degrades
+to nil: garbage or empty output, a parse failure, a vector payload,
+non-string or empty message values, an `error' value that is not an
+object.  Parse failure of a *failure* output must never mask the
+exit-code message the caller falls back to."
+  (when (and (stringp stdout) (not (string-empty-p stdout)))
+    (let ((payload (condition-case nil
+                       (gascity-reader-parse-json stdout)
+                     (error nil)))
+          msg)
+      (when (consp payload)     ; nil and vector payloads are not envelopes
+        (setq msg (cdr (assq 'message payload)))
+        (unless (and (stringp msg) (not (string-empty-p msg)))
+          (let ((err (cdr (assq 'error payload))))
+            (setq msg (and (consp err) (cdr (assq 'message err))))))
+        (and (stringp msg) (not (string-empty-p msg)) msg)))))
+
+(defun gascity-reader--failure-message (executable args exit-code stdout
+                                                 stderr remote)
   "Return the error message for EXECUTABLE run with ARGS exiting EXIT-CODE.
 On a remote directory a missing gc does not raise a spawn error —
 TRAMP hands the command line to the remote shell, which reports
@@ -262,17 +291,35 @@ non-executable).  When REMOTE (the remote identification captured at
 spawn time, since a sentinel may fire with an unrelated
 `default-directory') is non-nil and EXIT-CODE is one of those, surface
 the remote setup hint (`gascity-remote-spawn-error-hint') with the
-shell's own STDERR words as the reason; otherwise the plain
-\"gc … failed (exit N)\" message.  EXECUTABLE is likewise captured at
-spawn time (it may be a connection-local value)."
+shell's own STDERR words as the reason.
+
+Otherwise the text is \"gc <args> failed: <reason> (exit N)\", with the
+reason picked by informativeness: the JSON error envelope's message
+(STDOUT, `gascity-reader--error-envelope-message') when present and
+not the generic sentinel phrase, else trimmed non-empty STDERR (the
+envelope can be generic while the actionable text went to stderr),
+else the envelope message as-is, else today's bare \"failed (exit N)\"
+when neither carries anything.  EXECUTABLE is captured at spawn time
+(it may be a connection-local value)."
   (if (and remote (memq exit-code '(126 127)))
       (gascity-remote-spawn-error-hint
        executable
        (let ((s (and (stringp stderr) (string-trim stderr))))
          (if (and s (not (string-empty-p s))) s (format "exit %s" exit-code)))
        remote 'gascity-executable)
-    (format "gc %s failed (exit %s)"
-            (mapconcat #'identity args " ") exit-code)))
+    (let* ((envelope (gascity-reader--error-envelope-message stdout))
+           (err (and (stringp stderr) (string-trim stderr)))
+           (reason (cond ((and envelope
+                               (not (equal envelope
+                                           gascity-reader--generic-envelope-message)))
+                          envelope)
+                         ((and err (not (string-empty-p err))) err)
+                         (envelope envelope))))
+      (if reason
+          (format "gc %s failed: %s (exit %s)"
+                  (mapconcat #'identity args " ") reason exit-code)
+        (format "gc %s failed (exit %s)"
+                (mapconcat #'identity args " ") exit-code)))))
 
 (defun gascity-reader--read-1 (args full-args)
   "Run `gc' with FULL-ARGS once and return the parsed JSON payload.
@@ -285,13 +332,19 @@ which retries it on a remote parse error."
          (stderr (plist-get result :stderr))
          (executable (plist-get result :executable)))
     (unless (eql exit-code 0)
-      (signal 'gascity-command-error
-              (list (gascity-reader--exit-error-message
-                     executable args exit-code stderr
-                     (file-remote-p default-directory))
-                    :command (mapconcat #'identity
-                                        (cons executable full-args) " ")
-                    :exit-code exit-code :stdout stdout :stderr stderr)))
+      (let ((envelope (gascity-reader--error-envelope-message stdout)))
+        (signal 'gascity-command-error
+                (list (gascity-reader--failure-message
+                       executable args exit-code stdout stderr
+                       (file-remote-p default-directory))
+                      :command (mapconcat #'identity
+                                          (cons executable full-args) " ")
+                      :exit-code exit-code :stdout stdout :stderr stderr
+                      ;; The envelope message, when stdout carried one —
+                      ;; even the generic sentinel phrase — so callers can
+                      ;; show the envelope text even when a specific stderr
+                      ;; won the human-readable message.
+                      :message envelope))))
     (gascity-reader-parse-json stdout)))
 
 (defun gascity-reader-read (&rest args)
@@ -301,7 +354,7 @@ unless already present.  Signals `gascity-command-error' on a
 non-zero exit and `gascity-json-parse-error' on malformed JSON.
 A 127/126 exit on a remote directory — the remote shell's \"command
 not found\" — signals with the remote setup hint (see
-`gascity-reader--exit-error-message').
+`gascity-reader--failure-message').
 
 On a remote directory a parse error is retried once, after draining the
 TRAMP channel (`gascity-remote-drain-connection'): the sync read shares
@@ -455,12 +508,13 @@ through TRAMP on a remote directory, so gc runs on that host
                           (gascity--log 'error "Async gc exited %s: %s" code
                                         (mapconcat #'identity args " ")))
                         (when errback
-                          ;; Stderr is not captured here; a remote 127
-                          ;; still gets the setup hint, with the exit
-                          ;; code as the reason.
+                          ;; The same envelope-aware message builder as the
+                          ;; sync path, fed with the accumulated output (and
+                          ;; no stderr: it is not captured here) — a remote
+                          ;; 127 still gets the setup hint via REMOTE.
                           (funcall errback
-                                   (gascity-reader--exit-error-message
-                                    executable args code nil remote))))
+                                   (gascity-reader--failure-message
+                                    executable args code output nil remote))))
                        (t
                         (condition-case perr
                             (let ((data (gascity-reader-parse-json output)))
