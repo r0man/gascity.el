@@ -252,6 +252,18 @@ malformed input."
 
 ;;; High-level reader
 
+(defconst gascity-reader-exit-9-hint
+  "process killed (SIGKILL) — exit 9 is the signal status Emacs reports for a torn-down gc process, not an exit code gc defines: typically an auto-refresh superseded this read or the view unmounted while it was in flight (the successor tears the process down), occasionally an external kill (OOM, timeout); refresh to retry"
+  "The characterization shipped for a bare exit 9 (see
+`gascity-reader--exit-error-message').  Derived from the gc source census
+(git gascity: no `os.Exit(9)' anywhere — gc's own failures exit 1, or a
+commandExitError code nothing sets to 9) and an Emacs reproduction:
+`delete-process'/`kill-process' on a live async read SIGKILL it and its
+sentinel then observes (signal . 9), which the failure branch renders as
+\"exit 9\".  On a remote sync read the /bin/sh wrapper would report a
+SIGKILLed gc as 137, so a raw 9 there still means the LOCAL process Emacs
+spawned was killed (ssh/transport teardown, OOM).")
+
 (defun gascity-reader--exit-error-message (executable args exit-code stderr
                                                       remote)
   "Return the error message for EXECUTABLE run with ARGS exiting EXIT-CODE.
@@ -262,17 +274,26 @@ non-executable).  When REMOTE (the remote identification captured at
 spawn time, since a sentinel may fire with an unrelated
 `default-directory') is non-nil and EXIT-CODE is one of those, surface
 the remote setup hint (`gascity-remote-spawn-error-hint') with the
-shell's own STDERR words as the reason; otherwise the plain
+shell's own STDERR words as the reason.  EXIT-CODE 9 — Emacs reports a
+SIGKILLed process by its signal number — gets the characterized
+`gascity-reader-exit-9-hint' instead of the bare exit code (a buffer
+must never show a bare \"failed (exit 9)\").  Otherwise the plain
 \"gc … failed (exit N)\" message.  EXECUTABLE is likewise captured at
 spawn time (it may be a connection-local value)."
-  (if (and remote (memq exit-code '(126 127)))
-      (gascity-remote-spawn-error-hint
-       executable
-       (let ((s (and (stringp stderr) (string-trim stderr))))
-         (if (and s (not (string-empty-p s))) s (format "exit %s" exit-code)))
-       remote 'gascity-executable)
+  (cond
+   ((and remote (memq exit-code '(126 127)))
+    (gascity-remote-spawn-error-hint
+     executable
+     (let ((s (and (stringp stderr) (string-trim stderr))))
+       (if (and s (not (string-empty-p s))) s (format "exit %s" exit-code)))
+     remote 'gascity-executable))
+   ((eql exit-code 9)
+    (format "gc %s failed (exit 9 — %s)"
+            (mapconcat #'identity args " ")
+            gascity-reader-exit-9-hint))
+   (t
     (format "gc %s failed (exit %s)"
-            (mapconcat #'identity args " ") exit-code)))
+            (mapconcat #'identity args " ") exit-code))))
 
 (defun gascity-reader--read-1 (args full-args)
   "Run `gc' with FULL-ARGS once and return the parsed JSON payload.

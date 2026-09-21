@@ -83,6 +83,35 @@ JSON still signals."
   (should-error (gascity-reader-parse-json "tmux chatter, no JSON at all")
                 :type 'gascity-json-parse-error))
 
+;;; gascity-reader--exit-error-message (exit 9 characterization)
+
+(ert-deftest gascity-test-exit-error-message-exit-9-hinted ()
+  "Exit 9 — the signal status Emacs reports for a SIGKILLed process —\ngets the characterization, never a bare `failed (exit 9)'."
+  (let ((msg (gascity-reader--exit-error-message
+              "gc" '("session" "list" "--json") 9 nil nil)))
+    (should (string-prefix-p "gc session list --json failed (exit 9 — " msg))
+    (should (string-match-p "SIGKILL" msg))
+    ;; The characterization names the leading cause and the remedy.
+    (should (string-match-p "auto-refresh superseded this read" msg))
+    (should (string-match-p "refresh to retry" msg))))
+
+(ert-deftest gascity-test-exit-error-message-other-codes-unchanged ()
+  "Exit codes other than 9 keep the plain failure text."
+  (should (equal (gascity-reader--exit-error-message
+                  "gc" '("session" "list") 1 "boom" nil)
+                 "gc session list failed (exit 1)"))
+  (should (equal (gascity-reader--exit-error-message
+                  "gc" '("status") 137 nil nil)
+                 "gc status failed (exit 137)")))
+
+(ert-deftest gascity-test-exit-error-message-remote-127-still-hinted ()
+  "The remote 126/127 setup hint keeps precedence over the exit-9 hint
+shape (127 is a shell exit, never a signal status)."
+  (let ((msg (gascity-reader--exit-error-message
+              "gc" '("session" "list") 127 "command not found" "/ssh:h:")))
+    (should (string-match-p "command not found" msg))
+    (should-not (string-match-p "exit 9" msg))))
+
 ;;; gascity-command-line / subcommand
 
 (ert-deftest gascity-test-status-command-line ()
