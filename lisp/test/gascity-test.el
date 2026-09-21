@@ -2091,6 +2091,239 @@ lose `work_dir'/`session_name', so `d'/`t' no-op with no explanation."
   (should (gascity-status--sessions-note-vnode 'error "boom"))
   (should (gascity-status--sessions-note-vnode 'pending nil)))
 
+;;; Status dashboard — named sessions section (gce-8ey named-sessions half)
+
+(defconst gascity-test--status-named-sessions-city
+  '((ok . t) (city_name . "bright-lights")
+    (controller . ((running . t)))
+    (rigs . [((name . "gascity.el") (path . "/rigs/gascity.el"))])
+    (agents . [((name . "watchdog") (qualified_name . "watchdog")
+                (scope . "city") (running . t))])
+    (summary . ((store_health . ((path . "/city/.beads/dolt")
+                                 (size_bytes . 227124795)
+                                 (live_rows . 1789)
+                                 (ratio_mb_per_row . 0.12695)
+                                 (threshold_mb_per_row . 1))))))
+  "A `gc status --json' payload with a City block, a rig, and store health.
+The watchdog agent keeps the mayor assertions unambiguous: only the
+named-sessions section derives a row from the `session list' payload.")
+
+(ert-deftest gascity-test-status-named-sessions-row ()
+  "A named-session row renders the CLI-shaped `IDENTITY awake' line.
+The row is stamped with the action `gascity-agent' — enriched from the
+session map, tmux socket attached — so the standard action keys (`d'/`t'/
+RET/`i') act on it like on any agent row (AGENTS.md keyboard-parity
+rule).  Mode stays nil until gc exposes it, so no `(...)' suffix
+renders (REQ-001's documented fallback clause)."
+  (let* ((session (gascity-domain-decode
+                   'gascity-session
+                   '((agent_name . "mayor") (name . "mayor") (template . "mayor")
+                     (state . "active") (work_dir . "/city")
+                     (session_name . "mayor"))))
+         (named (car (gascity-domain-named-sessions-from-sessions (list session))))
+         (smap (gascity-status--session-map-rows (list session)))
+         (row (gascity-status--named-session-row named smap "sock")))
+    (should (equal (gascity-test--vnode-text row) "  mayor awake"))
+    (let ((obj (plist-get (vui-vnode-text-properties row) 'gascity-agent)))
+      (should (gascity-agent-p obj))
+      (should (equal (gascity-agent-name obj) "mayor"))
+      (should (equal (gascity-agent-work-dir obj) "/city"))
+      (should (equal (gascity-agent-socket obj) "sock")))))
+
+(ert-deftest gascity-test-status-named-sessions-row-asleep-and-mode ()
+  "A suspended named session renders `asleep'; a mode renders the suffix.
+The `(mode)' suffix exists only for a mode gc exposes in JSON — gc 1.4.2
+exposes none, so an unadorned row renders without one."
+  (let* ((asleep (car (gascity-domain-named-sessions-from-sessions
+                       (list (gascity-domain-decode
+                              'gascity-session
+                              '((agent_name . "mayor") (name . "mayor")
+                                (template . "mayor") (state . "suspended")))))))
+         (row (gascity-status--named-session-row asleep nil nil)))
+    (should (equal (gascity-named-session-label asleep) "asleep"))
+    (should (equal (gascity-test--vnode-text row) "  mayor asleep"))
+    (should (null (gascity-named-session-mode asleep))))
+  (let* ((session (gascity-domain-decode 'gascity-session
+                   '((agent_name . "mayor") (name . "mayor")
+                     (template . "mayor") (state . "active"))))
+         (named (car (gascity-domain-named-sessions-from-sessions (list session)))))
+    (setf (gascity-named-session-mode named) "always")
+    (should (equal (gascity-test--vnode-text
+                    (gascity-status--named-session-row named nil nil))
+                   "  mayor awake (always)"))))
+
+(ert-deftest gascity-test-status-named-sessions-vnode ()
+  "The section vnode renders header, rows, and the mode gap footnote.
+A nil derivation renders no vnode at all — zero named sessions, or the
+pending/failed session load with no snapshot in hand — so the section's
+absence never unmounts its neighbors (stale-while-revalidate rule,
+REQ-003).  The gap footnote hangs exactly while some row lacks a mode
+(gc exposes none in JSON, gce-8ey)."
+  (should-not (gascity-status--named-sessions-vnode nil nil nil))
+  (should-not (gascity-status--named-sessions-vnode
+               (gascity-domain-named-sessions-from-sessions
+                (gascity-domain-decode-list 'gascity-session []))
+               nil nil))
+  (let* ((session (gascity-domain-decode 'gascity-session
+                   '((agent_name . "mayor") (name . "mayor") (template . "mayor")
+                     (state . "active") (work_dir . "/city"))))
+         (named (gascity-domain-named-sessions-from-sessions (list session)))
+         (text (gascity-test--vnode-text
+                (gascity-status--named-sessions-vnode named nil "sock"))))
+    (should (string-search "Named sessions" text))
+    (should (string-search "mayor awake" text))
+    (should (string-search "mode unavailable from gc JSON (gce-8ey)" text))
+    ;; Once every row carries a mode the footnote disappears.
+    (dolist (n named)
+      (setf (gascity-named-session-mode n) "on_demand"))
+    (should-not (string-search
+                 "mode unavailable"
+                 (gascity-test--vnode-text
+                  (gascity-status--named-sessions-vnode named nil "sock"))))))
+
+(ert-deftest gascity-test-status-named-sessions-section-renders ()
+  "The mounted dashboard renders the CLI's Named sessions block.
+A canonical city-scoped session row (the materialized mayor) renders the
+section between the City block and the rigs, with the action agent
+stamped on the row; a payload holding only pool/rig rows renders no
+section at all (REQ-003, REQ-005)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (vui-render-delay nil)
+        (status gascity-test--status-named-sessions-city))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--status-async-stub status-box sessions-box)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (funcall (car status-box) status)
+                ;; No canonical row -> no section; the neighbors render.
+                (funcall (car sessions-box)
+                         '((sessions . [((agent_name . "bd.dog-1")
+                                         (name . "bd.dog-1")
+                                         (template . "bd.dog")
+                                         (state . "active"))])))
+                (should-not (gascity-test--buffer-contains-p "Named sessions"))
+                (should (gascity-test--buffer-contains-p "Gas City:"))
+                ;; The materialized mayor renders the CLI-shaped row.
+                (funcall (car sessions-box)
+                         '((summary . ((active . 1) (suspended . 0)))
+                           (sessions . [((agent_name . "mayor")
+                                         (name . "mayor") (template . "mayor")
+                                         (state . "active") (work_dir . "/city")
+                                         (session_name . "mayor"))])))
+                (should (gascity-test--buffer-contains-p "Named sessions"))
+                (should (gascity-test--buffer-contains-p "mayor awake"))
+                ;; CLI ordering: the block sits between City and the rigs.
+                (goto-char (point-min))
+                (let ((city (search-forward "watchdog" nil t))
+                      (named (search-forward "Named sessions" nil t))
+                      (rig (search-forward "▼ gascity.el" nil t)))
+                  (should city)
+                  (should named)
+                  (should rig)
+                  (should (< city named rig)))
+                ;; The row carries the action agent: d/t/RET act on it.
+                (goto-char (point-min))
+                (search-forward "mayor awake")
+                (goto-char (match-beginning 0))
+                (should (gascity-agent-p (get-text-property (point) 'gascity-agent))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*"))))))))
+
+(ert-deftest gascity-test-status-named-sessions-read-failure-isolated ()
+  "A failing `gc session list' read costs only the named-sessions section.
+The status read is a separate async load: header, City block, rigs, and
+store health all keep rendering from their own payload while the
+named-sessions section disappears (no session snapshot in hand) and the
+sessions note says why — one failed read must never blank the
+dashboard (REQ-005's failure-isolation half)."
+  (let ((status-box (list nil))
+        (reject-box (list nil))
+        (vui-render-delay nil)
+        (status gascity-test--status-named-sessions-city))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("session" "list")) (setcar reject-box errback))
+                  ((equal args '("agent" "list"))
+                   (funcall callback '((agents . []))))
+                  (t (error "unexpected async args: %S" args)))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (funcall (car status-box) status)
+                (funcall (car reject-box) "boom")
+                ;; The rest of the dashboard renders from the status payload.
+                (should (gascity-test--buffer-contains-p "Gas City:"))
+                (should (gascity-test--buffer-contains-p "watchdog"))
+                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
+                (should (gascity-test--buffer-contains-p "Store health"))
+                (should-not (gascity-test--buffer-contains-p
+                             "Loading Gas City status"))
+                ;; No session snapshot -> no named-sessions section, and the
+                ;; note reports why (REQ-002's structural isolation).
+                (should-not (gascity-test--buffer-contains-p "Named sessions"))
+                (should (gascity-test--buffer-contains-p "Sessions unavailable"))
+                (should (gascity-test--buffer-contains-p "(boom)"))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
+(ert-deftest gascity-test-status-named-sessions-refresh-keeps-snapshot ()
+  "A failed sessions refresh keeps the last snapshot's named sessions.
+The same stale-while-revalidate rule the collapse tests pin: the refresh
+restarts the `session list' load with nil data, but the dashboard keeps
+rendering the previous payload instead of dropping the section or
+blanking to the loading line."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (reject-box (list nil))
+        (fail (list nil))
+        (vui-render-delay nil)
+        (status gascity-test--status-named-sessions-city)
+        (sessions '((summary . ((active . 1)))
+                    (sessions . [((agent_name . "mayor") (name . "mayor")
+                                  (template . "mayor") (state . "active")
+                                  (work_dir . "/city")
+                                  (session_name . "mayor"))]))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("session" "list"))
+                   (if (car fail) (setcar reject-box errback)
+                     (setcar sessions-box callback)))
+                  ((equal args '("agent" "list"))
+                   (funcall callback '((agents . []))))
+                  (t (error "unexpected async args: %S" args)))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
+              (with-current-buffer "*gascity-status-test*"
+                (funcall (car status-box) status)
+                (funcall (car sessions-box) sessions)
+                (should (gascity-test--buffer-contains-p "mayor awake"))
+                ;; Refresh with the sessions read failing: the stale payload
+                ;; keeps the section mounted — no blank, no loading line.
+                (setcar fail t)
+                (gascity-status--refresh-instance (current-buffer))
+                (funcall (car status-box) status)
+                (funcall (car reject-box) "boom")
+                (should (gascity-test--buffer-contains-p "Named sessions"))
+                (should (gascity-test--buffer-contains-p "mayor awake"))
+                (should-not (gascity-test--buffer-contains-p
+                             "Loading Gas City status"))))
+          (when (get-buffer "*gascity-status-test*")
+            (kill-buffer "*gascity-status-test*")))))))
+
 ;;; Status dashboard refresh — collapse preservation (vui integration, gce-gie)
 
 (defun gascity-test--buffer-contains-p (needle)
