@@ -65,6 +65,16 @@
 (require 'gascity-rig)
 (require 'gascity-session)
 
+;;; City targeting
+
+;; The one wiring point for the reader's city-targeting hook
+;; (plans/sessions-list-city-targeting, D1): `gascity-reader' cannot
+;; `require' `gascity-context' (load-order cycle — context requires
+;; reader), so the installation happens here, after both modules have
+;; loaded.  From here on every sync and async read leads its argv with
+;; `--city <host-local root>' when the calling buffer sits in a city.
+(setq gascity-reader-city-args-function #'gascity-context-city-args)
+
 ;;; Debug logging
 
 (defun gascity--log (level format-string &rest args)

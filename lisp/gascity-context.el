@@ -156,6 +156,24 @@ be reclaimed while the view is still refreshing)."
     (or (gascity-context-city-root dir)
         (file-name-as-directory dir))))
 
+(defun gascity-context-city-args ()
+  "Return the gc argv tokens explicitly targeting the current city, or nil.
+The reader hook behind the explicit city targeting
+(plans/sessions-list-city-targeting, D1/D2/D3): when
+`gascity-context-city-root' resolves a root for `default-directory',
+the tokens are (\"--city\" ROOT) with ROOT in the host-local form
+\(`file-local-name' — identity on a local root, the TRAMP prefix
+stripped on a remote one), because the flag's consumer is the
+host-side gc process (D2).  Nil — outside any city — means today's
+auto-discovery behavior, not an error (D3): every real view buffer is
+pinned to a city root by `gascity-view-get-buffer-create', so the
+fallback is only ever hit by stray reads.  Installed as
+`gascity-reader-city-args-function' in `gascity.el' (the load-order
+cycle keeps the wiring out of this module's `require's); only ever
+resolves the memoized city-root walk, never spawns gc."
+  (when-let ((root (gascity-context-city-root)))
+    (list "--city" (file-local-name root))))
+
 (defun gascity-view-get-buffer-create (base &optional dir)
   "Return the view buffer named BASE, keyed and pinned to DIR's city.
 The one factory behind every buffer a gascity view opens — dashboards,
