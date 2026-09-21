@@ -504,7 +504,7 @@ why and the named-sessions section simply does not render."
      ;; The CLI's "Named sessions" block sits between the city agents and
      ;; the rigs; nil (nothing derived, or no session data yet) renders
      ;; nothing, so the section never blanks or unmounts its neighbors.
-     (gascity-status--named-sessions-vnode named-sessions session-map socket)
+     (gascity-status--named-sessions-vnode named-sessions socket)
      ;; `:spacing 1' renders a blank line between rig groups for visual
      ;; separation; the keyed `vui-list' still reconciles each rig in place,
      ;; so collapse state and point survive a refresh.
@@ -544,34 +544,24 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
      (vui-text "  Sessions loading — d/t available once ready"
                :face 'gascity-dim))))
 
-(defun gascity-status--named-session-row (named session-map socket)
+(defun gascity-status--named-session-row (named socket)
   "Return a row vnode for NAMED, a `gascity-named-session'.
 Mirrors `gc status''s \"mayor                   awake (always)\": the
 identity, the CLI-shaped awake/asleep token
 (`gascity-named-session-label'), and the mode in parentheses when gc
 exposes it in JSON (absent outright in gc 1.4.2, so usually nothing).
-The row is stamped with the action `gascity-agent' — enriched from the
-SESSION-MAP's `gascity-session' row for the identity (the same join the
-status agent rows use) plus the tmux SOCKET — so the standard text
+The row is stamped with the action `gascity-agent' — enriched from
+NAMED's own `gascity-session' row (always set by the derivation) plus
+the tmux SOCKET — so the standard text
 properties and action keys (`d'/`t'/RET/`i'/`M'/`s'/`K'/`w'/`D') act on
-it like on any agent row.  A row whose session is missing from the map
-degrades like other session-less agent rows: no worktree, no attach
-target."
+it like on any agent row."
   (let* ((identity (gascity-named-session-identity named))
-         ;; The materialized row: the map join keyed on the identity (the
-         ;; same key the status agent rows join on), falling back to the
-         ;; derivation's own session slot — for a derived object it is
-         ;; always set, so the enrichment cannot degrade by accident.
-         (session (or (and identity session-map (gethash identity session-map))
-                      (gascity-named-session-session named)))
+         (session (gascity-named-session-session named))
          (awake (gascity-named-session-awake named))
          (mode (gascity-named-session-mode named))
-         ;; The action object: enriched from the session row when the map
-         ;; holds one, a bare session-less agent otherwise — never nil,
-         ;; so every row carries an actionable object at point.
-         (obj (if session
-                  (gascity-agent-from-session session socket)
-                (make-instance 'gascity-agent :name identity :socket socket))))
+         ;; The action object: the derivation guarantees the session slot,
+         ;; so the row always carries an actionable object at point.
+         (obj (gascity-agent-from-session session socket)))
     (vui-text (format "  %s %s%s"
                       identity
                       (gascity-named-session-label named)
@@ -579,7 +569,7 @@ target."
               :face (gascity-section-state-face awake)
               'gascity-agent obj)))
 
-(defun gascity-status--named-sessions-vnode (named-sessions session-map socket)
+(defun gascity-status--named-sessions-vnode (named-sessions socket)
   "Return the named-sessions section vnode, or nil when there is nothing to show.
 NAMED-SESSIONS is the `gascity-domain-named-sessions-from-sessions'
 derivation over the dashboard's decoded `gc session list' rows.  A nil or
@@ -595,7 +585,7 @@ footnote the CLI's `(always)' suffix hangs on (gce-8ey)."
      (vui-text "Named sessions" :face 'gascity-dim 'gascity-section t)
      (vui-list named-sessions
                (lambda (named)
-                 (gascity-status--named-session-row named session-map socket))
+                 (gascity-status--named-session-row named socket))
                (lambda (named)
                  (or (gascity-named-session-identity named) "?")))
      (unless (seq-every-p #'gascity-named-session-mode named-sessions)

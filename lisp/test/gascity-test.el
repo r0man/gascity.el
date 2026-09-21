@@ -2111,8 +2111,9 @@ named-sessions section derives a row from the `session list' payload.")
 (ert-deftest gascity-test-status-named-sessions-row ()
   "A named-session row renders the CLI-shaped `IDENTITY awake' line.
 The row is stamped with the action `gascity-agent' — enriched from the
-session map, tmux socket attached — so the standard action keys (`d'/`t'/
-RET/`i') act on it like on any agent row (AGENTS.md keyboard-parity
+derivation's own session row, tmux socket attached — so the standard
+action keys (`d'/`t'/RET/`i') act on it like on any agent row
+(AGENTS.md keyboard-parity
 rule).  Mode stays nil until gc exposes it, so no `(...)' suffix
 renders (REQ-001's documented fallback clause)."
   (let* ((session (gascity-domain-decode
@@ -2121,8 +2122,7 @@ renders (REQ-001's documented fallback clause)."
                      (state . "active") (work_dir . "/city")
                      (session_name . "mayor"))))
          (named (car (gascity-domain-named-sessions-from-sessions (list session))))
-         (smap (gascity-status--session-map-rows (list session)))
-         (row (gascity-status--named-session-row named smap "sock")))
+         (row (gascity-status--named-session-row named "sock")))
     (should (equal (gascity-test--vnode-text row) "  mayor awake"))
     (let ((obj (plist-get (vui-vnode-text-properties row) 'gascity-agent)))
       (should (gascity-agent-p obj))
@@ -2139,7 +2139,7 @@ exposes none, so an unadorned row renders without one."
                               'gascity-session
                               '((agent_name . "mayor") (name . "mayor")
                                 (template . "mayor") (state . "suspended")))))))
-         (row (gascity-status--named-session-row asleep nil nil)))
+         (row (gascity-status--named-session-row asleep nil)))
     (should (equal (gascity-named-session-label asleep) "asleep"))
     (should (equal (gascity-test--vnode-text row) "  mayor asleep"))
     (should (null (gascity-named-session-mode asleep))))
@@ -2149,7 +2149,7 @@ exposes none, so an unadorned row renders without one."
          (named (car (gascity-domain-named-sessions-from-sessions (list session)))))
     (setf (gascity-named-session-mode named) "always")
     (should (equal (gascity-test--vnode-text
-                    (gascity-status--named-session-row named nil nil))
+                    (gascity-status--named-session-row named nil))
                    "  mayor awake (always)"))))
 
 (ert-deftest gascity-test-status-named-sessions-vnode ()
@@ -2159,17 +2159,17 @@ pending/failed session load with no snapshot in hand — so the section's
 absence never unmounts its neighbors (stale-while-revalidate rule,
 REQ-003).  The gap footnote hangs exactly while some row lacks a mode
 (gc exposes none in JSON, gce-8ey)."
-  (should-not (gascity-status--named-sessions-vnode nil nil nil))
+  (should-not (gascity-status--named-sessions-vnode nil nil))
   (should-not (gascity-status--named-sessions-vnode
                (gascity-domain-named-sessions-from-sessions
                 (gascity-domain-decode-list 'gascity-session []))
-               nil nil))
+               nil))
   (let* ((session (gascity-domain-decode 'gascity-session
                    '((agent_name . "mayor") (name . "mayor") (template . "mayor")
                      (state . "active") (work_dir . "/city"))))
          (named (gascity-domain-named-sessions-from-sessions (list session)))
          (text (gascity-test--vnode-text
-                (gascity-status--named-sessions-vnode named nil "sock"))))
+                (gascity-status--named-sessions-vnode named "sock"))))
     (should (string-search "Named sessions" text))
     (should (string-search "mayor awake" text))
     (should (string-search "mode unavailable from gc JSON (gce-8ey)" text))
@@ -2179,7 +2179,7 @@ REQ-003).  The gap footnote hangs exactly while some row lacks a mode
     (should-not (string-search
                  "mode unavailable"
                  (gascity-test--vnode-text
-                  (gascity-status--named-sessions-vnode named nil "sock"))))))
+                  (gascity-status--named-sessions-vnode named "sock"))))))
 
 (ert-deftest gascity-test-status-named-sessions-section-renders ()
   "The mounted dashboard renders the CLI's Named sessions block.
