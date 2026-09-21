@@ -47,6 +47,23 @@
 ;;   splices before the command, prepending the same profile
 ;;   directories to the PATH gc's children resolve against.
 ;;
+;; - Connection reuse.  Async reads (`gascity-reader-read-async') run
+;;   through TRAMP's `make-process' :file-handler, so their handler is
+;;   whatever the connection has — by default the tramp-sh channel
+;;   handler, which multiplexes every spawn over the ONE pooled ssh
+;;   connection.  This is measured, not assumed (W1, ga-o98t — see
+;;   plans/tramp-history-flood/implementation-summary-ga-o98t.md; REQ-002):
+;;   on a live /ssh:localhost: city, N = 10 consecutive async reads spawned
+;;   exactly one ssh process (at connection establishment, before the
+;;   burst) and appended zero new ssh login lines to the host's
+;;   `~/.bash_history', i.e. no fresh login per read.  Do not enable
+;;   direct-async (`tramp-direct-async-process') connection-locally to
+;;   "speed this up": that handler spawns a fresh local ssh PER READ,
+;;   which is exactly the per-refresh login flood the pooling avoids.
+;;   The direct-async support in `gascity-reader.el' stays — it exists
+;;   so a connection where the user DID enable it still behaves
+;;   correctly — but gascity itself never turns it on.
+;;
 ;; This module depends only on `gascity-custom' (the defcustom home),
 ;; so every other module can require it.
 

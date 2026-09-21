@@ -152,8 +152,17 @@ Notes:
 - TRAMP's faster direct-async process mode is fully supported — enable it
   per connection via the connection-local variable
   `tramp-direct-async-process` to cut per-read overhead on the dashboard.
-- Performance: each refresh is an ssh round trip. Emacs reuses the TRAMP
-  connection, and the dashboard skips an auto-refresh tick while a load is
+  Think twice before enabling it for gascity, though: direct-async spawns
+  a **fresh ssh login per read**, while the default tramp-sh handler
+  multiplexes every read over the one pooled connection.  Measured on a
+  live `/ssh:localhost:` city (W1, REQ-002): ten consecutive async
+  dashboard reads produced exactly one ssh process — established at
+  connection time — and zero new ssh logins on the host.  Keep
+  direct-async off unless you have another reason to want it.
+- Performance: each refresh is an ssh round trip.  Emacs reuses the TRAMP
+  connection — pooling holds by default (see above), so a refreshing
+  dashboard costs one channel round trip per read, not one ssh login per
+  read — and the dashboard skips an auto-refresh tick while a load is
   still in flight; raise `gascity-status-auto-refresh-interval` on slow
   links.
 
