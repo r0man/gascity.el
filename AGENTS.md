@@ -181,3 +181,11 @@ Before ending a session with code changes: run `scripts/gate.sh`, commit, then
 `git pull --rebase && git push` and confirm `git status` is up to date with
 origin. Work left only in the working tree or a local branch is considered
 stranded.
+
+## Tooling
+
+- Unbalanced parentheses in Lisp code (elisp, scheme, cl, clojure, ...): use
+  the `parenmedic` CLI instead of eyeballing — `parenmedic diagnose <files>`
+  to locate (stdin via `-`; `-f json`; `-d elisp` / `-d scheme` force a
+  dialect), `parenmedic fix <files-or-globs>` to auto-fix.
+  Installed at /home/roman/.guix-profile/bin/parenmedic.
