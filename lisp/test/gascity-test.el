@@ -1362,6 +1362,129 @@ layout — a static re-binding cannot silently collide."
       (dolist (key gascity-sling--reserved-keys)
         (should (member key bound))))))
 
+(ert-deftest gascity-test-sling-city-dir-pins-entered-from-city ()
+  "`gascity-sling--city-dir' reads the scope's `:city' pin (the
+prefix's view-buffer `default-directory', ga-4ia4) and falls back to
+the current `default-directory' when the scope carries none — the
+pre-pin behavior, so tests and foreign invocations degrade unchanged."
+  (with-temp-buffer
+    (setq default-directory "/elsewhere/foreign/")
+    ;; Live scope wins over the current buffer's directory.
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/entered-from/"))))
+      (should (equal (gascity-sling--city-dir) "/city/entered-from/"))
+      ;; An explicit scope wins over the live one (menu setup).
+      (should (equal (gascity-sling--city-dir (list :city "explicit"))
+                     "explicit")))
+    ;; No :city in the scope: falls back to the current directory.
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula nil))))
+      (should (equal (gascity-sling--city-dir) "/elsewhere/foreign/")))))
+
+(ert-deftest gascity-test-sling-dispatch-prefix-seeds-city-dir ()
+  "The prefix pins the `default-directory' of the buffer it was
+invoked from into the scope (`:city') — the seed every suffix reads
+back through `gascity-sling--city-dir' (ga-4ia4)."
+  (let ((captured nil))
+    (cl-letf (((symbol-function 'transient-setup)
+               (lambda (_name &rest args)
+                 (setq captured (plist-get args :scope))))
+              ((symbol-function 'gascity-sling-formula--bead-or-convoy-at-point)
+               (lambda () nil)))
+      (with-temp-buffer
+        (setq default-directory "/city/entered-from/")
+        (gascity-sling-dispatch)
+        (should (equal (plist-get captured :city) "/city/entered-from/"))
+        ;; The original scope shape is preserved alongside the pin.
+        (should (null (plist-get captured :formula)))
+        (should (null (plist-get captured :target)))))))
+
+(ert-deftest gascity-test-sling-dispatch-pick-pins-city-dir ()
+  "The pick runs the catalog read and its `completing-read' pinned to
+the city the transient was entered from, not the foreign directory a
+suffix command can inherit (transient menu buffer / reused minibuffer
+directory) — an unpinned read serves another city's catalog and
+memoizes it under the wrong scope key (ga-4ia4, bright-lights dogfood
+§5)."
+  (let ((pick-dir nil))
+    (with-temp-buffer
+      (setq default-directory "/elsewhere/foreign/")
+      (cl-letf (((symbol-function 'gascity-sling-formula--read-formula)
+                 (lambda () (setq pick-dir default-directory) "e2e-demo"))
+                ((symbol-function 'transient-scope)
+                 (lambda () (list :city "/city/entered-from/")))
+                ((symbol-function 'transient-args)
+                 (lambda (_prefix) nil))
+                ((symbol-function 'transient-setup)
+                 (lambda (&rest _))))
+        (gascity-sling-dispatch-pick)
+        (should (equal pick-dir "/city/entered-from/"))))))
+
+(ert-deftest gascity-test-sling-children-specs-read-recipe-pinned ()
+  "The menu setup's recipe read (`gascity-sling--children-specs') runs
+pinned to the scope's `:city': transient setup can run the
+`:setup-children' callback with the menu buffer current, whose stale
+directory must not key `gascity-formula-recipe-cached' (ga-4ia4)."
+  (let ((recipe-dir nil))
+    (with-temp-buffer
+      (setq default-directory "/elsewhere/foreign/")
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) (setq recipe-dir default-directory) nil)))
+        (gascity-sling--children-specs
+         (list :city "/city/entered-from/" :formula "do-work"))
+        (should (equal recipe-dir "/city/entered-from/"))))))
+
+(ert-deftest gascity-test-sling-dispatch-suffixes-run-pinned ()
+  "The gc-touching suffixes — refresh, target read, recipe preview and
+the sling run — execute with `default-directory' pinned to the city
+the transient was entered from, wherever transient runs them from
+(ga-4ia4): the caches key off the current directory and the dispatch's
+gc invocation reads where `default-directory' points."
+  (with-temp-buffer
+    (setq default-directory "/elsewhere/foreign/")
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/entered-from/"
+                                :formula "do-work")))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) nil))
+              ((symbol-function 'transient-setup)
+               (lambda (&rest _))))
+      ;; Refresh invalidates the entered-from city, not the buffer's.
+      (let ((invalidate-dir nil))
+        (cl-letf (((symbol-function 'gascity-formula-invalidate)
+                   (lambda () (setq invalidate-dir default-directory) nil)))
+          (gascity-sling-dispatch-refresh)
+          (should (equal invalidate-dir "/city/entered-from/"))))
+      ;; The target read completes over the entered-from city's sessions.
+      (let ((read-dir nil))
+        (cl-letf (((symbol-function 'gascity-action--read-session)
+                   (lambda (_prompt) (setq read-dir default-directory) "mayor")))
+          (gascity-sling-dispatch-target)
+          (should (equal read-dir "/city/entered-from/"))))
+      ;; The recipe preview re-runs `gc formula show' pinned.
+      (let ((recipe-dir nil))
+        (cl-letf (((symbol-function 'gascity-sling-formula--show-recipe)
+                   (lambda (_name _values)
+                     (setq recipe-dir default-directory)))
+                  ((symbol-function 'gascity-sling-formula--current-values)
+                   (lambda () nil)))
+          (gascity-sling-dispatch-recipe)
+          (should (equal recipe-dir "/city/entered-from/"))))
+      ;; The formula dispatch — recipe cache, session fallback read and
+      ;; the sling execution — runs pinned.
+      (let ((dispatch-dir nil))
+        (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                   (lambda (_name) nil))
+                  ((symbol-function 'gascity-action--read-session)
+                   (lambda (_prompt) "mayor"))
+                  ((symbol-function 'gascity-sling-formula--current-values)
+                   (lambda () nil))
+                  ((symbol-function 'gascity-sling-formula--dispatch)
+                   (lambda (&rest _)
+                     (setq dispatch-dir default-directory) nil)))
+          (gascity-sling--run nil nil)
+          (should (equal dispatch-dir "/city/entered-from/")))))))
+
 (ert-deftest gascity-test-formula-sling-check-pattern ()
   "The infix reader's pattern check (REQ-009): a mismatch is a
 `user-error' naming var and pattern; an unparseable pattern degrades to

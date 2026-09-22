@@ -988,6 +988,29 @@ args).  Unknown entries are ignored."
     (when vars (setq plist (plist-put plist :var (nreverse vars))))
     plist))
 
+(defun gascity-sling--city-dir (&optional scope)
+  "Return the city directory the sling transient was entered from.
+The prefix seeds the scope's `:city' with the `default-directory' of
+the buffer it was invoked from — a view buffer that
+`gascity-view-get-buffer-create' pinned to its city — and every
+re-setup carries the scope (and the pin) along.  With SCOPE nil the
+live transient scope is read; menu setup passes the scope explicitly
+so it never needs live transient state.  Falls back to the current
+buffer's `default-directory' when the scope carries no `:city' (tests,
+or a prefix invoked outside a pinned view — same behavior as before
+the pin existed).
+
+Suffixes must run their gc-touching reads and completions inside
+`(let ((default-directory (gascity-sling--city-dir))) …)': transient
+can execute a suffix with a foreign current-buffer (the menu buffer,
+or the reused minibuffer a completing-read inherits), and the formula
+catalog/recipe caches key off `gascity-context-scope-key' of whatever
+directory is current at call time — an unpinned read both queries
+another city and memoizes its catalog under the wrong (possibly
+empty) scope key (ga-4ia4, bright-lights dogfood §5)."
+  (or (plist-get (or scope (transient-scope)) :city)
+      default-directory))
+
 (defun gascity-sling--show-plan (command)
   "Execute COMMAND (a `--dry-run' sling) and show gc's routing plan.
 Pops a read-only view buffer with gc's captured stdout; a validation or gc
@@ -1021,27 +1044,28 @@ A target set through `-T' wins; with none set, the formula path reads
 it once via `gascity-action--read-session' (REQ-B's dispatch
 fallback).  With PREVIEW non-nil, force `--dry-run' and show gc's
 routing plan instead of executing."
-  (let* ((scope (transient-scope))
-         (formula (plist-get scope :formula)))
-    (if formula
-        (gascity-sling-formula--dispatch
-         (gascity-formula-recipe-cached formula)
-         (or (plist-get scope :target)
-             (gascity-action--read-session "Sling to target: "))
-         (plist-get scope :arg)
-         (gascity-sling-formula--current-values)
-         preview)
-      (let* ((plist (gascity-sling--parse-transient-args args))
-             (arg (read-string "Bead id or task text: " (gascity-bead-at-point)))
-             (target (gascity-action--read-session "Sling to target: "))
-             (command (apply #'gascity-command-sling
-                             :target target :arg arg
-                             (append (when preview (list :dry-run t))
-                                     plist))))
-        (if preview
-            (gascity-sling--show-plan command)
-          (gascity-command-act command)
-          (gascity--refresh-current-view))))))
+  (let ((default-directory (gascity-sling--city-dir)))
+    (let* ((scope (transient-scope))
+           (formula (plist-get scope :formula)))
+      (if formula
+          (gascity-sling-formula--dispatch
+           (gascity-formula-recipe-cached formula)
+           (or (plist-get scope :target)
+               (gascity-action--read-session "Sling to target: "))
+           (plist-get scope :arg)
+           (gascity-sling-formula--current-values)
+           preview)
+        (let* ((plist (gascity-sling--parse-transient-args args))
+               (arg (read-string "Bead id or task text: " (gascity-bead-at-point)))
+               (target (gascity-action--read-session "Sling to target: "))
+               (command (apply #'gascity-command-sling
+                               :target target :arg arg
+                               (append (when preview (list :dry-run t))
+                                       plist))))
+          (if preview
+              (gascity-sling--show-plan command)
+            (gascity-command-act command)
+            (gascity--refresh-current-view)))))))
 
 (transient-define-suffix gascity-sling-dispatch-run (args)
   "Sling for real using the dispatch flags ARGS."
@@ -1086,8 +1110,13 @@ each renders full width and stacks vertically: the header info line,
 Formula, Destination, Routing flags, Actions, then the picked
 formula's Variables section last (absent until a formula with vars is
 picked, REQ-A/REQ-B).  The generated infix keys avoid
-`gascity-sling--reserved-keys' (REQ-D)."
-  (let* ((recipe (and (plist-get scope :formula)
+`gascity-sling--reserved-keys' (REQ-D).  The recipe read and the
+header's city name run pinned to the scope's `:city'
+(`gascity-sling--city-dir'): transient can run setup with the menu
+buffer current, whose directory must not key the recipe cache nor name
+the header (ga-4ia4)."
+  (let* ((default-directory (gascity-sling--city-dir scope))
+         (recipe (and (plist-get scope :formula)
                       (gascity-formula-recipe-cached
                        (plist-get scope :formula)))))
     (append
@@ -1126,24 +1155,35 @@ picked, REQ-A/REQ-B).  The generated infix keys avoid
 One transient, one `-f' press (REQ-A): the same prefix re-setups with
 the picked formula in the scope and the current infix values carried
 over, so a variable the previous and new formulas share keeps its
-value (vars absent from the new formula drop with their infixes)."
+value (vars absent from the new formula drop with their infixes).
+The catalog read and its `completing-read' run pinned to the city
+directory the transient was entered from (`gascity-sling--city-dir'):
+the catalog cache keys off `gascity-context-scope-key' of whatever
+directory is current at call time, and the reused minibuffer inherits
+its `default-directory' from the buffer current at entry, so an
+unpinned read serves another city's catalog and memoizes it under the
+wrong scope key (ga-4ia4, bright-lights dogfood §5)."
   (interactive)
-  (let ((name (gascity-sling-formula--read-formula)))
-    (transient-setup 'gascity-sling-dispatch nil nil
-                     :scope (plist-put (copy-sequence (transient-scope))
-                                       :formula name)
-                     :value (transient-args 'gascity-sling-dispatch))))
+  (let ((default-directory (gascity-sling--city-dir)))
+    (let ((name (gascity-sling-formula--read-formula)))
+      (transient-setup 'gascity-sling-dispatch nil nil
+                       :scope (plist-put (copy-sequence (transient-scope))
+                                         :formula name)
+                       :value (transient-args 'gascity-sling-dispatch)))))
 
 (transient-define-suffix gascity-sling-dispatch-refresh ()
   "Invalidate this city's formula caches and rebuild the menu in place.
 `gascity-formula-invalidate' clears the catalog and recipe memos for
 the current city (per `gascity-context-scope-key'), so the next pick
 and the Variables section read gc fresh — a formula edited mid-session
-is no longer served stale.  Set infix values carry into the re-setup,
-like a re-pick.  The menu stays open."
+is no longer served stale.  The invalidation is pinned to the city the
+transient was entered from (`gascity-sling--city-dir'), so it clears
+that city's entries wherever the transient runs from.  Set infix
+values carry into the re-setup, like a re-pick.  The menu stays open."
   :transient t
   (interactive)
-  (gascity-formula-invalidate)
+  (let ((default-directory (gascity-sling--city-dir)))
+    (gascity-formula-invalidate))
   (transient-setup 'gascity-sling-dispatch nil nil
                    :scope (transient-scope)
                    :value (transient-args 'gascity-sling-dispatch)))
@@ -1174,11 +1214,12 @@ this binding press (OQ-1, F-4), never during setup or redisplay.  The
 set target wins at dispatch; an unset one is read once there."
   :transient t
   (interactive)
-  (let ((target (gascity-action--read-session "Sling to target: ")))
-    (transient-setup 'gascity-sling-dispatch nil nil
-                     :scope (plist-put (copy-sequence (transient-scope))
-                                       :target target)
-                     :value (transient-args 'gascity-sling-dispatch))))
+  (let ((default-directory (gascity-sling--city-dir)))
+    (let ((target (gascity-action--read-session "Sling to target: ")))
+      (transient-setup 'gascity-sling-dispatch nil nil
+                       :scope (plist-put (copy-sequence (transient-scope))
+                                         :target target)
+                       :value (transient-args 'gascity-sling-dispatch)))))
 
 (transient-define-suffix gascity-sling-dispatch-recipe ()
   "Preview the picked formula's recipe with the current var values.
@@ -1190,8 +1231,9 @@ The menu stays open."
   (let ((name (plist-get (transient-scope) :formula)))
     (unless name
       (user-error "No formula chosen — pick one first (-f)"))
-    (gascity-sling-formula--show-recipe
-     name (gascity-sling-formula--current-values))))
+    (let ((default-directory (gascity-sling--city-dir)))
+      (gascity-sling-formula--show-recipe
+       name (gascity-sling-formula--current-values)))))
 
 ;;;###autoload (autoload 'gascity-sling-dispatch "gascity-action" nil t)
 (transient-define-prefix gascity-sling-dispatch ()
@@ -1204,11 +1246,20 @@ re-renders this menu with a full-width Variables section, REQ-A).
 `s'/`p' dispatch: with a formula picked the formula path runs
 (validated vars, shape via `gascity-formula--needs-convoy', routing
 flags ignored); without one the plain flag path runs as before
-(REQ-G)."
+(REQ-G).
+The scope also pins the `default-directory' of the view buffer the
+transient was entered from (`:city', read back by
+`gascity-sling--city-dir'): suffix commands, the minibuffers their
+reads open, and the menu's own setup can all run with a foreign
+current-buffer directory, and the formula caches key off
+`gascity-context-scope-key' of that directory — the pin keeps every
+catalog/recipe read and dispatch on the entered-from city
+(ga-4ia4, bright-lights dogfood §5)."
   [ :class transient-subgroups :setup-children gascity-sling--setup-children ]
   (interactive)
   (transient-setup 'gascity-sling-dispatch nil nil
-                   :scope (list :formula nil :target nil
+                   :scope (list :city default-directory
+                                :formula nil :target nil
                                 :arg (gascity-sling-formula--bead-or-convoy-at-point))))
 
 ;;; ============================================================
