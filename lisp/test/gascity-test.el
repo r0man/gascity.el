@@ -7803,5 +7803,135 @@ restarts/cancels the buffer's timer to match."
           (should-not (timerp gascity-session-list--refresh-timer)))
       (when (buffer-live-p buf) (kill-buffer buf)))))
 
+;;; env-city targeting for the dolt pack commands (ga-hvob)
+
+(defmacro gascity-test--stub-reader (argv-var env-var)
+  "Expand to a `gascity-reader-run' stub capturing argv and environment.
+ARGV-VAR and ENV-VAR are lexical variables visible at the expansion
+site; each stub call setqs them (a `set'-by-symbol helper would miss
+the lexical binding).  The payload answers \"ok\", JSON-parseable."
+  `(lambda (args)
+     (setq ,argv-var args)
+     (setq ,env-var (copy-sequence process-environment))
+     (list :exit-code 0 :stdout "{\"ok\":true}" :stderr "" :executable "gc")))
+
+(ert-deftest gascity-test-env-city-overrides-for-dolt ()
+  "A dolt read in a city-pinned buffer targets by env, not `--city'.
+`gc dolt <leaf>' are pack commands: their leaves parse the argument
+tail blindly, so the advertised global `--city' is rejected
+(\"unknown flag: --city\").  The overrides carry the host-local root
+and the full identity anchor set — the consumer is the host-side gc
+process, and the anchors must lead the environment so gc's appended
+pack projection is not shadowed by an ambient anchor (ga-hvob)."
+  (let (argv env)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (gascity-test--stub-reader argv env))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (should (equal (gascity-reader-read "dolt" "health") '((ok . t)))))
+    (should (equal argv '("dolt" "health" "--json")))
+    (should (equal (nth 0 env) "GC_CITY=/tmp/fake-city/"))
+    (should (equal (nth 1 env) "GC_CITY_PATH=/tmp/fake-city/"))
+    (should (equal (nth 2 env)
+                   "GC_CITY_RUNTIME_DIR=/tmp/fake-city/.gc/runtime")))))
+
+(ert-deftest gascity-test-env-city-overrides-remote-host-local ()
+  "Over TRAMP the anchor values are host-local forms (the env entries
+are consumed by the remote gc, not Emacs's file-name machinery)."
+  (let (argv env)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (gascity-test--stub-reader argv env))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/ssh:fakehost:/home/roman/fake-city/")))
+      (let ((default-directory "/ssh:fakehost:/home/roman/fake-city/"))
+        (should (equal (gascity-reader-read "dolt" "list") '((ok . t)))))
+      (should (member "GC_CITY=/home/roman/fake-city/" env))
+      (should (member "GC_CITY_PATH=/home/roman/fake-city/" env))
+      (should (member "GC_CITY_RUNTIME_DIR=/home/roman/fake-city/.gc/runtime"
+                      env)))))
+
+(ert-deftest gascity-test-env-city-other-subcommands-unchanged ()
+  "Subcommands that accept the flag keep `--city' argv targeting and get
+no env override: the carving-out is per-subcommand, not global."
+  (let (argv env)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (gascity-test--stub-reader argv env))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (should (equal (gascity-reader-read "status") '((ok . t)))))
+    (should (equal argv '("--city" "/tmp/fake-city/" "status" "--json")))
+    ;; The ambient process-environment is untouched for non-dolt reads.
+    (should-not (member "GC_CITY=/tmp/fake-city/" env)))))
+
+(ert-deftest gascity-test-env-city-outside-city-unchanged ()
+  "A dolt read outside any city is unchanged: no env override, no tokens
+(D3's boundary carried over to the env tier)."
+  (let (argv env)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (gascity-test--stub-reader argv env))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) nil)))
+      (with-temp-buffer
+        (should (equal (gascity-reader-read "dolt" "health") '((ok . t)))))
+    (should (equal argv '("dolt" "health" "--json")))
+    (should-not (member "GC_CITY=/tmp/fake-city/" env)))))
+
+(ert-deftest gascity-test-env-city-shields-ambient-anchors ()
+  "The overrides beat an ambient GC_CITY projected for a different city:
+env resolution is gc's FIRST explicit tier, and the anchors LEAD the
+environment, above the ambient anchors a session-launched Emacs carries
+(ga-hvob — the rig dashboard showed the machine-global dolt server
+without them)."
+  (let (argv env)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (gascity-test--stub-reader argv env))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (let ((process-environment (cons "GC_CITY=/home/roman/emacs-city"
+                                       process-environment)))
+        (with-temp-buffer
+          (should (equal (gascity-reader-read "dolt" "health") '((ok . t)))))
+        ;; The override leads: resolution sees the view's city first.
+        (should (equal (car env) "GC_CITY=/tmp/fake-city/"))
+        (should (equal (nth 1 env) "GC_CITY_PATH=/tmp/fake-city/"))))))
+
+(ert-deftest gascity-test-env-city-async-dolt ()
+  "The async runner binds the env-city overrides around the spawn too
+(AC-2's env tier)."
+  (let (spawn-env)
+    (cl-letf (((symbol-function 'gascity-remote-find-executable)
+               (lambda (&optional _) "gc"))
+              ((symbol-function 'make-process)
+               (lambda (&rest _)
+                 (setq spawn-env process-environment)
+                 (error "stubbed spawn")))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (should (null (gascity-reader-read-async
+                       '("dolt" "health") #'ignore
+                       (lambda (_msg) t)))))
+      (should (equal (car spawn-env) "GC_CITY=/tmp/fake-city/"))
+      (should (member "GC_CITY_RUNTIME_DIR=/tmp/fake-city/.gc/runtime"
+                      spawn-env)))))
+
+(ert-deftest gascity-test-command-execute-dolt-env-city ()
+  "A bang-function dolt read drops the `--city' tokens and targets by
+environment: `gascity-command-execute' is the one call site outside the
+two reader wrappers, and the pack leaves reject the flag (ga-hvob)."
+  (let (argv env)
+    (cl-letf (((symbol-function 'gascity-reader-run)
+               (gascity-test--stub-reader argv env))
+              ((symbol-function 'gascity-command-parse)
+               (lambda (_command _execution) 'parsed))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/tmp/fake-city/")))
+      (with-temp-buffer
+        (gascity-command-execute (gascity-command-dolt-health)))
+      (should (equal argv '("dolt" "health" "--json")))
+      (should (equal (car env) "GC_CITY=/tmp/fake-city/")))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

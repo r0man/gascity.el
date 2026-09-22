@@ -77,7 +77,72 @@ spawn gc: it runs on every UI path, timers and eldoc included.
 
 The tokens LEAD the argv: gc parses the global flag before the
 subcommand, and the error text built from the argv then names the
-real invocation.")
+real invocation.
+
+Subcommands whose leaf never accepts the flag (the `dolt' pack
+commands, `gascity-reader-env-city-subcommands') are carved out below:
+for those the tokens are withheld and the city identity travels by
+environment instead (see `gascity-reader--city-env-pair').")
+
+;; The gc-side classification is "any leaf under the dolt namespace":
+;; `gc dolt <leaf>' resolves its city entirely through the environment
+;; and cwd (the pack-command dispatch re-projects the canonical env),
+;; and its argument parsing owns the tail blindly, so no --city can be
+;; accepted without the gc-side change this works around.  A list of
+;; first tokens covers every subcommand at once; widen it from real
+;; rejections only.
+(defconst gascity-reader-env-city-subcommands '("dolt")
+  "Subcommands whose city targeting goes by environment, not `--city'.
+`gc dolt …' subcommands are pack commands: the cobra leaf parses its
+argument tail blindly, so the advertised global `--city' flag is
+rejected with \"unknown flag: --city\" (gc#gc-6ahc2) even though the
+help text lists it, and the pack script resolves its city from the
+identity env (GC_CITY/GC_CITY_PATH — resolveExplicitCityPathEnv steps
+4/5, above cwd) which the dispatch re-projects canonically.  For these
+the reader withholds the `--city' tokens and overrides the identity
+env instead — which also shields the read from an ambient
+GC_CITY/GC_CITY_PATH projected for a different city (a session-launched
+Emacs carries emacs-city's anchors, and an unanchored dolt read would
+then hit the wrong machine-global dolt server).  See
+`gascity-reader--city-env-pair'.")
+
+;; Defined in gascity-context.el, which loads after this module; same
+;; load-order-cycle guard as `gascity-context-city-args' below.
+(declare-function gascity-context-city-root "gascity-context" (&optional dir))
+
+(defun gascity-reader--city-env-pair (args)
+  "Return the (VAR . HOST-LOCAL-VALUE) city env override for ARGS.
+ARGS is the caller's argv (the subcommand leading).  When the
+subcommand belongs to `gascity-reader-env-city-subcommands' and a city
+root is pinned for the calling buffer, return (\"GC_CITY\" . ROOT):
+env resolution is the very first explicit tier of gc's context
+resolution, above both the ambient env and the cwd walk-up, so the
+pack dispatch re-projects the canonical env (GC_CITY_PATH,
+GC_PACK_STATE_DIR, the dolt port) for THIS city.  The value is the
+host-local form (`file-local-name') — the consumer is the host-side
+gc process.  Anything else returns nil and the invocation targets by
+`--city' argv or gc's own discovery as before."
+  (when (member (car args) gascity-reader-env-city-subcommands)
+    (when-let ((root (gascity-context-city-root)))
+      (cons "GC_CITY" (file-local-name root)))))
+
+(defun gascity-reader--city-env-overrides (args)
+  "Return the env-city override list for ARGS, or nil.
+`gascity-reader--city-env-pair' answers the targeting var; for a real
+override the caller needs gc's full identity anchor set (GC_CITY,
+GC_CITY_PATH, GC_CITY_RUNTIME_DIR): a spawned gc projects the city's
+runtime env by APPENDING to the inherited environment, and on this
+stack a duplicated variable resolves to the FIRST entry in the child —
+so ambient anchors (a session-launched Emacs carries emacs-city's)
+would shadow gc's own projection and the pack script would read the
+wrong city's runtime dir.  Prepending the anchors here puts the view's
+city first instead, healing the dispatch for exactly this read."
+  (when-let ((pair (gascity-reader--city-env-pair args)))
+    (let ((root (cdr pair)))
+      (list (cons "GC_CITY" root)
+            (cons "GC_CITY_PATH" root)
+            (cons "GC_CITY_RUNTIME_DIR"
+                  (concat (directory-file-name root) "/.gc/runtime"))))))
 
 (defun gascity-reader--city-args ()
   "Return the city-targeting argv tokens for the current buffer, or nil.
@@ -195,55 +260,92 @@ connection-local value; a bare name on a remote directory is then
 resolved to an absolute host path by `gascity-remote-find-executable'
 \(`tramp-remote-path', falling back to `gascity-remote-search-path').
 The remote wrapper also exports the search-path directories on PATH so
-gc's own subprocesses (git, dolt) resolve too (gce-k5d)."
+gc's own subprocesses (git, dolt) resolve too (gce-k5d).  An env-city
+override (`gascity-reader--city-env-pair') is applied as a
+`process-environment' entry: locally make-process copies the binding
+at spawn; over TRAMP the dispatch emits the changed entry on the
+remote command line (\"env GC_CITY=… …\"), so gc's pack-command city
+resolution sees the view's city either way."
   (with-connection-local-variables
-   ;; Capture the executable and command HERE:
+   ;; Capture the executable, command and env-city override HERE:
    ;; `with-connection-local-variables' applies a connection-local
    ;; value buffer-locally in the current buffer, so a read inside
    ;; `with-temp-buffer' below would silently fall back to the global
-   ;; default.
+   ;; default; the env-city override answers from the same pinned
+   ;; `default-directory' and must be captured before any switch too.
    (let* ((executable (gascity-remote-find-executable gascity-executable))
           (delimiter (and (file-remote-p default-directory)
                           (gascity-reader--stderr-delimiter)))
+          (city-env (gascity-reader--city-env-overrides args))
           (command (gascity-reader--command executable args delimiter))
           (stderr-file (and (not delimiter)
-                            (make-nearby-temp-file "gascity-stderr-"))))
+                            (make-nearby-temp-file "gascity-stderr-")))
+          result)
      (when (fboundp 'gascity--log)
        (gascity--log 'info "Running: %s %s"
                      executable (mapconcat #'identity args " ")))
      (unwind-protect
          (with-temp-buffer
-           (let* ((exit-code
-                   (condition-case err
-                       (apply #'process-file (car command) nil
-                              (list (current-buffer) stderr-file) nil
-                              (cdr command))
-                     (file-error
-                      (signal 'gascity-command-error
-                              (list (gascity-remote-spawn-error-hint
-                                     executable
-                                     (error-message-string err)
-                                     nil 'gascity-executable)
-                                    :command (mapconcat
-                                              #'identity
-                                              (cons executable args) " ")
-                                    :exit-code nil :stdout "" :stderr "")))))
-                  (output (if delimiter
-                              (gascity-reader--split-output
-                               (buffer-string) delimiter)
-                            (cons (buffer-string)
-                                  (with-temp-buffer
-                                    (insert-file-contents stderr-file)
-                                    (buffer-string)))))
-                  (stdout (car output))
-                  (stderr (cdr output)))
-             (when (fboundp 'gascity--log)
-               (gascity--log 'info "Exit code: %s" exit-code)
-               (gascity--log 'verbose "Stdout: %s" stdout))
-             (list :exit-code exit-code :stdout stdout :stderr stderr
-                   :executable executable)))
+           ;; Only the override entry goes through TRAMP's
+           ;; "difference to the toplevel" filter — a plain literal
+           ;; value survives shell quoting; PATH is left to the
+           ;; remote wrapper's host-evaluated assignment.
+           (let ((process-environment
+                  (if city-env
+                      (append (gascity-reader--env-entries city-env)
+                              process-environment)
+                    process-environment)))
+             (let* ((exit-code
+                     (condition-case err
+                         (apply #'process-file (car command) nil
+                                (list (current-buffer) stderr-file) nil
+                                (cdr command))
+                       (file-error
+                        (signal 'gascity-command-error
+                                (list (gascity-remote-spawn-error-hint
+                                       executable
+                                       (error-message-string err)
+                                       nil 'gascity-executable)
+                                      :command (mapconcat
+                                                #'identity
+                                                (cons executable args) " ")
+                                      :exit-code nil :stdout "" :stderr "")))))
+                    (output (if delimiter
+                                (gascity-reader--split-output
+                                 (buffer-string) delimiter)
+                              (cons (buffer-string)
+                                    (with-temp-buffer
+                                      (insert-file-contents stderr-file)
+                                      (buffer-string)))))
+                    (stdout (car output))
+                    (stderr (cdr output)))
+               (when (fboundp 'gascity--log)
+                 (gascity--log 'info "Exit code: %s" exit-code)
+                 (gascity--log 'verbose "Stdout: %s" stdout))
+               (setq result (list :exit-code exit-code :stdout stdout
+                                  :stderr stderr :executable executable)))))
        (when (and stderr-file (file-exists-p stderr-file))
-         (delete-file stderr-file))))))
+         (delete-file stderr-file))
+       result))))
+
+(defun gascity-reader--env-entries (city-env)
+  "Return CITY-ENV (a list of (VAR . VALUE)) as environment entries.
+Order preserved: earlier entries win in `process-environment', and
+the identity anchors must lead (see `gascity-reader--city-env-overrides')."
+  (mapcar (lambda (pair) (format "%s=%s" (car pair) (cdr pair)))
+          city-env))
+
+(defun gascity-reader--run-with-env (args city-env)
+  "Run `gascity-reader-run' on ARGS with CITY-ENV overrides, or nil.
+CITY-ENV is a list of (VAR . VALUE) environment overrides prepended to
+`process-environment'.  Nil passes through unchanged — the plain
+runner is still the one call site every non-env read shares."
+  (if (not city-env)
+      (gascity-reader-run args)
+    (let ((process-environment
+           (append (gascity-reader--env-entries city-env)
+                   process-environment)))
+      (gascity-reader-run args))))
 
 ;;; JSON parsing
 
@@ -368,12 +470,14 @@ value)."
              (format "gc %s failed (exit %s)"
                      (mapconcat #'identity args " ") exit-code))))))
 
-(defun gascity-reader--read-1 (args full-args)
+(defun gascity-reader--read-1 (args full-args &optional city-env)
   "Run `gc' with FULL-ARGS once and return the parsed JSON payload.
 ARGS are the original tokens (for error messages), FULL-ARGS the argv
-including `--json'.  The single-attempt body of `gascity-reader-read',
-which retries it on a remote parse error."
-  (let* ((result (gascity-reader-run full-args))
+including `--json'.  CITY-ENV, when non-nil, is a (VAR . VALUE)
+environment override (the env-city targeting) applied around the
+spawn.  The single-attempt body of `gascity-reader-read', which
+retries it on a remote parse error."
+  (let* ((result (gascity-reader--run-with-env full-args city-env))
          (exit-code (plist-get result :exit-code))
          (stdout (plist-get result :stdout))
          (stderr (plist-get result :stderr))
@@ -418,27 +522,38 @@ When `gascity-reader-city-args-function' is installed (gascity.el wires
 `gascity-context-city-args' into it), its tokens are prepended to ARGS
 first: the read explicitly targets the calling buffer's pinned city,
 and the error text below names that real argv
-(plans/sessions-list-city-targeting, D1/D2/D3)."
+(plans/sessions-list-city-targeting, D1/D2/D3).  Subcommands whose
+leaves never accept the flag (the dolt pack commands) get the city by
+environment instead — see `gascity-reader--city-env-pair'."
   ;; The city-targeting tokens are captured HERE, in the calling
   ;; buffer, before any buffer switch: `default-directory' is the
   ;; pinned city root, and the drain/retry wrapper's error messages
   ;; below are built from the prepended ARGS so they show the real
-  ;; argv (plans/sessions-list-city-targeting, D1/D3).
-  (let* ((args (append (gascity-reader--city-args) args))
+  ;; argv (plans/sessions-list-city-targeting, D1/D3).  The env-city
+  ;; override is captured next to the tokens, answered from the same
+  ;; directory.
+  (let* (;; The env-city override is answered on the CALLER's argv — the
+         ;; subcommand decides — before the tokens are prepended, because
+         ;; a hit also withholds the tokens (the pack leaves reject
+         ;; `--city'; same pinned `default-directory').
+         (city-env (gascity-reader--city-env-overrides args))
+         (args (if city-env
+                   args
+                 (append (gascity-reader--city-args) args)))
          (full-args (if (member "--json" args)
                         args
                       (append args (list "--json")))))
     (if (not (file-remote-p default-directory))
-        (gascity-reader--read-1 args full-args)
+        (gascity-reader--read-1 args full-args city-env)
       (condition-case nil
-          (gascity-reader--read-1 args full-args)
+          (gascity-reader--read-1 args full-args city-env)
         (gascity-json-parse-error
          (when (fboundp 'gascity--log)
            (gascity--log 'error
                          "Stale TRAMP channel output for gc %s; draining and retrying"
                          (mapconcat #'identity args " ")))
          (gascity-remote-drain-connection)
-         (gascity-reader--read-1 args full-args))))))
+         (gascity-reader--read-1 args full-args city-env))))))
 
 ;;; Asynchronous reader
 
@@ -502,7 +617,13 @@ falls through to the spawn, whose own failure carries the real reason.
 The city-targeting tokens (see `gascity-reader-city-args-function')
 lead the argv here too, computed in the calling buffer before any
 buffer switch — the sentinel's error messages close over the prepended
-ARGS (D1/D2/D3).
+ARGS (D1/D2/D3).  Subcommands whose leaves never accept the flag (the
+dolt pack commands) get the city by environment instead: an
+env-city override entry (`gascity-reader--city-env-pair') is bound in
+`process-environment' around the spawn — the TRAMP dispatch forwards
+the changed entry to the remote command line (\"env GC_CITY=…\"),
+and a local make-process copies the binding — so the read targets the
+view's city either way.
 
 Runs where `default-directory' points: `:file-handler t' dispatches
 through TRAMP on a remote directory, so gc runs on that host
@@ -536,7 +657,14 @@ turns it on, at the cost of a fresh ssh per read."
      ;; `args' is shadowed with the city-targeting tokens prepended: the
      ;; sentinel's error text (which closes over this binding) then shows
      ;; the real argv, and `full-args' is built from it (D1).
-     (let* ((args (append (gascity-reader--city-args) args))
+     (let* (;; The env-city override is answered on the CALLER's argv —
+            ;; the subcommand decides — before the tokens are prepended,
+            ;; because a hit also withholds the tokens (the pack leaves
+            ;; reject `--city'; same pinned `default-directory').
+            (city-env (gascity-reader--city-env-overrides args))
+            (args (if city-env
+                       args
+                     (append (gascity-reader--city-args) args)))
             (full-args (if (member "--json" args)
                            args
                          (append args (list "--json"))))
@@ -565,43 +693,48 @@ turns it on, at the cost of a fresh ssh per read."
          (gascity--log 'info "Running async: %s %s"
                        executable (mapconcat #'identity full-args " ")))
        (condition-case err
-           (make-process
-            :name "gascity-gc"
-            :command command
-            :noquery t
-            :connection-type 'pipe
-            :file-handler t
-            :stderr stderr-buffer
-            :filter (lambda (_proc chunk) (setq output (concat output chunk)))
-            :sentinel
-            (lambda (proc _event)
-              (when (memq (process-status proc) '(exit signal))
-                (let ((code (process-exit-status proc)))
-                  (unwind-protect
-                      (cond
-                       ((not (eql code 0))
-                        (when (fboundp 'gascity--log)
-                          (gascity--log 'error "Async gc exited %s: %s" code
-                                        (mapconcat #'identity args " ")))
-                        (when errback
-                          ;; The same envelope-aware message builder as the
-                          ;; sync path, fed with the accumulated output (and
-                          ;; no stderr: it is not captured here) — a remote
-                          ;; 127 still gets the setup hint via REMOTE.
-                          (funcall errback
-                                   (gascity-reader--failure-message
-                                    executable args code output nil remote))))
-                       (t
-                        (condition-case perr
-                            (let ((data (gascity-reader-parse-json output)))
-                              (funcall callback data))
-                          (gascity-json-parse-error
-                           (when errback
-                             (funcall errback
-                                      (error-message-string perr)))))))
-                    (when (and (bufferp stderr-buffer)
-                               (buffer-live-p stderr-buffer))
-                      (kill-buffer stderr-buffer)))))))
+           (let ((process-environment
+                  (if city-env
+                      (append (gascity-reader--env-entries city-env)
+                              process-environment)
+                    process-environment)))
+             (make-process
+              :name "gascity-gc"
+              :command command
+              :noquery t
+              :connection-type 'pipe
+              :file-handler t
+              :stderr stderr-buffer
+              :filter (lambda (_proc chunk) (setq output (concat output chunk)))
+              :sentinel
+              (lambda (proc _event)
+                (when (memq (process-status proc) '(exit signal))
+                  (let ((code (process-exit-status proc)))
+                    (unwind-protect
+                        (cond
+                         ((not (eql code 0))
+                          (when (fboundp 'gascity--log)
+                            (gascity--log 'error "Async gc exited %s: %s" code
+                                          (mapconcat #'identity args " ")))
+                          (when errback
+                            ;; The same envelope-aware message builder as the
+                            ;; sync path, fed with the accumulated output (and
+                            ;; no stderr: it is not captured here) — a remote
+                            ;; 127 still gets the setup hint via REMOTE.
+                            (funcall errback
+                                     (gascity-reader--failure-message
+                                      executable args code output nil remote))))
+                         (t
+                          (condition-case perr
+                              (let ((data (gascity-reader-parse-json output)))
+                                (funcall callback data))
+                            (gascity-json-parse-error
+                             (when errback
+                               (funcall errback
+                                        (error-message-string perr)))))))
+                      (when (and (bufferp stderr-buffer)
+                                 (buffer-live-p stderr-buffer))
+                        (kill-buffer stderr-buffer))))))))
          (error
           (when (and (bufferp stderr-buffer) (buffer-live-p stderr-buffer))
             (kill-buffer stderr-buffer))
