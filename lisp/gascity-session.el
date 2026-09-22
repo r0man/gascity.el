@@ -187,22 +187,35 @@ its SESSION (a raw `gc session list' alist, or nil)."
                            :face (gascity-section-state-face running suspended)))
      (vui-text (format "  state %s · provider %s · attached %s · last active %s"
                        (or state (if running "running" "stopped"))
-                       (gascity-tabulated--str
-                        (and session (alist-get 'provider session)))
+                       ;; An empty value renders as "—", not a dangling
+                       ;; label: a city-scope agent has no session row, so
+                       ;; provider/last-active carry nothing (bright-lights
+                       ;; dogfood, ga-hirj — "provider · last active " read
+                       ;; as broken UI).
+                       (let ((provider (and session
+                                            (alist-get 'provider session))))
+                         (if (and provider (not (string-empty-p provider)))
+                             provider
+                           "—"))
                        (if (and session (alist-get 'attached session)) "yes" "no")
-                       (gascity-tabulated--format-timestamp
-                        (and session (alist-get 'last_active session))))
+                       (let ((ts (gascity-tabulated--format-timestamp
+                                  (and session
+                                       (alist-get 'last_active session)))))
+                         (if (string-empty-p ts) "—" ts)))
                :face 'gascity-dim)
-     (vui-text (format "  worktree %s"
-                       (gascity-tabulated--abbreviate-path
-                        (or (and session (alist-get 'work_dir session))
-                            (gascity-agent-work-dir agent))))
-               :face 'gascity-dim)
-     (vui-text (format "  tmux %s"
-                       (gascity-tabulated--str
-                        (or (and session (alist-get 'session_name session))
-                            (gascity-agent-session-name agent))))
-               :face 'gascity-dim))))
+     ;; The worktree and tmux target only exist for agents with a session;
+     ;; when absent, drop the line entirely rather than print a bare label
+     ;; followed by nothing.
+     (when-let* ((dir (gascity-tabulated--abbreviate-path
+                       (or (and session (alist-get 'work_dir session))
+                           (gascity-agent-work-dir agent)))))
+       (unless (string-empty-p dir)
+         (vui-text (format "  worktree %s" dir) :face 'gascity-dim)))
+     (let ((target (gascity-tabulated--str
+                    (or (and session (alist-get 'session_name session))
+                        (gascity-agent-session-name agent)))))
+       (unless (string-empty-p target)
+         (vui-text (format "  tmux %s" target) :face 'gascity-dim))))))
 
 (defun gascity-session--mail-vnode (mail-res)
   "Return the mail-count vnode from async MAIL-RES."

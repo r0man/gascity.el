@@ -58,6 +58,7 @@
 (declare-function gascity-rig-resume-at-point "gascity-action")
 (declare-function gascity-rig-restart-at-point "gascity-action")
 (declare-function gascity-order-run-at-point "gascity-action")
+(declare-function gascity-sling-dispatch "gascity-action")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -853,6 +854,11 @@ seconds whenever its buffer is visible."
   ;; Write verbs (DESIGN-write-actions.md phase 1): reset/undrain at point.
   "R"   #'gascity-session-reset-at-point
   "U"   #'gascity-session-undrain-at-point
+  ;; `S' sling-dispatch, matching the status dashboard, rig dashboard and
+  ;; session detail (the bright-lights dogfood pass, ga-hirj: the flat list
+  ;; was the only agent view where `S' was unbound, so dispatching a bead
+  ;; from the session list meant hunting for another view).
+  "S"   #'gascity-sling-dispatch
   ;; This flat list has no sections, so unlike the vui dashboards (which
   ;; inherit `n'/`p' from `gascity-section-mode-map') it binds line movement
   ;; locally.  Peek moves off `p' to `v' so `p' can mean previous-line.
@@ -866,7 +872,8 @@ seconds whenever its buffer is visible."
 action; `i' opens the session/polecat detail view; `d' opens its
 worktree in Dired.  `M' nudges (sends a message), `s' suspends, `K'
 force-kills the runtime of, `w' wakes, `D' drains, and `v' peeks at the
-output of the session at point.  `n'/`p' move by line.  When
+output of the session at point.  `S' opens the unified sling-dispatch
+transient for the session at point.  `n'/`p' move by line.  When
 `gascity-session-list-auto-refresh' is on (the default), the list
 re-reads `gc' every `gascity-session-list-auto-refresh-interval' seconds
 while visible; `W' toggles that live.

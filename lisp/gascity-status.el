@@ -380,6 +380,16 @@ read has landed, supplies the suspended-session count."
          (controller (alist-get 'controller status))
          (health (alist-get 'health status))
          (degraded (and health (alist-get 'degraded health)))
+         ;; gc's health carries a `signals' vector naming why it degraded
+         ;; (e.g. "no_agents_running"); surface it next to the verdict —
+         ;; a bare "degraded" gave a magit user nothing to act on (the
+         ;; bright-lights dogfood pass, ga-hirj, hit env-sensitive
+         ;; health reads and had to shell out to gc to learn why).
+         (signals (mapconcat #'identity
+                             (append (and health
+                                          (alist-get 'signals health))
+                                     nil)
+                             ", "))
          (suspended (alist-get 'suspended status))
          (summary (alist-get 'summary status))
          (running-agents (or (and summary (alist-get 'running_agents summary)) 0))
@@ -395,7 +405,11 @@ read has landed, supplies the suspended-session count."
       (when path (vui-text path :face 'gascity-dim)))
      (vui-text (format "  controller %s · health %s · %s"
                        (gascity-status--controller-label controller)
-                       (if degraded "degraded" "ok")
+                       (if degraded
+                           (if (string-empty-p signals)
+                               "degraded"
+                             (format "degraded (%s)" signals))
+                         "ok")
                        (if suspended "city suspended" "not suspended"))
                :face (cond (degraded 'gascity-failed)
                            (suspended 'gascity-suspended)
