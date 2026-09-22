@@ -507,7 +507,15 @@ ARGS (D1/D2/D3).
 Runs where `default-directory' points: `:file-handler t' dispatches
 through TRAMP on a remote directory, so gc runs on that host
 \(`gascity-executable' resolved connection-locally, as in
-`gascity-reader-run')."
+`gascity-reader-run').
+
+Connection reuse note (W1, REQ-002): the default handler on an ssh
+connection is tramp-sh, which multiplexes every async read over the ONE
+pooled ssh connection — measured: N = 10 consecutive async reads
+spawned one ssh process total and zero new host logins
+(see `gascity-remote.el''s commentary and the W1 summary).  gascity
+never enables direct-async itself; it only keeps working when the user
+turns it on, at the cost of a fresh ssh per read."
   (if (and (file-remote-p default-directory)
            ;; A probe error (unreachable host, dead connection) must
            ;; surface as the launch failure the spawn path already
