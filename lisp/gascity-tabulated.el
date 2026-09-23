@@ -282,18 +282,38 @@ Delegates the slice arithmetic to `beads-pager-slice'."
                      gascity-tabulated--current-page
                      (gascity-tabulated--effective-page-size)))
 
+(defvar-local gascity-tabulated--stale-errors nil
+  "Count of consecutive failed refreshes behind the visible rows, or nil.
+Set by a list's failure handler (e.g. the session list's auto-refresh
+error hygiene); rendered by `gascity-tabulated--stale-suffix' and
+cleared by the list's success path or a manual `g'.")
+
+(defun gascity-tabulated--stale-suffix ()
+  "Mode-line suffix for a list whose last refresh failed, or \"\".
+`gascity-tabulated--stale-errors' non-nil means the refresh behind the
+visible rows failed (the rows are stale); the suffix names the failure
+count so the state stays visible while the error itself is deduped out
+of the echo area (ga-eyw9)."
+  (if gascity-tabulated--stale-errors
+      (format " [stale: %d failed refresh%s]"
+              gascity-tabulated--stale-errors
+              (if (= gascity-tabulated--stale-errors 1) "" "es"))
+    ""))
+
 (defun gascity-tabulated--update-mode-name ()
   "Set `mode-name' to \"BASE [page/total]\" and refresh the mode line.
 When a filter is active, its description is appended in parentheses
 \(e.g. \"Sessions [1/1] (rig=gascity)\"), so a filtered list is never
-mistaken for a complete one."
-  (setq mode-name (format "%s [%d/%d]%s"
+mistaken for a complete one.  A list whose last refresh failed shows a
+stale marker (see `gascity-tabulated--stale-suffix')."
+  (setq mode-name (format "%s [%d/%d]%s%s"
                           gascity-tabulated--base-name
                           gascity-tabulated--current-page
                           (gascity-tabulated--total-pages)
                           (if gascity-tabulated--filter-description
                               (format " (%s)" gascity-tabulated--filter-description)
-                            "")))
+                            "")
+                          (gascity-tabulated--stale-suffix)))
   (force-mode-line-update))
 
 (defun gascity-tabulated--truncate-row (cols)
@@ -349,7 +369,8 @@ overwrite the rows of a later `g'.")
   (force-mode-line-update))
 
 (defun gascity-tabulated--refresh-async (base-name command decode-fn
-                                                   &optional filter)
+                                                   &optional filter error-fn
+                                                   success-fn)
   "Fetch COMMAND asynchronously and repaint the current tabulated buffer.
 The non-blocking counterpart of `gascity-tabulated--refresh', and what
 every list's `g' runs: COMMAND is a `gascity-command' read (its argv
@@ -368,8 +389,12 @@ buffer is alive, so out-of-order completion cannot show stale rows.  A
 failure — launch error, non-zero exit, malformed JSON — is echoed as
 one clean line and leaves the list empty, exactly like the synchronous
 path (gce-dfe).  BASE-NAME and FILTER as for `gascity-tabulated--refresh'.
-Returns the process, or nil when none could be started."
-  (when-let ((error-msg (gascity-command-validate command)))
+ERROR-FN, when given, replaces the default echo for that failure line
+(the session list's auto-refresh hygiene dedupes and counts through
+it); SUCCESS-FN, when given, runs just before the rows settle — the
+success half of that hygiene.  Returns the process, or nil when none
+could be started."
+  (when-let* ((error-msg (gascity-command-validate command)))
     (signal 'gascity-validation-error
             (list (format "Command validation failed: %s" error-msg)
                   :command command
@@ -403,6 +428,8 @@ Returns the process, or nil when none could be started."
           (gascity-reader-read-async
            args
            (lambda (payload)
+             (when (and success-fn (funcall current-p))
+               (funcall success-fn))
              (funcall settle
                       (lambda ()
                         (condition-case err
@@ -414,7 +441,9 @@ Returns the process, or nil when none could be started."
              ;; A superseded fetch is killed by its successor and reports
              ;; that as a failure: only the current one gets to speak.
              (when (funcall current-p)
-               (message "gascity: %s" msg)
+               (if error-fn
+                   (funcall error-fn msg)
+                 (message "gascity: %s" msg))
                (funcall settle #'ignore)))))))
 
 (defun gascity-tabulated--refresh-display ()
@@ -699,13 +728,77 @@ substring of its `rig'."
         (string-match-p (regexp-quote rig)
                         (gascity-tabulated--str (gascity-session-rig session))))))
 
-(defun gascity-session-list-refresh ()
+;;; Auto-refresh failure hygiene (ga-eyw9)
+;;
+;; The incident this closes: over a flaky TRAMP link, seven identical
+;; \"no such directory\" echoes in ~35s — one per auto-refresh tick —
+;; while the city itself was intact.  The hygiene: one visible error
+;; per distinct failure message, a failure counter in the mode line
+;; \(`gascity-tabulated--stale-errors'), and an exponential tick
+;; backoff (1, 2, 4 … capped at `gascity-session-list--backoff-max-ticks'
+;; ticks, i.e. interval × 6) so a wedged link is probed ever more
+;; rarely instead of once per tick.  A successful refresh heals
+;; silently; a manual `g' resets everything.
+
+(defconst gascity-session-list--backoff-max-ticks 6
+  "Auto-refresh backoff ceiling, in ticks.
+At the 5s default interval the pause tops out at 30s = interval × 6.")
+
+(defvar-local gascity-session-list--refresh-failures 0
+  "Consecutive failed refreshes of this session-list buffer.
+Drives the backoff exponent and the stale marker; cleared on success
+or by a manual `g'.")
+
+(defvar-local gascity-session-list--refresh-backoff 0
+  "Auto-refresh ticks still to skip before the next attempt.
+Armed by `gascity-session-list--note-refresh-error', consumed by the
+timer tick, cleared by success or a manual `g'.")
+
+(defvar-local gascity-session-list--last-error nil
+  "The failure message currently deduped, or nil.
+A new distinct message is echoed once; repeats of the same one only
+count (ga-eyw9: seven identical echoes for one episode).")
+
+(defun gascity-session-list--note-refresh-error (msg)
+  "Record a failed refresh (errback message MSG) in the current buffer.
+First failure of an episode — or a changed message — is echoed once;
+repeats of the same message are silent, only bumping the counters and
+the mode-line stale marker.  Arms the backoff: the tick then skips
+1, 2, 4 … ticks, capped at `gascity-session-list--backoff-max-ticks'."
+  (cl-incf gascity-session-list--refresh-failures)
+  (setq gascity-session-list--refresh-backoff
+        (min (ash 1 (1- gascity-session-list--refresh-failures))
+             gascity-session-list--backoff-max-ticks)
+        gascity-tabulated--stale-errors gascity-session-list--refresh-failures)
+  (unless (equal msg gascity-session-list--last-error)
+    (setq gascity-session-list--last-error msg)
+    (message "gascity: %s" msg)))
+
+(defun gascity-session-list--clear-refresh-errors ()
+  "Clear the session list's failure/backoff state in the current buffer.
+The success half of the hygiene — a refresh that works again heals the
+view silently, no banner, no message — and also what a manual `g'
+runs first: the user driving resets the backoff outright."
+  (setq gascity-session-list--refresh-failures 0
+        gascity-session-list--refresh-backoff 0
+        gascity-session-list--last-error nil
+        gascity-tabulated--stale-errors nil))
+
+(defun gascity-session-list-refresh (&optional from-auto-refresh)
   "Refresh the session list, applying the current filter.
 The `state' filter is sent to `gc' (`--state'); the `rig' filter is
 applied client-side to the decoded rows.  Asynchronous
 \(`gascity-tabulated--refresh-async'), so the seconds a remote `gc
-session list' takes never freeze the UI."
+session list' takes never freeze the UI.
+
+FROM-AUTO-REFRESH non-nil (the timer tick) engages the failure hygiene
+(`gascity-session-list--note-refresh-error'): consecutive identical
+errors are echoed once, counted in the mode line, and back off the
+timer.  A manual `g' (nil) resets all of that state — the user driving
+outranks the backoff — and also clears the stale marker."
   (interactive)
+  (unless from-auto-refresh
+    (gascity-session-list--clear-refresh-errors))
   (let ((cmd (apply #'gascity-command-session-list gascity-session-list--filter))
         ;; Resolve the tmux socket once per refresh — it is constant across
         ;; rows, and `gc session list' does not carry the city name.
@@ -721,7 +814,11 @@ session list' takes never freeze the UI."
                  (seq-filter (lambda (s)
                                (gascity-session-list--match-p s (oref cmd rig)))
                              sessions))))
-     gascity-session-list--filter)))
+     gascity-session-list--filter
+     ;; Auto-refresh error hygiene (ga-eyw9): dedupe + backoff on
+     ;; failure, silent self-heal on success.
+     #'gascity-session-list--note-refresh-error
+     #'gascity-session-list--clear-refresh-errors)))
 
 ;;; Auto-refresh timer
 ;;
@@ -747,8 +844,13 @@ list's OWN pinned `default-directory', since the timer runs with whatever
 buffer is current), or when an async refresh is still in flight (the live
 `gascity-tabulated--refresh-process'; starting one supersedes the pending
 fetch).  `non-essential' is bound so the timer can never make TRAMP
-establish a NEW connection — after a dropped link the tick degrades to an
-error line and a manual `g' reconnects."
+establish a NEW connection — after a dropped link the tick degrades to
+an error line and a manual `g' reconnects.
+
+A failed episode backs the tick off (skip 1, 2, 4 … ticks, capped at
+`gascity-session-list--backoff-max-ticks', ga-eyw9): a wedged link is
+probed ever more rarely, and each skipped tick only decrements the
+backoff counter.  A manual `g' resets it."
   (when (and (buffer-live-p buffer)
              (get-buffer-window buffer 'visible)
              (not (gascity-remote-connection-locked-p
@@ -757,7 +859,11 @@ error line and a manual `g' reconnects."
                    (buffer-local-value 'gascity-tabulated--refresh-process buffer))))
     (let ((non-essential t))
       (with-current-buffer buffer
-        (gascity-session-list-refresh)))))
+        (if (> gascity-session-list--refresh-backoff 0)
+            ;; Backing off after failures: spend this tick on the pause
+            ;; instead of another doomed `gc session list'.
+            (cl-decf gascity-session-list--refresh-backoff)
+          (gascity-session-list-refresh 'auto))))))
 
 (defun gascity-session-list--auto-refresh-teardown ()
   "Cancel the current buffer's auto-refresh timer.

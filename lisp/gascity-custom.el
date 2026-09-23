@@ -91,6 +91,30 @@ behaviour."
   :type 'natnum
   :group 'gascity)
 
+(defcustom gascity-remote-sync-timeout 30
+  "Seconds before a synchronous remote call is abandoned, 0 to disable.
+Every synchronous remote primitive gascity runs — the `process-file'
+read of `gascity-reader-run' (including the executable resolution
+ahead of it) and the tmux probes (`gascity-terminal--tmux',
+`gascity-terminal-tmux-session-exists-p',
+`gascity-terminal-pane-cwd') — waits inside TRAMP's
+`accept-process-output' loop, where timers run.  A timeout therefore
+can interrupt them when the channel is wedged: a half-dead ssh
+connection (killed laptop, dropped VPN) would otherwise block the UI
+for minutes on TCP retransmit timers, and a timer-driven probe would
+freeze Emacs once per tick.  When the bound fires, the caller is
+signalled with `gascity-remote-sync-timeout' after the connection has
+been drained (`gascity-remote-drain-connection'), so a retried command
+starts on a clean channel.
+
+Local calls are deliberately never bound: a local `process-file' waits
+in blocking C code that runs no timers, so a timeout could not fire —
+and a local spawn cannot stall on a network.  Set to 0 (or nil) to
+restore unbounded waits."
+  :type '(choice (natnum :tag "Seconds")
+                 (const :tag "Unbounded" nil))
+  :group 'gascity)
+
 ;;; Debug logging
 
 (defcustom gascity-enable-debug nil

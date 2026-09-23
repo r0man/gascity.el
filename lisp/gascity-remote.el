@@ -72,14 +72,17 @@
 ;;   hygiene section documents the user-run truncation command for an
 ;;   already-bloated file).
 ;;
-;; This module depends only on `gascity-custom' (the defcustom home),
-;; so every other module can require it.
+;; This module depends on `gascity-custom' (the defcustom home) and
+;; `gascity-error' (the timeout condition is a `gascity-error' child, so
+;; the action layer's existing error handlers catch and display it
+;; cleanly); every other module can require it.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'tramp)
 (require 'gascity-custom)
+(require 'gascity-error)
 
 ;;; Paths
 
@@ -159,6 +162,78 @@ abort the wait; errors are swallowed, draining is advisory."
             (while (and (> rounds 0)
                         (accept-process-output proc 0.1 nil t))
               (setq rounds (1- rounds)))))))))
+
+;;; Property hygiene
+
+(defun gascity-remote-flush-file-cache (&optional dir)
+  "Flush TRAMP's cached file properties for remote directory DIR.
+DIR defaults to `default-directory'; a local DIR is a no-op.  Drops the
+directory's own cached attribute entry (`file-directory-p' consults it)
+plus every per-file property cached for its contents, so a cached-NEGATIVE
+answer cannot survive the call: a channel command misparsed on a
+half-dead connection can leave `file-directory-p' answering nil for a
+healthy remote directory (the \"no such directory\" false negatives,
+ga-eyw9), and a probe that retries after this flush sees the directory
+as it is now, not as the poisoned cache had it.  Best-effort: any TRAMP
+error is swallowed — flushing is advisory hygiene, never a failure.
+Returns DIR when a remote flush was attempted, nil when nothing was
+flushed (a local DIR)."
+  (when-let* ((dir (or dir default-directory))
+              ((file-remote-p dir)))
+    (prog1 dir
+      (ignore-errors
+        (with-parsed-tramp-file-name (directory-file-name dir) nil
+          ;; The directory's own attributes (`file-directory-p' reads
+          ;; these)…
+          (tramp-flush-file-properties v localname)
+          ;; …and anything cached for the files inside it.
+          (tramp-flush-directory-properties v localname))))))
+
+;;; Synchronous-call timeout
+
+(define-error 'gascity-remote-sync-timeout
+  "Gas City synchronous remote call timed out"
+  'gascity-error)
+
+(defmacro gascity-remote-with-timeout (seconds &rest body)
+  "Run BODY, abandoning it after SECONDS on a remote directory.
+SECONDS is evaluated (typically `gascity-remote-sync-timeout'); a nil,
+zero, or negative value — or a LOCAL `default-directory' — runs BODY
+unbounded and unchanged.
+
+On a remote directory BODY is wrapped in `with-timeout': a synchronous
+TRAMP operation waits in `accept-process-output', where timers run, so
+the timeout can fire even though the outer call is synchronous.  When
+it fires, the connection is first drained
+\(`gascity-remote-drain-connection' — a channel command abandoned
+mid-unwind leaves output behind that the next command would harvest as
+its own stdout), then `gascity-remote-sync-timeout' is signalled, a
+`gascity-error' child the action layer's handlers already display
+ cleanly.  Locally the timeout cannot fire anyway (a local
+`process-file' waits in blocking C code that runs no timers), and a
+local spawn has no network to stall on, so BODY runs as written."
+  (declare (indent 1))
+  (let ((secs (make-symbol "secs")))
+    `(let ((,secs ,seconds))
+       (if (and (numberp ,secs) (> ,secs 0)
+                (file-remote-p default-directory))
+           (condition-case err
+               (with-timeout
+                   (,secs
+                    (signal 'gascity-remote-sync-timeout
+                            (list (format "synchronous remote call timed out\
+ after %s seconds (connection wedged?); \
+ raise or disable `gascity-remote-sync-timeout' to suit"
+                                          ,secs))))
+                 ,@body)
+             (gascity-remote-sync-timeout
+              ;; The abandoned channel command keeps its output in
+              ;; flight; drain so a retried command starts clean
+              ;; (gce-desync).  Draining is advisory — never mask the
+              ;; timeout signal with a drain failure.
+              (ignore-error error (gascity-remote-drain-connection))
+              (signal (car err) (cdr err))))
+         (progn ,@body)))))
 
 ;;; History hygiene
 

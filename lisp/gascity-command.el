@@ -367,7 +367,7 @@ directories exactly as they do for the reader paths (gce-k5d)."
 Validates COMMAND, runs it via `gascity-reader-run', then parses the
 output.  Signals `gascity-validation-error' when validation fails and
 `gascity-command-error' on a non-zero exit."
-  (when-let ((error-msg (gascity-command-validate command)))
+  (when-let* ((error-msg (gascity-command-validate command)))
     (signal 'gascity-validation-error
             (list (format "Command validation failed: %s" error-msg)
                   :command command

@@ -123,7 +123,7 @@ host-local form (`file-local-name') — the consumer is the host-side
 gc process.  Anything else returns nil and the invocation targets by
 `--city' argv or gc's own discovery as before."
   (when (member (car args) gascity-reader-env-city-subcommands)
-    (when-let ((root (gascity-context-city-root)))
+    (when-let* ((root (gascity-context-city-root)))
       (cons "GC_CITY" (file-local-name root)))))
 
 (defun gascity-reader--city-env-overrides (args)
@@ -137,7 +137,7 @@ so ambient anchors (a session-launched Emacs carries emacs-city's)
 would shadow gc's own projection and the pack script would read the
 wrong city's runtime dir.  Prepending the anchors here puts the view's
 city first instead, healing the dispatch for exactly this read."
-  (when-let ((pair (gascity-reader--city-env-pair args)))
+  (when-let* ((pair (gascity-reader--city-env-pair args)))
     (let ((root (cdr pair)))
       (list (cons "GC_CITY" root)
             (cons "GC_CITY_PATH" root)
@@ -267,6 +267,15 @@ at spawn; over TRAMP the dispatch emits the changed entry on the
 remote command line (\"env GC_CITY=… …\"), so gc's pack-command city
 resolution sees the view's city either way."
   (with-connection-local-variables
+   ;; Bounded when remote (`gascity-remote-with-timeout'): the
+   ;; executable resolution ahead of the spawn and the `process-file'
+   ;; itself are the synchronous channel round trips a half-dead
+   ;; connection stalls on, and this runner is reachable from
+   ;; interactive paths (peek, transients, action verbs) that must
+   ;; error out instead of hanging.  On timeout the connection is
+   ;; drained and `gascity-remote-sync-timeout' — a `gascity-error'
+   ;; child — propagates to the caller's existing handlers.
+   (gascity-remote-with-timeout gascity-remote-sync-timeout
    ;; Capture the executable, command and env-city override HERE:
    ;; `with-connection-local-variables' applies a connection-local
    ;; value buffer-locally in the current buffer, so a read inside
@@ -326,7 +335,7 @@ resolution sees the view's city either way."
                                   :stderr stderr :executable executable)))))
        (when (and stderr-file (file-exists-p stderr-file))
          (delete-file stderr-file))
-       result))))
+       result)))))
 
 (defun gascity-reader--env-entries (city-env)
   "Return CITY-ENV (a list of (VAR . VALUE)) as environment entries.
@@ -557,6 +566,79 @@ environment instead — see `gascity-reader--city-env-pair'."
 
 ;;; Asynchronous reader
 
+(defun gascity-reader--remote-dir-absent-bounded-p ()
+  "One bounded `file-directory-p' round trip (see the wrapper)."
+  (condition-case nil
+      (gascity-remote-with-timeout
+          gascity-remote-sync-timeout
+        (not (file-directory-p default-directory)))
+    (gascity-remote-sync-timeout 'timed-out)
+    (error nil)))
+
+(defun gascity-reader--remote-dir-absent-p (&optional may-reconnect)
+  "One bounded directory probe of `default-directory' (ga-eyw9).
+Returns t when `file-directory-p' answers nil, the symbol `timed-out'
+when the probe hit `gascity-remote-sync-timeout', and nil when the
+directory exists or the probe ERRORED — an error must fall through to
+the spawn, whose own failure carries the real reason; only a clean
+negative is ever reported.  The round trip is bounded by
+`gascity-remote-with-timeout' so a wedged channel degrades the tick
+instead of freezing it.
+
+Unless MAY-RECONNECT, `non-essential' is bound so the probe can never
+make TRAMP establish a NEW connection.  Only the cache-flush retry
+passes it: a manual refresh then may re-establish a dropped
+connection, while a timer tick — which binds `non-essential' itself —
+keeps its no-reconnect guarantee (the retry declines to override the
+caller's binding)."
+  (and (file-remote-p default-directory)
+       (if may-reconnect
+           (gascity-reader--remote-dir-absent-bounded-p)
+         (let ((non-essential t))
+           (gascity-reader--remote-dir-absent-bounded-p)))))
+
+(defun gascity-reader--async-dir-probe ()
+  "Verdict for the up-front async-spawn directory probe (ga-eyw9).
+Returns `absent' only when TWO bounded probes
+\(`gascity-reader--remote-dir-absent-p'), separated by a flush of
+TRAMP's cached file properties (`gascity-remote-flush-file-cache'),
+both say `default-directory' does not exist; `timed-out' when a probe
+hit the sync-timeout bound; nil when the directory exists, no probe
+was needed (a local directory), or the first probe's negative was
+reversed by the retry.
+
+The retry exists because a first \"absent\" can be SPURIOUS: a stale
+or wedged TRAMP connection can misparse a channel command and cache a
+negative file attribute, so a healthy remote city then reports \"no
+such directory\" as ground truth on every auto-refresh tick (the
+niri workspace-4 incident of 2026-09-23: seven identical errors over
+~35s against a verified-intact city).  A retry that reverses the
+verdict is logged, so recurring misparses stay visible in
+`gascity--log'."
+  (let ((probe (gascity-reader--remote-dir-absent-p)))
+    (cond
+     ((eq probe 'timed-out) 'timed-out)
+     (probe
+      ;; First probe said absent — possibly a cached-negative misparse.
+      (gascity-remote-flush-file-cache default-directory)
+      (let ((retry (gascity-reader--remote-dir-absent-p 'may-reconnect)))
+        (cond
+         ;; Two agreeing negatives: report absence as ground truth.
+         ((eq retry t) 'absent)
+         ;; The retry wedged the same way: a dead connection again.
+         ((eq retry 'timed-out) 'timed-out)
+         ;; Reversed: the flush cleared poisoned cache state — proceed
+         ;; with the spawn.
+         (t
+          (when (fboundp 'gascity--log)
+            (gascity--log
+             'info
+             "Directory probe reversed on retry after TRAMP cache flush\
+(cached-negative state?): %s"
+             default-directory))
+          nil))))
+     (t nil))))
+
 (defun gascity-reader-read-async (args callback &optional errback)
   "Run `gc ARGS... --json' asynchronously and parse its output.
 ARGS are the subcommand tokens and any flags (strings); `--json' is
@@ -612,7 +694,9 @@ prompt forever, so the sentinel never fires and every attempt leaks a
 wedged channel process (gce-q84).  Locally the spawn itself signals
 `file-missing', reaching ERRBACK through the launch-error handler
 below.  A directory probe error (unreachable host, dead connection)
-falls through to the spawn, whose own failure carries the real reason.
+falls through to the spawn, whose own failure carries the real reason;
+a clean negative is retried once past a TRAMP cache flush before it is
+reported (`gascity-reader--async-dir-probe').
 
 The city-targeting tokens (see `gascity-reader-city-args-function')
 lead the argv here too, computed in the calling buffer before any
@@ -637,13 +721,30 @@ spawned one ssh process total and zero new host logins
 (see `gascity-remote.el''s commentary and the W1 summary).  gascity
 never enables direct-async itself; it only keeps working when the user
 turns it on, at the cost of a fresh ssh per read."
-  (if (and (file-remote-p default-directory)
-           ;; A probe error (unreachable host, dead connection) must
-           ;; surface as the launch failure the spawn path already
-           ;; handles, not as a bogus missing-directory report.
-           (condition-case nil
-               (not (file-directory-p default-directory))
-             (error nil)))
+  ;; The up-front directory probe is bounded (`non-essential' +
+  ;; `gascity-remote-with-timeout'): async reads are reachable from
+  ;; auto-refresh timers, and this probe is the one synchronous TRAMP
+  ;; round trip on that path (the cache-flush retry adds a second only
+  ;; when the first answered "absent") — a half-dead connection must
+  ;; degrade the view (errback, nil), not freeze the tick on a
+  ;; reconnect.  An ordinary probe error (unreachable host) still falls
+  ;; through to the spawn, whose own failure carries the real reason.  A
+  ;; clean negative answer is retried once past a TRAMP cache flush
+  ;; before it is believed (`gascity-reader--async-dir-probe').
+  (let ((probe (gascity-reader--async-dir-probe)))
+    (cond
+     ((eq probe 'timed-out)
+      (when (fboundp 'gascity--log)
+        (gascity--log 'error
+                      "Async gc not started: directory probe timed out: %s"
+                      default-directory))
+      (when errback
+        (funcall errback
+                 (format "gc %s failed: no such directory (probe timed out): %s"
+                         (mapconcat #'identity args " ")
+                         default-directory)))
+      nil)
+     ((eq probe 'absent)
       (progn
         (when (fboundp 'gascity--log)
           (gascity--log 'error "Async gc not started: no such directory: %s"
@@ -652,8 +753,9 @@ turns it on, at the cost of a fresh ssh per read."
           (funcall errback (format "gc %s failed: no such directory: %s"
                                    (mapconcat #'identity args " ")
                                    default-directory)))
-        nil)
-    (with-connection-local-variables
+        nil))
+     (t
+      (with-connection-local-variables
      ;; `args' is shadowed with the city-targeting tokens prepended: the
      ;; sentinel's error text (which closes over this binding) then shows
      ;; the real argv, and `full-args' is built from it (D1).
@@ -743,7 +845,7 @@ turns it on, at the cost of a fresh ssh per read."
                               executable
                               (error-message-string err)
                               remote 'gascity-executable)))
-          nil))))))
+          nil))))))))
 
 ;; Named per-subcommand reads are the `gascity-command-*!' bang
 ;; functions (see `gascity-command'/`gascity-types'); there is no

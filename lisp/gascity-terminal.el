@@ -244,12 +244,18 @@ Probes via `process-file', so on a remote `default-directory' the
 city's own tmux server is asked, on its host — tmux resolved there by
 `gascity-remote-find-executable'.  Signals a `file-error' when tmux
 itself cannot be run there (callers that need a clean message wrap
-this — see `gascity-terminal-attach-tmux')."
+this — see `gascity-terminal-attach-tmux').  On a remote directory the
+probe is bounded by `gascity-remote-sync-timeout'
+\(`gascity-remote-with-timeout'): a wedged channel surfaces
+`gascity-remote-sync-timeout' instead of hanging forever; the local
+probe never needs the bound (no network, blocking C code that runs no
+timers)."
   (and session (stringp session) (not (string-empty-p session))
-       (eq 0 (apply #'process-file (gascity-remote-find-executable "tmux")
-                    nil nil nil
-                    (append (gascity-terminal--socket-args socket)
-                            (list "has-session" "-t" session))))))
+       (gascity-remote-with-timeout gascity-remote-sync-timeout
+         (eq 0 (apply #'process-file (gascity-remote-find-executable "tmux")
+                      nil nil nil
+                      (append (gascity-terminal--socket-args socket)
+                              (list "has-session" "-t" session)))))))
 
 (defun gascity-terminal-pane-cwd (session &optional socket)
   "Return the working directory of tmux SESSION's active pane, or nil.
@@ -260,17 +266,22 @@ trimmed path.  Returns nil when SESSION is empty, tmux is unavailable,
 the session is gone, or the pane reports no path; the caller validates
 that the path exists on disk.  This lets `gascity-agent-dired' open an
 agent's live working directory even when its session bead recorded no
-`work_dir' (mirroring gastown)."
+`work_dir' (mirroring gastown).  A remote probe is bounded by
+`gascity-remote-sync-timeout': a timeout answers nil, uniformly with
+the other failure modes, instead of hanging on a dead channel."
   (when (and session (stringp session) (not (string-empty-p session)))
     (with-temp-buffer
       (when (eq 0 (condition-case nil
-                      (apply #'process-file
-                             (gascity-remote-find-executable "tmux")
-                             nil t nil
-                             (append (gascity-terminal--socket-args socket)
-                                     (list "display-message" "-t" session
-                                           "-p" "#{pane_current_path}")))
-                    (file-error nil)))
+                      (gascity-remote-with-timeout
+                          gascity-remote-sync-timeout
+                        (apply #'process-file
+                               (gascity-remote-find-executable "tmux")
+                               nil t nil
+                               (append (gascity-terminal--socket-args socket)
+                                       (list "display-message" "-t" session
+                                             "-p" "#{pane_current_path}"))))
+                    (file-error nil)
+                    (gascity-remote-sync-timeout nil)))
         (let ((path (string-trim (buffer-string))))
           (unless (string-empty-p path) path))))))
 
@@ -309,14 +320,22 @@ Runs via `process-file' where `default-directory' points, so a remote
 city's tmux server is probed on its own host — tmux resolved there by
 `gascity-remote-find-executable'.  Returns nil when tmux is
 unavailable, the remote connection fails, or tmux exits non-zero (e.g.
-the session is gone), so callers treat a missing session uniformly."
+the session is gone), so callers treat a missing session uniformly.
+A remote call is bounded by `gascity-remote-sync-timeout': a wedged
+channel answers nil — uniformly with the other failure modes — instead
+of hanging, which is what lets the status-mirror tick keep degrading
+gracefully after the link dies (the timer path itself adds the
+connection-lock and `non-essential' guards on top)."
   (with-temp-buffer
     (when (eq 0 (condition-case nil
-                    (apply #'process-file
-                           (gascity-remote-find-executable "tmux")
-                           nil t nil
-                           (append (gascity-terminal--socket-args socket) args))
-                  (file-error nil)))
+                    (gascity-remote-with-timeout
+                        gascity-remote-sync-timeout
+                      (apply #'process-file
+                             (gascity-remote-find-executable "tmux")
+                             nil t nil
+                             (append (gascity-terminal--socket-args socket) args)))
+                  (file-error nil)
+                  (gascity-remote-sync-timeout nil)))
       (string-trim (buffer-string)))))
 
 (defun gascity-terminal--window-list (session socket)

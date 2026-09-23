@@ -171,7 +171,7 @@ fallback is only ever hit by stray reads.  Installed as
 `gascity-reader-city-args-function' in `gascity.el' (the load-order
 cycle keeps the wiring out of this module's `require's); only ever
 resolves the memoized city-root walk, never spawns gc."
-  (when-let ((root (gascity-context-city-root)))
+  (when-let* ((root (gascity-context-city-root)))
     (list "--city" (file-local-name root))))
 
 (defun gascity-view-get-buffer-create (base &optional dir)
@@ -365,7 +365,7 @@ for beads.el's `beads-issue-id-prefixes'."
 Derived from the basename of `gascity-context-city-root', so it only
 succeeds when DIR is inside the city tree.  For a gc-backed resolution
 that stays robust outside the tree, see `gascity-context-gc-city-name'."
-  (when-let ((root (gascity-context-city-root dir)))
+  (when-let* ((root (gascity-context-city-root dir)))
     (file-name-nondirectory (directory-file-name root))))
 
 (defun gascity-context-gc-city-name (&optional dir)

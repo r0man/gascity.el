@@ -5755,6 +5755,95 @@ TRAMP >= 2.6, so the status-tick guard reads the property instead)."
         (tramp-flush-connection-property proc "locked"))
       (should-not (gascity-remote-connection-locked-p)))))
 
+;;; Probe retry over cached-negative TRAMP state (ga-eyw9)
+
+(ert-deftest gascity-test-async-dir-probe-retry-reverses-cached-negative ()
+  "A first \"absent\" probe verdict is retried once past a TRAMP cache
+flush; a reversed retry answers present (nil), so the spawn proceeds."
+  (let ((answers nil) (flushes 0))
+    (cl-letf (((symbol-function 'file-remote-p) (lambda (&rest _) t))
+              ((symbol-function 'file-directory-p)
+               (lambda (&rest _) (pop answers)))
+              ((symbol-function 'gascity-remote-flush-file-cache)
+               (lambda (&optional _) (cl-incf flushes))))
+      ;; First probe misreads the directory, the retry sees it.
+      (setq answers '(nil t))
+      (should (null (gascity-reader--async-dir-probe)))
+      (should (= flushes 1))
+      ;; A healthy directory from the start never flushes.
+      (setq answers '(t))
+      (should (null (gascity-reader--async-dir-probe)))
+      (should (= flushes 1)))))
+
+(ert-deftest gascity-test-async-dir-probe-absent-confirmed-twice ()
+  "Two agreeing negatives report absence — a real absence still errbacks
+through the usual \"no such directory\" path, not a silent spawn."
+  (let ((answers nil) (flushes 0))
+    (cl-letf (((symbol-function 'file-remote-p) (lambda (&rest _) t))
+              ((symbol-function 'file-directory-p)
+               (lambda (&rest _) (pop answers)))
+              ((symbol-function 'gascity-remote-flush-file-cache)
+               (lambda (&optional _) (cl-incf flushes))))
+      (setq answers '(nil nil))
+      (should (eq (gascity-reader--async-dir-probe) 'absent))
+      (should (= flushes 1)))))
+
+(ert-deftest gascity-test-async-dir-probe-local-skips-probe ()
+  "A local directory is never probed and never flushed."
+  (let ((default-directory temporary-file-directory)
+        (probed 0))
+    (cl-letf (((symbol-function 'file-directory-p)
+               (lambda (&rest _) (cl-incf probed))))
+      (should (null (gascity-reader--async-dir-probe)))
+      (should (zerop probed)))))
+
+(ert-deftest gascity-test-remote-async-absent-errbacks-no-spawn ()
+  "With the probe confirming absence, the async read errbacks the
+\"no such directory\" message and spawns nothing."
+  (let ((result nil) (spawned nil))
+    (with-temp-buffer
+      (should (null
+               (cl-letf (((symbol-function 'gascity-reader--async-dir-probe)
+                          (lambda () 'absent))
+                         ((symbol-function 'make-process)
+                          (lambda (&rest _) (setq spawned t))))
+                 (gascity-reader-read-async
+                  '("session" "list")
+                  (lambda (_d) (setcar result :called))
+                  (lambda (msg) (setq result msg))))))
+      (should-not spawned)
+      (should (string-match-p "no such directory" result)))))
+
+(ert-deftest gascity-test-remote-async-reversed-probe-spawns ()
+  "With the probe verdict reversed (nil), the async read proceeds to the
+spawn instead of reporting \"no such directory\"."
+  (let ((result nil))
+    (with-temp-buffer
+      (let ((gascity-executable "/bin/sh"))
+        (cl-letf (((symbol-function 'gascity-reader--async-dir-probe)
+                   (lambda () nil))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest _)
+                     (error "connection refused (mock)"))))
+          (gascity-reader-read-async
+           '("session" "list")
+           (lambda (_d) (setq result :called))
+           (lambda (msg) (setq result msg)))))
+      (should result)
+      (should-not (eq result :called))
+      (should-not (string-match-p "no such directory" result)))))
+
+(ert-deftest gascity-test-remote-flush-file-cache-noop-local ()
+  "`gascity-remote-flush-file-cache' is a silent no-op on a local
+directory, and a best-effort success on a remote one."
+  (let ((default-directory temporary-file-directory))
+    (should-not (gascity-remote-flush-file-cache)))
+  (gascity-test--with-mock-remote
+    (file-directory-p default-directory)
+    (should (gascity-remote-flush-file-cache default-directory))
+    ;; The cache still works afterwards (flush is not destruction).
+    (should (file-directory-p default-directory))))
+
 (ert-deftest gascity-test-remote-find-executable ()
   "Bare names resolve on the host with zero setup (gce-qke): a
 `tramp-remote-path' hit (`executable-find') wins, else the
@@ -7752,6 +7841,113 @@ buffer current) — and refreshes once it clears."
                   (should (= refreshes 1))))))
         (kill-buffer sessions)))))
 
+;;; Auto-refresh error hygiene: dedupe + backoff (ga-eyw9)
+
+(ert-deftest gascity-test-session-list-refresh-error-dedupe-and-backoff ()
+  "The error hygiene: the first failure echoes, repeats of the same
+message are silent (one visible error per episode), the counters arm
+the exponential backoff (capped at six ticks), and the stale marker
+shows the failure count."
+  (let ((buf (generate-new-buffer "*gascity-sessions-err*"))
+        (echoed nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (push (apply #'format fmt args) echoed))))
+            (gascity-session-list--note-refresh-error "no such directory: x")
+            (gascity-session-list--note-refresh-error "no such directory: x")
+            (should (= (length echoed) 1))
+            (should (= gascity-session-list--refresh-failures 2))
+            (should (= gascity-session-list--refresh-backoff 2))
+            (should (= gascity-tabulated--stale-errors 2))
+            (gascity-session-list--note-refresh-error "changed")
+            (should (= (length echoed) 2))
+            (should (= gascity-session-list--refresh-failures 3))
+            (should (= gascity-session-list--refresh-backoff 4))))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-refresh-success-clears-state ()
+  "A successful refresh heals silently: counters, backoff, dedupe key
+and stale marker all reset."
+  (let ((buf (generate-new-buffer "*gascity-sessions-heal*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (gascity-session-list--note-refresh-error "boom")
+          (should gascity-session-list--refresh-failures)
+          (gascity-session-list--clear-refresh-errors)
+          (should (zerop gascity-session-list--refresh-failures))
+          (should (zerop gascity-session-list--refresh-backoff))
+          (should-not gascity-session-list--last-error)
+          (should-not gascity-tabulated--stale-errors))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-auto-refresh-tick-backs-off ()
+  "During a failure episode the tick consumes the backoff instead of
+refreshing, and refreshes again once the backoff is spent."
+  (let ((buf (generate-new-buffer "*gascity-sessions-backoff*"))
+        (refreshes 0))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq gascity-session-list--refresh-backoff 2)
+          (cl-letf (((symbol-function 'get-buffer-window) (lambda (&rest _) 'w))
+                    ((symbol-function 'gascity-remote-connection-locked-p)
+                     #'ignore)
+                    ((symbol-function 'gascity-session-list-refresh)
+                     (lambda (&optional _auto) (cl-incf refreshes))))
+            (gascity-session-list--auto-refresh-tick buf)
+            (should (= refreshes 0))
+            (should (= gascity-session-list--refresh-backoff 1))
+            (gascity-session-list--auto-refresh-tick buf)
+            (should (= refreshes 0))
+            (should (zerop gascity-session-list--refresh-backoff))
+            (gascity-session-list--auto-refresh-tick buf)
+            (should (= refreshes 1))))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-session-list-manual-refresh-resets-backoff ()
+  "A manual `g' (FROM-AUTO-REFRESH nil) resets the failure/backoff state
+outright; a timer-driven refresh leaves it alone."
+  (let ((buf (generate-new-buffer "*gascity-sessions-manual*"))
+            captured)
+    (unwind-protect
+        (with-current-buffer buf
+          (gascity-session-list--note-refresh-error "boom")
+          (should gascity-session-list--refresh-backoff)
+          (cl-letf (((symbol-function 'gascity-resolve-tmux-socket) #'ignore)
+                    ((symbol-function 'gascity-tabulated--refresh-async)
+                     (lambda (&rest args) (setq captured args))))
+            (gascity-session-list-refresh 'auto)
+            ;; Timer-driven: backoff state survives.
+            (should gascity-session-list--refresh-backoff)
+            (should (= gascity-tabulated--stale-errors 1))
+            ;; The hygiene handlers are wired through to the refresh.
+            (should (= (length captured) 6))
+            (should (eq (nth 4 captured)
+                        #'gascity-session-list--note-refresh-error))
+            (should (eq (nth 5 captured)
+                        #'gascity-session-list--clear-refresh-errors))
+            ;; Manual `g': everything resets.
+            (gascity-session-list-refresh)
+            (should (zerop gascity-session-list--refresh-failures))
+            (should (zerop gascity-session-list--refresh-backoff))
+            (should-not gascity-tabulated--stale-errors)))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-tabulated-stale-marker-in-mode-name ()
+  "The mode line shows a stale marker with the failure count while the
+visible rows come from a failed refresh, and none after recovery."
+  (with-temp-buffer
+    (setq gascity-tabulated--base-name "Sessions")
+    (gascity-tabulated--update-mode-name)
+    (should-not (string-match-p "stale" mode-name))
+    (setq gascity-tabulated--stale-errors 3)
+    (gascity-tabulated--update-mode-name)
+    (should (string-match-p "\\[stale: 3 failed refreshes\\]" mode-name))
+    (setq gascity-tabulated--stale-errors 1)
+    (gascity-tabulated--update-mode-name)
+    (should (string-match-p "\\[stale: 1 failed refresh\\]" mode-name))))
+
 (ert-deftest gascity-test-session-list-auto-refresh-teardown-cancels-timer ()
   "Killing the list cancels its auto-refresh timer via `kill-buffer-hook'
 — no leaked timers."
@@ -7802,6 +7998,28 @@ restarts/cancels the buffer's timer to match."
           (should-not gascity-session-list-auto-refresh)
           (should-not (timerp gascity-session-list--refresh-timer)))
       (when (buffer-live-p buf) (kill-buffer buf)))))
+
+;;; Live-city TRAMP acceptance for ga-eyw9 (probe retry + refresh hygiene)
+;;
+;; The scripted acceptance flow lives in scripts/ga-eyw9-acceptance.el;
+;; it needs the real bright-lights city over TRAMP, so it skips itself
+;; when that city is not reachable.  The pass: open the remote session
+;; list, kill the pooled TRAMP connection, tick the auto-refresh eight
+;; times, and require the failure episode to surface at most ONE visible
+;; error, then self-heal silently on the next working refresh.
+
+(defconst gascity-test--bright-lights "/ssh:localhost:/home/roman/bright-lights/")
+
+(ert-deftest gascity-test-remote-ga-eyw9-acceptance-live ()
+  "The ga-eyw9 acceptance flow against the live bright-lights city:
+a dropped TRAMP link costs at most one visible error per episode, and
+the view self-heals when the link works again."
+  (skip-unless (ignore-errors (file-directory-p gascity-test--bright-lights)))
+  (load (expand-file-name
+         "../../scripts/ga-eyw9-acceptance.el"
+         (file-name-directory (locate-library "gascity-test")))
+        nil t)
+  (should (zerop (ga-eyw9-run))))
 
 ;;; env-city targeting for the dolt pack commands (ga-hvob)
 
