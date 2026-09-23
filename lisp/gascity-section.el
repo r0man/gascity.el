@@ -603,6 +603,38 @@ beads falls back to the buffer's own directory."
                              (gascity-rigs-cached))))
     (gascity-beads--rig-path rig)))
 
+(defun gascity-beads--city-store (&optional dir)
+  "Return the city root's own bead store for DIR, or nil.
+The city root directory itself (`gascity-context-city-root') — the tree
+holding the city-level `.beads' store gc routes prefix-less city beads
+through — re-prefixed for a remote city exactly like rig stores are
+(`gascity-remote-localize-path').  Nil when DIR sits outside any city."
+  (when-let* ((root (gascity-context-city-root dir)))
+    (file-name-as-directory
+     (expand-file-name (gascity-remote-localize-path root)))))
+
+(defun gascity-beads--create-store (&optional store)
+  "Return the store directory a quick-capture bead create should target.
+STORE selects it explicitly: a rig name resolves that rig's store
+\(`gascity-beads--rig-path'); the string \"city\" resolves the city
+root's own store.  STORE nil (programmatic calls) resolves contextually:
+a rig at point keeps the rig-store behavior; otherwise the city store.
+Nil — no explicit store, no rig at point, no city root — means the
+ambient directory: the caller emits no `-C' and defers to gc's own
+routing, exactly as create always did when nothing resolved.
+
+The returned directory names the store as Emacs sees it (TRAMP-prefixed
+on a remote city); the `-C' a gc process receives must name the store as
+that host sees it, so callers derive it with `file-local-name' — the
+same split `gascity-beads--show-in-store' makes for delegated reads."
+  (cond
+   ((and (stringp store) (string-empty-p store))
+    (gascity-beads--create-store nil))
+   ((equal store "city") (gascity-beads--city-store))
+   ((stringp store) (gascity-beads--rig-path store))
+   (t (or (gascity-beads--rig-path (gascity-context-rig-name))
+          (gascity-beads--city-store)))))
+
 (defun gascity-beads--show-in-store (id store)
   "Display bead ID with beads.el, resolving its store at STORE.
 STORE is the bead's store directory, or nil for the ambient directory.

@@ -5268,6 +5268,188 @@ Return BOX's car."
       (accept-process-output nil 0.1))
     (car box)))
 
+(ert-deftest gascity-test-bead-create-store-resolution ()
+  "`gascity-beads--create-store' resolves the create destination: an
+explicit rig name picks that rig's store, \"city\" picks the city root,
+and a nil STORE resolves contextually — the rig at point, else the city
+root (the fix for the rig-scoped-only create, ga-wle9)."
+  (let ((rigs '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))
+                         ((name . "bright-lights") (path . "/r/bl") (prefix . "bl"))])))
+        city-root)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _) rigs))
+              ((symbol-function 'gascity-context-rig-name)
+               (lambda (&optional _) nil))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) (setq city-root "/city/emacs-city/"))))
+      ;; An explicit rig name routes to that rig's store.
+      (should (equal (gascity-beads--create-store "gascity.el") "/r/gce/"))
+      ;; "city" routes to the city root's own store.
+      (should (equal (gascity-beads--create-store "city") "/city/emacs-city/"))
+      ;; Contextual: the rig at point wins over the city.
+      (cl-letf (((symbol-function 'gascity-context-rig-name)
+                 (lambda (&optional _) "bright-lights")))
+        (should (equal (gascity-beads--create-store) "/r/bl/")))
+      ;; Contextual: no rig at point -> the city store (the resolver's
+      ;; `gascity-context-rig-name' call is stubbed nil in this letf).
+      (should (equal (gascity-beads--create-store) "/city/emacs-city/"))
+      ;; An empty-string store falls back to the contextual answer too.
+      (should (equal (gascity-beads--create-store "") "/city/emacs-city/"))
+      ;; Outside any city with no rig at point (both stubbed nil here):
+      ;; ambient — no store resolved.
+      (cl-letf (((symbol-function 'gascity-context-city-root)
+                 (lambda (&optional _) nil)))
+        (should (null (gascity-beads--create-store)))
+        (should (null (gascity-beads--create-store "city")))))))
+
+(ert-deftest gascity-test-bead-create-contextual-store ()
+  "`gascity-bead-create' pins `-C' to the contextual store — the rig's when
+one is at point, the city root's own store otherwise — and passes the
+host-local form to gc (`file-local-name'), never the TRAMP-prefixed one."
+  (let (line)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'gascity-context-rig-name)
+               (lambda (&optional _) "gascity.el"))
+              ((symbol-function 'gascity-command-act)
+               (lambda (cmd) (setq line (gascity-command-line cmd)) '((id . "gce-new"))))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      ;; Rig context: unchanged rig-store behavior.
+      (gascity-bead-create "New bead" "task" "2" "")
+      (should (equal line '("gc" "bd" "create" "New bead" "--json" "-C" "/r/gce/"
+                            "--type" "task" "--priority" "2")))
+      ;; No rig at point -> the city store, and no prompting happened (the
+      ;; programmatic STORE argument was nil).
+      (cl-letf (((symbol-function 'gascity-context-city-root)
+                 (lambda (&optional _) "/city/emacs-city/"))
+                ((symbol-function 'gascity-context-rig-name)
+                 (lambda (&optional _) nil)))
+        (gascity-bead-create "City bead" nil nil nil)
+        (should (equal line '("gc" "bd" "create" "City bead" "--json"
+                              "-C" "/city/emacs-city/"))))
+      ;; A remote city: `-C' names the store as the host sees it, with the
+      ;; TRAMP prefix stripped (`file-local-name').
+      (cl-letf (((symbol-function 'gascity-context-city-root)
+                 (lambda (&optional _) "/city/emacs-city/"))
+                ((symbol-function 'gascity-context-rig-name)
+                 (lambda (&optional _) nil))
+                ((symbol-function 'gascity-remote-localize-path)
+                 (lambda (path &optional _dir) (concat "/ssh:u@h:" path))))
+        (gascity-bead-create "Remote bead" "task" "2" "")
+        (should (equal line '("gc" "bd" "create" "Remote bead" "--json"
+                              "-C" "/city/emacs-city/"
+                              "--type" "task" "--priority" "2")))))))
+
+(ert-deftest gascity-test-bead-create-explicit-store-and-echo ()
+  "An explicit STORE argument wins over context, the default store keeps
+the rig label, and the success message names the destination store
+alongside the new id."
+  (let (line label)
+    (cl-letf (((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/city/emacs-city/"))
+              ((symbol-function 'gascity-context-rig-name)
+               (lambda (&optional _) "gascity.el"))
+              ((symbol-function 'gascity-command-act)
+               (lambda (cmd) (setq line (gascity-command-line cmd)) '((id . "gce-new"))))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore)
+              ((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (when (string-match-p "store\\'" fmt)
+                   (setq label (apply #'format fmt args))))))
+      ;; Explicit "city" overrides the contextual rig (and echoes it).
+      (gascity-bead-create "Cross store" "task" "2" "" "city")
+      (should (equal line '("gc" "bd" "create" "Cross store" "--json"
+                            "-C" "/city/emacs-city/" "--type" "task"
+                            "--priority" "2")))
+      (should (equal label "gc bd create: created gce-new in city store"))
+      ;; A nil STORE in a rig context echoes the contextual rig store.
+      (gascity-bead-create "Rig bead" nil nil nil)
+      (should (equal label "gc bd create: created gce-new in gascity.el store"))
+      ;; No store resolvable at all: ambient create, labeled as such.
+      (cl-letf (((symbol-function 'gascity-context-city-root)
+                 (lambda (&optional _) nil))
+                ((symbol-function 'gascity-context-rig-name)
+                 (lambda (&optional _) nil)))
+        (gascity-bead-create "Ambient bead" nil nil nil)
+        (should (equal line '("gc" "bd" "create" "Ambient bead" "--json")))
+        (should (equal label "gc bd create: created gce-new in ambient store"))))))
+
+(ert-deftest gascity-test-bead-create-read-store-prompt ()
+  "The interactive store prompt defaults to the contextual answer and
+completes over \"city\" plus the rig names; with neither a city root nor
+rigs resolvable it returns nil without prompting."
+  ;; Rig at point: the rig name is the default.
+  (let (prompted)
+    (cl-letf (((symbol-function 'gascity-context-rig-name)
+               (lambda (&optional _) "gascity.el"))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/city/emacs-city/"))
+              ((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'completing-read)
+               (lambda (prompt _coll &rest _)
+                 (setq prompted prompt) "city")))
+      (should (equal (gascity-bead-create--read-store) "city"))
+      (should (equal prompted "Create in store (default gascity.el): ")))
+    ;; No rig, city root present: "city" is the default.
+    (cl-letf (((symbol-function 'gascity-context-rig-name)
+               (lambda (&optional _) nil))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) "/city/emacs-city/"))
+              ((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _)
+                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt _coll &rest _args) "city")))
+      (should (equal (gascity-bead-create--read-store) "city")))
+    ;; Neither resolvable: nil, and no completion UI is ever invoked
+    ;; (the rig read fails outright, so the choice list is empty).
+    (cl-letf (((symbol-function 'gascity-context-rig-name)
+               (lambda (&optional _) nil))
+              ((symbol-function 'gascity-context-city-root)
+               (lambda (&optional _) nil))
+              ((symbol-function 'gascity-command-rig-list!)
+               (lambda (&rest _) (error "no city")))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (error "must not prompt"))))
+      (should (null (gascity-bead-create--read-store))))))
+
+(ert-deftest gascity-test-bead-create-remote-city-store ()
+  "Over a remote `default-directory' the contextual city store comes back
+TRAMP-prefixed for Emacs (the split `gascity-beads--show-in-store' makes
+for delegated reads), while the `-C' gc receives stays host-local, named
+as the store's host sees it (ga-wle9)."
+  (gascity-test--with-mock-remote
+    (let (resolved line)
+      (cl-letf (((symbol-function 'gascity-command-rig-list!)
+                 (lambda (&rest _)
+                   '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+                ;; A host-local city root (what gc would report): the
+                ;; resolver must re-prefix it for the city's host ...
+                ((symbol-function 'gascity-context-city-root)
+                 (lambda (&optional _) "/home/roman/bright-lights/"))
+                ((symbol-function 'gascity-context-rig-name)
+                 (lambda (&optional _) nil))
+                ((symbol-function 'gascity-command-act)
+                 (lambda (cmd) (setq line (gascity-command-line cmd)) '((id . "ec-new"))))
+                ((symbol-function 'gascity--refresh-current-view) #'ignore)
+                ;; Keep the executable resolution out of the assertion.
+                ((symbol-function 'gascity-remote-find-executable)
+                 (lambda (&rest _) "gc")))
+        (should (equal (gascity-beads--create-store)
+                       (concat (file-remote-p gascity-test--mock-directory)
+                               "/home/roman/bright-lights/")))
+        (gascity-bead-create "City bead" "task" "2" "")
+        ;; ... and `-C' is the host-local form, TRAMP prefix stripped.
+        (should (equal line '("gc" "bd" "create" "City bead" "--json"
+                              "-C" "/home/roman/bright-lights/"
+                              "--type" "task" "--priority" "2")))))))
+
 (ert-deftest gascity-test-remote-localize-path ()
   "Host-local gc paths are re-prefixed for a remote view; locals untouched."
   ;; Local context: unchanged.

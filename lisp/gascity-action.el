@@ -701,25 +701,61 @@ ID defaults to the bead reference at point."
     (gascity-bead-dep-remove--run
      id (read-string (format "%s no longer depends on: " id)))))
 
+(defun gascity-bead-create--read-store ()
+  "Prompt for a quick-capture bead's destination store.
+Completes over \"city\" plus the city's rig names; the default is the
+contextual answer — the rig at point, else \"city\" when a city root
+resolves.  Returns the chosen rig name, \"city\", or nil when no
+destination resolves (the create then runs against the ambient
+directory, as before).  The prompt names the default, so the destination
+is never a mystery."
+  (let* ((rig (gascity-context-rig-name))
+         (city (and (gascity-context-city-root) "city"))
+         (choices (append (when city (list city))
+                          (mapcar #'gascity-rig-name
+                                  (ignore-errors (gascity-rigs)))))
+         (default (or rig city)))
+    (when choices
+      (completing-read
+       (format "Create in store (default %s): " (or default (car choices)))
+       choices nil t nil nil default))))
+
 ;;;###autoload
-(defun gascity-bead-create (title type priority assignee)
+(defun gascity-bead-create (title type priority assignee &optional store)
   "Quick-capture a new bead: TITLE/TYPE/PRIORITY/ASSIGNEE (all prompted).
-Creates in the contextual rig's store (`-C'); on success the new id is echoed
-for hand-off to beads.el for deeper authoring (DESIGN.md §4.3).  An empty
-ASSIGNEE leaves the bead unassigned."
+The destination store is prompted first (STORE, a rig name or \"city\",
+skips the prompt): a rig at point creates in that rig's store — the
+historic behavior — while a city context with no rig creates in the
+CITY root's own store, where gc routes prefix-less city beads; neither
+resolvable means the ambient directory.  On success the new id and its
+destination are echoed for hand-off to beads.el for deeper authoring
+(DESIGN.md §4.3).  An empty ASSIGNEE leaves the bead unassigned."
   (interactive
-   (list (read-string "New bead title: ")
-         (gascity-action--read-type "Type: ")
-         (gascity-action--read-priority "Priority: ")
-         (gascity-action--read-assignee "Assignee (empty for none): ")))
-  (gascity-command-act
-   (gascity-command-bd-create
-    :title title
-    :type (and (stringp type) (not (string-empty-p type)) type)
-    :priority (and (stringp priority) (not (string-empty-p priority)) priority)
-    :assignee (and (stringp assignee) (not (string-empty-p assignee)) assignee)
-    :directory (gascity-beads--rig-path (gascity-context-rig-name))))
-  (gascity--refresh-current-view))
+   (let ((store (gascity-bead-create--read-store)))
+     (list (read-string "New bead title: ")
+           (gascity-action--read-type "Type: ")
+           (gascity-action--read-priority "Priority: ")
+           (gascity-action--read-assignee "Assignee (empty for none): ")
+           store)))
+  (let* ((dir (gascity-beads--create-store store))
+         (result (gascity-command-act
+                  (gascity-command-bd-create
+                   :title title
+                   :type (and (stringp type) (not (string-empty-p type)) type)
+                   :priority (and (stringp priority) (not (string-empty-p priority)) priority)
+                   :assignee (and (stringp assignee) (not (string-empty-p assignee)) assignee)
+                   ;; gc runs on the store's host (`process-file' from the
+                   ;; city-pinned buffer), so `-C' must be host-local.
+                   :directory (and dir (file-local-name dir)))))
+         ;; The label mirrors the resolution: an explicit choice, else the
+         ;; contextual rig, else the city, else the ambient directory.
+         (label (cond ((and (stringp store) (not (string-empty-p store)))
+                       store)
+                      (dir (or (gascity-context-rig-name) "city"))
+                      (t "ambient"))))
+    (message "gc bd create: %s in %s store"
+             (gascity-action--summarize result) label)
+    (gascity--refresh-current-view)))
 
 ;;; Session — reset (fresh restart) and undrain (clear the drain flag)
 
