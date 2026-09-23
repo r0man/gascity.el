@@ -5755,6 +5755,75 @@ TRAMP >= 2.6, so the status-tick guard reads the property instead)."
         (tramp-flush-connection-property proc "locked"))
       (should-not (gascity-remote-connection-locked-p)))))
 
+;;; Synchronous-call timeout bound (ga-yam7)
+
+(ert-deftest gascity-test-remote-with-timeout-local-unbounded ()
+  "A local `default-directory' never arms the bound: the body runs even
+with a zero-second timeout, because a local `process-file' waits in
+blocking C code that runs no timers (a bound there could not fire)."
+  (let ((default-directory temporary-file-directory))
+    (should (eq (gascity-remote-with-timeout 0 'done) 'done))
+    (should (eq (gascity-remote-with-timeout nil 'done) 'done))))
+
+(ert-deftest gascity-test-remote-with-timeout-remote-disabled-unbounded ()
+  "On a remote directory a nil or zero timeout leaves the body unbounded."
+  (gascity-test--with-mock-remote
+    (should (eq (gascity-remote-with-timeout nil 'done) 'done))
+    (should (eq (gascity-remote-with-timeout 0 'done) 'done))))
+
+(ert-deftest gascity-test-remote-with-timeout-fires-and-drains ()
+  "On a remote directory a body that yields to the event loop
+\(`sit-for' — the same accept-process-output wait a TRAMP
+`process-file' sits in) is abandoned at the bound:
+`gascity-remote-sync-timeout' — a `gascity-error' child — is signalled
+after `gascity-remote-drain-connection' cleaned the channel."
+  (gascity-test--with-mock-remote
+    (let ((drained 0) (completed nil))
+      (cl-letf (((symbol-function 'gascity-remote-drain-connection)
+                 (lambda (&optional _) (cl-incf drained))))
+        ;; Fires: the body never completes.
+        (should (eq (condition-case err
+                        (progn
+                          (gascity-remote-with-timeout 0.2
+                            (sit-for 5)
+                            (setq completed t)))
+                      (gascity-remote-sync-timeout 'timed-out)
+                      (error (error-message-string err)))
+                    'timed-out))
+        (should-not completed)
+        (should (= drained 1))
+        ;; The condition is a `gascity-error' child, so the action
+        ;; layer's existing handlers display it cleanly.
+        (should (eq (car (get 'gascity-remote-sync-timeout
+                              'error-conditions))
+                    'gascity-remote-sync-timeout))
+        (should (memq 'gascity-error
+                      (get 'gascity-remote-sync-timeout
+                           'error-conditions)))))))
+
+(ert-deftest gascity-test-remote-with-timeout-completes-within-bound ()
+  "A body that finishes inside the bound returns its value untouched." 
+  (gascity-test--with-mock-remote
+    (should (eq (gascity-remote-with-timeout 5 'done) 'done))))
+
+(ert-deftest gascity-test-terminal-tmux-probe-bounded-remote ()
+  "`gascity-terminal--tmux' answers nil — uniformly with the other
+failure modes — when a remote probe hits the sync-timeout bound
+instead of hanging on a wedged channel (ga-yam7)."
+  (gascity-test--with-mock-remote
+    (cl-letf (((symbol-function 'gascity-remote-find-executable)
+               (lambda (&rest _) "/bin/tmux"))
+              ((symbol-function 'process-file)
+               (lambda (&rest _)
+                 ;; A wedged channel: yield forever, like a dead ssh.
+                 (sit-for 5)
+                 nil)))
+      (let ((gascity-remote-sync-timeout 0.2))
+        (should-not (gascity-terminal--tmux nil "list-sessions"))
+        ;; And the plain probe runner degrades identically.
+        (should-not
+         (gascity-terminal-tmux-session-exists-p "sess"))))))
+
 ;;; Probe retry over cached-negative TRAMP state (ga-eyw9)
 
 (ert-deftest gascity-test-async-dir-probe-retry-reverses-cached-negative ()

@@ -246,16 +246,21 @@ city's own tmux server is asked, on its host — tmux resolved there by
 itself cannot be run there (callers that need a clean message wrap
 this — see `gascity-terminal-attach-tmux').  On a remote directory the
 probe is bounded by `gascity-remote-sync-timeout'
-\(`gascity-remote-with-timeout'): a wedged channel surfaces
-`gascity-remote-sync-timeout' instead of hanging forever; the local
-probe never needs the bound (no network, blocking C code that runs no
-timers)."
+\(`gascity-remote-with-timeout'): a wedged channel answers nil —
+uniformly with the other failure modes — instead of hanging forever;
+the local probe never needs the bound (no network, blocking C code that
+runs no timers)."
   (and session (stringp session) (not (string-empty-p session))
-       (gascity-remote-with-timeout gascity-remote-sync-timeout
-         (eq 0 (apply #'process-file (gascity-remote-find-executable "tmux")
-                      nil nil nil
-                      (append (gascity-terminal--socket-args socket)
-                              (list "has-session" "-t" session)))))))
+       (condition-case nil
+           (gascity-remote-with-timeout gascity-remote-sync-timeout
+             (eq 0 (apply #'process-file (gascity-remote-find-executable "tmux")
+                          nil nil nil
+                          (append (gascity-terminal--socket-args socket)
+                                  (list "has-session" "-t" session)))))
+         ;; A wedged channel degrades to "does not exist" — uniformly
+         ;; with the non-zero-exit and spawn-failure answers — instead of
+         ;; signalling into attach/peek call sites that expect a boolean.
+         (gascity-remote-sync-timeout nil))))
 
 (defun gascity-terminal-pane-cwd (session &optional socket)
   "Return the working directory of tmux SESSION's active pane, or nil.
