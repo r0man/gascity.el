@@ -63,14 +63,22 @@ e2e_require_tmux_session() {
 # Deliver keystrokes to a live tmux session, fail fast if it is gone.
 # KEYS is split on whitespace and sent unquoted, so tmux treats each token
 # as a KEY NAME when it knows one (Enter, Tab, C-x, M-x, ...) and as literal
-# text otherwise.  Mind tmux 3.7c (ga-rs12): multi-word names like "Return"
-# are NOT key names there — tmux types the word literally instead of
-# pressing the key.  Use the single-word names (Enter, Space, BSpace,
-# Escape, Up, Down, F1, Home, ...), hex via e2e_send_keys_hex, or -H codes
-# for anything the names miss.
+# text otherwise.  Mind tmux 3.7c (ga-rs12): the name "Return" is NOT a key
+# name there — tmux types the word literally instead of pressing the key.
+# Use "Enter" (or C-m), the other single-word names (Space, BSpace, Escape,
+# Up, Down, F1, Home, ...), hex via e2e_send_keys_hex, or -H codes for
+# anything the names miss.  This helper fails fast if a KEYS token is the
+# literal word "Return", so the 3.7c footgun cannot pass silently.
 e2e_send_keys() {
     _s="$1"; _keys="$2"
     e2e_require_tmux_session "$_s" || return 1
+    case " $_keys " in
+        *\ Return\ *)
+            echo "e2e: tmux 3.7c (ga-rs12) types the key name 'Return'" \
+                 "literally; use 'Enter' (or e2e_send_keys_hex 0d) instead" >&2
+            return 1
+            ;;
+    esac
     timeout "$E2E_TMUX_TIMEOUT" tmux send-keys -t "$_s" $_keys
 }
 
