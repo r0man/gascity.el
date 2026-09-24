@@ -8571,8 +8571,11 @@ whose assignee carries no handle) degrades to an unjoined row (REQ-003)."
     (should (= (length rows) 1))))
 
 (ert-deftest gascity-test-dashboard-needs-you-precedence ()
-  "Exactly one reason per agent: awaiting-input > errored > rate-limited >
-stalled, and one next action each (REQ-004)."
+  "Exactly one reason per agent: errored > rate-limited > stalled, and one
+next action each (REQ-004).  There is no pending-interaction reason:
+pending interactions need the supervisor API; out of scope by user
+directive — an agent that looks awaitable (or even a stale pending arg)
+must classify by its derivable CLI state instead."
   (let* ((agents '(((qualified_name . "a") (state . "failed") (running . t))
                    ((qualified_name . "b") (state . "rate-limited"))
                    ((qualified_name . "c") (state . "active") (running . t)
@@ -8582,11 +8585,9 @@ stalled, and one next action each (REQ-004)."
                    ((qualified_name . "f") (state . "WAITING"))
                    ((qualified_name . "g") (state . "Crashed"))
                    ((qualified_name . "h") (running . nil) (session . nil))))
-         (pending '(("a" . "Deploy to prod?\nny")))
-         (rows (gascity-dashboard--needs-you agents pending)))
+         (rows (gascity-dashboard--needs-you agents)))
     (should (= (length rows) 6))
-    ;; Precedence: the pending ask outranks the failure state.
-    (should (equal (nth 0 rows) '("a" "awaiting-input" "Deploy to prod?" "respond")))
+    (should (equal (nth 0 rows) '("a" "errored" "Exited failed." "reset")))
     (should (equal (nth 1 rows) '("b" "rate-limited" "Throttled by a provider limit." "nudge")))
     ;; Actively running with a live session blocks nobody.
     (should-not (assoc "c" rows))
@@ -8595,17 +8596,31 @@ stalled, and one next action each (REQ-004)."
     (should (equal (nth 3 rows) '("e" "stalled" "Running with no live session." "nudge")))
     ;; State matching is case-insensitive.
     (should (equal (nth 4 rows) '("f" "rate-limited" "Throttled by a provider limit." "nudge")))
-    (should (equal (nth 5 rows) '("g" "errored" "Exited Crashed." "reset")))))
+    (should (equal (nth 5 rows) '("g" "errored" "Exited Crashed." "reset")))
+    ;; Honesty: `awaiting-input' can no longer be produced, by any agent.
+    (should-not (member "awaiting-input" (mapcar #'cl-second rows)))
+    (should-not (rassq 'respond gascity-dashboard--needs-you-actions))
+    ;; The selector takes no pending argument at all (arity pinned).
+    (should (condition-case nil
+                (progn (gascity-dashboard--needs-you agents nil) nil)
+              (wrong-number-of-arguments t)))))
 
-(ert-deftest gascity-test-dashboard-needs-you-prompt-line ()
-  "An awaiting-input row details the prompt's first line; no prompt or a
-blank one degrades to \"Awaiting your decision.\""
-  (should (equal (gascity-dashboard--prompt-line nil) "Awaiting your decision."))
-  (should (equal (gascity-dashboard--prompt-line "") "Awaiting your decision."))
-  (should (equal (gascity-dashboard--prompt-line "\n  second")
-                 "Awaiting your decision."))
-  (should (equal (gascity-dashboard--prompt-line "first line\nsecond")
-                 "first line")))
+(ert-deftest gascity-test-dashboard-needs-you-awaiting-input-unreachable ()
+  "`awaiting-input' is gone as a classification output (AC 5).
+An agent in a perfectly awaitable shape still classifies by its CLI-
+derivable state — never by a pending interaction the CLI cannot see."
+  (let ((agent '((qualified_name . "p") (state . "active") (running . t)
+                 (session . nil))))
+    ;; Running with no live session is the stalled reason — awaiting
+    ;; input is never emitted, no matter what the agent looks like.
+    (should (equal (gascity-dashboard--needs-you-reason agent) "stalled"))
+    (should-not (member "awaiting-input"
+                        (mapcar (lambda (a) (gascity-dashboard--needs-you-reason a))
+                                (list agent
+                                      '((qualified_name . "q") (state . "waiting"))
+                                      '((qualified_name . "r") (state . "active")
+                                        (running . t) (session . "s-9"))
+                                      '((qualified_name . "s"))))))))
 
 (ert-deftest gascity-test-dashboard-needs-you-count-parity ()
   "The badge count and the section rows read the same selector output.
@@ -8613,11 +8628,84 @@ The count the section header shows is the selector output's length, from
 one call site (REQ-004)."
   (let* ((agents '(((qualified_name . "x") (state . "stuck"))
                    ((qualified_name . "y") (running . t))))
-         (rows (gascity-dashboard--needs-you agents nil)))
+         (rows (gascity-dashboard--needs-you agents)))
     (should (= (length rows) 2))
     (should (equal (car rows) '("x" "errored" "Exited stuck." "reset")))
     ;; Running with no live session is the stalled reason.
     (should (equal (nth 1 rows) '("y" "stalled" "Running with no live session." "nudge")))))
+
+(ert-deftest gascity-test-dashboard-cockpit-mail-and-costs ()
+  "The cockpit renders the mail-unread header from the `gc mail count'
+payload, exactly one dim costs pointer row after it, and the api
+placeholder (AC 4, AC 6 pointer rendering)."
+  (let* ((text (gascity-test--vnode-text
+                (gascity-dashboard--cockpit-vnode
+                 gascity-test--dashboard-status '((unread . 4) (total . 9)))))
+         (lines (split-string text "\n")))
+    (should (string-match-p "mail 4 unread" text))
+    ;; Zero unread renders too (the dim-when-zero shape).
+    (should (string-match-p
+             "mail 0 unread"
+             (gascity-test--vnode-text
+              (gascity-dashboard--cockpit-vnode
+               gascity-test--dashboard-status '((unread . 0) (total . 2))))))
+    ;; Missing payload degrades to 0, never a nil in the format.
+    (should (string-match-p
+             "mail 0 unread"
+             (gascity-test--vnode-text
+              (gascity-dashboard--cockpit-vnode
+               gascity-test--dashboard-status nil))))
+    ;; Exactly one costs pointer row, dim (gascity-dim face), after the
+    ;; mail segment.
+    (should (= 1 (cl-count-if
+                  (lambda (l) (string-match-p "costs — run `gc costs' in a shell; no JSON surface" l))
+                  lines)))
+    (let* ((cockpit (gascity-dashboard--cockpit-vnode
+                     gascity-test--dashboard-status '((unread . 4))))
+           (kids (vui-vnode-vstack-children cockpit))
+           (idx (cl-position-if
+                 (lambda (k) (and (vui-vnode-text-p k)
+                                  (string-match-p "mail 4 unread" (vui-vnode-text-content k))))
+                 kids))
+           (cost (and idx (nth (+ idx 2) kids))))
+      (should cost)
+      (should (vui-vnode-text-p cost))
+      (should (eq (vui-vnode-text-face cost) 'gascity-dim))
+      (should (string-match-p "costs — run `gc costs' in a shell" (vui-vnode-text-content cost))))
+    ;; The mail line itself is dim.
+    (should (cl-count-if
+             (lambda (l) (string-match-p "mail 4 unread" l))
+             lines))))
+
+(ert-deftest gascity-test-dashboard-mail-key-and-read ()
+  "`m' opens the existing mail inbox, and the cockpit's mail header comes
+from an async `(mail count)' read through the reader (AC 4)."
+  (should (eq (lookup-key gascity-city-dashboard-mode-map "m")
+              #'gascity-mail-inbox))
+  (should (commandp 'gascity-mail-inbox))
+  ;; The root component's mail read is wired: render with a stub reader
+  ;; and check the (mail count) argv is requested.
+  (let ((mail-box (list nil))
+        (seen-args nil)
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback)
+                 (push args seen-args)
+                 (if (equal args '("mail" "count"))
+                     (setcar mail-box callback)
+                   (funcall callback '((issues . [])))))))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-mail-test*")
+              (should (member '("mail" "count") seen-args))
+              ;; Resolve the count: the cockpit header renders the unread.
+              (funcall (car mail-box) '((unread . 4) (total . 9)))
+              (with-current-buffer "*gascity-dashboard-mail-test*"
+                (should (gascity-test--buffer-contains-p "mail 4 unread"))))
+          (when (get-buffer "*gascity-dashboard-mail-test*")
+            (kill-buffer "*gascity-dashboard-mail-test*")))))))
 
 (ert-deftest gascity-test-dashboard-bead-filter ()
   "The `/` rig filter narrows bead rows by id prefix; nil passes all."
@@ -8962,7 +9050,7 @@ The needs-you map stores (NAME REASON DETAIL ACTION) rows, so the `!'
 branch formats the reason string, not the name again (R3)."
   (let* ((agent '((name . "w1") (qualified_name . "gascity.el/gc.worker")
                   (running . t) (suspended . :json-false)))
-         (rows (gascity-dashboard--needs-you (list agent) nil))
+         (rows (gascity-dashboard--needs-you (list agent)))
          (map (make-hash-table :test 'equal)))
     (should (equal (nth 1 (car rows)) "stalled"))
     (dolist (row rows) (puthash (nth 0 row) row map))

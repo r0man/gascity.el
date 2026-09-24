@@ -31,13 +31,20 @@
 ;;                  `work-in-flight.ts'.  A bead whose session is not
 ;;                  live (or whose assignee carries no recognizable
 ;;                  handle) degrades to an unjoined row.
+;; - mail           the unread count from one `gc mail count' read,
+;;                  rendered dim in the cockpit; `m' opens the existing
+;;                  mail inbox (`default-directory' is pinned to the
+;;                  city by the view factory, so the inbox scopes to
+;;                  the same city).
 ;; - needs you      agents blocking the operator, exactly one reason and
 ;;                  one next action each (REQ-004) — the port of the
-;;                  SPA's `needsYou.ts' (`awaiting-input' > `errored' >
-;;                  `rate-limited' > `stalled'; respond/reset/nudge; no
-;;                clocks, no age thresholds).  The section count and
-;;                  the agent roster's highlighting read the same
-;;                selector output, so they cannot disagree.
+;;                  SPA's `needsYou.ts' minus the pending branch (`errored'
+;;                  > `rate-limited' > `stalled'; reset/nudge; no clocks,
+;;                  no age thresholds).  Pending interactions need the
+;;                  supervisor API; out of scope by user directive, so
+;;                  only the CLI-derivable reasons remain.  The section
+;;                  count and the agent roster's highlighting read the
+;;                  same selector output, so they cannot disagree.
 ;; - agents         the full `gc status' roster, needs-you rows marked.
 ;; - sessions       live sessions, the named-session derivation, and
 ;;                the run census from `gc status''s summary (REQ-006).
@@ -92,6 +99,7 @@
 
 ;; Detail/list openers and agent actions live in sibling modules loaded
 ;; alongside this one; reference them by name (resolved at call time).
+(declare-function gascity-mail-inbox "gascity-tabulated")
 (declare-function gascity-polecat-detail-at-point "gascity-session")
 (declare-function gascity-rig-dashboard "gascity-rig")
 (declare-function gascity-session-nudge-at-point "gascity-action")
@@ -222,23 +230,23 @@ payload occurrence wins).  Port of the SPA's work-in-flight projection."
   "Supervisor states that mean the agent is throttled by a provider limit.")
 
 (defconst gascity-dashboard--needs-you-actions
-  '(("awaiting-input" . "respond")
-    ("errored" . "reset")
+  '(("errored" . "reset")
     ("rate-limited" . "nudge")
     ("stalled" . "nudge"))
-  "The one next operator step for each needs-you reason.")
+  "The one next operator step for each needs-you reason.
+No reply action exists: pending interactions need the supervisor API;
+out of scope by user directive.")
 
-(defun gascity-dashboard--needs-you-reason (agent pending)
+(defun gascity-dashboard--needs-you-reason (agent)
   "Return the one needs-you reason for AGENT, or nil when it blocks nobody.
 AGENT is a raw `gc status' agent entry, optionally enriched with a
 `state' string and a `session' id (nil when it has no live session) by
-the dashboard's join.  PENDING is the operator-interaction list, an
-alist of (AGENT-NAME . PROMPT).  First match wins, in the SPA's
-precedence order: awaiting-input > errored > rate-limited > stalled."
-  (let* ((name (alist-get 'qualified_name agent))
-         (state (downcase (or (alist-get 'state agent) ""))))
-    (cond ((and name (assoc name pending)) "awaiting-input")
-          ((member state gascity-dashboard--failure-states) "errored")
+the dashboard's join.  First match wins: errored > rate-limited >
+stalled.  There is deliberately no pending-interaction reason: the
+data plane is the `gc' CLI, and pending interactions need the
+supervisor API — out of scope by user directive."
+  (let ((state (downcase (or (alist-get 'state agent) ""))))
+    (cond ((member state gascity-dashboard--failure-states) "errored")
           ((member state gascity-dashboard--rate-limited-states)
            "rate-limited")
           ((gascity-dashboard--stalled-p agent state) "stalled"))))
@@ -252,50 +260,35 @@ claim is stalled by definition.  No clocks, no age thresholds."
       (and (alist-get 'running agent)
            (not (alist-get 'session agent)))))
 
-(defun gascity-dashboard--prompt-line (prompt)
-  "Return the first line of PROMPT, for a one-line row detail.
-Only the line before the first newline counts — a prompt starting with
-an empty line degrades to \"Awaiting your decision.\" like the SPA's
-`promptLine', whose `split(\\n, 1)' never skips a leading empty line."
-  (let ((line (and (stringp prompt)
-                   (car (split-string prompt "\n")))))
-    (setq line (and line (string-trim line)))
-    (if (and line (not (string-empty-p line)))
-        line
-      "Awaiting your decision.")))
-
-(defun gascity-dashboard--needs-you-detail (agent reason prompt)
+(defun gascity-dashboard--needs-you-detail (agent reason)
   "Return the structural why-phrase for AGENT's needs-you REASON.
-PROMPT is the pending interaction's prompt when the reason is
-`awaiting-input'.  Mirrors the SPA's `needsYouDetail'."
+Mirrors the SPA's `needsYouDetail' minus its pending branch: pending
+interactions need the supervisor API; out of scope by user directive."
   (let ((state (downcase (or (alist-get 'state agent) ""))))
     (pcase reason
-      ("awaiting-input" (gascity-dashboard--prompt-line prompt))
       ("errored" (format "Exited %s." (or (alist-get 'state agent) "?")))
       ("rate-limited" "Throttled by a provider limit.")
       ("stalled" (if (equal state "detached")
                      "Detached from its session."
                    "Running with no live session.")))))
 
-(defun gascity-dashboard--needs-you (agents pending)
+(defun gascity-dashboard--needs-you (agents)
   "Project the AGENTS roster into the rows that need the operator.
 AGENTS is a list (or vector) of raw `gc status' agent entries, optionally
-enriched with `state'/`session' keys; PENDING the operator-interaction
-alist of (AGENT-NAME . PROMPT).  Returns one (NAME REASON DETAIL ACTION)
-row per blocking agent, NAME being the qualified name, in roster order.
-The badge and section counts read this same output, so a badge and its
-page cannot disagree (REQ-004).  Port of the SPA's `needsYou.ts': no
-clock, no age threshold, nothing that can flap."
+enriched with `state'/`session' keys.  Returns one (NAME REASON DETAIL
+ACTION) row per blocking agent, NAME being the qualified name, in roster
+order.  The badge and section counts read this same output, so a badge
+and its page cannot disagree (REQ-004).  Port of the SPA's `needsYou.ts'
+minus its pending branch — no clock, no age threshold, nothing that can
+flap, and nothing the CLI data plane cannot derive."
   (let ((rows nil))
     (dolist (agent (append agents nil) (nreverse rows))
       (let* ((name (alist-get 'qualified_name agent))
-             (reason (gascity-dashboard--needs-you-reason agent pending)))
+             (reason (gascity-dashboard--needs-you-reason agent)))
         (when reason
           (push (list name
                       reason
-                      (gascity-dashboard--needs-you-detail
-                       agent reason
-                       (cdr (assoc name pending)))
+                      (gascity-dashboard--needs-you-detail agent reason)
                       (cdr (assoc reason gascity-dashboard--needs-you-actions)))
                 rows))))))
 
@@ -406,15 +399,23 @@ renders its header — `N'/`P' keep working and the count stays visible."
            (unless collapsed
              (gascity-dashboard--section-body load rows-fn)))))
 
-(defun gascity-dashboard--cockpit-vnode (status)
-  "Return the cockpit section vnode for the `gc status' payload STATUS.
-Reuses the status dashboard's header vnode (city, controller, health,
-counters, store health) — one async read feeds it (REQ-002).  The API
-URL appears in no `gc --json' payload yet, so it renders as a dim
-placeholder rather than a hand-parsed city.toml (ga-jhwz convention)."
+(defun gascity-dashboard--cockpit-vnode (status mail-count)
+  "Return the cockpit section vnode for STATUS and MAIL-COUNT.
+STATUS is the `gc status' payload; the header vnode (city, controller,
+health, counters, store health) is the status dashboard's own, fed by
+one async read (REQ-002).  MAIL-COUNT is the `gc mail count' payload
+(total/unread) — a dim header line whose unread count the mail inbox
+(`m') acts on.  The API URL and a costs surface appear in no `gc --json'
+payload yet (`gc costs --json' is json_unsupported), so both render as
+dim pointers rather than fake or hand-parsed data (ga-jhwz convention)."
   (vui-vstack
    (gascity-status--header-vnode status)
+   (vui-text (format "  mail %s unread"
+                     (or (alist-get 'unread mail-count) 0))
+             :face 'gascity-dim)
    (vui-text "  api — (gc exposes no API URL in --json yet)"
+             :face 'gascity-dim)
+   (vui-text "  costs — run `gc costs' in a shell; no JSON surface"
              :face 'gascity-dim)))
 
 (defun gascity-dashboard--agent-for (session-alist socket)
@@ -585,6 +586,11 @@ rows from the payload's bead list.  The filter is applied here, so a
                          (lambda (resolve reject)
                            (gascity-reader-read-async
                             '("status") resolve reject))))
+         (mail-res
+          (vui-use-async (list 'mail-count refresh-tick)
+                         (lambda (resolve reject)
+                           (gascity-reader-read-async
+                            '("mail" "count") resolve reject))))
          (sessions-res
           (vui-use-async (list 'sessions refresh-tick)
                          (lambda (resolve reject)
@@ -614,6 +620,7 @@ rows from the payload's bead list.  The filter is applied here, so a
                             '("convoy" "list") resolve reject))))
          (status-state (plist-get status-res :status))
          (last-status (vui-use-ref nil))
+         (last-mail (vui-use-ref nil))
          (last-sessions (vui-use-ref nil))
          (last-ready (vui-use-ref nil))
          (last-inprog (vui-use-ref nil))
@@ -623,6 +630,7 @@ rows from the payload's bead list.  The filter is applied here, so a
          ;; keep rendering the last snapshot (see
          ;; `gascity-dashboard--effective-load').
          (status (gascity-dashboard--effective-load status-res last-status))
+         (mail-count (gascity-dashboard--effective-load mail-res last-mail))
          (sessions-load (gascity-dashboard--effective-load sessions-res
                                                            last-sessions))
          (ready-load (gascity-dashboard--effective-load ready-res
@@ -640,23 +648,25 @@ rows from the payload's bead list.  The filter is applied here, so a
       (vui-text "Loading city dashboard…" :face 'gascity-dim))
      (t
       (gascity-dashboard--content-vnode
-       (plist-get status :data) sessions-load ready-load inprog-load
+       (plist-get status :data) (plist-get mail-count :data)
+       sessions-load ready-load inprog-load
        blocked-load convoy-load
        :collapsed collapsed :bead-rig bead-rig)))))
 
-(cl-defun gascity-dashboard--content-vnode (status sessions-load ready-load
-                                            inprog-load blocked-load
-                                            convoy-load
+(cl-defun gascity-dashboard--content-vnode (status mail-count sessions-load
+                                            ready-load inprog-load
+                                            blocked-load convoy-load
                                             &key collapsed bead-rig)
   "Return the dashboard body vnode.
-STATUS is the `gc status' payload; the five LOAD arguments are the
-normalized loads of `gc session list', `gc bd ready', the in-progress and
-blocked `gc bd list' reads and `gc convoy list'.  COLLAPSED is the root's
-list of collapsed section names; BEAD-RIG the active `/` rig filter (a
-rig name, or nil for all).  Each section renders from its own load, so a
-failing one degrades alone (REQ-010); the needs-you rows are computed
-once per render and feed both the needs-you section and the roster's
-highlighting (REQ-004's single-selector rule)."
+STATUS is the `gc status' payload; MAIL-COUNT the `gc mail count'
+payload (unread count for the cockpit header); the five LOAD arguments
+are the normalized loads of `gc session list', `gc bd ready', the
+in-progress and blocked `gc bd list' reads and `gc convoy list'.
+COLLAPSED is the root's list of collapsed section names; BEAD-RIG the
+active `/` rig filter (a rig name, or nil for all).  Each section renders
+from its own load, so a failing one degrades alone (REQ-010); the
+needs-you rows are computed once per render and feed both the needs-you
+section and the roster's highlighting (REQ-004's single-selector rule)."
   (let* (;; Decode the session rows once: the typed list feeds the session
          ;; section, the named-session derivation and the join map.
          (sessions (and (plist-get sessions-load :data)
@@ -691,8 +701,7 @@ highlighting (REQ-004's single-selector rule)."
                                                    (and session
                                                         (alist-get 'id session)))))))
                            agents))
-         (pending nil)     ; gc exposes no pending-interaction read yet
-         (needs-you-rows (gascity-dashboard--needs-you enriched pending))
+         (needs-you-rows (gascity-dashboard--needs-you enriched))
          (needs-you-map (make-hash-table :test 'equal))
          (filter-prefix (gascity-dashboard--rig-prefix bead-rig
                                                        (alist-get 'rigs status))))
@@ -700,7 +709,7 @@ highlighting (REQ-004's single-selector rule)."
       (puthash (nth 0 row) row needs-you-map))
     (vui-vstack
      :spacing 1
-     (gascity-dashboard--cockpit-vnode status)
+     (gascity-dashboard--cockpit-vnode status mail-count)
      (gascity-dashboard--section
       "work" "Work in flight"
       (list :state (plist-get inprog-load :state)
@@ -898,6 +907,10 @@ I/O-free rig memo — no synchronous gc call here (AC-5)."
   ;; mean the same thing here as in the status dashboard, rig dashboard
   ;; and session detail.  `N'/`P' section jumps and `n'/`p' line
   ;; movement are inherited from `gascity-section-mode-map'.
+  ;; `m' opens the existing mail inbox; the buffer's `default-directory'
+  ;; is pinned to the city by `gascity-view-get-buffer-create', so the
+  ;; inbox scopes to the same city the dashboard reads.
+  "m"   #'gascity-mail-inbox
   "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point
@@ -906,6 +919,12 @@ I/O-free rig memo — no synchronous gc call here (AC-5)."
 
 (define-derived-mode gascity-city-dashboard-mode gascity-section-mode "GC-City"
   "Major mode for the gascity city dashboard.
+
+Sections: cockpit (with the mail-unread header and the costs pointer),
+work in flight, needs-you agents, the roster, sessions, beads (+convoys),
+the activity pointer and the rigs.  Pending interactions need the
+supervisor API; out of scope by user directive, so the needs-you reasons
+are only the CLI-derivable ones (errored / rate-limited / stalled).
 
 \\{gascity-city-dashboard-mode-map}"
   :interactive nil
@@ -920,9 +939,10 @@ I/O-free rig memo — no synchronous gc call here (AC-5)."
 (defun gascity-dashboard ()
   "Show the city-level vui dashboard.
 One buffer answering \"what is happening in this city right now?\": the
-cockpit, work in flight, needs-you agents, the roster, sessions, beads
-(+convoys), the activity pointer and the rigs — each section backed by
-its own async `gc … --json' read, refresh stale-while-revalidate.  The
+cockpit (mail-unread header, costs pointer), work in flight, needs-you
+agents, the roster, sessions, beads (+convoys), the activity pointer and
+the rigs — each section backed by its own async `gc … --json' read,
+refresh stale-while-revalidate.  `m' opens the existing mail inbox.  The
 buffer is keyed to the city it is opened for via
 `gascity-view-get-buffer-create' (host-qualified name, pinned
 `default-directory'), so local and TRAMP access modes coexist (REQ-011).
