@@ -31,6 +31,11 @@
 ;;                  `work-in-flight.ts'.  A bead whose session is not
 ;;                  live (or whose assignee carries no recognizable
 ;;                  handle) degrades to an unjoined row.
+;; - runs           the workflow-run census (REQ-014): one `gc bd list'
+;;                  read, grouped client-side by `gc.graphv2_root_key' —
+;;                  root vs step discrimination, per-run progress and
+;;                  current step, closed runs excluded by default.  A run
+;;                  row is stamped with its root bead id for `RET'.
 ;; - needs you      agents blocking the operator, exactly one reason and
 ;;                  one next action each (REQ-004) — the port of the
 ;;                  SPA's `needsYou.ts' (`awaiting-input' > `errored' >
@@ -313,6 +318,130 @@ narrowed to live rows (state \"active\", not closed)."
     (when (stringp qname)
       (seq-find (lambda (s) (equal (alist-get 'agent_name s) qname))
                 (append session-rows nil)))))
+
+;; Workflow-run projection (REQ-014)
+;;
+;; A workflow run is a bead whose metadata carries `gc.graphv2_root_key';
+;; steps carry the same key plus `gc.root_bead_id'.  Root vs step is
+;; decided by the verified live shape: roots carry `gc.kind: workflow'
+;; (the tracker the steps TRACK); when `gc.kind' is absent the fallback
+;; is the same key WITHOUT `gc.root_bead_id' — roots have no step anchor.
+
+(defun gascity-dashboard--bead-meta (bead)
+  "Return BEAD's raw metadata alist (nil when absent)."
+  (let ((meta (alist-get 'metadata bead)))
+    (and (listp meta) meta)))
+
+(defun gascity-dashboard--root-key (bead)
+  "Return BEAD's `gc.graphv2_root_key' metadata value, or nil."
+  (alist-get 'gc.graphv2_root_key (gascity-dashboard--bead-meta bead)))
+
+(defun gascity-dashboard--run-root-p (bead)
+  "Return non-nil when BEAD is a workflow-run root.
+Verified live: roots carry `gc.kind: workflow'; the fallback for a
+metadata shape without `gc.kind' is the same root key WITHOUT
+`gc.root_bead_id' (a root tracks its steps, it is not one)."
+  (and (gascity-dashboard--root-key bead)
+       (or (equal (alist-get 'gc.kind (gascity-dashboard--bead-meta bead))
+                  "workflow")
+           (not (alist-get 'gc.root_bead_id
+                           (gascity-dashboard--bead-meta bead))))))
+
+(defun gascity-dashboard--run-current-step (steps)
+  "Return the first non-closed STEP with a non-empty `assignee', or nil.
+STEPS is the run's step-bead list, payload order — the graph's own
+readiness order.  Pure over the raw decoded alists."
+  (seq-find (lambda (step)
+              (and (not (equal (alist-get 'status step) "closed"))
+                   (let ((assignee (alist-get 'assignee step)))
+                     (and (stringp assignee) (not (string-empty-p assignee))))))
+            (append steps nil)))
+
+(defun gascity-dashboard--workflow-runs (bead-rows)
+  "Group raw BEAD-ROWS into workflow-run rows, keyed by `gc.graphv2_root_key'.
+BEAD-ROWS is the raw decoded `gc bd list --json' payload (a bare array
+or an `issues'-wrapped object).  One row per run root, payload order:
+
+  (ROOT CLOSED TOTAL CURRENT UPDATED)
+
+where ROOT is the raw root bead alist, CLOSED/TOTAL the closed/total
+step counts (steps = beads sharing the root's `gc.graphv2_root_key'
+that are NOT run roots — verified live, every step carries
+`gc.root_bead_id'), CURRENT the first non-closed step with a non-empty
+`assignee' (nil when none — the run's steps are queued or closed), and
+UPDATED the root's raw `updated_at'.  Runs whose root is closed are
+EXCLUDED from the default view (the caller surfaces a dim \"N closed
+runs\" line); steps with no root in the payload are skipped.  Pure over
+the decoded payload (REQ-014)."
+  (let* ((beads (append (if (vectorp bead-rows)
+                            bead-rows
+                          (or (alist-get 'issues bead-rows) bead-rows))
+                        nil))
+         (steps (make-hash-table :test 'equal))
+         (roots nil)
+         (seen (make-hash-table :test 'equal))
+         (root-keys (make-hash-table :test 'equal))
+         (closed-runs 0)
+         (rows nil))
+    (dolist (bead beads)
+      (let ((key (gascity-dashboard--root-key bead)))
+        (when (and key (not (gethash bead seen)))
+          (puthash bead t seen)
+          (if (gascity-dashboard--run-root-p bead)
+              (unless (gethash key root-keys)
+                (puthash key t root-keys)
+                (push bead roots))
+            (let* ((root-id (alist-get 'gc.root_bead_id
+                                       (gascity-dashboard--bead-meta bead)))
+                   (bucket (gethash root-id steps)))
+              (puthash root-id (cons bead (or bucket nil)) steps))))))
+    (dolist (root (nreverse roots) (list :rows (nreverse rows)
+                                         :closed-count closed-runs))
+      (let* ((steps-of-run (append (gethash (alist-get 'id root) steps) nil))
+             (closed (seq-count (lambda (step)
+                                  (equal (alist-get 'status step) "closed"))
+                                steps-of-run)))
+        (if (equal (alist-get 'status root) "closed")
+            (setq closed-runs (1+ closed-runs))
+          (push (list root
+                      closed
+                      (length steps-of-run)
+                      (gascity-dashboard--run-current-step steps-of-run)
+                      (alist-get 'updated_at root))
+                rows))))))
+
+(defun gascity-dashboard--run-row (row)
+  "Return a vnode for one workflow-run ROW (see `--workflow-runs').
+Columns: run id, formula, phase, progress closed/total, current step
+(id), updated.  The row is stamped with the root bead id under
+`gascity-bead', so `RET' lands on the run (the S2 drill-in's hook).
+Missing pieces render as em dashes, the dashboard's established
+gap-marker convention."
+  (let* ((root (nth 0 row))
+         (closed (nth 1 row))
+         (total (nth 2 row))
+         (current (nth 3 row))
+         (updated (nth 4 row))
+         (meta (gascity-dashboard--bead-meta root))
+         (id (gascity-tabulated--str (alist-get 'id root))))
+    (vui-text
+     (format "  %-12s %-16s %-12s %s/%-4s %-12s %s"
+             id
+             (or (alist-get 'gc.formula_name meta) "—")
+             (gascity-tabulated--str (alist-get 'status root))
+             (or closed 0)
+             (or total 0)
+             (if current
+                 (gascity-tabulated--str (alist-get 'id current))
+               "—")
+             (if (and (stringp updated) (not (string-empty-p updated)))
+                 (substring updated 0 (min 16 (length updated)))
+               "—"))
+     :face (gascity-section-state-face
+            (member (gascity-tabulated--str (alist-get 'status root))
+                    '("in_progress" "active"))
+            nil)
+     'gascity-bead id)))
 
 (defun gascity-dashboard--bead-in-filter-p (bead prefix)
   "Return non-nil when BEAD passes the rig-prefix PREFIX filter.
@@ -651,13 +780,24 @@ rows from the payload's bead list.  The filter is applied here, so a
   "Return the dashboard body vnode.
 STATUS is the `gc status' payload; the five LOAD arguments are the
 normalized loads of `gc session list', `gc bd ready', the in-progress and
-blocked `gc bd list' reads and `gc convoy list'.  COLLAPSED is the root's
+blocked `gc bd list' reads and `gc convoy list'.  The Runs section reuses
+the in-progress load's full `gc bd list' payload (REQ-014: zero extra
+reads; the in-progress read carries every run and step for the small
+stores this view targets).  COLLAPSED is the root's
 list of collapsed section names; BEAD-RIG the active `/` rig filter (a
 rig name, or nil for all).  Each section renders from its own load, so a
 failing one degrades alone (REQ-010); the needs-you rows are computed
 once per render and feed both the needs-you section and the roster's
 highlighting (REQ-004's single-selector rule)."
-  (let* (;; Decode the session rows once: the typed list feeds the session
+  (let* (;; The full in-progress `gc bd list' payload, decoded to bead rows
+         ;; once: the Runs section groups it into workflow runs (REQ-014,
+         ;; one read serving both sections).
+         (beads-load (list :state (plist-get inprog-load :state)
+                           :error (plist-get inprog-load :error)
+                           :data (and (plist-get inprog-load :data)
+                                      (gascity-section-beads
+                                       (plist-get inprog-load :data)))))
+         ;; Decode the session rows once: the typed list feeds the session
          ;; section, the named-session derivation and the join map.
          (sessions (and (plist-get sessions-load :data)
                         (alist-get 'sessions (plist-get sessions-load :data))))
@@ -701,6 +841,26 @@ highlighting (REQ-004's single-selector rule)."
     (vui-vstack
      :spacing 1
      (gascity-dashboard--cockpit-vnode status)
+     (gascity-dashboard--section
+      "runs" "Runs"
+      (list :state (plist-get beads-load :state)
+            :error (plist-get beads-load :error)
+            :data (and (plist-get beads-load :data)
+                       (gascity-dashboard--workflow-runs
+                        (plist-get beads-load :data))))
+      (member "runs" collapsed)
+      (lambda (result)
+        (append
+         (mapcar #'gascity-dashboard--run-row (plist-get result :rows))
+         (and (plist-get result :closed-count)
+              (> (plist-get result :closed-count) 0)
+              (list (vui-text
+                     (format "  %d closed run%s hidden"
+                             (plist-get result :closed-count)
+                             (if (= (plist-get result :closed-count) 1)
+                                 "" "s"))
+                     :face 'gascity-dim)))))
+      (lambda (result) (length (plist-get result :rows))))
      (gascity-dashboard--section
       "work" "Work in flight"
       (list :state (plist-get inprog-load :state)
@@ -921,7 +1081,8 @@ I/O-free rig memo — no synchronous gc call here (AC-5)."
   "Show the city-level vui dashboard.
 One buffer answering \"what is happening in this city right now?\": the
 cockpit, work in flight, needs-you agents, the roster, sessions, beads
-(+convoys), the activity pointer and the rigs — each section backed by
+(+convoys), the workflow runs, the activity pointer and the rigs — each
+section backed by
 its own async `gc … --json' read, refresh stale-while-revalidate.  The
 buffer is keyed to the city it is opened for via
 `gascity-view-get-buffer-create' (host-qualified name, pinned

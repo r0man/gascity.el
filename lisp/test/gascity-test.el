@@ -8619,7 +8619,190 @@ one call site (REQ-004)."
     ;; Running with no live session is the stalled reason.
     (should (equal (nth 1 rows) '("y" "stalled" "Running with no live session." "nudge")))))
 
+;;; City dashboard — workflow runs (REQ-014, S1 of Dashboard v2)
+
+(defconst gascity-test--runs-beads
+  '(((id . "ga-run1") (status . "in_progress") (title . "do-work")
+     (updated_at . "2026-09-24T10:00:00Z")
+     (metadata . ((gc.graphv2_root_key . "graphv2-root:ga-run1")
+                  (gc.kind . "workflow")
+                  (gc.formula_name . "do-work"))))
+    ((id . "ga-step1") (status . "closed") (title . "Prepare")
+     (metadata . ((gc.graphv2_root_key . "graphv2-root:ga-run1")
+                  (gc.root_bead_id . "ga-run1")
+                  (gc.step_id . "prepare"))))
+    ((id . "ga-step2") (status . "in_progress") (title . "Implement")
+     (assignee . "gc__implementation-worker-ec-51c1")
+     (metadata . ((gc.graphv2_root_key . "graphv2-root:ga-run1")
+                  (gc.root_bead_id . "ga-run1")
+                  (gc.step_id . "implement"))))
+    ((id . "ga-step3") (status . "open") (title . "Review")
+     (metadata . ((gc.graphv2_root_key . "graphv2-root:ga-run1")
+                  (gc.root_bead_id . "ga-run1")
+                  (gc.step_id . "review"))))
+    ((id . "ga-run2") (status . "open") (title . "build-basic")
+     (updated_at . "2026-09-24T11:30:00Z")
+     (metadata . ((gc.graphv2_root_key . "graphv2-root:ga-run2")
+                  (gc.kind . "workflow")
+                  (gc.formula_name . "build-basic"))))
+    ((id . "ga-run3") (status . "closed") (title . "done run")
+     (metadata . ((gc.graphv2_root_key . "graphv2-root:ga-run3")
+                  (gc.kind . "workflow")
+                  (gc.formula_name . "build-basic"))))
+    ((id . "ga-old1") (status . "closed") (title . "closed step of closed run")
+     (metadata . ((gc.graphv2_root_key . "graphv2-root:ga-run3")
+                  (gc.root_bead_id . "ga-run3")
+                  (gc.step_id . "implement"))))
+    ((id . "ga-9xq") (status . "open") (title . "plain bead, no root key")
+     (metadata . ((gc.kind . "spec")))))
+  "A fixture `gc bd list' payload for the workflow-run selectors:
+two open runs (one with a closed step, an active step, a queued step;
+one with no steps), one closed run with a closed step, and a plain
+non-workflow bead.")
+
+(ert-deftest gascity-test-dashboard-run-root-p-discrimination ()
+  "Root vs step: `gc.kind: workflow' is the root signal; a step carries
+`gc.root_bead_id'.  The fallback for a shape without `gc.kind' is the
+root key WITHOUT a step anchor."
+  (let ((rows (append gascity-test--runs-beads nil)))
+    (should (gascity-dashboard--run-root-p (nth 0 rows)))
+    (should-not (gascity-dashboard--run-root-p (nth 1 rows)))
+    (should-not (gascity-dashboard--run-root-p (nth 7 rows)))
+    ;; Fallback: same key, no `gc.kind', no `gc.root_bead_id' => root.
+    (should (gascity-dashboard--run-root-p
+             '((id . "ga-fb") (metadata . ((gc.graphv2_root_key . "k"))))))
+    ;; ...but the same key WITH a step anchor is a step.
+    (should-not (gascity-dashboard--run-root-p
+                 '((id . "ga-fb2")
+                   (metadata . ((gc.graphv2_root_key . "k")
+                                (gc.root_bead_id . "ga-fb"))))))))
+
+(ert-deftest gascity-test-dashboard-workflow-runs-groups-and-progress ()
+  "Runs group by `gc.graphv2_root_key': one row per open root in payload
+order, progress = closed/total steps, current step = first non-closed
+step with an assignee, updated = root `updated_at'."
+  (let* ((result (gascity-dashboard--workflow-runs gascity-test--runs-beads))
+         (rows (plist-get result :rows)))
+    (should (= (length rows) 2))
+    ;; Row 1: the do-work run.
+    (should (equal (alist-get 'id (nth 0 (nth 0 rows))) "ga-run1"))
+    (should (equal (nth 1 (nth 0 rows)) 1))       ; closed steps
+    (should (equal (nth 2 (nth 0 rows)) 3))       ; total steps
+    ;; Current step: the in_progress step with an assignee (not the
+    ;; closed one, not the unassigned queued one).
+    (should (equal (alist-get 'id (nth 3 (nth 0 rows))) "ga-step2"))
+    (should (equal (nth 4 (nth 0 rows)) "2026-09-24T10:00:00Z"))
+    ;; Row 2: the build-basic run with no steps at all.
+    (should (equal (alist-get 'id (nth 0 (nth 1 rows))) "ga-run2"))
+    (should (equal (nth 1 (nth 1 rows)) 0))
+    (should (equal (nth 2 (nth 1 rows)) 0))
+    (should-not (nth 3 (nth 1 rows)))))
+
+(ert-deftest gascity-test-dashboard-workflow-runs-exclude-closed ()
+  "Closed runs are excluded from the default view; the result reports
+their count so the section can render the dim \"N closed runs\" line."
+  (let ((result (gascity-dashboard--workflow-runs gascity-test--runs-beads)))
+    (should (= (plist-get result :closed-count) 1))
+    (should-not (seq-find (lambda (row)
+                            (equal (alist-get 'id (nth 0 row)) "ga-run3"))
+                          (plist-get result :rows)))))
+
+(ert-deftest gascity-test-dashboard-workflow-runs-accepts-wrapped-payload ()
+  "The selector accepts the `issues'-wrapped payload shape too."
+  (let ((result (gascity-dashboard--workflow-runs
+                 (list (cons 'issues gascity-test--runs-beads)))))
+    (should (= (length (plist-get result :rows)) 2))))
+
+(ert-deftest gascity-test-dashboard-run-row-stamps-root-id ()
+  "A run row renders id/formula/phase/progress/current-step/updated and
+stamps `gascity-bead' with the ROOT bead id (the drill-in hook)."
+  (let* ((result (gascity-dashboard--workflow-runs gascity-test--runs-beads))
+         (row (nth 0 (plist-get result :rows)))
+         (vnode (gascity-dashboard--run-row row))
+         (text (gascity-test--vnode-text vnode)))
+    (should (string-match-p "ga-run1" text))
+    (should (string-match-p "do-work" text))
+    (should (string-match-p "in_progress" text))
+    (should (string-match-p "1/3" text))
+    (should (string-match-p "ga-step2" text))
+    (should (equal (plist-get (vui-vnode-text-properties vnode)
+                              'gascity-bead)
+                   "ga-run1"))))
+
+(ert-deftest gascity-test-dashboard-runs-section-renders-and-hides-closed ()
+  "The mounted dashboard renders the Runs section above Work in flight
+with live runs; closed runs are hidden behind the dim count line.
+(REQ-014, AC 1's structure.)"
+  (let ((status-box (list nil))
+        (inprog-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("bd" "list" "--status" "in_progress"))
+                   (setcar inprog-box callback))
+                  (t (funcall callback '((issues . []) (convoys . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car inprog-box)
+                         `((issues . ,(vconcat gascity-test--runs-beads))))
+                (should (gascity-test--buffer-contains-p "▼ Runs"))
+                (should (gascity-test--buffer-contains-p "ga-run1"))
+                (should (gascity-test--buffer-contains-p "ga-run2"))
+                ;; The closed run's row is absent — only the dim count
+                ;; line mentions it.  (Its title still appears via the Beads
+                ;; section's In-progress group below; that group is the raw
+                ;; bead list, not the run view.)
+                (should (gascity-test--buffer-contains-p
+                         "1 closed run hidden"))
+                ;; Runs sits above Work in flight.
+                (should (< (progn (goto-char (point-min))
+                                  (search-forward "▼ Runs") (point))
+                           (progn (goto-char (point-min))
+                                  (search-forward "▼ Work in flight") (point))))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-runs-section-error-inline ()
+  "A failed `gc bd list' read renders the Runs section's error dimly with
+a retry hint — the per-section failure rule (REQ-010, REQ-014)."
+  (let ((status-box (list nil))
+        (inprog-reject (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("bd" "list" "--status" "in_progress"))
+                   (setcar inprog-reject errback))
+                  (t (funcall callback '((issues . []) (convoys . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car inprog-reject) "boom-bd-list")
+                (should (gascity-test--buffer-contains-p "▼ Runs"))
+                (should (gascity-test--buffer-contains-p "gc error: boom-bd-list"))
+                (should (gascity-test--buffer-contains-p "press g to retry"))
+                ;; The other sections keep rendering.
+                (should (gascity-test--buffer-contains-p "▼ Work in flight"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
 (ert-deftest gascity-test-dashboard-bead-filter ()
+  "The `/` rig filter narrows bead rows by id prefix; nil passes all."
+  (let ((beads '(((id . "ga-1")) ((id . "be-2")) ((id . "ga-3"))))))
   "The `/` rig filter narrows bead rows by id prefix; nil passes all."
   (let ((beads '(((id . "ga-1")) ((id . "be-2")) ((id . "ga-3")))))
     (should (= (length (seq-filter
