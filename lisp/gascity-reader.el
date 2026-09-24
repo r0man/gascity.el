@@ -389,6 +389,46 @@ malformed input."
                    :input string
                    :parse-error err)))))
 
+;;; JSON Lines
+
+(defun gascity-reader--parse-json-lines (output)
+  "Decode OUTPUT as JSON Lines into (GOOD . BAD).
+Each non-empty line is decoded independently with
+`gascity-reader-parse-json'; GOOD is the list of decoded values in feed
+order, BAD the count of lines that failed to decode.  A malformed line
+is a per-line decode-error marker (the BAD count), never a whole-feed
+failure — a stream feed must survive one bad line (plan S3).
+Leading lines before the first `{'-starting line are transport chatter
+(an ssh client warning or login banner — the same hazard
+`gascity-reader-parse-json' documents for single-payload output, which
+TRAMP can prepend to gc's stdout) and are ignored, not counted bad.
+Empty output decodes to (nil . 0)."
+  (let* ((lines (split-string output "\n"))
+         ;; Skip transport chatter: everything before the first line
+         ;; that starts a JSON object (see `gascity-reader-parse-json').
+         (start (cl-position-if
+                 (lambda (line) (string-match-p "\\`[[:space:]]*{" line))
+                 lines))
+         (good nil)
+         (bad 0))
+    ;; No object line at all: pure transport chatter (or an empty
+    ;; feed) — the single-payload path's "parse from the first `{'"
+    ;; answer with nothing after it is no events and no errors.
+    (when start
+      (dolist (line (nthcdr start lines))
+        (setq line (string-trim line))
+        (unless (string-empty-p line)
+          (condition-case nil
+              (let ((decoded (gascity-reader-parse-json line)))
+                ;; A JSONL DTO line is an object; a decoded scalar or
+                ;; array (valid JSON, wrong shape) is a malformed EVENT
+                ;; line — count it bad rather than crash the renderer.
+                (if (consp decoded)
+                    (push decoded good)
+                  (cl-incf bad)))
+            (gascity-json-parse-error (cl-incf bad))))))
+    (cons (nreverse good) bad)))
+
 ;;; High-level reader
 
 (defconst gascity-reader--generic-envelope-message
@@ -639,15 +679,25 @@ verdict is logged, so recurring misparses stay visible in
           nil))))
      (t nil))))
 
-(defun gascity-reader-read-async (args callback &optional errback)
-  "Run `gc ARGS... --json' asynchronously and parse its output.
-ARGS are the subcommand tokens and any flags (strings); `--json' is
-appended unless already present.
+(defun gascity-reader-read-async (args callback &optional errback &key lines)
+  "Run `gc ARGS...' asynchronously and parse its output.
+ARGS are the subcommand tokens and any flags (strings).
 
-On a clean exit CALLBACK is called with the decoded payload
-\(alist/vector).  On any failure — the executable cannot be launched, a
-non-zero exit, or malformed JSON — ERRBACK, when non-nil, is called with
-a human-readable error string; CALLBACK is not.
+The default decodes the whole output as ONE JSON payload: `--json' is
+appended unless already present, and on a clean exit CALLBACK is called
+with the decoded payload (alist/vector).
+
+With LINES non-nil the output is JSON Lines (one JSON value per line,
+the shape `gc events' emits): `--json' is NOT appended (the JSONL
+leaves emit lines natively), each non-empty line is decoded
+independently, and CALLBACK receives a cons (GOOD . BAD) — GOOD the
+list of decoded values in feed order, BAD the count of lines that
+failed to decode.  A malformed line is a per-line decode-error marker
+in the payload, never a whole-feed failure.
+
+On any failure — the executable cannot be launched, a non-zero exit,
+or (in single-payload mode) malformed JSON — ERRBACK, when non-nil, is
+called with a human-readable error string; CALLBACK is not.
 
 Standard error is separated so a stray warning on stderr never corrupts
 the JSON parsed from stdout — but never via a string `:stderr': tramp-sh
@@ -767,7 +817,9 @@ turns it on, at the cost of a fresh ssh per read."
             (args (if city-env
                        args
                      (append (gascity-reader--city-args) args)))
-            (full-args (if (member "--json" args)
+            ;; JSONL leaves emit their lines natively; appending --json
+            ;; there would be a rejected flag.
+            (full-args (if (or lines (member "--json" args))
                            args
                          (append args (list "--json"))))
             (output "")
@@ -828,7 +880,11 @@ turns it on, at the cost of a fresh ssh per read."
                                       executable args code output nil remote))))
                          (t
                           (condition-case perr
-                              (let ((data (gascity-reader-parse-json output)))
+                              (let ((data (if lines
+                                              (gascity-reader--parse-json-lines
+                                               output)
+                                            (gascity-reader-parse-json
+                                             output))))
                                 (funcall callback data))
                             (gascity-json-parse-error
                              (when errback

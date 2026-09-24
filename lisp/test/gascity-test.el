@@ -2570,7 +2570,7 @@ dashboard (REQ-005's failure-isolation half)."
         (vui-render-delay nil)
         (status gascity-test--status-named-sessions-city))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
+               (lambda (args callback &optional errback &rest _)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar reject-box errback))
@@ -2618,7 +2618,7 @@ blanking to the loading line."
                                   (work_dir . "/city")
                                   (session_name . "mayor"))]))))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
+               (lambda (args callback &optional errback &rest _)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list"))
@@ -4384,7 +4384,7 @@ supersede path has something to kill; every process is deleted on exit."
        (let ((,calls nil) (procs nil))
          (unwind-protect
              (cl-letf (((symbol-function 'gascity-reader-read-async)
-                        (lambda (args callback &optional errback)
+                        (lambda (args callback &optional errback &rest _)
                           (push (list args callback errback) ,calls)
                           (car (push (make-process :name "gascity-test-cat"
                                                    :command '("cat")
@@ -8854,13 +8854,14 @@ BOXES is an alist of (ARGUMENTS . BOX-LIST); a read whose argv matches a
 key parks its resolve callback in that box for the test to fire later.
 Reads with no matching box resolve immediately with an empty payload of
 the shape the dashboard expects."
-  (lambda (args callback &optional errback)
+  (lambda (args callback &optional errback &rest _)
     (let ((box (cdr (assoc args boxes))))
       (if box
           (setcar box callback)
         (funcall callback
                  (cond ((equal args '("bd" "ready")) '((issues . [])))
                        ((equal args '("convoy" "list")) '((convoys . [])))
+                       ((equal args '("events" "--since" "2h")) '(nil . 0))
                        (t '((issues . [])))))))
     nil))
 
@@ -8901,8 +8902,7 @@ rigs all render from their own payloads (REQ-001, REQ-002)."
                 (should (gascity-test--buffer-contains-p "▼ Sessions"))
                 (should (gascity-test--buffer-contains-p "▼ Beads"))
                 (should (gascity-test--buffer-contains-p "Ready"))
-                (should (gascity-test--buffer-contains-p "recent activity"))
-                (should (gascity-test--buffer-contains-p ".gc/events.jsonl"))
+                (should (gascity-test--buffer-contains-p "▼ Activity"))
                 (should (gascity-test--buffer-contains-p "▼ Rigs")))
               (should t))
           (when (get-buffer "*gascity-dashboard-test*")
@@ -8917,13 +8917,14 @@ and never blanks the other sections (REQ-010, REQ-006)."
         (ready-reject (list nil))
         (vui-render-delay nil))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
+               (lambda (args callback &optional errback &rest _)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
                   ((equal args '("bd" "list" "--status" "in_progress"))
                    (setcar inprog-box callback))
                   ((equal args '("bd" "ready")) (setcar ready-reject errback))
+                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
                   (t (funcall callback '((issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
@@ -8955,13 +8956,14 @@ renders from its own payload while the beads section still loads."
         (ready-box (list nil))
         (vui-render-delay nil))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
+               (lambda (args callback &optional errback &rest _)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
                   ((equal args '("bd" "list" "--status" "in_progress"))
                    (setcar inprog-box callback))
                   ((equal args '("bd" "ready")) (setcar ready-box callback))
+                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
                   (t (funcall callback '((issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
@@ -8992,14 +8994,17 @@ rendering while the reloads are in flight, and collapse state survives
   (let ((status-box (list nil))
         (sessions-box (list nil))
         (inprog-box (list nil))
+        (events-box (list nil))
         (vui-render-delay nil))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
+               (lambda (args callback &optional errback &rest _)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
                   ((equal args '("bd" "list" "--status" "in_progress"))
                    (setcar inprog-box callback))
+                  ((equal args '("events" "--since" "2h"))
+                   (setcar events-box callback))
                   (t (funcall callback '((issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
@@ -9028,6 +9033,7 @@ rendering while the reloads are in flight, and collapse state survives
                 (funcall (car status-box) gascity-test--dashboard-status)
                 (funcall (car sessions-box) gascity-test--dashboard-sessions)
                 (funcall (car inprog-box) '((issues . [])))
+                (funcall (car events-box) '(nil . 0))
                 (should (gascity-test--buffer-contains-p "▶ Agents"))))
           (when (get-buffer "*gascity-dashboard-test*")
             (kill-buffer "*gascity-dashboard-test*")))))))
@@ -9048,7 +9054,7 @@ failure is still surfaced dimly with a retry hint — never swallowed
                                 (status . "open")
                                 (progress . ((closed . 0) (total . 1))))]))))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
+               (lambda (args callback &optional errback &rest _)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
@@ -9058,6 +9064,7 @@ failure is still surfaced dimly with a retry hint — never swallowed
                    (if (car convoy-fail)
                        (setcar convoy-reject errback)
                      (setcar convoy-box callback)))
+                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
                   (t (funcall callback '((issues . [])))))
                  nil)))
       (save-window-excursion
@@ -9098,7 +9105,7 @@ REQ-010): the fabricated work load propagates the read's `:error'."
         (inprog-reject (list nil))
         (vui-render-delay nil))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
+               (lambda (args callback &optional errback &rest _)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
@@ -9106,6 +9113,7 @@ REQ-010): the fabricated work load propagates the read's `:error'."
                    (if (car inprog-fail)
                        (setcar inprog-reject errback)
                      (setcar inprog-box callback)))
+                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
                   (t (funcall callback '((issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
@@ -9501,6 +9509,277 @@ drills into the bead at point."
   (should (eq (keymap-lookup gascity-run-mode-map "q") #'quit-window))
   (should (eq (keymap-lookup gascity-run-mode-map "N")
               #'gascity-section-next)))
+
+;;; City dashboard — Activity feed (events JSONL, plan S3)
+
+(ert-deftest gascity-test-reader-jsonl-decode-good-bad-split ()
+  "The JSONL reader splits good and bad lines.
+Each non-empty line decodes independently; a malformed line counts in
+BAD and never fails the feed; empty lines (trailing newline) are
+ignored."
+  (let* ((output (concat "{\"type\": \"a\", \"seq\": 1}\n"
+                         "not json at all\n"
+                         "\n"
+                         "{\"type\": \"b\", \"seq\": 2}\n"))
+         (result (gascity-reader--parse-json-lines output)))
+    (should (= (length (car result)) 2))
+    (should (equal (alist-get 'type (nth 0 (car result))) "a"))
+    (should (equal (alist-get 'type (nth 1 (car result))) "b"))
+    (should (= (cdr result) 1)))
+  ;; Empty output is an empty good feed, no errors.
+  (should (equal (gascity-reader--parse-json-lines "") '(nil . 0)))
+  (should (equal (gascity-reader--parse-json-lines "\n\n") '(nil . 0))))
+
+(ert-deftest gascity-test-reader-jsonl-skips-chatter-and-scalars ()
+  "Leading transport chatter is ignored, not counted bad; a decoded
+scalar line (valid JSON, wrong DTO shape) counts bad, never crashes
+the feed — the remote-parity shape of the whole-feed-failure rule
+(plan S3, REQ-011)."
+  (let* ((output (concat "Warning: No xauth data\n"
+                         "city-42 login: last login from tty3\n"
+                         "{\"type\": \"a\"}\n"
+                         "42\n"
+                         "[1, 2]\n"
+                         "{\"type\": \"b\"}\n"))
+         (result (gascity-reader--parse-json-lines output)))
+    (should (equal (mapcar (lambda (e) (alist-get 'type e)) (car result))
+                   '("a" "b")))
+    ;; The scalar and the array are malformed EVENT lines; the chatter
+    ;; before the first object is not counted at all.
+    (should (= (cdr result) 2)))
+  ;; A feed with no object at all is pure chatter: no events, no errors.
+  (should (equal (gascity-reader--parse-json-lines "just noise\n")
+                 '(nil . 0))))
+
+(ert-deftest gascity-test-dashboard-events-exclude-chatty-default ()
+  "The default exclusion drops the chatty types, everything else passes."
+  (let* ((events (list '((type . "order.fired") (subject . "x"))
+                       '((type . "bead.updated") (subject . "y"))
+                       '((type . "order.completed") (subject . "w"))
+                       '((type . "session.started") (subject . "z"))))
+         (view (gascity-dashboard--events-view
+                (cons events 0) gascity-dashboard--events-chatty-default
+                gascity-dashboard-events-limit)))
+    (should (= (length (plist-get view :events)) 1))
+    (should (equal (alist-get 'type (car (plist-get view :events)))
+                   "session.started"))
+    (should (= (plist-get view :hidden) 0))
+    (should (= (plist-get view :bad) 0))))
+
+(ert-deftest gascity-test-dashboard-events-cap-trims-oldest ()
+  "The limit cap keeps the payload's tail (the most recent events) and
+counts the dropped ones in :hidden."
+  (let* ((events (cl-loop for i from 1 to 5
+                          collect `((type . "t") (seq . ,i))))
+         (view (gascity-dashboard--events-view (cons events 0) nil 2)))
+    (should (= (length (plist-get view :events)) 2))
+    ;; The LAST events survive (ascending seq = oldest first).
+    (should (equal (alist-get 'seq (car (plist-get view :events))) 4))
+    (should (equal (alist-get 'seq (car (last (plist-get view :events))))
+                   5))
+    (should (= (plist-get view :hidden) 3)))
+  ;; A feed shorter than the limit is untouched.
+  (let ((view (gascity-dashboard--events-view
+               (cons '(((type . "t"))) 0) nil 500)))
+    (should (= (length (plist-get view :events)) 1))
+    (should (= (plist-get view :hidden) 0))))
+
+(ert-deftest gascity-test-dashboard-event-ts-and-summary ()
+  "The ts renders HH:MM:SS out of the RFC3339 stamp; the summary is the
+first line of payload.title (preferred) or payload.summary, nil when
+neither."
+  (should (equal (gascity-dashboard--event-ts
+                  '((ts . "2026-09-24T13:59:12.293914966+02:00")))
+                 "13:59:12"))
+  ;; Unexpected shapes degrade to the raw value.
+  (should (equal (gascity-dashboard--event-ts '((ts . "whenever")))
+                 "whenever"))
+  (should-not (gascity-dashboard--event-ts '((subject . "x"))))
+  (should (equal (gascity-dashboard--event-summary
+                  '((payload . ((title . "first line\nsecond")))))
+                 "first line"))
+  (should (equal (gascity-dashboard--event-summary
+                  '((payload . ((summary . "  the summary ")))))
+                 "the summary"))
+  ;; title wins over summary; no summary fields, no summary.
+  (should (equal (gascity-dashboard--event-summary
+                  '((payload . ((title . "t") (summary . "s")))))
+                 "t"))
+  (should-not (gascity-dashboard--event-summary
+               '((payload . ((other . "x")))))))
+
+(ert-deftest gascity-test-dashboard-events-toggle-chatty-set ()
+  "The chatty toggle works as a set: none excluded adds all; any
+excluded removes all; other exclusions are preserved."
+  (should (equal (gascity-dashboard--events-toggle-chatty nil)
+                 gascity-dashboard--events-chatty-default))
+  (should (equal (gascity-dashboard--events-toggle-chatty
+                  gascity-dashboard--events-chatty-default)
+                 nil))
+  (should (equal (gascity-dashboard--events-toggle-chatty '("custom.x"))
+                 (append '("custom.x")
+                         gascity-dashboard--events-chatty-default)))
+  (should (equal (gascity-dashboard--events-toggle-chatty
+                  (append '("custom.x")
+                          gascity-dashboard--events-chatty-default))
+                 '("custom.x"))))
+
+(defconst gascity-test--dashboard-events-payload
+  (cons (list '((type . "session.started") (subject . "ec-51a1")
+                (ts . "2026-09-24T13:59:12.293914966+02:00") (ok . t)
+                (payload . ((title . "worker up\ndetails"))))
+              '((type . "order.fired") (subject . "nudge-on-route")
+                (ts . "2026-09-24T13:59:13.000000000+02:00") (ok . t))
+              '((type . "session.started") (subject . "ec-52b2")
+                (ts . "2026-09-24T14:00:01.000000000+02:00") (ok . t))
+              '((type . "session.started") (subject . "ec-53c3")
+                (ts . "2026-09-24T14:00:02.000000000+02:00")
+                (ok . :json-false)))
+        2)
+  "A JSONL events payload: three visible events (one failed), one chatty
+type, and two malformed lines.")
+
+(ert-deftest gascity-test-dashboard-activity-renders-events ()
+  "The Activity section renders event rows, the cap line and the
+malformed-line count from the JSONL payload; the read goes through the
+reader's :lines mode and the chatty type is filtered from rows and
+count alike (plan S3)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (events-box (list nil))
+        (lines-flag nil)
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback &rest _)
+                 (cond ((equal args '("status"))
+                        (setcar status-box callback))
+                       ((equal args '("session" "list"))
+                        (setcar sessions-box callback))
+                       ((equal args '("events" "--since" "2h"))
+                        (setq lines-flag t)
+                        (setcar events-box callback))
+                       (t (funcall callback '((issues . [])))))
+                 nil))
+              (gascity-dashboard-events-limit 2))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car events-box)
+                         gascity-test--dashboard-events-payload)
+                ;; The JSONL path was requested, not the single-payload
+                ;; --json one.
+                (should lines-flag)
+                ;; Header counts the FILTERED, CAPPED rows (3 good
+                ;; non-chatty events capped to 2; the chatty one and
+                ;; the two malformed lines never render as rows).
+                (should (gascity-test--buffer-contains-p "▼ Activity (2)"))
+                ;; The cap keeps the MOST RECENT events: the oldest
+                ;; visible row (ec-51a1) is hidden by the cap…
+                (should (gascity-test--buffer-contains-p "14:00:01"))
+                (should (gascity-test--buffer-contains-p "ec-52b2"))
+                (should (gascity-test--buffer-contains-p "14:00:02"))
+                (should (gascity-test--buffer-contains-p "ec-53c3"))
+                (should-not (gascity-test--buffer-contains-p "13:59:12"))
+                (should-not (gascity-test--buffer-contains-p "worker up"))
+                ;; The chatty type is excluded by default.
+                (should-not (gascity-test--buffer-contains-p
+                             "nudge-on-route"))
+                (should-not (gascity-test--buffer-contains-p
+                             "order.fired"))
+                ;; The cap dropped the oldest visible event…
+                (should (gascity-test--buffer-contains-p
+                         "1 older events hidden"))
+                ;; …and the payload's malformed lines degrade to a dim
+                ;; inline line, never a failure.
+                (should (gascity-test--buffer-contains-p
+                         "2 malformed event lines skipped"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-activity-failure-inline ()
+  "A failing Activity read shows the standard dim error line with a
+retry hint and never blanks the dashboard (REQ-010)."
+  (let ((status-box (list nil))
+        (events-reject (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback &rest _)
+                 (cond ((equal args '("status"))
+                        (setcar status-box callback))
+                       ((equal args '("events" "--since" "2h"))
+                        (setcar events-reject errback))
+                       (t (funcall callback
+                                   '((issues . []) (convoys . []))))))
+                 nil))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car events-reject) "boom-events")
+                (should (gascity-test--buffer-contains-p "▼ Activity"))
+                (should (gascity-test--buffer-contains-p
+                         "gc error: boom-events"))
+                (should (gascity-test--buffer-contains-p
+                         "press g to retry"))
+                ;; The other sections keep rendering.
+                (should (gascity-test--buffer-contains-p "▼ Agents"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-events-filter-toggle-lifted ()
+  "The events filter is lifted to the root component: toggling the
+default-chatty set off reveals the excluded rows and survives a
+refresh; clearing re-excludes nothing."
+  (let ((status-box (list nil))
+        (events-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback &rest _)
+                 (cond ((equal args '("status"))
+                        (setcar status-box callback))
+                       ((equal args '("events" "--since" "2h"))
+                        (setcar events-box callback))
+                       (t (funcall callback '((issues . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car events-box)
+                         (cons (list '((type . "order.fired")
+                                       (subject . "nudge-on-route")
+                                       (ts . "2026-09-24T13:59:13.000000000+02:00")
+                                       (ok . t)))
+                               0))
+                ;; Excluded by default…
+                (should-not (gascity-test--buffer-contains-p
+                             "nudge-on-route"))
+                ;; …revealed by the toggle…
+                (gascity-dashboard-events-toggle-chatty)
+                (should (gascity-test--buffer-contains-p "nudge-on-route"))
+                ;; …and the state survives a refresh.
+                (gascity-dashboard-refresh)
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car events-box)
+                         (cons (list '((type . "order.fired")
+                                       (subject . "nudge-on-route")
+                                       (ts . "2026-09-24T13:59:13.000000000+02:00")
+                                       (ok . t)))
+                               0))
+                (should (gascity-test--buffer-contains-p "nudge-on-route"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
 
 (provide 'gascity-test)
 ;;; gascity-test.el ends here
