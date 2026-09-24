@@ -427,7 +427,7 @@ readiness order.  Pure over the raw decoded alists."
             (append steps nil)))
 
 (defun gascity-dashboard--workflow-runs (bead-rows)
-  "Group raw BEAD-ROWS into workflow-run rows, keyed by `gc.graphv2_root_key'.
+  "Group raw BEAD-ROWS into workflow-run rows, steps joined by `gc.root_bead_id'.
 BEAD-ROWS is the raw decoded `gc bd list --json' payload (a bare array
 or an `issues'-wrapped object).  One row per run root, payload order:
 
@@ -1374,7 +1374,7 @@ toggle must be able to re-add the chatty set from there."
 
 Sections: cockpit (with the mail-unread header and the costs pointer),
 work in flight, needs-you agents, the roster, sessions, beads (+convoys),
-the activity pointer and the rigs.  Pending interactions need the
+the activity feed and the rigs.  Pending interactions need the
 supervisor API; out of scope by user directive, so the needs-you reasons
 are only the CLI-derivable ones (errored / rate-limited / stalled).
 
