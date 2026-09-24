@@ -64,6 +64,7 @@
 (require 'gascity-action)
 (require 'gascity-rig)
 (require 'gascity-dashboard)
+(require 'gascity-run)
 (require 'gascity-session)
 
 ;;; City targeting

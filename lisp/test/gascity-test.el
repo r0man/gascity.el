@@ -9227,5 +9227,280 @@ transient versions this package builds against."
     (should (eq (plist-get (cdr suffix) :command)
                 'gascity-dashboard))))
 
+;;; Run detail (gascity-run.el) — selectors, rendering, wiring
+
+(defconst gascity-test--run-rows
+  '((issues
+     . [((id . "ga-um77")
+         (title . "do-work")
+         (status . "in_progress")
+         (assignee . "gc__implementation-worker-ec-uoxs")
+         (metadata . ((gc.kind . "workflow")
+                      (gc.formula_name . "do-work")
+                      (gc.input_convoy_id . "ga-da1f"))))
+        ((id . "ga-30zs")          ; another run's root — excluded
+         (title . "do-work")
+         (status . "open")
+         (metadata . ((gc.kind . "workflow"))))
+        ((id . "ga-bpc6")
+         (title . "Step spec for Implement owned work")
+         (status . "open")
+         (metadata . ((gc.root_bead_id . "ga-um77")
+                      (gc.kind . "spec"))))
+        ((id . "ga-w3rq")
+         (title . "Implement owned work")
+         (status . "in_progress")
+         (assignee . "gc__implementation-worker-ec-wfaj")
+         (metadata . ((gc.root_bead_id . "ga-um77")
+                      (gc.control_for . "implement"))))
+        ((id . "ga-gwdj")           ; a closed step — progress needs it
+         (title . "Prepare item worktree")
+         (status . "closed")
+         (metadata . ((gc.root_bead_id . "ga-um77"))))
+        ((id . "ga-tceg")           ; another run's step — excluded
+         (title . "Finalize workflow")
+         (status . "open")
+         (metadata . ((gc.root_bead_id . "ga-999")
+                      (gc.kind . "workflow-finalize"))))
+        ((id . "ga-stray")          ; no metadata at all — excluded
+         (title . "Plain bead")
+         (status . "open"))]))
+  "A decoded `gc bd list' fixture: one run (ga-um77), three steps,
+unrelated rows of another run and a metadata-less bead.")
+
+(defconst gascity-test--run-convoy-status
+  '((convoy . ((id . "ga-da1f")
+               (title . "drain unit 3 for ga-xmh3")
+               (status . "open")))
+    (progress . ((closed . 0) (total . 1)))
+    (ok . t))
+  "A `gc convoy status' fixture for the run fixture's input convoy.")
+
+(ert-deftest gascity-test-run-selectors ()
+  "The run selectors group `bd list' rows into root, steps and progress.
+Steps are the rows carrying `gc.root_bead_id' = the run id, in payload
+order; the root row itself is excluded; unrelated runs and
+metadata-less beads are filtered out; opening a step id climbs to its
+run root."
+  (let* ((rows (gascity-section-beads gascity-test--run-rows))
+         (root (gascity-run--root-row "ga-um77" rows))
+         (steps (gascity-run--steps "ga-um77" rows)))
+    (should (equal (alist-get 'id root) "ga-um77"))
+    (should (equal (mapcar (lambda (s) (alist-get 'id s)) steps)
+                   '("ga-bpc6" "ga-w3rq" "ga-gwdj")))
+    (should (equal (gascity-run--progress steps) '(1 . 3)))
+    (should (equal (gascity-run--phase root) "in_progress"))
+    (should (equal (gascity-run--formula root) "do-work"))
+    (should (equal (gascity-run--input-convoy-id root) "ga-da1f"))
+    ;; A step id climbs to its run root; the root's own id is itself.
+    (should (equal (gascity-run--root-id (nth 1 steps)) "ga-um77"))
+    (should (equal (gascity-run--root-id root) "ga-um77"))
+    (should-not (gascity-run--root-row "ga-nope" rows))
+    (should-not (gascity-run--steps "ga-nope" rows))))
+
+(ert-deftest gascity-test-run-convoy-pair ()
+  "A `gc convoy status' payload unwraps to (CONVOY . PROGRESS); a
+payload without a convoy object yields nil — both shapes render the
+convoy join present/absent."
+  (let ((pair (gascity-run--convoy-pair gascity-test--run-convoy-status)))
+    (should (equal (alist-get 'id (car pair)) "ga-da1f"))
+    (should (equal (cdr pair) '((closed . 0) (total . 1)))))
+  ;; A dashboard `convoy list' row carries progress on the row itself.
+  (let ((pair (gascity-run--convoy-pair
+               '((convoy . ((id . "ga-9")
+                            (progress . ((closed . 2) (total . 5)))))))))
+    (should (equal (car pair) '((id . "ga-9")
+                                (progress . ((closed . 2) (total . 5))))))
+    (should (equal (cdr pair) '((closed . 2) (total . 5)))))
+  (should-not (gascity-run--convoy-pair nil))
+  (should-not (gascity-run--convoy-pair '((issues . [])))))
+
+(ert-deftest gascity-test-run-renders-steps-and-convoy ()
+  "The mounted run detail renders the header (phase, progress, formula),
+one section per step (id, title, kind, status, assignee) and the dim
+input-convoy row joined from the run root's metadata."
+  (let ((bd-box (list nil))
+        (convoy-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback)
+                 (cond
+                  ((equal args '("bd" "list" "--status"
+                                 "open,in_progress,blocked,deferred,closed"))
+                   (setcar bd-box callback))
+                  ((equal args '("convoy" "status" "ga-da1f"))
+                   (setcar convoy-box callback))
+                  (t (funcall callback nil))))))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-run-app :run-id "ga-um77")
+                         "*gascity-run-test*")
+              (with-current-buffer "*gascity-run-test*"
+                ;; Pending first: the header renders, the body loads.
+                (should (gascity-test--buffer-contains-p "Run ga-um77"))
+                (funcall (car bd-box) gascity-test--run-rows)
+                ;; The convoy read fires only now, keyed on the convoy
+                ;; id the root metadata resolved.
+                (should (car convoy-box))
+                (funcall (car convoy-box) gascity-test--run-convoy-status)
+                (should (gascity-test--buffer-contains-p
+                         "Run ga-um77 — do-work"))
+                (should (gascity-test--buffer-contains-p
+                         "phase in_progress"))
+                (should (gascity-test--buffer-contains-p "progress 1/3"))
+                (should (gascity-test--buffer-contains-p "▼ Steps (3)"))
+                (should (gascity-test--buffer-contains-p "ga-bpc6"))
+                (should (gascity-test--buffer-contains-p "spec · open · —"))
+                (should (gascity-test--buffer-contains-p "ga-w3rq"))
+                (should (gascity-test--buffer-contains-p
+                         "implement · in_progress"))
+                (should (gascity-test--buffer-contains-p
+                         "gc__implementation-worker-ec-wfaj"))
+                (should (gascity-test--buffer-contains-p "— · closed · —"))
+                (should (gascity-test--buffer-contains-p
+                         "▼ Input convoy (1)"))
+                (should (gascity-test--buffer-contains-p
+                         "input convoy ga-da1f open 0/1"))))
+          (when (get-buffer "*gascity-run-test*")
+            (kill-buffer "*gascity-run-test*")))))))
+
+(ert-deftest gascity-test-run-renders-without-convoy ()
+  "A run whose root carries no `gc.input_convoy_id' renders the step
+graph and an explicit dim `(no input convoy)' — the join's absent half;
+no convoy read may fire for such a run."
+  (let ((bd-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("bd" "list" "--status"
+                                 "open,in_progress,blocked,deferred,closed"))
+                   (setcar bd-box callback))
+                  (t (funcall (or errback callback) nil))))))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-run-app :run-id "ga-30zs")
+                         "*gascity-run-test*")
+              (with-current-buffer "*gascity-run-test*"
+                (funcall (car bd-box)
+                         '((issues
+                            . [((id . "ga-30zs")
+                                (title . "do-work")
+                                (status . "open")
+                                (metadata . ((gc.kind . "workflow")
+                                             (gc.formula_name . "do-work"))))])))
+                (should (gascity-test--buffer-contains-p
+                         "Run ga-30zs — do-work"))
+                (should (gascity-test--buffer-contains-p
+                         "(no input convoy)"))))
+          (when (get-buffer "*gascity-run-test*")
+            (kill-buffer "*gascity-run-test*")))))))
+
+(ert-deftest gascity-test-run-failure-inline ()
+  "A failing `bd list' read renders the standard inline error dimly with
+a retry hint and never unmounts the view; the convoy section, an
+independent load, degrades to its absent state (REQ-010)."
+  (let ((bd-reject (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args _callback &optional errback)
+                 (if (equal args '("bd" "list" "--status"
+                                   "open,in_progress,blocked,deferred,closed"))
+                     (setcar bd-reject errback)
+                   (funcall (or errback callback) nil)))))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-run-app :run-id "ga-um77")
+                         "*gascity-run-test*")
+              (with-current-buffer "*gascity-run-test*"
+                (funcall (car bd-reject) "boom")
+                (should (gascity-test--buffer-contains-p "gc error: boom"))
+                (should (gascity-test--buffer-contains-p "press g to retry"))
+                ;; The header and the convoy section stay up.
+                (should (gascity-test--buffer-contains-p "Run ga-um77"))
+                (should (gascity-test--buffer-contains-p
+                         "(no input convoy)"))))
+          (when (get-buffer "*gascity-run-test*")
+            (kill-buffer "*gascity-run-test*")))))))
+
+(ert-deftest gascity-test-run-not-found ()
+  "A run id absent from the bead list renders an inline not-found error,
+not a blank pane."
+  (let ((bd-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--dashboard-async-stub
+                `((("bd" "list" "--status"
+                    "open,in_progress,blocked,deferred,closed")
+                   . ,bd-box)))))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-run-app :run-id "ga-zzz")
+                         "*gascity-run-test*")
+              (with-current-buffer "*gascity-run-test*"
+                (funcall (car bd-box) '((issues . [])))
+                (should (gascity-test--buffer-contains-p
+                         "run ga-zzz not found in `bd list'"))))
+          (when (get-buffer "*gascity-run-test*")
+            (kill-buffer "*gascity-run-test*")))))))
+
+(ert-deftest gascity-test-run-show-opens-view-keyed-buffer ()
+  "`gascity-run-show' creates the buffer through the view-buffer factory
+with the `*gascity-run*' base name, mounts the component in
+`gascity-run-mode' and records the run id; the same run refreshes in
+place, a different run remounts."
+  (let ((factory-bases nil)
+        (mounts 0)
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+               (lambda (base &optional _dir)
+                 (setq factory-bases (cons base factory-bases))
+                 (get-buffer-create "*gascity-run-fake*")))
+              ((symbol-function 'gascity-section-refresh-instance)
+               (lambda (_buf) t))       ; a live instance, always
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (&rest _) nil))
+              ((symbol-function 'pop-to-buffer) #'ignore)
+              ((symbol-function 'vui-mount)
+               (lambda (&rest _)
+                 (cl-incf mounts)
+                 ;; The real mount would render; the stub only records.
+                 (get-buffer "*gascity-run-fake*"))))
+      (gascity-run-show "ga-um77")
+      (should (equal factory-bases (list "*gascity-run*")))
+      (should (= mounts 1))
+      (with-current-buffer "*gascity-run-fake*"
+        (should (derived-mode-p 'gascity-run-mode))
+        (should (equal gascity-run--current-run "ga-um77")))
+      ;; The same run again: in-place refresh, no remount.
+      (gascity-run-show "ga-um77")
+      (should (= mounts 1))
+      ;; A different run: remount with the new id.
+      (gascity-run-show "ga-999")
+      (should (= mounts 2))
+      (with-current-buffer "*gascity-run-fake*"
+        (should (equal gascity-run--current-run "ga-999")))
+      (when (get-buffer "*gascity-run-fake*")
+        (kill-buffer "*gascity-run-fake*")))))
+
+(ert-deftest gascity-test-run-wiring ()
+  "The run detail is wired as a view: the command is interactive, the
+mode derives `gascity-section-mode', `g' refreshes in place and `RET'
+drills into the bead at point."
+  (should (commandp 'gascity-run-show))
+  (should (commandp 'gascity-run-refresh))
+  (should (commandp 'gascity-run-activate))
+  (should (eq (keymap-lookup gascity-run-mode-map "g")
+              #'gascity-run-refresh))
+  (should (eq (keymap-lookup gascity-run-mode-map "RET")
+              #'gascity-run-activate))
+  (should (eq (keymap-lookup gascity-run-mode-map "q") #'quit-window))
+  (should (eq (keymap-lookup gascity-run-mode-map "N")
+              #'gascity-section-next)))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here
