@@ -110,6 +110,7 @@
 (declare-function gascity-mail-inbox "gascity-tabulated")
 (declare-function gascity-polecat-detail-at-point "gascity-session")
 (declare-function gascity-rig-dashboard "gascity-rig")
+(declare-function gascity-run-show "gascity-run")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -317,6 +318,78 @@ narrowed to live rows (state \"active\", not closed)."
 
 ;; Workflow-run projection (REQ-014)
 ;;
+;; A workflow run lives in the dispatching rig's bead store, not the
+;; city store: `gc bd list --city ROOT' reads one store, and the live
+;; emacs-city check (S5) proved a real city's runs invisible from the
+;; city root alone.  The dashboard's in-progress/blocked reads therefore
+;; fan out over the city's rig stores: one `rig list' read, then one
+;; `bd list' read per rig, resolved as a stamped union.
+
+(defun gascity-dashboard--rig-names (rigs-payload)
+  "Return the rig names of a `gc rig list' RIGS-PAYLOAD, in order."
+  (delq nil (mapcar (lambda (rig) (alist-get 'name rig))
+                    (append (alist-get 'rigs rigs-payload) nil))))
+
+(defun gascity-dashboard--stamp-rig (bead name)
+  "Return BEAD stamped with its owning rig store NAME."
+  (append bead (list (cons 'gascity-rig name))))
+
+(defun gascity-dashboard--union-batches (names batches)
+  "Concatenate the per-rig BATCHES of NAMES in rig order."
+  (apply #'append (mapcar (lambda (name) (gethash name batches)) names)))
+
+(defun gascity-dashboard--bd-list-rigs-async (args resolve reject)
+  "Read `gc bd list ARGS' from EVERY rig store of the calling city.
+One `rig list' read, then one `bd list ARGS --rig NAME' read per rig,
+all through the async reader — never synchronously, over TRAMP like
+any other read.  Resolves the union of the stores' bead rows once
+every per-rig read has settled, rows in rig order, each stamped with
+`(gascity-rig . NAME)' so drill-ins can scope back to the owning
+store.  A rig read that fails skips just that store — the union still
+resolves, partial data beats none; when EVERY rig read fails, or the
+`rig list' read itself fails, REJECT is called with the first error so
+the section renders its standard inline error (REQ-010).  A city with
+no rigs resolves the empty list."
+  (gascity-reader-read-async
+   '("rig" "list")
+   (lambda (rigs-payload)
+     (let* ((names (gascity-dashboard--rig-names rigs-payload))
+            (pending (length names))
+            (batches (make-hash-table :test 'equal))
+            (errors nil)
+            (settle
+             (lambda ()
+               (cond ((= (length errors) (length names))
+                      (funcall reject (car (nreverse errors))))
+                     (t
+                      ;; Resolved as a bare-array payload, the shape a
+                      ;; `gc bd list --json' read emits: every consumer
+                      ;; of these loads decodes through
+                      ;; `gascity-section-beads', exactly as it does for
+                      ;; a single-store read.
+                      (funcall resolve
+                               (vconcat
+                                (gascity-dashboard--union-batches
+                                 names batches))))))))
+       (if (null names)
+           (funcall resolve [])
+         (dolist (name names)
+           (gascity-reader-read-async
+            (append args (list "--rig" name))
+            (lambda (payload)
+              (puthash name
+                       (mapcar (lambda (bead)
+                                 (gascity-dashboard--stamp-rig bead name))
+                               (gascity-section-beads payload))
+                       batches)
+              (setq pending (1- pending))
+              (when (zerop pending) (funcall settle)))
+            (lambda (err)
+              (setq errors (cons err errors))
+              (setq pending (1- pending))
+              (when (zerop pending) (funcall settle))))))))
+   reject))
+
 ;; A workflow run is a bead whose metadata carries `gc.graphv2_root_key';
 ;; steps carry the same key plus `gc.root_bead_id'.  Root vs step is
 ;; decided by the verified live shape: roots carry `gc.kind: workflow'
@@ -361,14 +434,18 @@ or an `issues'-wrapped object).  One row per run root, payload order:
   (ROOT CLOSED TOTAL CURRENT UPDATED)
 
 where ROOT is the raw root bead alist, CLOSED/TOTAL the closed/total
-step counts (steps = beads sharing the root's `gc.graphv2_root_key'
-that are NOT run roots — verified live, every step carries
-`gc.root_bead_id'), CURRENT the first non-closed step with a non-empty
+step counts, CURRENT the first non-closed step with a non-empty
 `assignee' (nil when none — the run's steps are queued or closed), and
-UPDATED the root's raw `updated_at'.  Runs whose root is closed are
-EXCLUDED from the default view (the caller surfaces a dim \"N closed
-runs\" line); steps with no root in the payload are skipped.  Pure over
-the decoded payload (REQ-014)."
+UPDATED the root's raw `updated_at'.
+
+Root vs step (verified live, S5): a run root carries
+`gc.graphv2_root_key' with `gc.kind workflow'; a STEP carries only
+`gc.root_bead_id' = the root id — the root key does NOT reach the
+steps, so grouping walks `gc.root_bead_id' (the same verified shape
+`gascity-run--steps' climbs).  Runs whose root is closed are EXCLUDED
+from the default view (the caller surfaces a dim \"N closed runs\"
+line); steps with no root in the payload are skipped.  Pure over the
+decoded payload (REQ-014)."
   (let* ((beads (append (if (vectorp bead-rows)
                             bead-rows
                           (or (alist-get 'issues bead-rows) bead-rows))
@@ -380,17 +457,23 @@ the decoded payload (REQ-014)."
          (closed-runs 0)
          (rows nil))
     (dolist (bead beads)
-      (let ((key (gascity-dashboard--root-key bead)))
-        (when (and key (not (gethash bead seen)))
-          (puthash bead t seen)
-          (if (gascity-dashboard--run-root-p bead)
+      (unless (gethash bead seen)
+        (puthash bead t seen)
+        (let* ((meta (gascity-dashboard--bead-meta bead))
+               (root-id (alist-get 'gc.root_bead_id meta)))
+          (cond
+           ;; A step: any bead anchored to a root by `gc.root_bead_id'
+           ;; — with or without the root key, which the live steps do
+           ;; not carry.
+           (root-id
+            (let ((bucket (gethash root-id steps)))
+              (puthash root-id (cons bead (or bucket nil)) steps)))
+           ;; A run root: carries the root key (and no step anchor).
+           ((gascity-dashboard--run-root-p bead)
+            (let ((key (gascity-dashboard--root-key bead)))
               (unless (gethash key root-keys)
                 (puthash key t root-keys)
-                (push bead roots))
-            (let* ((root-id (alist-get 'gc.root_bead_id
-                                       (gascity-dashboard--bead-meta bead)))
-                   (bucket (gethash root-id steps)))
-              (puthash root-id (cons bead (or bucket nil)) steps))))))
+                (push bead roots))))))))
     (dolist (root (nreverse roots) (list :rows (nreverse rows)
                                          :closed-count closed-runs))
       (let* ((steps-of-run (append (gethash (alist-get 'id root) steps) nil))
@@ -437,7 +520,10 @@ gap-marker convention."
             (member (gascity-tabulated--str (alist-get 'status root))
                     '("in_progress" "active"))
             nil)
-     'gascity-bead id)))
+     'gascity-bead id
+     ;; The rig store the fan-out read this run from (`--bd-list-rigs-async'
+     ;; stamps every row): the drill-in scopes its own read to it.
+     'gascity-run-rig (alist-get 'gascity-rig root))))
 
 (defun gascity-dashboard--bead-in-filter-p (bead prefix)
   "Return non-nil when BEAD passes the rig-prefix PREFIX filter.
@@ -842,17 +928,33 @@ section's first, dataless render): empty body, the \"(none)\" line."
                          (lambda (resolve reject)
                            (gascity-reader-read-async
                             '("bd" "ready") resolve reject))))
+         ;; In-progress and blocked census: fanned out over the city's
+         ;; rig stores (`--bd-list-rigs-async') — runs and step beads
+         ;; live in the dispatching rig's store, which a single
+         ;; city-scoped `bd list' never sees.  The Runs section and the
+         ;; Work-in-flight join both read the in-progress union.
          (inprog-res
           (vui-use-async (list 'inprog refresh-tick)
                          (lambda (resolve reject)
-                           (gascity-reader-read-async
+                           (gascity-dashboard--bd-list-rigs-async
                             '("bd" "list" "--status" "in_progress")
                             resolve reject))))
          (blocked-res
           (vui-use-async (list 'blocked refresh-tick)
                          (lambda (resolve reject)
-                           (gascity-reader-read-async
+                           (gascity-dashboard--bd-list-rigs-async
                             '("bd" "list" "--status" "blocked")
+                            resolve reject))))
+         ;; The Runs census: same rig fan-out, but over EVERY status —
+         ;; a run's progress fraction counts closed steps, which an
+         ;; in-progress read never sees (S5 live check: the real
+         ;; build-basic run rendered 0/0 without this).
+         (runs-res
+          (vui-use-async (list 'runs refresh-tick)
+                         (lambda (resolve reject)
+                           (gascity-dashboard--bd-list-rigs-async
+                            '("bd" "list" "--status"
+                              "open,in_progress,blocked,deferred,closed")
                             resolve reject))))
          (convoy-res
           (vui-use-async (list 'convoy refresh-tick)
@@ -876,6 +978,7 @@ section's first, dataless render): empty body, the \"(none)\" line."
          (last-ready (vui-use-ref nil))
          (last-inprog (vui-use-ref nil))
          (last-blocked (vui-use-ref nil))
+         (last-runs (vui-use-ref nil))
          (last-convoy (vui-use-ref nil))
          (last-events (vui-use-ref nil))
          ;; Stale-while-revalidate: on `ready' adopt fresh data, else
@@ -891,6 +994,8 @@ section's first, dataless render): empty body, the \"(none)\" line."
                                                          last-inprog))
          (blocked-load (gascity-dashboard--effective-load blocked-res
                                                           last-blocked))
+         (runs-load (gascity-dashboard--effective-load runs-res
+                                                       last-runs))
          (convoy-load (gascity-dashboard--effective-load convoy-res
                                                          last-convoy))
          (events-load (gascity-dashboard--effective-load events-res
@@ -906,6 +1011,7 @@ section's first, dataless render): empty body, the \"(none)\" line."
        sessions-load ready-load inprog-load
        blocked-load convoy-load
        :collapsed collapsed :bead-rig bead-rig
+       :runs-load runs-load
        :events-load events-load
        :event-types-excluded event-types-excluded)))))
 
@@ -913,31 +1019,24 @@ section's first, dataless render): empty body, the \"(none)\" line."
                                             ready-load inprog-load
                                             blocked-load convoy-load
                                             &key collapsed bead-rig
-                                            events-load event-types-excluded)
+                                            runs-load events-load
+                                            event-types-excluded)
   "Return the dashboard body vnode.
 STATUS is the `gc status' payload; MAIL-COUNT the `gc mail count'
 payload (unread count for the cockpit header); the five LOAD arguments
 are the normalized loads of `gc session list', `gc bd ready', the
-in-progress and blocked `gc bd list' reads and `gc convoy list'.  The
-Runs section reuses the in-progress load's full `gc bd list' payload
-(REQ-014: zero extra reads; the in-progress read carries every run and
-step for the small stores this view targets).  EVENTS-LOAD is the
-normalized JSONL events load; EVENT-TYPES-EXCLUDED the Activity feed's
-excluded types (root state, survives a refresh).  COLLAPSED is the
-root's list of collapsed section names; BEAD-RIG the active `/` rig
-filter (a rig name, or nil for all).  Each section renders from its own
-load, so a failing one degrades alone (REQ-010); the needs-you rows are
-computed once per render and feed both the needs-you section and the
-roster's highlighting (REQ-004's single-selector rule)."
-  (let* (;; The full in-progress `gc bd list' payload, decoded to bead rows
-         ;; once: the Runs section groups it into workflow runs (REQ-014,
-         ;; one read serving both sections).
-         (beads-load (list :state (plist-get inprog-load :state)
-                           :error (plist-get inprog-load :error)
-                           :data (and (plist-get inprog-load :data)
-                                      (gascity-section-beads
-                                       (plist-get inprog-load :data)))))
-         ;; Decode the session rows once: the typed list feeds the session
+in-progress and blocked `gc bd list' reads and `gc convoy list'.
+RUNS-LOAD is the Runs census's own full-status rig fan-out — separate
+from INPROG-LOAD because a run's closed steps must count toward its
+progress fraction.  EVENTS-LOAD is the normalized JSONL events load;
+EVENT-TYPES-EXCLUDED the Activity feed's excluded types (root state,
+survives a refresh).  COLLAPSED is the root's list of collapsed section
+names; BEAD-RIG the active `/` rig filter (a rig name, or nil for all).
+Each section renders from its own load, so a failing one degrades alone
+(REQ-010); the needs-you rows are computed once per render and feed
+both the needs-you section and the roster's highlighting (REQ-004's
+single-selector rule)."
+  (let* (;; Decode the session rows once: the typed list feeds the session
          ;; section, the named-session derivation and the join map.
          (sessions (and (plist-get sessions-load :data)
                         (alist-get 'sessions (plist-get sessions-load :data))))
@@ -982,11 +1081,11 @@ roster's highlighting (REQ-004's single-selector rule)."
      (gascity-dashboard--cockpit-vnode status mail-count)
      (gascity-dashboard--section
       "runs" "Runs"
-      (list :state (plist-get beads-load :state)
-            :error (plist-get beads-load :error)
-            :data (and (plist-get beads-load :data)
+      (list :state (plist-get runs-load :state)
+            :error (plist-get runs-load :error)
+            :data (and (plist-get runs-load :data)
                        (gascity-dashboard--workflow-runs
-                        (plist-get beads-load :data))))
+                        (plist-get runs-load :data))))
       (member "runs" collapsed)
       (lambda (result)
         (append
@@ -1134,6 +1233,13 @@ rig row it opens the rig dashboard."
   (let ((section (get-text-property (point) 'gascity-dashboard-section)))
     (cond
      (section (gascity-dashboard--flip-collapsed section))
+     ;; A Runs-section row: the run-detail drill-in (AC 2), keyed on the
+     ;; property `--run-row' stamps (checked before the bead fallback,
+     ;; whose store scoping would open the run root in beads.el).
+     ((get-text-property (point) 'gascity-run-rig)
+      (gascity-run-show (get-text-property (point) 'gascity-bead)
+                        nil
+                        (get-text-property (point) 'gascity-run-rig)))
      ((and (get-text-property (point) 'gascity-rig)
            (not (gascity-agent-at-point)))
       (gascity-rig-dashboard (get-text-property (point) 'gascity-rig)))
@@ -1254,6 +1360,9 @@ toggle must be able to re-add the chatty set from there."
   ;; is pinned to the city by `gascity-view-get-buffer-create', so the
   ;; inbox scopes to the same city the dashboard reads.
   "m"   #'gascity-mail-inbox
+  ;; `e' opens the Activity feed's type filter directly (the footer
+  ;; legend's entry; also reachable under `/' as "Events…").
+  "e"   #'gascity-dashboard-events-filter-dispatch
   "M"   #'gascity-session-nudge-at-point
   "s"   #'gascity-session-suspend-at-point
   "K"   #'gascity-session-kill-at-point

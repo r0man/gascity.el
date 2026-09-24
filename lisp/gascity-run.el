@@ -21,6 +21,13 @@
 ;; hold for steps).  The read carries every status — progress counts
 ;; closed steps, which a default `bd list' hides.
 ;;
+;; A run lives in its dispatching rig's bead store; the read scopes to
+;; it with `--rig NAME' (the dashboard's fan-out stamps each row with
+;; `gascity-rig', so `RET' hands the owning store along — `RET' at point
+;; never needs a second `rig list').  Without a rig the view keeps its
+;; own single city-scoped read; the affected-list filter keeps runs in
+;; the city's other rig stores visible.
+;;
 ;; The input convoy is joined on the run root's `gc.input_convoy_id'
 ;; metadata.  A caller holding the dashboard's already-loaded
 ;; `convoy list' row passes it as the CONVOY argument (no extra read);
@@ -58,6 +65,12 @@ one, so run details of different cities coexist.")
 
 (defvar-local gascity-run--current-run nil
   "The run root bead id the buffer's mounted component was opened for.")
+
+(defvar-local gascity-run--current-rig nil
+  "The rig store the buffer's mounted component reads (`--rig' scope).
+Nil when the view was opened without a rig hint — the read is then
+plain city-scoped, with the affected-list fallback for runs owned by
+another rig's store.")
 
 ;;; Pure selectors (raw decoded `bd list' / `convoy status' alists)
 
@@ -190,13 +203,16 @@ kind (`gc.kind', else `gc.control_for'), status and assignee."
 
 ;;; Component
 
-(vui-defcomponent gascity-run-app (run-id convoy)
+(vui-defcomponent gascity-run-app (run-id convoy rig)
   "Root component of the run-detail view.
 RUN-ID is the run's root bead id.  CONVOY, when non-nil, is the raw
 input-convoy row the caller already loaded (the dashboard's
 `convoy list' payload) — the view then skips its own convoy read.
 Otherwise the convoy is joined from the run root's `gc.input_convoy_id'
-metadata with an independent async `gc convoy status' read."
+metadata with an independent async `gc convoy status' read.  RIG, when
+non-nil, is the dispatching rig's store name — the read scopes `bd
+list' to it with `--rig' (the dashboard's fan-out stamps the owning
+store on every row it hands the drill-in)."
   ;; Every hook runs unconditionally, in order, every render.  The
   ;; `bd list' load is keyed on the run id and the refresh tick; the
   ;; convoy load is keyed on the convoy id the bead list resolved, so
@@ -208,8 +224,9 @@ metadata with an independent async `gc convoy status' read."
           (vui-use-async (list 'run run-id refresh-tick)
             (lambda (resolve reject)
               (gascity-reader-read-async
-               '("bd" "list" "--status"
-                 "open,in_progress,blocked,deferred,closed")
+               `("bd" "list" "--status"
+                 "open,in_progress,blocked,deferred,closed"
+                 ,@(and rig (list "--rig" rig)))
                resolve reject))))
          (last-beads (vui-use-ref nil))
          (beads-load (gascity-dashboard--effective-load beads-res last-beads))
@@ -241,14 +258,21 @@ metadata with an independent async `gc convoy status' read."
       "steps" "Steps"
       (list :state (plist-get beads-load :state)
             :error (plist-get beads-load :error)
-            :data (and root steps))
+            :data (or root steps))
       nil
       (lambda (data)
         (if root
-            (mapcar #'gascity-run--step-vnode data)
-          (list (vui-text (format "  run %s not found in `bd list'" run-id)
-                          :face 'gascity-dim)
-                (vui-text "  press g to retry" :face 'gascity-dim))))
+            (mapcar #'gascity-run--step-vnode steps)
+          ;; Not in this store: the live check found runs in other rigs
+          ;; of the same city — render the affected list to climb to the
+          ;; owning store, never a bare "not found".
+          (append
+           (list (vui-text (format "  run %s not found in this store" run-id)
+                           :face 'gascity-dim))
+           (if (listp data)
+               (mapcar #'gascity-run--affected-row data)
+             nil)
+           (list (vui-text "  press g to retry" :face 'gascity-dim)))))
       (lambda (_) (and root (length steps))))
      (gascity-dashboard--section
       "convoy" "Input convoy"
@@ -263,6 +287,21 @@ metadata with an independent async `gc convoy status' read."
       (lambda (pair) (and pair 1)))
      (vui-text "g refresh · RET open bead · N/P section · q bury"
                :face 'gascity-dim))))
+
+(defun gascity-run--affected-row (run)
+  "Return a dim vnode for an affected RUN row (the not-found fallback).
+RUN is a raw bead row from the city's affected-list read; the row is
+stamped with the bead id so `RET' opens the run drill-in from here
+with the owning rig resolved from the row's `gascity-rig' stamp."
+  (let ((id (gascity-tabulated--str (alist-get 'id run))))
+    (vui-text
+     (format "  affected %s %s %s"
+             id
+             (gascity-tabulated--str (alist-get 'status run))
+             (gascity-tabulated--str (alist-get 'title run)))
+     :face 'gascity-dim
+     'gascity-bead id
+     'gascity-run-rig (alist-get 'gascity-rig run))))
 
 ;;; Mode
 
@@ -284,10 +323,11 @@ metadata with an independent async `gc convoy status' read."
 
 ;;; Commands
 
-(defun gascity-run--mount (buffer run-id convoy)
+(defun gascity-run--mount (buffer run-id convoy rig)
   "Mount the run-detail component for RUN-ID in BUFFER.
-CONVOY is the optional pre-joined input-convoy row.  The buffer's run
-identity is recorded in `gascity-run--current-run'."
+CONVOY is the optional pre-joined input-convoy row; RIG the optional
+owning rig store (see `gascity-run-app').  The buffer's run identity
+is recorded in `gascity-run--current-run' / `gascity-run--current-rig'."
   (with-current-buffer buffer
     (unless (derived-mode-p 'gascity-run-mode)
       (gascity-run-mode)))
@@ -295,10 +335,11 @@ identity is recorded in `gascity-run--current-run'."
   ;; buffer is displayed once, via `pop-to-buffer', by the caller.
   (save-window-excursion
     (vui-mount (vui-component 'gascity-run-app
-                              :run-id run-id :convoy convoy)
+                              :run-id run-id :convoy convoy :rig rig)
                (buffer-name buffer)))
   (with-current-buffer buffer
-    (setq gascity-run--current-run run-id)))
+    (setq gascity-run--current-run run-id
+          gascity-run--current-rig rig)))
 
 (defun gascity-run-refresh ()
   "Reload the run detail's data, preserving point."
@@ -307,14 +348,21 @@ identity is recorded in `gascity-run--current-run'."
     (user-error "No run detail to refresh here")))
 
 (defun gascity-run-activate ()
-  "Open the bead id at point in beads.el, scoped to its store."
+  "Open the thing at point.
+An affected-list row (the not-found fallback, stamped with its owning
+rig) re-drills into that run's detail scoped to the store; a plain bead
+id opens in beads.el scoped to its store."
   (interactive)
-  (if (gascity-bead-at-point)
-      (gascity-bead-show-at-point)
-    (gascity-section-activate)))
+  (cond ((and (get-text-property (point) 'gascity-run-rig)
+              (gascity-bead-at-point))
+         (gascity-run-show (gascity-bead-at-point) nil
+                           (get-text-property (point) 'gascity-run-rig)))
+        ((gascity-bead-at-point)
+         (gascity-bead-show-at-point))
+        (t (gascity-section-activate))))
 
 ;;;###autoload
-(defun gascity-run-show (run &optional convoy)
+(defun gascity-run-show (run &optional convoy rig)
   "Show the workflow run whose root bead id is RUN.
 RUN is the run's root bead id, or the run row at point in the city
 dashboard's Runs section (a step id climbs to its run root).  The
@@ -327,8 +375,17 @@ CONVOY, when non-nil, is the raw input-convoy row the caller already
 loaded (the dashboard's `convoy list' payload) — the view skips its
 own convoy read.  Without it, the input convoy is joined from the run
 root's `gc.input_convoy_id' metadata with the view's own async
-`gc convoy status <id> --json' read.  Re-opening the same run refreshes
-in place; a different run remounts the buffer."
+`gc convoy status <id> --json' read.
+
+RIG, when non-nil, scopes the bead-list read to that rig's store with
+`--rig' — the dashboard's fan-out stamps each run row with the store
+it came from (`gascity-run-rig' property), so `RET' at point opens the
+run against its owning store and never needs a second `rig list'.  A
+run opened without a rig reads the city store city-scoped; when the
+run is not there, the Steps section renders the city's affected-list
+rows (whose rows re-drill with their own rig stamp).  Re-opening the
+same run refreshes in place; a different run — or the same run with a
+newly resolved rig — remounts the buffer."
   (interactive
    (list (or (gascity-bead-at-point)
              (read-string "Run root bead id: "))))
@@ -337,20 +394,26 @@ in place; a different run remounts the buffer."
     (user-error "No run root bead id"))
   (let ((buf (gascity-view-get-buffer-create gascity-run-buffer-name)))
     (cond
-     ((equal (buffer-local-value 'gascity-run--current-run buf) run)
-      ;; Same run: keep the mounted component, refresh in place when one
-      ;; is live (cold-mount otherwise — the buffer may have lost it).
+     ;; Same run, same store: refresh in place when a component is live
+     ;; (cold-mount otherwise — the buffer may have lost it).
+     ((and (equal (buffer-local-value 'gascity-run--current-run buf) run)
+           (equal (buffer-local-value 'gascity-run--current-rig buf) rig))
       (or (gascity-section-refresh-instance buf)
-          (gascity-run--mount buf run convoy)))
+          (gascity-run--mount buf run convoy rig)))
      ;; A buffer never mounted for a run yet (fresh factory buffer or one
       ;; whose instance died): mount it directly.
      ((null (buffer-local-value 'gascity-run--current-run buf))
-      (gascity-run--mount buf run convoy))
+      (gascity-run--mount buf run convoy rig))
+     ;; Same run re-opened with a resolved rig: remount so the read
+     ;; re-scopes to the owning store.
+     ((and (equal (buffer-local-value 'gascity-run--current-run buf) run)
+           (not (equal (buffer-local-value 'gascity-run--current-rig buf) rig)))
+      (gascity-run--mount buf run convoy rig))
      (t
       ;; A different run in this buffer: remount.
       (kill-buffer buf)
       (setq buf (gascity-view-get-buffer-create gascity-run-buffer-name))
-      (gascity-run--mount buf run convoy)))
+      (gascity-run--mount buf run convoy rig)))
     (pop-to-buffer buf)))
 
 (provide 'gascity-run)

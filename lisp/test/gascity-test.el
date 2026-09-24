@@ -8750,14 +8750,19 @@ with live runs; closed runs are hidden behind the dim count line.
 (REQ-014, AC 1's structure.)"
   (let ((status-box (list nil))
         (inprog-box (list nil))
+        (runs-box (list nil))
         (vui-render-delay nil))
     (cl-letf (((symbol-function 'gascity-reader-read-async)
                (lambda (args callback &optional errback)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress"))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
                    (setcar inprog-box callback))
-                  (t (funcall callback '((issues . []) (convoys . [])))))
+                  ((equal args '("bd" "list" "--status"
+                                 "open,in_progress,blocked,deferred,closed"
+                                 "--rig" "gascity.el"))
+                   (setcar runs-box callback))
+                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
@@ -8767,6 +8772,8 @@ with live runs; closed runs are hidden behind the dim count line.
               (with-current-buffer "*gascity-dashboard-test*"
                 (funcall (car status-box) gascity-test--dashboard-status)
                 (funcall (car inprog-box)
+                         `((issues . ,(vconcat gascity-test--runs-beads))))
+                (funcall (car runs-box)
                          `((issues . ,(vconcat gascity-test--runs-beads))))
 
                 (should (gascity-test--buffer-contains-p "▼ Runs"))
@@ -8796,9 +8803,9 @@ a retry hint — the per-section failure rule (REQ-010, REQ-014)."
                (lambda (args callback &optional errback)
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress"))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
                    (setcar inprog-reject errback))
-                  (t (funcall callback '((issues . []) (convoys . [])))))
+                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
@@ -8947,7 +8954,12 @@ the shape the dashboard expects."
       (if box
           (setcar box callback)
         (funcall callback
-                 (cond ((equal args '("bd" "ready")) '((issues . [])))
+                 (cond ((equal args '("rig" "list"))
+                        ;; The rig census the bd-list fan-out starts
+                        ;; from: one rig store, matching the per-rig
+                        ;; argv keys the dashboard stubs park in.
+                        '((rigs . [((name . "gascity.el"))])))
+                       ((equal args '("bd" "ready")) '((issues . [])))
                        ((equal args '("convoy" "list")) '((convoys . [])))
                        ((equal args '("events" "--since" "2h")) '(nil . 0))
                        (t '((issues . [])))))))
@@ -8965,7 +8977,7 @@ rigs all render from their own payloads (REQ-001, REQ-002)."
                (gascity-test--dashboard-async-stub
                 `((("status") . ,status-box)
                   (("session" "list") . ,sessions-box)
-                  (("bd" "list" "--status" "in_progress") . ,inprog-box)))))
+                  (("bd" "list" "--status" "in_progress" "--rig" "gascity.el") . ,inprog-box)))))
       (save-window-excursion
         (unwind-protect
             (progn
@@ -9009,11 +9021,11 @@ and never blanks the other sections (REQ-010, REQ-006)."
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress"))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
                    (setcar inprog-box callback))
                   ((equal args '("bd" "ready")) (setcar ready-reject errback))
                   ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((issues . []) (convoys . [])))))
+                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
@@ -9048,11 +9060,11 @@ renders from its own payload while the beads section still loads."
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress"))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
                    (setcar inprog-box callback))
                   ((equal args '("bd" "ready")) (setcar ready-box callback))
                   ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((issues . []) (convoys . [])))))
+                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
@@ -9089,11 +9101,11 @@ rendering while the reloads are in flight, and collapse state survives
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress"))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
                    (setcar inprog-box callback))
                   ((equal args '("events" "--since" "2h"))
                    (setcar events-box callback))
-                  (t (funcall callback '((issues . []) (convoys . [])))))
+                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
@@ -9146,14 +9158,14 @@ failure is still surfaced dimly with a retry hint — never swallowed
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress"))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
                    (setcar inprog-box callback))
                   ((equal args '("convoy" "list"))
                    (if (car convoy-fail)
                        (setcar convoy-reject errback)
                      (setcar convoy-box callback)))
                   ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((issues . [])))))
+                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
@@ -9197,12 +9209,12 @@ REQ-010): the fabricated work load propagates the read's `:error'."
                  (cond
                   ((equal args '("status")) (setcar status-box callback))
                   ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress"))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
                    (if (car inprog-fail)
                        (setcar inprog-reject errback)
                      (setcar inprog-box callback)))
                   ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((issues . []) (convoys . [])))))
+                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
@@ -9540,7 +9552,7 @@ not a blank pane."
               (with-current-buffer "*gascity-run-test*"
                 (funcall (car bd-box) '((issues . [])))
                 (should (gascity-test--buffer-contains-p
-                         "run ga-zzz not found in `bd list'"))))
+                         "run ga-zzz not found in this store"))))
           (when (get-buffer "*gascity-run-test*")
             (kill-buffer "*gascity-run-test*")))))))
 
@@ -9597,6 +9609,196 @@ drills into the bead at point."
   (should (eq (keymap-lookup gascity-run-mode-map "q") #'quit-window))
   (should (eq (keymap-lookup gascity-run-mode-map "N")
               #'gascity-section-next)))
+
+;;; City dashboard — Runs rig fan-out (S5 live-check fix)
+
+(ert-deftest gascity-test-dashboard-fanout-unions-rig-stores ()
+  "The rig fan-out unions the per-rig stores in rig order, each row
+stamped with its owning store (the drill-in's `--rig' scope hook)."
+  (let ((resolved nil)
+        (parked nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback &rest _)
+                 (cond
+                  ((equal args '("rig" "list"))
+                   (funcall callback
+                            '((rigs . [((name . "alpha") (prefix . "al"))
+                                      ((name . "beta") (prefix . "be"))]))))
+                  (t
+                   (push (cons args callback) parked)))
+                 nil)))
+      (gascity-dashboard--bd-list-rigs-async
+       '("bd" "list" "--status" "in_progress")
+       (lambda (rows) (setq resolved rows))
+       (lambda (_err) (setq resolved :rejected)))
+      ;; One read per rig, in rig order, with the `--rig' scope.
+      (should (equal (mapcar #'car parked)
+                     (list '("bd" "list" "--status" "in_progress" "--rig" "beta")
+                           '("bd" "list" "--status" "in_progress" "--rig" "alpha"))))
+      (funcall (alist-get '("bd" "list" "--status" "in_progress" "--rig" "alpha")
+                      parked nil nil #'equal)
+               '((issues . [((id . "al-1") (status . "in_progress"))])))
+      (funcall (alist-get '("bd" "list" "--status" "in_progress" "--rig" "beta")
+                      parked nil nil #'equal)
+               '((issues . [((id . "be-1") (status . "in_progress"))])))
+      ;; Union in rig order, each row stamped with its store.
+      (should (equal resolved
+                     (vector '((id . "al-1") (status . "in_progress")
+                               (gascity-rig . "alpha"))
+                             '((id . "be-1") (status . "in_progress")
+                               (gascity-rig . "beta"))))))))
+
+(ert-deftest gascity-test-dashboard-fanout-partial-failure-degrades ()
+  "A failing rig store skips just that store — the union still
+resolves with the other rigs' rows; only a total failure rejects."
+  (let (resolved rejected)
+    ;; One of two rigs fails: alpha's rows survive.
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback &rest _)
+                 (cond
+                  ((equal args '("rig" "list"))
+                   (funcall callback
+                            '((rigs . [((name . "alpha")) ((name . "beta"))]))))
+                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "beta"))
+                   (funcall errback "boom-beta"))
+                  (t (funcall callback '((issues . [((id . "al-1"))])))))
+                 nil)))
+      (gascity-dashboard--bd-list-rigs-async
+       '("bd" "list" "--status" "in_progress")
+       (lambda (rows) (setq resolved rows))
+       (lambda (err) (setq rejected err)))
+      (should (null rejected))
+      (should (equal resolved
+                     (vector '((id . "al-1") (gascity-rig . "alpha")))))))
+    ;; Every rig fails: the section's error path fires.
+    (let (resolved rejected)
+      (cl-letf (((symbol-function 'gascity-reader-read-async)
+                 (lambda (args callback &optional errback &rest _)
+                   (cond
+                    ((equal args '("rig" "list"))
+                     (funcall callback '((rigs . [((name . "alpha"))]))))
+                    (t (funcall errback "boom-all")))
+                   nil)))
+        (gascity-dashboard--bd-list-rigs-async
+         '("bd" "list" "--status" "in_progress")
+         (lambda (rows) (setq resolved rows))
+         (lambda (err) (setq rejected err)))
+        (should (equal rejected "boom-all")))))
+
+(ert-deftest gascity-test-dashboard-fanout-no-rigs-resolves-empty ()
+  "A city with no rigs resolves the empty payload, never a hang."
+  (let (resolved)
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback &rest _)
+                 (when (equal args '("rig" "list"))
+                   (funcall callback '((rigs . []))))
+                 nil)))
+      (gascity-dashboard--bd-list-rigs-async
+       '("bd" "list" "--status" "in_progress")
+       (lambda (rows) (setq resolved rows))
+       (lambda (_err) (setq resolved :rejected)))
+      (should (equal resolved [])))))
+
+(ert-deftest gascity-test-dashboard-runs-read-carries-all-statuses ()
+  "The Runs census reads EVERY status per rig (the fan-out scope): a
+run's progress fraction counts closed steps, which an in-progress read
+never sees (S5 live check — the real build-basic run rendered 0/0)."
+  (let ((args-captured nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback &rest _)
+                 (push args args-captured)
+                 (if (equal args '("rig" "list"))
+                     (funcall callback '((rigs . [((name . "gascity.el"))])))
+                   (funcall callback '((issues . []))))
+                 nil)))
+      (gascity-dashboard--bd-list-rigs-async
+       '("bd" "list" "--status" "open,in_progress,blocked,deferred,closed")
+       #'ignore #'ignore)
+      (should (member '("bd" "list" "--status"
+                        "open,in_progress,blocked,deferred,closed"
+                        "--rig" "gascity.el")
+                      args-captured))
+      ;; The in-progress census (Work in flight, Beads) stays separate.
+      (gascity-dashboard--bd-list-rigs-async
+       '("bd" "list" "--status" "in_progress")
+       #'ignore #'ignore)
+      (should (member '("bd" "list" "--status" "in_progress"
+                        "--rig" "gascity.el")
+                      args-captured)))))
+
+(ert-deftest gascity-test-dashboard-workflow-runs-live-step-shape ()
+  "The live S5 shape: steps carry ONLY `gc.root_bead_id' — the root key
+never reaches the steps — and the grouping still counts them toward
+the run's progress fraction (the real build-basic run rendered 0/0
+before this)."
+  (let* ((rows '((id . "ga-live") (status . "in_progress")
+                 (title . "do-work") (updated_at . "2026-09-24T15:00:00Z")
+                 (metadata . ((gc.kind . "workflow")
+                              (gc.formula_name . "do-work")
+                              (gc.graphv2_root_key . "graphv2-root:ga-live")))))
+         (step-open '((id . "ga-lbl7") (status . "in_progress")
+                      (assignee . "gc__worker")
+                      (metadata . ((gc.root_bead_id . "ga-live")))))
+         (step-closed '((id . "ga-prep") (status . "closed")
+                        (metadata . ((gc.root_bead_id . "ga-live")))))
+         (result (gascity-dashboard--workflow-runs
+                  (vector rows step-open step-closed))))
+    (should (= (length (plist-get result :rows)) 1))
+    (let ((row (car (plist-get result :rows))))
+      (should (equal (alist-get 'id (nth 0 row)) "ga-live"))
+      (should (= (nth 1 row) 1))          ; one closed step
+      (should (= (nth 2 row) 2))          ; two steps total
+      (should (equal (alist-get 'id (nth 3 row)) "ga-lbl7")))))
+
+(ert-deftest gascity-test-dashboard-ret-on-run-row-opens-run-show ()
+  "RET on a Runs-section row opens the run-detail drill-in scoped to
+the row's owning rig store (AC 2), not the plain bead fallback."
+  (with-temp-buffer
+    (insert "  ga-run1     do-work      in_progress  1/3  ga-step2\n")
+    (goto-char (point-min))
+    (put-text-property (point) (line-end-position)
+                       'gascity-run-rig "gascity.el")
+    (put-text-property (point) (line-end-position)
+                       'gascity-bead "ga-run1")
+    (let ((calls nil))
+      (cl-letf (((symbol-function 'gascity-run-show)
+                 (lambda (run _convoy rig) (push (list run rig) calls))))
+        (gascity-dashboard-activate)
+        (should (equal calls '(("ga-run1" "gascity.el"))))))))
+
+(ert-deftest gascity-test-run-show-scopes-read-to-rig ()
+  "The run view's `bd list' read carries `--rig' when opened with an
+owning rig (the fan-out's stamp), and the mount records the store; a
+rig-less mount reads city-scoped as before."
+  (let ((args-captured nil)
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+               (lambda (_base &optional _dir)
+                 (get-buffer-create "*gascity-run-fake*")))
+              ((symbol-function 'pop-to-buffer) #'ignore)
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional _errback &rest _)
+                 (push args args-captured)
+                 (funcall callback '((issues . [])))
+                 nil)))
+      (unwind-protect
+          (progn
+            (gascity-run-show "ga-um77" nil "gascity.el")
+            (should (member '("bd" "list" "--status"
+                              "open,in_progress,blocked,deferred,closed"
+                              "--rig" "gascity.el")
+                            args-captured))
+            (with-current-buffer "*gascity-run-fake*"
+              (should (equal gascity-run--current-rig "gascity.el")))
+            ;; A different rig for the same run: remount, re-scoped.
+            (setq args-captured nil)
+            (gascity-run-show "ga-um77" nil "other-rig")
+            (should (member '("bd" "list" "--status"
+                              "open,in_progress,blocked,deferred,closed"
+                              "--rig" "other-rig")
+                            args-captured)))
+        (when (get-buffer "*gascity-run-fake*")
+          (kill-buffer "*gascity-run-fake*"))))))
 
 ;;; City dashboard — Activity feed (events JSONL, plan S3)
 
@@ -9746,7 +9948,7 @@ count alike (plan S3)."
                        ((equal args '("events" "--since" "2h"))
                         (setq lines-flag t)
                         (setcar events-box callback))
-                       (t (funcall callback '((issues . [])))))
+                       (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . [])))))
                  nil))
               (gascity-dashboard-events-limit 2))
       (save-window-excursion
@@ -9835,7 +10037,7 @@ refresh; clearing re-excludes nothing."
                         (setcar status-box callback))
                        ((equal args '("events" "--since" "2h"))
                         (setcar events-box callback))
-                       (t (funcall callback '((issues . [])))))
+                       (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . [])))))
                  nil)))
       (save-window-excursion
         (unwind-protect
