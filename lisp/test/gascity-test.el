@@ -464,6 +464,26 @@ still degrade the list to empty rows."
     (should (equal (gascity-test--plain-cols entry)
                    '("gascity.el" "gce" "running" "main" "initialized")))))
 
+(ert-deftest gascity-test-rig-entry-nil-branch-em-dash ()
+  "A nil default-branch renders \"—\" for every rig, HQ or not (ga-1kdu).
+The HQ-only em-dash left non-HQ rigs an empty Branch cell for the same
+absent value: in one list bright-lights (HQ) showed \"—\" while
+hello-world showed \"\" (bright-lights dogfood §2)."
+  ;; The HQ with no branch: the long-standing em-dash.
+  (let ((hq (gascity-domain-decode
+             'gascity-rig
+             '((name . "bright-lights") (prefix . "bl") (hq . t)))))
+    (should (equal (nth 3 (gascity-test--plain-cols
+                           (gascity-rig-list--entry hq)))
+                   "—")))
+  ;; A plain rig with no branch renders the same em-dash, not "".
+  (let ((rig (gascity-domain-decode
+              'gascity-rig
+              '((name . "hello-world") (prefix . "hw") (running . t)))))
+    (should (equal (nth 3 (gascity-test--plain-cols
+                           (gascity-rig-list--entry rig)))
+                   "—"))))
+
 (defun gascity-test--rig-list-buffer ()
   "Render a rig-list buffer with an HQ row and a plain rig row.
 The HQ row (`bright-lights') carries `hq', as `gc rig list' marks the city
@@ -3094,6 +3114,35 @@ toggling or attaching something unrelated."
                 (should-not (gascity-test--buffer-contains-p "▶ gascity.el"))))
           (when (get-buffer "*gascity-status-test*")
             (kill-buffer "*gascity-status-test*")))))))
+
+;;; ga-1kdu — TAB's message distinguishes a non-collapsible section from no section
+
+(ert-deftest gascity-test-status-tab-non-collapsible-section ()
+  "TAB on a non-collapsible `gascity-section' header says so honestly (ga-1kdu).
+The City block carries `gascity-section' but has no collapse state; TAB
+there used to claim \"No section to toggle here\", denying a section the
+header plainly marks (bright-lights dogfood §1).  The message now
+distinguishes \"section exists but not collapsible\" from \"no section at\nall\"."
+  ;; The dashboard's city-agents section header is the exact structure the
+  ;; bug reported against: stamp the same properties the render emits.
+  (let ((header (vui-text "City" :face 'gascity-header 'gascity-section t)))
+    (should (plist-get (vui-vnode-text-properties header) 'gascity-section))
+    ;; At that point, TAB reports the section, not its absence.
+    (with-temp-buffer
+      (insert (vui-vnode-text-content header))
+      (add-text-properties (point-min) (1- (point-max))
+                           (vui-vnode-text-properties header))
+      (goto-char (point-min))
+      (should (equal (should-error (gascity-status-toggle-section)
+                                   :type 'user-error)
+                     '(user-error "This section has no collapse state")))))
+  ;; Off any section (an agent row): the old "nothing here" message.
+  (with-temp-buffer
+    (insert "  ● furiosa")
+    (goto-char (point-min))
+    (should (equal (should-error (gascity-status-toggle-section)
+                                 :type 'user-error)
+                   '(user-error "No section to toggle here")))))
 
 ;;; tmux socket resolution
 
