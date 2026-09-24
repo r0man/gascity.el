@@ -8495,5 +8495,454 @@ two reader wrappers, and the pack leaves reject the flag (ga-hvob)."
       (should (equal argv '("dolt" "health" "--json")))
       (should (equal (car env) "GC_CITY=/tmp/fake-city/")))))
 
+;;; City dashboard (gascity-dashboard.el) — pure selectors
+;;
+;; The SPA projections (`work-in-flight.ts', `needsYou.ts') ported as pure
+;; functions, tested before any rendering — plan Step 1.
+
+(ert-deftest gascity-test-dashboard-parse-assignee ()
+  "The assignee parser ports `parseAssignee' exactly, tricky cases included.
+The trailing handle is boundary-anchored and minimal, the bare-id gate
+requires a digit, and a role without a handle degrades to the whole
+string (REQ-003)."
+  (dolist (case '(("polecat-gc-335825" . ("polecat" . "gc-335825"))
+                  ("scix-worker-gc-335812" . ("scix-worker" . "gc-335812"))
+                  ("enterprisebench-worker-gc-335808"
+                   . ("enterprisebench-worker" . "gc-335808"))
+                  ("gc-335825" . ("gc-335825" . "gc-335825"))
+                  ("td-9abc" . ("td-9abc" . "td-9abc"))
+                  ("th-1a2b" . ("th-1a2b" . "th-1a2b"))
+                  ("scix-worker" . ("scix-worker"))
+                  ("human" . ("human"))
+                  ("bd-x1" . ("bd-x1"))
+                  ("  polecat-gc-335825 " . ("polecat" . "gc-335825"))))
+    (let ((result (gascity-dashboard--parse-assignee (car case))))
+      (should (equal (car result) (car (cdr case))))
+      (should (equal (cdr result) (cdr (cdr case)))))))
+
+(ert-deftest gascity-test-dashboard-parse-assignee-bare-id-needs-digit ()
+  "A 4-letter-prefixed role without a digit in its body is not a bare id.
+`scix-worker' would otherwise parse as the bare session id `scix-worker'
+(prefix `scix' + body `worker'); requiring a digit keeps roles out."
+  (should-not (gascity-dashboard--bare-session-id-p "scix-worker"))
+  (should (gascity-dashboard--bare-session-id-p "td-9abc"))
+  (should-not (gascity-dashboard--bare-session-id-p "td-abcd"))
+  (should-not (gascity-dashboard--bare-session-id-p "scix-worker-gc-335812")))
+
+(ert-deftest gascity-test-dashboard-work-in-flight-joins-live-sessions ()
+  "Work in flight joins in-progress beads to live sessions via the parser.
+One row per bead in payload order; a bead whose session is not live (or
+whose assignee carries no handle) degrades to an unjoined row (REQ-003)."
+  (let* ((beads '(((id . "gc-5rarj") (status . "in_progress")
+                   (title . "A") (assignee . "polecat-gc-335825"))
+                  ((id . "gc-4if7h") (status . "in_progress")
+                   (title . "B") (assignee . "scix-worker-gc-335812"))
+                  ((id . "gc-4ded") (status . "in_progress")
+                   (title . "C") (assignee . "human"))
+                  ((id . "gc-4eee") (status . "in_progress")
+                   (title . "D") (assignee . "polecat-gc-999999"))))
+         (sessions '(((id . "gc-335825") (agent_name . "polecat")
+                      (state . "active") (closed . nil))
+                     ((id . "gc-335812") (agent_name . "scix-worker")
+                      (state . "active") (closed . nil))
+                     ((id . "gc-999999") (agent_name . "polecat")
+                      (state . "suspended") (closed . nil))))
+         (rows (gascity-dashboard--work-in-flight beads sessions)))
+    (should (= (length rows) 4))
+    ;; Joined: bead -> live session, role parsed off the assignee.
+    (should (equal (nth 1 (nth 0 rows)) "polecat"))
+    (should (equal (nth 2 (nth 0 rows)) "gc-335825"))
+    (should (equal (alist-get 'id (nth 3 (nth 0 rows))) "gc-335825"))
+    (should (equal (nth 2 (nth 1 rows)) "gc-335812"))
+    ;; Unjoined: no parseable handle.
+    (should (equal (nth 2 (nth 2 rows)) nil))
+    (should (null (nth 3 (nth 2 rows))))
+    ;; Parsed but not live (suspended) -> unjoined row.
+    (should (equal (nth 2 (nth 3 rows)) "gc-999999"))
+    (should (null (nth 3 (nth 3 rows))))))
+
+(ert-deftest gascity-test-dashboard-work-in-flight-dedupes ()
+  "A bead appears at most once, first payload occurrence wins."
+  (let ((rows (gascity-dashboard--work-in-flight
+               '(((id . "gc-1") (assignee . "polecat-gc-111") (title . "x"))
+                 ((id . "gc-1") (assignee . "polecat-gc-111") (title . "x")))
+               '(((id . "gc-111") (agent_name . "polecat")
+                  (state . "active") (closed . nil))))))
+    (should (= (length rows) 1))))
+
+(ert-deftest gascity-test-dashboard-needs-you-precedence ()
+  "Exactly one reason per agent: awaiting-input > errored > rate-limited >
+stalled, and one next action each (REQ-004)."
+  (let* ((agents '(((qualified_name . "a") (state . "failed") (running . t))
+                   ((qualified_name . "b") (state . "rate-limited"))
+                   ((qualified_name . "c") (state . "active") (running . t)
+                    (session . "s-1"))
+                   ((qualified_name . "d") (state . "detached") (running . t))
+                   ((qualified_name . "e") (running . t) (session . nil))
+                   ((qualified_name . "f") (state . "WAITING"))
+                   ((qualified_name . "g") (state . "Crashed"))
+                   ((qualified_name . "h") (running . nil) (session . nil))))
+         (pending '(("a" . "Deploy to prod?\nny")))
+         (rows (gascity-dashboard--needs-you agents pending)))
+    (should (= (length rows) 6))
+    ;; Precedence: the pending ask outranks the failure state.
+    (should (equal (nth 0 rows) '("a" "awaiting-input" "Deploy to prod?" "respond")))
+    (should (equal (nth 1 rows) '("b" "rate-limited" "Throttled by a provider limit." "nudge")))
+    ;; Actively running with a live session blocks nobody.
+    (should-not (assoc "c" rows))
+    ;; Stalled: detached, or running with no live session.
+    (should (equal (nth 2 rows) '("d" "stalled" "Detached from its session." "nudge")))
+    (should (equal (nth 3 rows) '("e" "stalled" "Running with no live session." "nudge")))
+    ;; State matching is case-insensitive.
+    (should (equal (nth 4 rows) '("f" "rate-limited" "Throttled by a provider limit." "nudge")))
+    (should (equal (nth 5 rows) '("g" "errored" "Exited Crashed." "reset")))))
+
+(ert-deftest gascity-test-dashboard-needs-you-prompt-line ()
+  "An awaiting-input row details the prompt's first line; no prompt or a
+blank one degrades to \"Awaiting your decision.\""
+  (should (equal (gascity-dashboard--prompt-line nil) "Awaiting your decision."))
+  (should (equal (gascity-dashboard--prompt-line "") "Awaiting your decision."))
+  (should (equal (gascity-dashboard--prompt-line "\n  second")
+                 "Awaiting your decision."))
+  (should (equal (gascity-dashboard--prompt-line "first line\nsecond")
+                 "first line")))
+
+(ert-deftest gascity-test-dashboard-needs-you-count-parity ()
+  "The badge count and the section rows read the same selector output.
+The count the section header shows is the selector output's length, from
+one call site (REQ-004)."
+  (let* ((agents '(((qualified_name . "x") (state . "stuck"))
+                   ((qualified_name . "y") (running . t))))
+         (rows (gascity-dashboard--needs-you agents nil)))
+    (should (= (length rows) 2))
+    (should (equal (car rows) '("x" "errored" "Exited stuck." "reset")))
+    ;; Running with no live session is the stalled reason.
+    (should (equal (nth 1 rows) '("y" "stalled" "Running with no live session." "nudge")))))
+
+(ert-deftest gascity-test-dashboard-bead-filter ()
+  "The `/` rig filter narrows bead rows by id prefix; nil passes all."
+  (let ((beads '(((id . "ga-1")) ((id . "be-2")) ((id . "ga-3")))))
+    (should (= (length (seq-filter
+                        (lambda (b) (gascity-dashboard--bead-in-filter-p b "ga-"))
+                        beads))
+               2))
+    (should (= (length (seq-filter
+                        (lambda (b) (gascity-dashboard--bead-in-filter-p b nil))
+                        beads))
+               3)))
+  (should (equal (gascity-dashboard--rig-prefix
+                  "gascity.el"
+                  '(((name . "gascity.el") (prefix . "ga"))
+                    ((name . "beads.el") (prefix . "be"))))
+                 "ga")))
+
+;;; City dashboard — rendering (mocked async reads, cl-letf)
+
+(defconst gascity-test--dashboard-status
+  '((ok . t) (city_name . "emacs-city") (city_path . "/home/roman/emacs-city")
+    (running . t) (suspended . nil)
+    (controller . ((running . :json-false) (mode . "supervisor")))
+    (health . ((usable . t) (degraded . :json-false)))
+    (summary . ((total_agents . 3) (running_agents . 1)
+                (active_sessions . 2)
+                (store_health . ((path . "/c/.beads/dolt") (size_bytes . 1024)
+                                 (live_rows . 0) (ratio_mb_per_row . 0)
+                                 (warning . :json-false)))))
+    (agents . [((name . "w1") (qualified_name . "gascity.el/gc.worker")
+                (scope . "rig") (running . :json-false) (suspended . :json-false))
+               ((name . "w2") (qualified_name . "gascity.el/gc.worker-2")
+                (scope . "rig") (running . t) (suspended . :json-false))])
+    (rigs . [((name . "gascity.el") (path . "/home/roman/workspace/gascity.el")
+              (prefix . "ga") (suspended . :json-false))]))
+  "A small `gc status' payload for the city dashboard tests.")
+
+(defconst gascity-test--dashboard-sessions
+  '((summary . ((total . 1) (active . 1) (suspended . 0) (closed . 0)))
+    (sessions . [((id . "ec-51a1") (name . "gascity.el/gc.worker")
+                  (agent_name . "gascity.el/gc.worker") (template . "gc.worker")
+                  (state . "active") (provider . "pi") (rig . "gascity.el")
+                  (work_dir . "/home/roman/workspace/gascity.el")
+                  (session_name . "gc__worker-ec-51a1") (closed . :json-false))]))
+  "A small `gc session list' payload: one live worker session.")
+
+(defun gascity-test--dashboard-async-stub (boxes)
+  "Return a `gascity-reader-read-async' stub parking callbacks in BOXES.
+BOXES is an alist of (ARGUMENTS . BOX-LIST); a read whose argv matches a
+key parks its resolve callback in that box for the test to fire later.
+Reads with no matching box resolve immediately with an empty payload of
+the shape the dashboard expects."
+  (lambda (args callback &optional errback)
+    (let ((box (cdr (assoc args boxes))))
+      (if box
+          (setcar box callback)
+        (funcall callback
+                 (cond ((equal args '("bd" "ready")) '((issues . [])))
+                       ((equal args '("convoy" "list")) '((convoys . [])))
+                       (t '((issues . [])))))))
+    nil))
+
+(ert-deftest gascity-test-dashboard-renders-sections ()
+  "The mounted dashboard renders every section with data in hand.
+Cockpit, work in flight, needs you, agents, sessions, beads, activity and
+rigs all render from their own payloads (REQ-001, REQ-002)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (inprog-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (gascity-test--dashboard-async-stub
+                `((("status") . ,status-box)
+                  (("session" "list") . ,sessions-box)
+                  (("bd" "list" "--status" "in_progress") . ,inprog-box)))))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box)
+                         '((issues . [((id . "ga-10p0")
+                                       (status . "in_progress")
+                                       (title . "Implement")
+                                       (assignee . "human"))])))
+                (should (gascity-test--buffer-contains-p "Gas City:"))
+                (should (gascity-test--buffer-contains-p "emacs-city"))
+                (should (gascity-test--buffer-contains-p "api —"))
+                (should (gascity-test--buffer-contains-p "▼ Work in flight"))
+                (should (gascity-test--buffer-contains-p "ga-10p0"))
+                (should (gascity-test--buffer-contains-p "▼ Needs you"))
+                (should (gascity-test--buffer-contains-p "▼ Agents"))
+                (should (gascity-test--buffer-contains-p "gascity.el/gc.worker"))
+                (should (gascity-test--buffer-contains-p "▼ Sessions"))
+                (should (gascity-test--buffer-contains-p "▼ Beads"))
+                (should (gascity-test--buffer-contains-p "Ready"))
+                (should (gascity-test--buffer-contains-p "recent activity"))
+                (should (gascity-test--buffer-contains-p ".gc/events.jsonl"))
+                (should (gascity-test--buffer-contains-p "▼ Rigs")))
+              (should t))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-section-failure-isolated ()
+  "One failing section's read renders its error dimly with a retry hint
+and never blanks the other sections (REQ-010, REQ-006)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (inprog-box (list nil))
+        (ready-reject (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("session" "list")) (setcar sessions-box callback))
+                  ((equal args '("bd" "list" "--status" "in_progress"))
+                   (setcar inprog-box callback))
+                  ((equal args '("bd" "ready")) (setcar ready-reject errback))
+                  (t (funcall callback '((issues . []) (convoys . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box) '((issues . [])))
+                (funcall (car ready-reject) "boom")
+                (should (gascity-test--buffer-contains-p "gc error: boom"))
+                (should (gascity-test--buffer-contains-p "press g to retry"))
+                ;; The other sections keep their payloads.
+                (should (gascity-test--buffer-contains-p "▼ Work in flight"))
+                (should (gascity-test--buffer-contains-p "▼ Agents"))
+                (should (gascity-test--buffer-contains-p "▼ Rigs"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-pending-nil-does-not-unmount ()
+  "A section still pending with nil data keeps its neighbors mounted.
+A pending state must never unmount a subtree (REQ-010): the cockpit
+renders from its own payload while the beads section still loads."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (inprog-box (list nil))
+        (ready-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("session" "list")) (setcar sessions-box callback))
+                  ((equal args '("bd" "list" "--status" "in_progress"))
+                   (setcar inprog-box callback))
+                  ((equal args '("bd" "ready")) (setcar ready-box callback))
+                  (t (funcall callback '((issues . []) (convoys . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                ;; The ready-beads read is still pending.
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box) '((issues . [])))
+                (should (gascity-test--buffer-contains-p "Gas City:"))
+                (should (gascity-test--buffer-contains-p "▼ Beads"))
+                (should (gascity-test--buffer-contains-p "loading…"))
+                ;; Resolving it fills the group in.
+                (funcall (car ready-box)
+                         '((issues . [((id . "ga-1") (status . "open")
+                                       (title . "One"))])))
+                (should (gascity-test--buffer-contains-p "ga-1"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-refresh-keeps-snapshot-and-collapse ()
+  "A `g' refresh is stale-while-revalidate: the prior payloads keep
+rendering while the reloads are in flight, and collapse state survives
+(REQ-010, REQ-012)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (inprog-box (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("session" "list")) (setcar sessions-box callback))
+                  ((equal args '("bd" "list" "--status" "in_progress"))
+                   (setcar inprog-box callback))
+                  (t (funcall callback '((issues . []) (convoys . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box) '((issues . [])))
+                (should (gascity-test--buffer-contains-p "▼ Agents"))
+                ;; Collapse the Agents section via its header.
+                (goto-char (point-min))
+                (search-forward "▼ Agents")
+                (goto-char (match-beginning 0))
+                (gascity-dashboard-activate)
+                (should (gascity-test--buffer-contains-p "▶ Agents"))
+                ;; Refresh: stale payloads keep the tree mounted, and the
+                ;; collapsed section stays collapsed.
+                (gascity-dashboard-refresh)
+                (should (gascity-test--buffer-contains-p "▶ Agents"))
+                (should-not (gascity-test--buffer-contains-p
+                             "Loading city dashboard"))
+                ;; Fresh data arrives -> collapse still preserved.
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box) '((issues . [])))
+                (should (gascity-test--buffer-contains-p "▶ Agents"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-stale-refresh-error-inline ()
+  "A failed refresh over a good snapshot keeps the rows AND shows the error.
+The stale-while-revalidate rule keeps the last payload mounted, but the
+failure is still surfaced dimly with a retry hint — never swallowed
+(REQ-010, e2e failing-section check)."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (inprog-box (list nil))
+        (convoy-box (list nil))
+        (convoy-fail (list nil))
+        (convoy-reject (list nil))
+        (vui-render-delay nil)
+        (convoys '((convoys . [((id . "ga-y9e4") (title . "drain unit 0")
+                                (status . "open")
+                                (progress . ((closed . 0) (total . 1))))]))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("session" "list")) (setcar sessions-box callback))
+                  ((equal args '("bd" "list" "--status" "in_progress"))
+                   (setcar inprog-box callback))
+                  ((equal args '("convoy" "list"))
+                   (if (car convoy-fail)
+                       (setcar convoy-reject errback)
+                     (setcar convoy-box callback)))
+                  (t (funcall callback '((issues . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box) '((issues . [])))
+                (funcall (car convoy-box) convoys)
+                ;; Good data first, convoys loaded.
+                (should (gascity-test--buffer-contains-p "ga-y9e4"))
+                ;; Refresh with the convoy read failing: stale rows keep
+                ;; rendering AND the error shows dimly with a retry hint.
+                (setcar convoy-fail t)
+                (gascity-dashboard-refresh)
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box) '((issues . [])))
+                (funcall (car convoy-reject) "boom-over-tramp")
+                (should (gascity-test--buffer-contains-p "ga-y9e4"))
+                (should (gascity-test--buffer-contains-p
+                         "gc error: boom-over-tramp (showing last good data)"))
+                (should (gascity-test--buffer-contains-p "press g to retry"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-buffer-is-view-keyed ()
+  "The dashboard buffer is created through the view-buffer factory.
+`gascity-view-get-buffer-create' host-qualifies the name, pins
+`default-directory' to the city and installs the I/O-free project —
+mandatory for TRAMP parity (REQ-011); a second call returns the same
+buffer."
+  (let ((factory-calls 0))
+    (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+               (lambda (base &optional dir)
+                 (setq factory-calls (1+ factory-calls))
+                 (get-buffer-create "*gascity-dashboard-fake*")))
+              ((symbol-function 'gascity-section-refresh-instance)
+               (let ((n 0))
+                 (lambda (_buf) (= (cl-incf n) 1))))
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (&rest _) nil))
+              ((symbol-function 'pop-to-buffer) #'ignore))
+      (gascity-dashboard)
+      (should (= factory-calls 1))
+      (with-current-buffer "*gascity-dashboard-fake*"
+        (should (derived-mode-p 'gascity-city-dashboard-mode)))
+      (gascity-dashboard)
+      (should (= factory-calls 2))
+      (when (get-buffer "*gascity-dashboard-fake*")
+        (kill-buffer "*gascity-dashboard-fake*")))))
+
+(ert-deftest gascity-test-dashboard-wiring ()
+  "The dashboard is wired as an entry point: the command is interactive
+and the `gascity' dispatch transient lists it (Overview column, key `D').
+The suffix is located by its KEY string: transient >= 0.12 dropped the
+numeric-coordinate LOC form (a list's second element is now a child
+key/command, not an index), while a bare key string works across the
+transient versions this package builds against."
+  (should (commandp 'gascity-dashboard))
+  (should (commandp 'gascity-dashboard-refresh))
+  (let ((suffix (transient-get-suffix 'gascity "D")))
+    (should suffix)
+    (should (eq (plist-get (cdr suffix) :command)
+                'gascity-dashboard))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

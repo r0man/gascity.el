@@ -58,6 +58,13 @@
 (declare-function gascity-session-kill-at-point "gascity-action")
 (declare-function gascity-session-wake-at-point "gascity-action")
 (declare-function gascity-session-drain-at-point "gascity-action")
+;; Write verbs (DESIGN-write-actions.md phase 1/2) bound in the keymap:
+;; reset/undrain the agent at point, the bead-dispatch (`c') and sling
+;; (`S') menus on a bead reference.
+(declare-function gascity-session-reset-at-point "gascity-action")
+(declare-function gascity-session-undrain-at-point "gascity-action")
+(declare-function gascity-bead-dispatch "gascity-action")
+(declare-function gascity-sling-dispatch "gascity-action")
 (declare-function gascity-session-peek-at-point "gascity-action")
 
 ;;; Buffer

@@ -63,6 +63,7 @@
 (require 'gascity-status)
 (require 'gascity-action)
 (require 'gascity-rig)
+(require 'gascity-dashboard)
 (require 'gascity-session)
 
 ;;; City targeting
@@ -110,6 +111,7 @@ the lists and the status dashboard."
   ["Gas City"
    ["Overview"
     ("s" "Status dashboard" gascity-status)
+    ("D" "City dashboard" gascity-dashboard)
     ("d" "Rig dashboard…" gascity-rig-dashboard)
     ("b" "Beads (rig)…" gascity-rig-beads)]
    ["Lists"
