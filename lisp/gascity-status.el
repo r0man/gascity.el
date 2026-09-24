@@ -34,7 +34,7 @@
 ;; view — sessions are trusted independently — and a failed `gc agent
 ;; list' costs only the grouping, not the rows.
 ;;
-;; TODO (gc-side JSON gap, gce-8ey): the named-sessions half of this gap
+;; TODO (gc-side JSON gaps): the named-sessions half of the gce-8ey gap
 ;; is closed via derived data — the dashboard renders named sessions from
 ;; the `gc session list' rows it already fetches
 ;; (`gascity-status--named-sessions-vnode'), and the `(mode)' suffix
@@ -42,7 +42,11 @@
 ;; outright in gc 1.4.2).  The API URL half remains: it appears in no
 ;; payload and cannot be derived; it renders here as soon as gc exposes
 ;; it.  Hand-parsing city.toml or .gc/system/packs is not an option — the
-;; reconciler owns and rewrites those files.
+;; reconciler owns and rewrites those files.  Likewise the events domain
+;; declares `json_unsupported' outright (ga-69kj): the dashboard carries
+;; only a dim pointer to `.gc/events.jsonl'
+;; (`gascity-status--events-pointer-vnode') and grows a real recent-
+;; activity section the day gc emits event JSON.
 ;;
 ;; Rig sections and pool groups are collapsible (their collapse state
 ;; lifted to the root component, so it survives an in-place refresh).
@@ -443,6 +447,18 @@ rendered in the failed face rather than dimmed away."
                             (alist-get 'threshold_mb_per_row health)))
                    :face (if warning 'gascity-failed 'gascity-dim)))))))
 
+(defun gascity-status--events-pointer-vnode ()
+  "Return the recent-activity pointer vnode — the documented events gap.
+`gc event' has no `list' subcommand and the whole `event' domain declares
+`json_unsupported', so no `--json' payload carries the city's recent
+activity, and the porcelain does not read gc's internal
+`.gc/events.jsonl' itself (every view is a function of `gc … --json').
+Until gc grows a JSON event surface, the dashboard closes with a dim
+pointer to the log instead of a silent absence — the same move as the
+`(mode —)' placeholder (ga-69kj)."
+  (vui-text "  recent activity: .gc/events.jsonl (gc event has no JSON support yet)"
+            :face 'gascity-dim))
+
 (defun gascity-status--format-bytes (bytes)
   "Return BYTES as a human-readable decimal size, e.g. \"227.1 MB\".
 Decimal units (kB/MB/GB), matching how `gc status' sizes the store."
@@ -533,7 +549,8 @@ why and the named-sessions section simply does not render."
                                                 t)))
                (lambda (rig) (gascity-rig-name rig))
                :spacing 1)
-     (gascity-status--store-health-vnode status))))
+     (gascity-status--store-health-vnode status)
+     (gascity-status--events-pointer-vnode))))
 
 (defun gascity-status--error-vnode (message)
   "Return a vnode reporting MESSAGE and how to retry."

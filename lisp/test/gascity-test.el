@@ -2368,6 +2368,16 @@ A payload without `store_health' (an older gc) renders no section at all."
     (should (string-search "1789 live rows" text))
     (should (string-search "0.13 MB/row (threshold 1.0 MB/row)" text))))
 
+(ert-deftest gascity-test-status-events-pointer-vnode ()
+  "The dashboard closes with a dim pointer to the event log (ga-69kj).
+`gc event' has no JSON surface, so the recent-activity gap is documented,
+not hidden: the pointer names `.gc/events.jsonl' and why there is no
+section yet."
+  (let ((text (gascity-test--vnode-text
+               (gascity-status--events-pointer-vnode))))
+    (should (string-search ".gc/events.jsonl" text))
+    (should (string-search "no JSON support" text))))
+
 (ert-deftest gascity-test-status-sessions-note ()
   "A sessions-load hint appears only when that load is not ready.
 Without it, a failed/pending session load degrades silently — agent rows
@@ -7196,6 +7206,9 @@ gascity-status.el."
      ;; Store health.
      (should (gascity-test--buffer-contains-p "Store health"))
      (should (gascity-test--buffer-contains-p "/home/roman/bright-lights/.beads/dolt"))
+     ;; The documented events pointer closes the dashboard (ga-69kj).
+     (should (gascity-test--buffer-contains-p
+              "recent activity: .gc/events.jsonl"))
      (should (gascity-test--buffer-contains-p
               "227.1 MB · 1789 live rows · 0.13 MB/row (threshold 1.0 MB/row)")))))
 

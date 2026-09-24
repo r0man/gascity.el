@@ -448,6 +448,15 @@ crosses the threshold @command{gc} reports, the line switches to the
 @code{gascity-failed} face --- the store has accumulated garbage and
 wants a @code{gc dolt gc}.
 
+@cindex events, recent activity
+@noindent
+Below it, a dim @samp{recent activity: .gc/events.jsonl} line documents
+the one overview gap: @command{gc event} exposes no @command{list}
+subcommand and declares no JSON support, so there is no payload to
+render and the porcelain does not read gc-internal files.  Read the log
+directly, e.g.@ @kbd{tail -f .gc/events.jsonl}, until @command{gc} grows
+an event JSON surface.
+
 @cindex stale-while-revalidate
 The three reads run asynchronously, and @kbd{g} re-fetches them while
 leaving the last good snapshot on screen, so your point and your
