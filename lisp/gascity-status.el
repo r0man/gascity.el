@@ -563,7 +563,10 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
 Mirrors `gc status''s \"mayor                   awake (always)\": the
 identity, the CLI-shaped awake/asleep token
 (`gascity-named-session-label'), and the mode in parentheses when gc
-exposes it in JSON (absent outright in gc 1.4.2, so usually nothing).
+exposes it in JSON.  When gc's session rows carry no mode (absent
+outright in gc 1.4.2), the row appends a dim \"(mode —)\" placeholder —
+the same em-dash convention the other views use for absent values —
+instead of a section-wide footnote (ga-jhwz).
 The row is stamped with the action `gascity-agent' — enriched from
 NAMED's own `gascity-session' row (always set by the derivation) plus
 the tmux SOCKET — so the standard text
@@ -576,12 +579,22 @@ it like on any agent row."
          ;; The action object: the derivation guarantees the session slot,
          ;; so the row always carries an actionable object at point.
          (obj (gascity-agent-from-session session socket)))
-    (vui-text (format "  %s %s%s"
-                      identity
-                      (gascity-named-session-label named)
-                      (if mode (format " (%s)" mode) ""))
-              :face (gascity-section-state-face awake)
-              'gascity-agent obj)))
+    (if mode
+        (vui-text (format "  %s %s (%s)"
+                          identity
+                          (gascity-named-session-label named)
+                          mode)
+                  :face (gascity-section-state-face awake)
+                  'gascity-agent obj)
+      ;; No mode in gc's JSON: keep the row actionable and append the dim
+      ;; placeholder so the gap reads as a value, not broken UI (ga-jhwz).
+      (vui-hstack :spacing 1
+                  (vui-text (format "  %s %s"
+                                    identity
+                                    (gascity-named-session-label named))
+                            :face (gascity-section-state-face awake)
+                            'gascity-agent obj)
+                  (vui-text "(mode —)" :face 'gascity-dim)))))
 
 (defun gascity-status--named-sessions-vnode (named-sessions socket)
   "Return the named-sessions section vnode, or nil when there is nothing to show.
@@ -591,9 +604,8 @@ empty derivation — no canonical city-scoped row, which is also what a
 pending or failed session load with no snapshot in hand yields — returns
 nil, so nothing unmounts (the stale-while-revalidate rule: the section's
 absence must never blank its neighbors).  Otherwise this is a dim
-\"Named sessions\" header, one row per derived object, and — while any row
-lacks a mode, i.e. while gc exposes none in JSON — the single gap
-footnote the CLI's `(always)' suffix hangs on (gce-8ey)."
+\"Named sessions\" header and one row per derived object; rows gc exposes
+no mode for render a dim \"(mode —)\" placeholder inline (ga-jhwz)."
   (when named-sessions
     (vui-vstack
      (vui-text "Named sessions" :face 'gascity-dim 'gascity-section t)
@@ -601,10 +613,7 @@ footnote the CLI's `(always)' suffix hangs on (gce-8ey)."
                (lambda (named)
                  (gascity-status--named-session-row named socket))
                (lambda (named)
-                 (or (gascity-named-session-identity named) "?")))
-     (unless (seq-every-p #'gascity-named-session-mode named-sessions)
-       (vui-text "  mode unavailable from gc JSON (gce-8ey)"
-                 :face 'gascity-dim)))))
+                 (or (gascity-named-session-identity named) "?"))))))
 
 ;;; Components
 
@@ -816,14 +825,19 @@ section at point\"; this is the dashboard's `TAB'.  The status board's
 collapsible sections are its rig headers (stamped with a `gascity-rig' text
 property) and its pool groups (`gascity-pool'); on either, this flips the
 collapse — the same toggle `RET' performs on a header
-\(`gascity-status-activate').  Elsewhere (an agent row, the city block)
-there is nothing collapsible, so it signals a clean `user-error' rather than
-acting on something unrelated — `TAB' toggles, never attaches."
+\(`gascity-status-activate').  On other `gascity-section' headers (the city
+block, Named sessions) there is a section but none this command knows how
+to collapse, so it says so honestly instead of denying a section exists
+(ga-1kdu, bright-lights dogfood §1); elsewhere it signals a clean
+`user-error' rather than acting on something unrelated — `TAB' toggles,
+never attaches."
   (interactive)
   (let ((rig (get-text-property (point) 'gascity-rig))
         (pool (get-text-property (point) 'gascity-pool)))
     (cond (rig (gascity-status--toggle-rig rig))
           (pool (gascity-status--toggle-pool pool))
+          ((get-text-property (point) 'gascity-section)
+           (user-error "This section has no collapse state"))
           (t (user-error "No section to toggle here")))))
 
 (defun gascity-status--toggle-collapsed (key name)

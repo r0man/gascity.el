@@ -61,10 +61,37 @@ e2e_require_tmux_session() {
 
 # e2e_send_keys SESSION KEYS
 # Deliver keystrokes to a live tmux session, fail fast if it is gone.
+# KEYS is split on whitespace and sent unquoted, so tmux treats each token
+# as a KEY NAME when it knows one (Enter, Tab, C-x, M-x, ...) and as literal
+# text otherwise.  Mind tmux 3.7c (ga-rs12): multi-word names like "Return"
+# are NOT key names there — tmux types the word literally instead of
+# pressing the key.  Use the single-word names (Enter, Space, BSpace,
+# Escape, Up, Down, F1, Home, ...), hex via e2e_send_keys_hex, or -H codes
+# for anything the names miss.
 e2e_send_keys() {
     _s="$1"; _keys="$2"
     e2e_require_tmux_session "$_s" || return 1
     timeout "$E2E_TMUX_TIMEOUT" tmux send-keys -t "$_s" $_keys
+}
+
+# e2e_send_keys_literal SESSION TEXT
+# Type TEXT as literal characters (tmux send-keys -l) — no key-name
+# interpretation at all.  For prose, paths, and anything containing
+# characters tmux would otherwise read as key names.
+e2e_send_keys_literal() {
+    _s="$1"; _text="$2"
+    e2e_require_tmux_session "$_s" || return 1
+    timeout "$E2E_TMUX_TIMEOUT" tmux send-keys -t "$_s" -l "$_text"
+}
+
+# e2e_send_keys_hex SESSION HEX...
+# Send raw key codes by hex byte (tmux send-keys -H, tmux >= 3.4) —
+# e.g. 0d for Enter, 09 for Tab.  The unambiguous escape hatch when a key
+# name is unreliable on the installed tmux (ga-rs12).
+e2e_send_keys_hex() {
+    _s="$1"; shift
+    e2e_require_tmux_session "$_s" || return 1
+    timeout "$E2E_TMUX_TIMEOUT" tmux send-keys -t "$_s" -H "$@"
 }
 
 # e2e_capture SESSION

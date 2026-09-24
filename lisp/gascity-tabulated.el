@@ -595,8 +595,10 @@ The entry id is the typed rig, so `RET'/`d'/`b' act on it."
         (vector (gascity-tabulated--str (gascity-rig-name rig))
                 (gascity-tabulated--str (gascity-rig-prefix rig))
                 (gascity-rig-list--status rig)
-                (gascity-tabulated--str (or (gascity-rig-default-branch rig)
-                                            (and (gascity-rig-hq rig) "—")))
+                ;; A nil default-branch renders as "—" for every rig: the
+                ;; HQ-only "—" left non-HQ rigs an empty cell for the same
+                ;; value (ga-1kdu, bright-lights dogfood §2).
+                (gascity-tabulated--str (or (gascity-rig-default-branch rig) "—"))
                 (gascity-tabulated--str (gascity-rig-store rig)))))
 
 (defun gascity-rig-list-dired ()

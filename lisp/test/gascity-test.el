@@ -2400,8 +2400,9 @@ The row is stamped with the action `gascity-agent' — enriched from the
 derivation's own session row, tmux socket attached — so the standard
 action keys (`d'/`t'/RET/`i') act on it like on any agent row
 (AGENTS.md keyboard-parity
-rule).  Mode stays nil until gc exposes it, so no `(...)' suffix
-renders (REQ-001's documented fallback clause)."
+rule).  Mode stays nil until gc exposes it, so the row renders the dim
+\"(mode —)\" placeholder instead of a bare unexplained gap (ga-jhwz,
+REQ-001's documented fallback clause)."
   (let* ((session (gascity-domain-decode
                    'gascity-session
                    '((agent_name . "mayor") (name . "mayor") (template . "mayor")
@@ -2409,17 +2410,22 @@ renders (REQ-001's documented fallback clause)."
                      (session_name . "mayor"))))
          (named (car (gascity-domain-named-sessions-from-sessions (list session))))
          (row (gascity-status--named-session-row named "sock")))
-    (should (equal (gascity-test--vnode-text row) "  mayor awake"))
-    (let ((obj (plist-get (vui-vnode-text-properties row) 'gascity-agent)))
-      (should (gascity-agent-p obj))
-      (should (equal (gascity-agent-name obj) "mayor"))
-      (should (equal (gascity-agent-work-dir obj) "/city"))
-      (should (equal (gascity-agent-socket obj) "sock")))))
+    (should (equal (gascity-test--vnode-text row) "  mayor awake (mode —)"))
+    ;; The agent object lives on the row's main text child (the hstack's
+    ;; first element), so the action keys keep working on the placeholder.
+    (let ((row-text (if (vui-vnode-text-p row) row
+                      (car (vui-vnode-hstack-children row)))))
+      (should (vui-vnode-text-p row-text))
+      (let ((obj (plist-get (vui-vnode-text-properties row-text) 'gascity-agent)))
+        (should (gascity-agent-p obj))
+        (should (equal (gascity-agent-name obj) "mayor"))
+        (should (equal (gascity-agent-work-dir obj) "/city"))
+        (should (equal (gascity-agent-socket obj) "sock"))))))
 
 (ert-deftest gascity-test-status-named-sessions-row-asleep-and-mode ()
   "A suspended named session renders `asleep'; a mode renders the suffix.
 The `(mode)' suffix exists only for a mode gc exposes in JSON — gc 1.4.2
-exposes none, so an unadorned row renders without one."
+exposes none, so a modeless row carries the dim placeholder."
   (let* ((asleep (car (gascity-domain-named-sessions-from-sessions
                        (list (gascity-domain-decode
                               'gascity-session
@@ -2427,7 +2433,7 @@ exposes none, so an unadorned row renders without one."
                                 (template . "mayor") (state . "suspended")))))))
          (row (gascity-status--named-session-row asleep nil)))
     (should (equal (gascity-named-session-label asleep) "asleep"))
-    (should (equal (gascity-test--vnode-text row) "  mayor asleep"))
+    (should (equal (gascity-test--vnode-text row) "  mayor asleep (mode —)"))
     (should (null (gascity-named-session-mode asleep))))
   (let* ((session (gascity-domain-decode 'gascity-session
                    '((agent_name . "mayor") (name . "mayor")
@@ -2439,12 +2445,13 @@ exposes none, so an unadorned row renders without one."
                    "  mayor awake (always)"))))
 
 (ert-deftest gascity-test-status-named-sessions-vnode ()
-  "The section vnode renders header, rows, and the mode gap footnote.
+  "The section vnode renders header and rows, with a dim mode placeholder.
 A nil derivation renders no vnode at all — zero named sessions, or the
 pending/failed session load with no snapshot in hand — so the section's
 absence never unmounts its neighbors (stale-while-revalidate rule,
-REQ-003).  The gap footnote hangs exactly while some row lacks a mode
-(gc exposes none in JSON, gce-8ey)."
+REQ-003).  A row whose gc session row lacks a mode renders a dim
+\"(mode —)\" placeholder inline — a value, not a section-wide footnote
+claiming the data is unavailable (ga-jhwz)."
   (should-not (gascity-status--named-sessions-vnode nil nil))
   (should-not (gascity-status--named-sessions-vnode
                (gascity-domain-named-sessions-from-sessions
@@ -2458,14 +2465,16 @@ REQ-003).  The gap footnote hangs exactly while some row lacks a mode
                 (gascity-status--named-sessions-vnode named "sock"))))
     (should (string-search "Named sessions" text))
     (should (string-search "mayor awake" text))
-    (should (string-search "mode unavailable from gc JSON (gce-8ey)" text))
-    ;; Once every row carries a mode the footnote disappears.
+    ;; No mode in the gc row: the dim placeholder rides on the row itself.
+    (should (string-search "(mode —)" text))
+    (should-not (string-search "mode unavailable" text))
+    ;; Once gc exposes a mode the row renders it in parentheses instead.
     (dolist (n named)
       (setf (gascity-named-session-mode n) "on_demand"))
-    (should-not (string-search
-                 "mode unavailable"
-                 (gascity-test--vnode-text
-                  (gascity-status--named-sessions-vnode named "sock"))))))
+    (let ((text (gascity-test--vnode-text
+                 (gascity-status--named-sessions-vnode named "sock"))))
+      (should (string-search "(on_demand)" text))
+      (should-not (string-search "(mode —)" text)))))
 
 (ert-deftest gascity-test-status-named-sessions-section-renders ()
   "The mounted dashboard renders the CLI's Named sessions block.
@@ -3941,6 +3950,28 @@ Nils and empty strings are dropped; duplicates collapse."
   (should (equal (gascity-session--assignee-keys
                   (gascity-test--agent :name "a" :session-name "")) '("a")))
   (should (null (gascity-session--assignee-keys (gascity-test--agent :name nil)))))
+
+(ert-deftest gascity-test-session-mail-vnode-error-surface ()
+  "The mail-count line surfaces gc's failure detail on error.
+\"mail (unavailable)\" swallowed the why — the reader's envelope message
+naming the actual gc failure — leaving a magit user nothing to act on
+(ga-52t8, bright-lights dogfood §6).  Pending keeps its spinner and a
+ready count its message arithmetic."
+  (should (equal (gascity-test--vnode-text
+                  (gascity-session--mail-vnode '(:status pending)))
+                 "  mail …"))
+  (should (string-search "session not found"
+                         (gascity-test--vnode-text
+                          (gascity-session--mail-vnode
+                           '(:status error :error "gc mail inbox: session not found")))))
+  ;; A nil :error still renders a sane line, not a bare format hole.
+  (should (string-search "load failed"
+                         (gascity-test--vnode-text
+                          (gascity-session--mail-vnode '(:status error :error nil)))))
+  (should (equal (gascity-test--vnode-text
+                  (gascity-session--mail-vnode
+                   '(:status ready :data ((messages . [(x . t)])))))
+                 "  mail 1 message")))
 
 (ert-deftest gascity-test-session-bead-args ()
   "Per-key bead args filter server-side by assignee and scope to the rig."

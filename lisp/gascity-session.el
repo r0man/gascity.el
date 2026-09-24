@@ -218,11 +218,16 @@ its SESSION (a raw `gc session list' alist, or nil)."
          (vui-text (format "  tmux %s" target) :face 'gascity-dim))))))
 
 (defun gascity-session--mail-vnode (mail-res)
-  "Return the mail-count vnode from async MAIL-RES."
+  "Return the mail-count vnode from async MAIL-RES.
+The error branch surfaces gc's own failure detail (the reader's
+envelope message) instead of swallowing it — a magit user staring at
+\"mail (unavailable)\" needs the why (ga-52t8, bright-lights dogfood
+§6)."
   (vui-text
    (pcase (plist-get mail-res :status)
      ('pending "  mail …")
-     ('error "  mail (unavailable)")
+     ('error (format "  mail unavailable — %s"
+                     (or (plist-get mail-res :error) "load failed")))
      (_ (let ((n (length (alist-get 'messages (plist-get mail-res :data)))))
           (format "  mail %d message%s" n (if (= n 1) "" "s")))))
    :face 'gascity-dim))
