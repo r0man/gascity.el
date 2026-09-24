@@ -1095,7 +1095,7 @@ roster's highlighting (REQ-004's single-selector rule)."
       (lambda (rows) (mapcar #'gascity-dashboard--rig-row rows)))
      (vui-text (concat "g refresh · / filter · RET open/toggle · i detail · "
                        "b beads · d dired · t tmux · M/s/K/w/D session · "
-                       "N/P section · q bury")
+                       "m mail · e events filter · N/P section · q bury")
                :face 'gascity-dim))))
 
 ;;; State flips (root component, survive a refresh)
@@ -1276,7 +1276,7 @@ are only the CLI-derivable ones (errored / rate-limited / stalled).
   (setq-local header-line-format
               (concat " City dashboard  (g refresh · / filter · RET open/toggle"
                       " · i detail · b beads · d dired · t tmux · M/s/K/w/D session"
-                      " · N/P section · q bury)")))
+                      " · m mail · e events · N/P section · q bury)")))
 
 ;;;###autoload
 (defun gascity-dashboard ()
