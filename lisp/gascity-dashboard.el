@@ -484,7 +484,7 @@ for the shared action keys."
          (reason (and qname (gethash qname needs-you-map)))
          (obj (gascity-status--agent agent nil session-map socket)))
     (if reason
-        (vui-text (format "  ● !%s %s" (nth 0 reason) qname)
+        (vui-text (format "  ● !%s %s" (nth 1 reason) qname)
                   :face 'gascity-failed
                   'gascity-agent obj)
       (vui-text (format "  %s %s" (if running "●" "○")
@@ -668,8 +668,9 @@ highlighting (REQ-004's single-selector rule)."
          (named-sessions
           (gascity-domain-named-sessions-from-sessions session-rows))
          (agents (append (alist-get 'agents status) nil))
-         (rigs (gascity-domain-decode-list
-                'gascity-rig (alist-get 'rigs status)))
+         (rigs (gascity-rigs-remember
+                (gascity-domain-decode-list
+                 'gascity-rig (alist-get 'rigs status))))
          ;; Render: no synchronous gc fallback (`no-probe').
          (socket (gascity-resolve-tmux-socket
                   (alist-get 'city_name status) 'no-probe))
@@ -703,6 +704,7 @@ highlighting (REQ-004's single-selector rule)."
      (gascity-dashboard--section
       "work" "Work in flight"
       (list :state (plist-get inprog-load :state)
+            :error (plist-get inprog-load :error)
             :data (gascity-dashboard--work-in-flight
                    (and (plist-get inprog-load :data)
                         (gascity-section-beads (plist-get inprog-load :data)))
@@ -845,21 +847,24 @@ rig row it opens the rig dashboard."
 
 ;;; Bead filter (`/`)
 
+(defun gascity-dashboard--filter-rig-names ()
+  "Return the rig names offered by the `/` bead filter.
+Sourced from the I/O-free rig memo (`gascity-rigs-cached') — the same
+list this dashboard's own status read keeps warm via
+`gascity-rigs-remember' — never the synchronous gc executor (AC-5)."
+  (delq nil (mapcar #'gascity-rig-name (gascity-rigs-cached))))
+
 ;;;###autoload
 (defun gascity-dashboard-filter-rig ()
   "Filter the dashboard's bead sections by rig, via completion.
 The filter narrows the ready/in-progress/blocked and convoy groups to the
 chosen rig's id prefix, client-side; state is lifted to the root
-component, so it survives a refresh."
+component, so it survives a refresh.  The candidates come from the
+I/O-free rig memo — no synchronous gc call here (AC-5)."
   (interactive)
   (let ((rig (completing-read
               "Filter beads by rig (empty = all): "
-              (condition-case nil
-                  (delq nil (mapcar (lambda (r) (alist-get 'name r))
-                                    (append (alist-get 'rigs
-                                                       (gascity-command-rig-list!))
-                                            nil)))
-                (gascity-error nil)))))
+              (gascity-dashboard--filter-rig-names))))
     (gascity-dashboard--set-bead-rig (and (not (string-empty-p rig)) rig))))
 
 (defun gascity-dashboard-filter-clear ()

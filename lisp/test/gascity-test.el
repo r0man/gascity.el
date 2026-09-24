@@ -8904,6 +8904,106 @@ failure is still surfaced dimly with a retry hint — never swallowed
           (when (get-buffer "*gascity-dashboard-test*")
             (kill-buffer "*gascity-dashboard-test*")))))))
 
+(ert-deftest gascity-test-dashboard-work-section-error-inline ()
+  "A failed work-in-flight refresh over a good first load keeps the
+joined rows and surfaces the failure dimly with a retry hint (R1,
+REQ-010): the fabricated work load propagates the read's `:error'."
+  (let ((status-box (list nil))
+        (sessions-box (list nil))
+        (inprog-box (list nil))
+        (inprog-fail (list nil))
+        (inprog-reject (list nil))
+        (vui-render-delay nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback)
+                 (cond
+                  ((equal args '("status")) (setcar status-box callback))
+                  ((equal args '("session" "list")) (setcar sessions-box callback))
+                  ((equal args '("bd" "list" "--status" "in_progress"))
+                   (if (car inprog-fail)
+                       (setcar inprog-reject errback)
+                     (setcar inprog-box callback)))
+                  (t (funcall callback '((issues . []) (convoys . [])))))
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-dashboard-app)
+                         "*gascity-dashboard-test*")
+              (with-current-buffer "*gascity-dashboard-test*"
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-box)
+                         '((issues . [((id . "ga-10p0")
+                                       (status . "in_progress")
+                                       (title . "Implement")
+                                       (assignee . "human"))])))
+                ;; Good first load: the joined row renders.
+                (should (gascity-test--buffer-contains-p "ga-10p0"))
+                ;; Refresh with the in-progress read failing: the stale
+                ;; rows keep rendering AND the Work section shows the
+                ;; error dimly with a retry hint (previously dropped:
+                ;; the fabricated load carried no `:error').
+                (setcar inprog-fail t)
+                (gascity-dashboard-refresh)
+                (funcall (car status-box) gascity-test--dashboard-status)
+                (funcall (car sessions-box) gascity-test--dashboard-sessions)
+                (funcall (car inprog-reject) "boom-over-tramp")
+                (should (gascity-test--buffer-contains-p "ga-10p0"))
+                (should (gascity-test--buffer-contains-p
+                         "gc error: boom-over-tramp (showing last good data)"))
+                (should (gascity-test--buffer-contains-p "press g to retry"))))
+          (when (get-buffer "*gascity-dashboard-test*")
+            (kill-buffer "*gascity-dashboard-test*")))))))
+
+(ert-deftest gascity-test-dashboard-agent-row-needs-you-reason ()
+  "A needs-you-flagged roster row prints the REASON, not the name twice.
+The needs-you map stores (NAME REASON DETAIL ACTION) rows, so the `!'
+branch formats the reason string, not the name again (R3)."
+  (let* ((agent '((name . "w1") (qualified_name . "gascity.el/gc.worker")
+                  (running . t) (suspended . :json-false)))
+         (rows (gascity-dashboard--needs-you (list agent) nil))
+         (map (make-hash-table :test 'equal)))
+    (should (equal (nth 1 (car rows)) "stalled"))
+    (dolist (row rows) (puthash (nth 0 row) row map))
+    (let ((text (gascity-test--vnode-text
+                 (gascity-dashboard--agent-row
+                  agent map (make-hash-table :test 'equal) "sock"))))
+      (should (string-match-p "● !stalled gascity.el/gc.worker" text))
+      (should-not (string-match-p
+                   "gascity.el/gc.worker gascity.el/gc.worker" text)))))
+
+(ert-deftest gascity-test-dashboard-filter-rig-no-sync-gc ()
+  "The `/` filter sources its candidates from the rig memo, never the
+synchronous gc executor (R2, AC-5): a memo stub feeds the completion and
+any `gascity-command-rig-list!' call fails the test."
+  (let ((captured 'unset))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _)
+                 (list (make-instance 'gascity-rig :name "gascity.el"
+                                      :prefix "ga")
+                       (make-instance 'gascity-rig :name "beads.el"
+                                      :prefix "be"))))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt candidates)
+                 (car (member "gascity.el" candidates))))
+              ((symbol-function 'gascity-command-rig-list!)
+               (lambda () (error "synchronous gc call in the / filter")))
+              ((symbol-function 'gascity-dashboard--set-bead-rig)
+               (lambda (rig) (setq captured rig))))
+      (gascity-dashboard-filter-rig)
+      (should (equal captured "gascity.el"))))
+  ;; An empty completion clears the filter.
+  (let ((captured 'unset))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _) nil))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt _candidates) ""))
+              ((symbol-function 'gascity-dashboard--set-bead-rig)
+               (lambda (rig) (setq captured rig))))
+      (gascity-dashboard-filter-rig)
+      (should (equal captured nil)))))
+
 (ert-deftest gascity-test-dashboard-buffer-is-view-keyed ()
   "The dashboard buffer is created through the view-buffer factory.
 `gascity-view-get-buffer-create' host-qualifies the name, pins
