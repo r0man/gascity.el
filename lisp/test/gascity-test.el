@@ -8850,6 +8850,7 @@ rendering while the reloads are in flight, and collapse state survives
                 (funcall (car status-box) gascity-test--dashboard-status)
                 (funcall (car sessions-box) gascity-test--dashboard-sessions)
                 (funcall (car inprog-box) '((issues . [])))
+                (funcall (car events-box) '(nil . 0))
                 (should (gascity-test--buffer-contains-p "▶ Agents"))))
           (when (get-buffer "*gascity-dashboard-test*")
             (kill-buffer "*gascity-dashboard-test*")))))))
