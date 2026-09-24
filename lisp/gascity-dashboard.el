@@ -45,9 +45,12 @@
 ;;                (REQ-007); `/` opens a filter transient.  `RET'
 ;;                opens a bead or convoy in beads.el, scoped to the
 ;;                store owning its id prefix (DESIGN.md §4.3).
-;; - activity       gc's documented events gap (ga-69kj): `gc event'
-;;                has no JSON support, so this renders the documented
-;;                pointer and never reads `.gc/events.jsonl' (REQ-008).
+;; - activity       the real events feed (plan S3): `gc events --since'
+;;                read as JSON Lines through the reader's :lines mode,
+;;                chatty types excluded by default (`/` → events
+;;                submenu toggles), capped to the most recent
+;;                `gascity-dashboard-events-limit' events; a decode
+;;                error degrades to a dim inline line, never a blank.
 ;; - rigs           per-rig summary rows; `RET' opens the rig dashboard.
 ;;
 ;; Rendering contract (REQ-010): the skeleton with per-section pending
@@ -88,7 +91,7 @@
 (require 'gascity-reader)             ; gascity-reader-read-async (per-section)
 (require 'gascity-section)
 (require 'gascity-tabulated)          ; shared cell formatters (--str)
-(require 'gascity-status)             ; header vnode, session-map join, events pointer
+(require 'gascity-status)             ; header vnode, session-map join
 
 ;; Detail/list openers and agent actions live in sibling modules loaded
 ;; alongside this one; reference them by name (resolved at call time).
@@ -567,16 +570,125 @@ rows from the payload's bead list.  The filter is applied here, so a
                      (gascity-rig-suspended rig))
               'gascity-rig name)))
 
+;;; Activity feed (events JSONL, plan S3)
+
+(defcustom gascity-dashboard-events-limit 500
+  "Maximum number of recent events the Activity section renders.
+The cap keeps the MOST RECENT events (the payload's tail — `gc events'
+emits ascending sequence numbers); anything older is summarized in a
+dim trailing \"N older events hidden\" line."
+  :type 'natnum
+  :group 'gascity)
+
+(defconst gascity-dashboard--events-chatty-default
+  '("order.fired" "order.completed" "bead.updated")
+  "The chatty event types the Activity feed excludes by default.
+Toggled as a set by `gascity-dashboard-events-toggle-chatty'.")
+
+(defun gascity-dashboard--events-visible (events excluded)
+  "Return EVENTS in payload order, minus the EXCLUDED types.
+EVENTS are the decoded `gc events' JSONL alists."
+  (seq-filter (lambda (event)
+                (not (member (alist-get 'type event) excluded)))
+              events))
+
+(defun gascity-dashboard--events-cap (events limit)
+  "Return the most recent LIMIT events, payload order preserved.
+Events arrive oldest-first (ascending `seq'), so the cap keeps the
+tail.  A nil LIMIT or a shorter list passes through unchanged."
+  (if (and limit (> (length events) limit))
+      (nthcdr (- (length events) limit) events)
+    events))
+
+(defun gascity-dashboard--events-view (data excluded limit)
+  "Project the JSONL events payload DATA into the rendered view.
+DATA is the reader's (EVENTS . BAD) cons — EVENTS the decoded
+per-line alists in feed order, BAD the count of malformed lines.  A
+nil or non-cons payload (still pending, or an unexpected shape)
+degrades to an empty feed — never an error.  Returns a plist
+\(:events :hidden :bad): :events the EXCLUDED-type-filtered events
+capped to the most recent LIMIT, :hidden how many visible events the
+cap dropped, :bad the payload's malformed-line count."
+  (let* ((events (and (consp data) (append (car data) nil)))
+         (visible (gascity-dashboard--events-visible events excluded))
+         (capped (gascity-dashboard--events-cap visible limit)))
+    (list :events capped
+          :hidden (- (length visible) (length capped))
+          :bad (or (and (consp data) (cdr data)) 0))))
+
+(defun gascity-dashboard--event-ts (event)
+  "Return EVENT's ts formatted HH:MM:SS, or the raw value.
+`gc events' emits RFC3339 with nanoseconds and an offset
+\(\"2026-09-24T13:59:12.293914966+02:00\"); only the clock time is
+rendered.  A missing or unexpected shape degrades to the raw value."
+  (let ((ts (alist-get 'ts event)))
+    (if (and (stringp ts)
+             (string-match
+              "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T\\([0-9]\\{2\\}:[0-9]\\{2\\}:[0-9]\\{2\\}\\)"
+              ts))
+        (match-string 1 ts)
+      ts)))
+
+(defun gascity-dashboard--event-summary (event)
+  "Return the first line of EVENT's payload summary, or nil.
+The payload's `title' wins over `summary'; only a non-empty first line
+counts.  A payload of an unexpected shape (a JSON scalar) degrades to
+no summary."
+  (let* ((payload (alist-get 'payload event))
+         (text (and (listp payload)
+                    (or (alist-get 'title payload)
+                        (alist-get 'summary payload)))))
+    (when (stringp text)
+      (let ((line (string-trim (car (split-string text "\n")))))
+        (unless (string-empty-p line) line)))))
+
+(defun gascity-dashboard--event-row (event)
+  "Return one Activity row vnode for EVENT.
+Columns: clock time (HH:MM:SS), type, subject, then the first line of
+the payload's title/summary when present.  An event whose `ok' is nil
+renders in the failed face."
+  (let* ((summary (gascity-dashboard--event-summary event))
+         (text (format "  %-8s %-18s %s%s"
+                       (or (gascity-dashboard--event-ts event) "?")
+                       (or (alist-get 'type event) "?")
+                       (or (alist-get 'subject event) "?")
+                       (if summary (concat " — " summary) ""))))
+    (if (alist-get 'ok event)
+        (vui-text text)
+      (vui-text text :face 'gascity-failed))))
+
+(defun gascity-dashboard--events-rows (view)
+  "Return the Activity section's body vnodes for the processed VIEW.
+A trailing dim line reports events hidden by the limit cap; a
+non-zero malformed-line count renders a dim inline line — a decode
+error degrades the feed, never blanks it.  VIEW may be nil (the
+section's first, dataless render): empty body, the \"(none)\" line."
+  (let ((events (plist-get view :events))
+        (hidden (plist-get view :hidden))
+        (bad (plist-get view :bad)))
+    (append (mapcar #'gascity-dashboard--event-row events)
+            (and hidden (> hidden 0)
+                 (list (vui-text
+                        (format "  %d older events hidden" hidden)
+                        :face 'gascity-dim)))
+            (and bad (> bad 0)
+                 (list (vui-text
+                        (format "  %d malformed event lines skipped" bad)
+                        :face 'gascity-dim))))))
+
 ;;; Component
 
 (vui-defcomponent gascity-dashboard-app ()
   "Root component of the city dashboard."
-  ;; Collapse state (`collapsed') and the `/` bead filter (`bead-rig')
+  ;; Collapse state (`collapsed'), the `/` bead filter (`bead-rig') and
+  ;; the Activity feed's excluded event types (`event-types-excluded')
   ;; live here, in the root component, rather than per section: the
   ;; keymap commands (`gascity-dashboard-activate',
-  ;; `gascity-dashboard-filter-*') flip them and both survive an
+  ;; `gascity-dashboard-filter-*') flip them and all survive an
   ;; in-place refresh, since `g' only bumps `refresh-tick'.
-  :state ((refresh-tick 0) (collapsed nil) (bead-rig nil))
+  :state ((refresh-tick 0) (collapsed nil) (bead-rig nil)
+          (event-types-excluded
+           '("order.fired" "order.completed" "bead.updated")))
   :render
   ;; All async hooks run unconditionally, in order, every render.  Each
   ;; section's load is independent: one failure never blanks the others.
@@ -612,6 +724,16 @@ rows from the payload's bead list.  The filter is applied here, so a
                          (lambda (resolve reject)
                            (gascity-reader-read-async
                             '("convoy" "list") resolve reject))))
+         ;; The Activity feed: JSON Lines, not one --json payload
+         ;; (plan S3).  Same per-section independence as every other
+         ;; read; a malformed line is a decode-error count in the
+         ;; payload, a read failure the standard dim error line.
+         (events-res
+          (vui-use-async (list 'events refresh-tick)
+                         (lambda (resolve reject)
+                           (gascity-reader-read-async
+                            '("events" "--since" "2h") resolve reject
+                            :lines t))))
          (status-state (plist-get status-res :status))
          (last-status (vui-use-ref nil))
          (last-sessions (vui-use-ref nil))
@@ -619,6 +741,7 @@ rows from the payload's bead list.  The filter is applied here, so a
          (last-inprog (vui-use-ref nil))
          (last-blocked (vui-use-ref nil))
          (last-convoy (vui-use-ref nil))
+         (last-events (vui-use-ref nil))
          ;; Stale-while-revalidate: on `ready' adopt fresh data, else
          ;; keep rendering the last snapshot (see
          ;; `gascity-dashboard--effective-load').
@@ -632,7 +755,9 @@ rows from the payload's bead list.  The filter is applied here, so a
          (blocked-load (gascity-dashboard--effective-load blocked-res
                                                           last-blocked))
          (convoy-load (gascity-dashboard--effective-load convoy-res
-                                                         last-convoy)))
+                                                         last-convoy))
+         (events-load (gascity-dashboard--effective-load events-res
+                                                         last-events)))
     (cond
      ((and (eq status-state 'error) (null (plist-get status :data)))
       (gascity-status--error-vnode (plist-get status-res :error)))
@@ -642,16 +767,21 @@ rows from the payload's bead list.  The filter is applied here, so a
       (gascity-dashboard--content-vnode
        (plist-get status :data) sessions-load ready-load inprog-load
        blocked-load convoy-load
-       :collapsed collapsed :bead-rig bead-rig)))))
+       :collapsed collapsed :bead-rig bead-rig
+       :events-load events-load
+       :event-types-excluded event-types-excluded)))))
 
 (cl-defun gascity-dashboard--content-vnode (status sessions-load ready-load
                                             inprog-load blocked-load
                                             convoy-load
-                                            &key collapsed bead-rig)
+                                            &key collapsed bead-rig
+                                            events-load event-types-excluded)
   "Return the dashboard body vnode.
 STATUS is the `gc status' payload; the five LOAD arguments are the
 normalized loads of `gc session list', `gc bd ready', the in-progress and
-blocked `gc bd list' reads and `gc convoy list'.  COLLAPSED is the root's
+blocked `gc bd list' reads and `gc convoy list'.  EVENTS-LOAD is the
+normalized JSONL events load; EVENT-TYPES-EXCLUDED the Activity feed's
+excluded types (root state, survives a refresh).  COLLAPSED is the root's
 list of collapsed section names; BEAD-RIG the active `/` rig filter (a
 rig name, or nil for all).  Each section renders from its own load, so a
 failing one degrades alone (REQ-010); the needs-you rows are computed
@@ -778,12 +908,18 @@ highlighting (REQ-004's single-selector rule)."
           "Convoys" convoy-load filter-prefix
           (lambda (data)
             (append (alist-get 'convoys data) nil))))))
-     (vui-vstack
-      (vui-text "Activity" :face 'gascity-header 'gascity-section t)
-      ;; The documented events gap (ga-69kj): `gc event' has no JSON
-      ;; support, so render the documented pointer — never read
-      ;; `.gc/events.jsonl' directly (REQ-008).
-      (gascity-status--events-pointer-vnode))
+     (gascity-dashboard--section
+      "activity" "Activity"
+      (list :state (plist-get events-load :state)
+            :error (plist-get events-load :error)
+            :data (and (plist-get events-load :data)
+                       (gascity-dashboard--events-view
+                        (plist-get events-load :data)
+                        event-types-excluded
+                        gascity-dashboard-events-limit)))
+      (member "activity" collapsed)
+      #'gascity-dashboard--events-rows
+      (lambda (view) (length (plist-get view :events))))
      (gascity-dashboard--section
       "rigs" "Rigs" (list :state 'ready :data rigs)
       (member "rigs" collapsed)
@@ -872,11 +1008,58 @@ I/O-free rig memo — no synchronous gc call here (AC-5)."
   (interactive)
   (gascity-dashboard--set-bead-rig nil))
 
+(defun gascity-dashboard-events-toggle-chatty ()
+  "Toggle the Activity feed's default-chatty types as a set.
+When any of them is currently excluded, remove all of them; otherwise
+add all.  Root-component state, so it survives a refresh."
+  (interactive)
+  (gascity-dashboard--set-state
+   :event-types-excluded
+   (gascity-dashboard--events-toggle-chatty
+    (gascity-dashboard--events-excluded))))
+
+(defun gascity-dashboard-events-filter-clear ()
+  "Clear the Activity feed's type filter: exclude no event types."
+  (interactive)
+  (gascity-dashboard--set-state :event-types-excluded nil))
+
+(defun gascity-dashboard--events-toggle-chatty (excluded)
+  "Return EXCLUDED with the default-chatty types toggled as a set.
+Any member currently excluded removes all of them; none present adds
+the full default set, preserving other exclusions."
+  (if (seq-some (lambda (type) (member type excluded))
+                gascity-dashboard--events-chatty-default)
+      (seq-remove (lambda (type)
+                    (member type gascity-dashboard--events-chatty-default))
+                  excluded)
+    (append excluded gascity-dashboard--events-chatty-default)))
+
+(transient-define-prefix gascity-dashboard-events-filter-dispatch ()
+  "Filter the Activity feed's event types."
+  ["Events filter"
+   ("t" "Toggle default-chatty types" gascity-dashboard-events-toggle-chatty)
+   ("c" "Clear excluded types" gascity-dashboard-events-filter-clear)])
+
 (transient-define-prefix gascity-dashboard-filter-dispatch ()
-  "Filter the city dashboard's bead sections."
-  ["Bead filter"
-   ("r" "Rig…" gascity-dashboard-filter-rig)
-   ("c" "Clear filter" gascity-dashboard-filter-clear)])
+  "Filter the city dashboard's sections."
+  ["Filter"
+   ("r" "Beads by rig…" gascity-dashboard-filter-rig)
+   ("e" "Events…" gascity-dashboard-events-filter-dispatch)
+   ("c" "Clear bead filter" gascity-dashboard-filter-clear)])
+
+(defun gascity-dashboard--events-excluded ()
+  "Return the root component's current excluded event types.
+Outside a live dashboard root (a command typed elsewhere, tests) this
+falls back to the default chatty exclusion instead of nil — the
+commands below then behave sensibly from any buffer.  Inside a live
+root a nil state is respected: the user cleared the filter, and the
+toggle must be able to re-add the chatty set from there."
+  (let ((current (and (boundp 'vui--root-instance) vui--root-instance
+                      (plist-get (vui-instance-state vui--root-instance)
+                                 :event-types-excluded))))
+    (if (and (boundp 'vui--root-instance) vui--root-instance)
+        current
+      gascity-dashboard--events-chatty-default)))
 
 ;;; Mode
 
