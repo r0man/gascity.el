@@ -103,7 +103,7 @@ when non-nil, scopes the query to that rig's bead store."
   (append (list "bd" "list" "--assignee" key)
           (and rig (list "--rig" rig))
           '("--status" "open,in_progress,blocked,deferred,closed"
-            "--sort" "updated" "--reverse" "--limit" "50")))
+            "--sort" "updated" "--reverse" "-n" "0")))
 
 (defun gascity-session--worked-args (rig)
   "Return `gc bd list' args for recent beads carrying a `work_dir', newest first.
@@ -117,7 +117,7 @@ when non-nil, scopes the query to that rig's bead store."
   (append (list "bd" "list" "--has-metadata-key" "work_dir")
           (and rig (list "--rig" rig))
           '("--status" "open,in_progress,blocked,deferred,closed"
-            "--sort" "updated" "--reverse" "--limit" "100")))
+            "--sort" "updated" "--reverse" "-n" "0")))
 
 (defun gascity-session--worked-here-p (bead work-dir)
   "Return non-nil when BEAD was built within WORK-DIR.
@@ -542,14 +542,20 @@ AGENT is the action object carried by an agent row in any view."
     (delete-process gascity-session--log-process)))
 
 (defun gascity-session--log-argv (target dir)
-  "Return the argv following TARGET's log from a view in DIR.
-Locally gc itself; for a remote DIR a local no-pty ssh pipe
-\(`gascity-remote-ssh-pipe-argv', §8.3 R4), never a TRAMP channel."
-  (let ((args (append (gascity-context-city-args)
-                      (list "session" "logs" target "-f"))))
-    (if (file-remote-p dir)
-        (gascity-remote-ssh-pipe-argv dir (cons "gc" args))
-      (cons gascity-executable args))))
+  "Return the local argv following TARGET's log from a view in DIR.
+Locally gc itself; for a remote DIR the reader's ssh pipe transport
+\(`gascity-reader--ssh-command', §8.3 R4): no TRAMP channel, no round
+trip, `--city' and the env-city overrides as for any read."
+  (let* ((default-directory dir)
+         (sub (list "session" "logs" target "-f"))
+         (city-env (gascity-reader--city-env-overrides sub))
+         (args (if city-env sub (append (gascity-reader--city-args) sub)))
+         (executable (with-connection-local-variables gascity-executable)))
+    (cond ((gascity-reader--ssh-pipe-p dir)
+           (gascity-reader--ssh-command executable args city-env))
+          ((file-remote-p dir)
+           (user-error "Log follow needs an ssh-based remote city"))
+          (t (cons executable args)))))
 
 (defun gascity-session--log-filter (proc chunk)
   "Append CHUNK from PROC to its log buffer, following the end."

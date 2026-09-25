@@ -669,7 +669,21 @@ spans every page).  Each list's own keymap parents off this and adds
 ;; jump; SPC shows the row's detail in a side window (rows cannot host
 ;; an inline drawer), replacing tabulated-list's SPC = next line.
 (gascity-thing-define-keys gascity-tabulated-base-map)
-(keymap-set gascity-tabulated-base-map "SPC" #'gascity-tabulated-detail-toggle)
+
+(defun gascity-tabulated--toggle-row (thing)
+  "Toggle the detail window for a list row THING (a `beads-thing' handler).
+Rows cannot host an inline drawer, so SPC on a row shows its detail in
+the `*gascity-detail*' side window, or closes it."
+  (when (eq (beads-thing-kind thing) 'row)
+    (gascity-tabulated-detail-toggle)
+    t))
+
+(defun gascity-tabulated--setup-things ()
+  "Route SPC on this list's rows to the detail window (§5.4).
+Installs `gascity-tabulated--toggle-row' on the buffer-local
+`beads-thing-toggle-functions', the shared primitive's one dispatch
+path.  Run from every list mode's body."
+  (add-hook 'beads-thing-toggle-functions #'gascity-tabulated--toggle-row nil t))
 
 ;;; Detail side window (§5.4)
 
@@ -909,6 +923,7 @@ the rig at point.
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Name" nil))
   (tabulated-list-init-header)
+  (gascity-tabulated--setup-things)
   (gascity-tabulated--install-filter 'gascity-rig-list--filter
                                      #'gascity-rig-list-refresh))
 
@@ -1208,6 +1223,7 @@ while visible; `W' toggles that live.
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Agent" nil))
   (tabulated-list-init-header)
+  (gascity-tabulated--setup-things)
   (gascity-tabulated--install-filter 'gascity-session-list--filter
                                      #'gascity-session-list-refresh)
   (gascity-session-list--auto-refresh-setup))
@@ -1314,7 +1330,8 @@ Asynchronous (`gascity-tabulated--refresh-async')."
   (setq tabulated-list-sort-key (cons "ID" nil))
   (gascity-tabulated--install-filter 'gascity-convoy-list--filter
                                      #'gascity-convoy-list-refresh)
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (gascity-tabulated--setup-things))
 
 ;;;###autoload
 (defun gascity-convoy-list ()
@@ -1441,6 +1458,7 @@ marks read); `a' archives (confirmed); `u' marks unread.
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (tabulated-list-init-header)
+  (gascity-tabulated--setup-things)
   (gascity-tabulated--install-filter 'gascity-mail-inbox--filter
                                      #'gascity-mail-inbox-refresh))
 
@@ -1554,6 +1572,7 @@ manually (bypassing its trigger).
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Order" nil))
   (tabulated-list-init-header)
+  (gascity-tabulated--setup-things)
   (gascity-tabulated--install-filter 'gascity-order-list--filter
                                      #'gascity-order-list-refresh))
 
@@ -1628,7 +1647,8 @@ Dolt has no filter dimension, so its `/' menu only sorts; pagination
           ("Commits" 10 ,(gascity-tabulated--numeric-sorter 1))])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Database" nil))
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (gascity-tabulated--setup-things))
 
 ;;;###autoload
 (defun gascity-dolt-list ()

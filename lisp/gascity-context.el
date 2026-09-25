@@ -14,8 +14,8 @@
 ;;   basename (`gascity-context-city-name').
 ;; - Rigs live outside the city tree and are tracked in gc's registry,
 ;;   so there is no reliable local marker; `gascity-context-rig-name'
-;;   asks gc to resolve the rig from `default-directory', caching the
-;;   answer per directory.
+;;   matches `default-directory' against the paths of the memoized rig
+;;   list, never spawning gc.
 ;;
 ;; Override `gascity-context-city' / `gascity-context-rig' to pin the
 ;; context (e.g. for a switch-rig command, arriving in later phases).
@@ -78,9 +78,6 @@
 (defconst gascity-context-city-file "city.toml"
   "Marker file identifying a Gas City root directory.")
 
-(defvar gascity-context--rig-cache (make-hash-table :test 'equal)
-  "Cache mapping an absolute directory to its resolved rig name.")
-
 (defvar gascity-context--city-cache (make-hash-table :test 'equal)
   "Cache mapping an absolute directory to its gc-resolved city name.")
 
@@ -112,7 +109,6 @@ misses) of `gascity-remote-find-executable'.  Call after the city's rig
 set changes, after a program moved on a remote host, or to force
 re-resolution."
   (interactive)
-  (clrhash gascity-context--rig-cache)
   (clrhash gascity-context--city-cache)
   (clrhash gascity-context--root-cache)
   (clrhash gascity-context--rigs-cache)
@@ -395,35 +391,41 @@ from directory context.  Answers are cached per directory; clear with
                  (gascity-error nil))
                gascity-context--city-cache))))
 
-(defun gascity-context-rig-name (&optional dir)
-  "Return the current rig name for DIR (default `default-directory'), or nil.
-Honours `gascity-context-rig'.  Otherwise asks gc to resolve the rig
-from DIR via `gc rig status', returning nil when DIR is not inside a
-rig.  Answers are cached per directory; clear with
-`gascity-context-clear-cache'."
+(declare-function gascity-rig-path "gascity-domain")
+(declare-function gascity-rig-name "gascity-domain")
+(declare-function gascity-rig-hq "gascity-domain")
+
+(defun gascity-context--rig-from-memo (&optional dir)
+  "Return the rig containing DIR (default `default-directory'), or nil.
+Honours `gascity-context-rig'.  Otherwise the memoized rig list
+\(`gascity-rigs-cached') is matched by path: the rig whose `path' is the
+longest prefix of DIR's host-local name.  The city HQ is no rig (it is
+the city store).  Never spawns gc — gc 1.4.2's `gc rig status' needs a
+rig name and cannot resolve one from a directory (QA F7); a cold memo
+answers nil."
   (or gascity-context-rig
-      (let* ((key (expand-file-name (or dir default-directory)))
-             (cached (gethash key gascity-context--rig-cache 'miss)))
-        (if (not (eq cached 'miss))
-            cached
-          (puthash key
-                   (condition-case nil
-                       (let* ((default-directory key)
-                              (rig (alist-get
-                                    'rig (gascity-reader-read "rig" "status"))))
-                         (alist-get 'name rig))
-                     (gascity-error nil))
-                   gascity-context--rig-cache)))))
+      (let* ((local (file-name-as-directory
+                     (file-local-name (expand-file-name (or dir default-directory)))))
+             (best nil))
+        (dolist (rig (gascity-rigs-cached dir))
+          (let ((path (gascity-rig-path rig)))
+            (when (and (stringp path) (not (string-empty-p path))
+                       (not (gascity-rig-hq rig))
+                       (string-prefix-p (file-name-as-directory path) local)
+                       (or (null best)
+                           (> (length path) (length (gascity-rig-path best)))))
+              (setq best rig))))
+        (and best (gascity-rig-name best)))))
+
+(defun gascity-context-rig-name (&optional dir)
+  "Return the rig containing DIR, or nil (see `gascity-context--rig-from-memo')."
+  (gascity-context--rig-from-memo dir))
 
 (defun gascity-context-rig-name-cached (&optional dir)
-  "Return the contextual rig name for DIR from memory only, or nil.
-Honours `gascity-context-rig', else the memo of an earlier
-`gascity-context-rig-name' answer; never spawns gc — the default for
-completion prompts (dashboard-v3 §8.5)."
-  (or gascity-context-rig
-      (let ((cached (gethash (expand-file-name (or dir default-directory))
-                             gascity-context--rig-cache 'miss)))
-        (and (not (eq cached 'miss)) cached))))
+  "Return the contextual rig of DIR from memory only, or nil.
+The same answer as `gascity-context-rig-name', which no longer spawns
+gc either; kept as the name completion prompts call (§8.5)."
+  (gascity-context--rig-from-memo dir))
 
 (provide 'gascity-context)
 ;;; gascity-context.el ends here

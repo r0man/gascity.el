@@ -3443,7 +3443,7 @@ and a pending load shows `…'."
   (should (equal (gascity-session--bead-args "k" "gascity.el")
                  '("bd" "list" "--assignee" "k" "--rig" "gascity.el"
                    "--status" "open,in_progress,blocked,deferred,closed"
-                   "--sort" "updated" "--reverse" "--limit" "50")))
+                   "--sort" "updated" "--reverse" "-n" "0")))
   ;; A nil rig drops the --rig scope.
   (should-not (member "--rig" (gascity-session--bead-args "k" nil))))
 
@@ -3454,7 +3454,7 @@ matches its assignee."
   (should (equal (gascity-session--worked-args "gascity.el")
                  '("bd" "list" "--has-metadata-key" "work_dir" "--rig" "gascity.el"
                    "--status" "open,in_progress,blocked,deferred,closed"
-                   "--sort" "updated" "--reverse" "--limit" "100")))
+                   "--sort" "updated" "--reverse" "-n" "0")))
   ;; A nil rig drops the --rig scope.
   (should-not (member "--rig" (gascity-session--worked-args nil))))
 

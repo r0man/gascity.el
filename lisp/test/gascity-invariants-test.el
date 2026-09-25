@@ -318,5 +318,49 @@ directory, whatever buffer is current when the callback fires (QA F5)."
       (call-interactively #'gascity-jump-beads)
       (should (equal offered '("city" "beads.el"))))))
 
+(ert-deftest gascity-test-context-rig-name-from-memo ()
+  "The contextual rig comes from the rig memo by path prefix, never gc
+\(QA F7: `gc rig status' without a name is rejected)."
+  (cl-letf (((symbol-function 'gascity-reader-read)
+             (lambda (&rest a) (error "Sync gc: %S" a)))
+            ((symbol-function 'gascity-rigs-cached)
+             (lambda (&rest _)
+               (list (gascity-domain-decode 'gascity-rig
+                                            '((name . "city") (path . "/home/u/city")
+                                              (hq . t)))
+                     (gascity-domain-decode 'gascity-rig
+                                            '((name . "beads.el")
+                                              (path . "/home/u/workspace/beads.el")))))))
+    (let ((gascity-context-rig nil))
+      (should (equal (gascity-context-rig-name "/home/u/workspace/beads.el/lisp/")
+                     "beads.el"))
+      (should (equal (gascity-context-rig-name-cached "/home/u/workspace/beads.el/")
+                     "beads.el"))
+      (should-not (gascity-context-rig-name "/home/u/city/"))
+      (should-not (gascity-context-rig-name "/home/u/workspace/beads.el2/"))
+      (should (equal (gascity-context-rig-name
+                      "/ssh:h:/home/u/workspace/beads.el/x/")
+                     "beads.el")))
+    (let ((gascity-context-rig "pinned"))
+      (should (equal (gascity-context-rig-name "/anywhere/") "pinned")))))
+
+(ert-deftest gascity-test-tabulated-spc-uses-thing-hook ()
+  "SPC on a list row dispatches through `beads-thing-toggle-functions'."
+  (with-temp-buffer
+    (cl-letf (((symbol-function 'gascity-convoy-list-refresh) #'ignore))
+      (gascity-convoy-list-mode))
+    (should (memq #'gascity-tabulated--toggle-row beads-thing-toggle-functions))
+    (should (eq (keymap-lookup gascity-convoy-list-mode-map "SPC")
+                'gascity-thing-toggle))
+    (let (toggled)
+      (cl-letf (((symbol-function 'gascity-tabulated-detail-toggle)
+                 (lambda () (setq toggled t))))
+        (setq tabulated-list-entries
+              (list (list '((id . "ga-1")) (vector "ga-1" "t" "open" "0/1"))))
+        (tabulated-list-print)
+        (goto-char (point-min))
+        (gascity-thing-toggle)
+        (should toggled)))))
+
 (provide 'gascity-invariants-test)
 ;;; gascity-invariants-test.el ends here

@@ -276,19 +276,20 @@ stopped agents take their template's provider from `gc agent list'."
         (kill-buffer buf)))))
 
 (ert-deftest gascity-test-agent-detail-log-argv ()
-  "`f' follows locally with gc, remotely through a no-pty ssh pipe (R4)."
-  (let ((default-directory "/tmp/"))
-    (cl-letf (((symbol-function 'gascity-context-city-args)
-               (lambda () '("--city" "/home/u/city"))))
-      (should (equal (gascity-session--log-argv "ec-fl8o" "/tmp/")
-                     (list gascity-executable "--city" "/home/u/city"
-                           "session" "logs" "ec-fl8o" "-f")))
-      (cl-letf (((symbol-function 'gascity-remote-ssh-pipe-argv)
-                 (lambda (dir argv) (list 'ssh dir argv))))
-        (should (equal (gascity-session--log-argv "ec-fl8o" "/ssh:h:/home/u/city/")
-                       '(ssh "/ssh:h:/home/u/city/"
-                             ("gc" "--city" "/home/u/city" "session" "logs"
-                              "ec-fl8o" "-f"))))))))
+  "`f' follows locally with gc, remotely through the reader's ssh pipe (R4)."
+  (cl-letf (((symbol-function 'gascity-reader--city-args)
+             (lambda () '("--city" "/home/u/city")))
+            ((symbol-function 'gascity-reader--city-env-overrides) #'ignore))
+    (should (equal (gascity-session--log-argv "ec-fl8o" "/tmp/")
+                   (list gascity-executable "--city" "/home/u/city"
+                         "session" "logs" "ec-fl8o" "-f")))
+    (cl-letf (((symbol-function 'gascity-reader--ssh-pipe-p) (lambda (&rest _) t))
+              ((symbol-function 'gascity-reader--ssh-command)
+               (lambda (exe args env) (list 'ssh default-directory exe args env))))
+      (should (equal (gascity-session--log-argv "ec-fl8o" "/ssh:h:/home/u/city/")
+                     (list 'ssh "/ssh:h:/home/u/city/" gascity-executable
+                           '("--city" "/home/u/city" "session" "logs" "ec-fl8o" "-f")
+                           nil))))))
 
 (ert-deftest gascity-test-agent-detail-follow-log-buffer ()
   "`f' opens `*gascity-log: TARGET*' fed by a local pipe process; `q' kills it."

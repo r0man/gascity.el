@@ -304,6 +304,7 @@ the §5.3 agent keys act on the row at point.
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (tabulated-list-init-header)
+  (gascity-tabulated--setup-things)
   (gascity-tabulated--install-filter
    'gascity-agents--filter
    (lambda () (gascity-agents--render)))

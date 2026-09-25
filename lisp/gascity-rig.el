@@ -225,29 +225,28 @@ Each section reads independently and refreshes stale-while-revalidate:
 the last payload keeps rendering while a reload is in flight."
   :state ((refresh-tick 0))
   :render
-  ;; All async hooks run unconditionally, in order, every render.
+  ;; All store hooks run unconditionally, in order, every render.
   (let* ((status-res
           (gascity-store-use (list "rig" "status" rig-name) :tick refresh-tick))
          (sessions-res
           (gascity-store-use '("session" "list") :tick refresh-tick))
          (ready-res
-          (gascity-store-use (list "bd" "ready" "--rig" rig-name) :tick refresh-tick))
+          (gascity-store-use (list "bd" "ready" "--rig" rig-name "-n" "0")
+                             :tick refresh-tick))
          (inprog-res
-          (vui-use-async (list 'inprog refresh-tick rig-name)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            (list "bd" "list" "--rig" rig-name
-                                  "--status" "in_progress") resolve reject))))
+          (gascity-store-use (list "bd" "list" "--rig" rig-name
+                                   "--status" "in_progress" "-n" "0")
+                             :tick refresh-tick))
          (orders-res
           (gascity-store-use '("order" "list") :tick refresh-tick))
          (dolt-res
           (gascity-store-use '("dolt" "health") :tick refresh-tick))
-         (status (gascity-ui-effective-load status-res (vui-use-ref nil)))
-         (sessions (gascity-ui-effective-load sessions-res (vui-use-ref nil)))
-         (ready (gascity-ui-effective-load ready-res (vui-use-ref nil)))
-         (inprog (gascity-ui-effective-load inprog-res (vui-use-ref nil)))
-         (orders (gascity-ui-effective-load orders-res (vui-use-ref nil)))
-         (dolt (gascity-ui-effective-load dolt-res (vui-use-ref nil))))
+         (status (gascity-ui-store-load status-res))
+         (sessions (gascity-ui-store-load sessions-res))
+         (ready (gascity-ui-store-load ready-res))
+         (inprog (gascity-ui-store-load inprog-res))
+         (orders (gascity-ui-store-load orders-res))
+         (dolt (gascity-ui-store-load dolt-res)))
     (pcase (plist-get status :state)
       ('error (vui-vstack
                (gascity-ui-section-header rig-name nil)

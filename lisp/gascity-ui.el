@@ -348,7 +348,8 @@ when a refresh failed over it), `error' with no data, else `pending'."
         (err (plist-get snapshot :error)))
     (pcase status
       ('ready (if err
-                  (list :state 'stale :data (plist-get snapshot :data) :error err)
+                  (list :state 'stale :data (plist-get snapshot :data) :error err
+                        :timed-out (plist-get snapshot :timed-out))
                 (list :state 'ready :data (plist-get snapshot :data))))
       ('error (list :state 'error :error err))
       (_ (list :state 'pending)))))
