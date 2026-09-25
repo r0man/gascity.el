@@ -1478,7 +1478,8 @@ worker drawn under its run (not a top-level row of the section)."
                       (pcase level ('attention (gascity-ui-glyph 'fail))
                              ('watch (gascity-ui-glyph 'watch)) (_ " "))
                       "    " (gascity-ui-fit (or (alist-get 'type event) "") 28)
-                      " " (gascity-ui-fit (gascity-dashboard--event-subject event) 30))
+                      " " (gascity-ui-truncate
+                           (gascity-dashboard--event-subject event) 30))
               nil
               (lambda () (gascity-dashboard--event-drawer event))
               'gascity-dashboard-event event
