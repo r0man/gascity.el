@@ -535,6 +535,22 @@ AGENT is the action object carried by an agent row in any view."
   (add-hook 'kill-buffer-hook #'gascity-session--log-teardown nil t))
 
 (keymap-set gascity-log-mode-map "q" #'kill-current-buffer)
+(keymap-set gascity-log-mode-map "g" #'gascity-session-log-restart)
+
+(defvar-local gascity-session--log-spawn nil
+  "Function of no arguments that (re)starts this log buffer's follower.")
+
+(defun gascity-session-log-restart ()
+  "Restart this buffer's log follower if it has ended (`g').
+The follower streams on its own; while it runs `g' only says so.  (The
+inherited `revert-buffer' would signal: the buffer has no file.)"
+  (interactive)
+  (cond ((process-live-p gascity-session--log-process)
+         (message "Still following"))
+        (gascity-session--log-spawn
+         (funcall gascity-session--log-spawn)
+         (message "Following again"))
+        (t (user-error "Nothing to follow here"))))
 
 (defun gascity-session--log-teardown ()
   "Stop this buffer's log follower."
@@ -598,20 +614,23 @@ TRAMP as a local ssh pipe.  `q' in the log buffer stops it."
          (buf (gascity-view-get-buffer-create (format "*gascity-log: %s*" target))))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-log-mode) (gascity-log-mode))
+      (setq gascity-session--log-spawn
+            (lambda ()
+              (let ((inhibit-read-only t)) (erase-buffer))
+              (setq gascity-session--log-process
+                    ;; A local process always: remote cities go through ssh.
+                    (let ((default-directory (if (file-remote-p dir) "~/" dir)))
+                      (make-process :name (format "gascity-log %s" target)
+                                    :buffer buf
+                                    :command argv
+                                    :connection-type 'pipe
+                                    :noquery t
+                                    :stderr (get-buffer-create
+                                             (format " *gascity-log-stderr: %s*" target))
+                                    :filter #'gascity-session--log-filter
+                                    :sentinel #'gascity-session--log-sentinel)))))
       (unless (process-live-p gascity-session--log-process)
-        (let ((inhibit-read-only t)) (erase-buffer))
-        (setq gascity-session--log-process
-              ;; A local process always: remote cities go through ssh.
-              (let ((default-directory (if (file-remote-p dir) "~/" dir)))
-                (make-process :name (format "gascity-log %s" target)
-                              :buffer buf
-                              :command argv
-                              :connection-type 'pipe
-                              :noquery t
-                              :stderr (get-buffer-create
-                                       (format " *gascity-log-stderr: %s*" target))
-                              :filter #'gascity-session--log-filter
-                              :sentinel #'gascity-session--log-sentinel)))))
+        (funcall gascity-session--log-spawn)))
     (pop-to-buffer buf)))
 
 ;;; Mode
