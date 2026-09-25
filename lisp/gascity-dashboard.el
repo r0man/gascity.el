@@ -72,7 +72,7 @@
 (require 'gascity-tabulated)
 
 ;; Openers and verbs live in sibling modules loaded alongside this one.
-(declare-function gascity-mail-inbox "gascity-tabulated")
+(declare-function gascity-mail-inbox "gascity-mail")
 (declare-function gascity-rig-list "gascity-tabulated")
 (declare-function gascity-convoy-list "gascity-tabulated")
 (declare-function gascity-order-list "gascity-tabulated")
@@ -1919,8 +1919,7 @@ Pure: reads buffer-local state and the TRAMP name only (§8.3 R2)."
   "Call the first defined command of CANDIDATES, else say NAME is pending.
 Views built by later phases are reached by name; until one exists the
 jump echoes instead of failing."
-  ;; `commandp', not `fboundp': `gascity-mail' is also the mail class's
-  ;; constructor, a function but no command.
+  ;; `commandp', not `fboundp': a jump target must be interactive.
   (let ((cmd (seq-find #'commandp candidates)))
     (if cmd
         (call-interactively cmd)

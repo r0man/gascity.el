@@ -507,6 +507,10 @@ absorbs drift on open sessions rather than draining them.")
             :long-option "message" :option-type :string
             :documentation "Message body text (`-m'/`--message'); from the
 compose buffer.")
+   (notify :initarg :notify :type boolean :initform nil
+           :long-option "notify" :option-type :boolean
+           :documentation "Nudge the recipient about this message, even if
+earlier mail is still unread (the compose buffer's Notify toggle).")
    (json :initarg :json :type boolean :initform t
          :long-option "json" :option-type :boolean
          :documentation "On: the JSON result carries the new message, which
@@ -525,6 +529,10 @@ compose buffer (`gascity-compose').")
             :long-option "message" :option-type :string
             :documentation "Reply body text (`-m'/`--message'); from the
 compose buffer.")
+   (notify :initarg :notify :type boolean :initform nil
+           :long-option "notify" :option-type :boolean
+           :documentation "Nudge the recipient about this message, even if
+earlier mail is still unread (the compose buffer's Notify toggle).")
    (json :initarg :json :type boolean :initform t
          :long-option "json" :option-type :boolean
          :documentation "On: the JSON result carries the reply, which

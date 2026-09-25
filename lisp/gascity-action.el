@@ -71,6 +71,7 @@
 (declare-function gascity-formula-recipe-cached "gascity-formula")
 (declare-function gascity-formula-invalidate "gascity-formula")
 (declare-function gascity-formula-refresh-async "gascity-formula")
+(declare-function gascity-mail-inbox-refresh "gascity-mail")
 
 ;;; ============================================================
 ;;; Synchronous action runner (inline-result callers only)
@@ -938,15 +939,7 @@ sessions instead of draining them.  City-level (gc has no `rig reload')."
   (interactive "P")
   (gascity-command-execute-interactive (gascity-command-reload :soft (and soft t))))
 
-;;; Mail — read / archive / mark-read / mark-unread (at point in the inbox)
-
-(defun gascity-mail--id-at-point ()
-  "Return the message id of the mail at point, or signal a `user-error'."
-  (let* ((message (gascity-mail-at-point))
-         (id (and message (gascity-mail-id message))))
-    (if (and id (stringp id) (not (string-empty-p id)))
-        id
-      (user-error "No message at point"))))
+;;; Async text views (peek, sling dry runs)
 
 (defun gascity-action--fill-text (buf text empty)
   "Replace read-only view BUF's text with TEXT, or EMPTY when TEXT is blank.
@@ -991,53 +984,6 @@ ORIGIN, when non-nil, is the view refreshed after such a mutation."
                    (message "%s" msg)
                    (gascity-action--fill-text buf msg empty))))
     buf))
-
-(defun gascity-mail--show-body (id text)
-  "Pop a read-only view buffer showing body TEXT of message ID.
-The buffer is keyed and pinned to the inbox's city
-\(`gascity-view-get-buffer-create'), so a remote city's message body
-carries that host's `default-directory'."
-  (let ((buf (gascity-view-get-buffer-create (format "*gc-mail: %s*" id))))
-    (gascity-action--fill-text buf text "(no message body)")
-    (pop-to-buffer buf)))
-
-;;;###autoload
-(defun gascity-mail-read-at-point ()
-  "Read the message at point and mark it read, show its body, then refresh.
-`RET' shows the cached fields without contacting gc; this `r' action runs
-`gc mail read', which also marks the message read, so the default
-unread-filtered inbox drops it on refresh.  The body buffer opens at
-once with `…' and fills in when gc answers (D9)."
-  (interactive)
-  (let ((id (gascity-mail--id-at-point)))
-    (gascity-action--async-text-view
-     (format "*gc-mail: %s*" id)
-     (gascity-command-mail-read :id id)
-     "(no message body)"
-     ;; Marking read changes the inbox: refresh it once gc has answered.
-     (current-buffer))))
-
-;;;###autoload
-(defun gascity-mail-archive-at-point ()
-  "Archive the message at point (confirmed) and refresh."
-  (interactive)
-  (let ((id (gascity-mail--id-at-point)))
-    (when (gascity-action--confirm "Archive message %s? " id)
-      (gascity-command-execute-interactive (gascity-command-mail-archive :id id)))))
-
-;;;###autoload
-(defun gascity-mail-mark-read-at-point ()
-  "Mark the message at point read without opening it, then refresh."
-  (interactive)
-  (gascity-command-execute-interactive
-   (gascity-command-mail-mark-read :id (gascity-mail--id-at-point))))
-
-;;;###autoload
-(defun gascity-mail-mark-unread-at-point ()
-  "Mark the message at point unread and refresh."
-  (interactive)
-  (gascity-command-execute-interactive
-   (gascity-command-mail-mark-unread :id (gascity-mail--id-at-point))))
 
 ;;; ============================================================
 ;;; Peek — read-only output capture (no mutation, no refresh)
@@ -1406,58 +1352,6 @@ catalog/recipe read and dispatch on the entered-from city
                                 :arg (gascity-sling-formula--bead-or-convoy-at-point))))
 
 ;;; ============================================================
-;;; Mail — send / reply via the compose buffer (gascity-compose §6)
-;;; ============================================================
-
-(defun gascity-mail--reply-subject (subject)
-  "Return a default reply subject for SUBJECT (prefix \"RE: \" once)."
-  (let ((s (or subject "")))
-    (if (string-match-p "\\`[Rr][Ee]: " s) s (concat "RE: " s))))
-
-;;;###autoload
-(defun gascity-mail-send (to subject)
-  "Compose and send a new message to TO with SUBJECT (both prompted).
-Opens a `gascity-compose' buffer for the body; in it,
-\\<gascity-compose-mode-map>\\[gascity-compose-finish] sends and
-\\[gascity-compose-abort] aborts.  TO completes over session aliases but
-accepts any address."
-  (interactive
-   (let ((to (gascity-action--read-assignee "Send mail to: ")))
-     (list to (read-string (format "Subject (to %s): " to)))))
-  (let ((origin (current-buffer)))
-    (gascity-compose
-     :buffer-name (format "*gc-mail to %s*" to)
-     :header (list (cons "To" to) (cons "Subject" subject))
-     :origin origin
-     :finish (lambda (body)
-               (gascity-command-act-async
-                (gascity-command-mail-send
-                 :to to :subject subject :message body)
-                :target to :origin origin)))))
-
-;;;###autoload
-(defun gascity-mail-reply-at-point ()
-  "Reply to the message at point — compose the body, then send to its sender.
-The subject defaults to the original prefixed with \"RE: \"."
-  (interactive)
-  (let* ((message (or (gascity-mail-at-point) (user-error "No message at point")))
-         (id (gascity-mail-id message))
-         (subject (read-string
-                   "Reply subject: "
-                   (gascity-mail--reply-subject (gascity-mail-subject message))))
-         (origin (current-buffer)))
-    (gascity-compose
-     :buffer-name (format "*gc-mail reply %s*" id)
-     :header (list (cons "To" (or (gascity-mail-from message) "(sender)"))
-                   (cons "Subject" subject))
-     :origin origin
-     :finish (lambda (body)
-               (gascity-command-act-async
-                (gascity-command-mail-reply
-                 :id id :subject subject :message body)
-                :origin origin)))))
-
-;;; ============================================================
 ;;; Sub-transients — hand-built command-dispatch backends
 ;;; ============================================================
 
@@ -1514,18 +1408,6 @@ bead in beads.el; this menu is targeted command dispatch (DESIGN §4)."
    ("D" "Remove dependency…" gascity-bead-dep-remove-at-point)
    ("n" "Create…" gascity-bead-create)
    ("v" "Visit (beads.el)" gascity-bead-visit)])
-
-;;;###autoload (autoload 'gascity-mail-dispatch "gascity-action" nil t)
-(beads-define-prefix gascity-mail-dispatch ()
-  "Dispatch mail actions in the inbox (a hand-built command backend).
-`read'/`archive'/`reply' act on the message at point; `send' composes a
-fresh message to a prompted recipient."
-  ["Mail"
-   ("r" "Read…" gascity-mail-read-at-point)
-   ("R" "Reply…" gascity-mail-reply-at-point)
-   ("s" "Send…" gascity-mail-send)
-   ("a" "Archive…" gascity-mail-archive-at-point)
-   ("u" "Mark unread" gascity-mail-mark-unread-at-point)])
 
 (provide 'gascity-action)
 ;;; gascity-action.el ends here

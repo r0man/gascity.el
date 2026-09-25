@@ -903,9 +903,9 @@ City start/stop keep their streaming `async-shell-command' buffer.")
 
 (defun gascity-test-store--verbs ()
   "Return (NAME . THUNK) for every input-free action verb, prompts answered."
-  (let ((mail (gascity-domain-decode 'gascity-mail
-                                     '((id . "m-1") (from . "mayor")
-                                       (subject . "hi")))))
+  (let ((mail (gascity-domain-decode 'gascity-mail-message
+                                             '((id . "m-1") (from . "mayor")
+                                               (subject . "hi")))))
     `((gascity-session-suspend . ,(lambda () (gascity-session-suspend "r/a")))
       (gascity-session-wake . ,(lambda () (gascity-session-wake "r/a")))
       (gascity-session-drain . ,(lambda () (gascity-session-drain "r/a")))
@@ -1010,13 +1010,16 @@ exceptions (city start/stop) are exempt by name."
               (should (< (- (float-time) start) 1.0))
               (ert-info ((format "%s" (car verb)))
                 (should (null sync-calls))
-                (should (null reads))
+                ;; `r' also opens the thread: one read beside the
+                ;; mark-read (§7.9).
+                (should (= (length reads)
+                           (if (eq (car verb) 'gascity-mail-read-at-point) 1 0)))
                 (should (= (length actions) 1))
                 ;; Only started: nothing has answered, the target is
                 ;; still pending.
                 (should (gascity-store-pending-targets))))))))
     (dolist (b (buffer-list))
-      (when (string-match-p "\\`\\*gc-\\(mail\\|peek\\)" (buffer-name b))
+      (when (string-match-p "\\`\\*\\(gc-\\(mail\\|peek\\)\\|gascity-mail-thread\\)" (buffer-name b))
         (kill-buffer b)))))
 
 (provide 'gascity-store-test)

@@ -7,8 +7,8 @@
 ;;; Commentary:
 
 ;; `tabulated-list-mode' views for the homogeneous `gc' lists: rigs,
-;; sessions, convoys, mail, orders, and Dolt databases (the Events view
-;; lives in gascity-events).  Per the design
+;; sessions, convoys, orders, and Dolt databases (the mail inbox lives in
+;; gascity-mail, the Events view in gascity-events).  Per the design
 ;; matrix, lists use tabulated-list (sorting, navigation, and
 ;; `tabulated-list-get-id' for free); the heterogeneous status overview
 ;; and detail views use vui instead.
@@ -70,18 +70,9 @@
 (declare-function gascity-session-wake-at-point "gascity-action")
 (declare-function gascity-session-drain-at-point "gascity-action")
 (declare-function gascity-session-peek-at-point "gascity-action")
-;; Write verbs (DESIGN-write-actions.md phase 1): session reset/undrain and
-;; the mail inbox read/archive/mark-unread at-point actions.
+;; Write verbs (DESIGN-write-actions.md phase 1): session reset/undrain.
 (declare-function gascity-session-reset-at-point "gascity-action")
 (declare-function gascity-session-undrain-at-point "gascity-action")
-(declare-function gascity-mail-read-at-point "gascity-action")
-(declare-function gascity-mail-archive-at-point "gascity-action")
-(declare-function gascity-mail-mark-unread-at-point "gascity-action")
-;; Write verbs (DESIGN-write-actions.md phase 2): mail reply (compose) and
-;; the mail-dispatch menu (`c').
-(declare-function gascity-mail-reply-at-point "gascity-action")
-(declare-function gascity-mail-dispatch "gascity-action")
-
 ;; Detail-view openers (the `RET' targets) live in gascity-rig /
 ;; gascity-session, loaded after this module via gascity.el.
 (declare-function gascity-rig-dashboard-at-point "gascity-rig")
@@ -532,7 +523,7 @@ the shared read's process when one is running, else nil."
   "Return the object id an action on row ID names, or nil."
   (cond ((gascity-agent-p id) (gascity-agent-name id))
         ((gascity-rig-p id) (gascity-rig-name id))
-        ((gascity-mail-p id) (gascity-mail-id id))
+        ((gascity-mail-message-p id) (gascity-mail-id id))
         ((gascity-order-p id) (or (gascity-order-name id)
                                   (gascity-order-scoped-name id)))
         ((stringp id) id)))
@@ -1302,135 +1293,6 @@ Asynchronous (`gascity-tabulated--refresh-async')."
 (cl-defmethod gascity-command-execute-interactive ((_cmd gascity-command-convoy-list))
   "Open the convoy list buffer."
   (gascity-convoy-list))
-
-;;; ============================================================
-;;; Mail
-;;; ============================================================
-
-(defconst gascity-mail-inbox-buffer-name "*gascity-mail*")
-
-(defvar-local gascity-mail-inbox--filter nil
-  "Active mail-inbox filter as command initargs (e.g. (:unread t)), or nil.")
-
-(defun gascity-mail-inbox--unread-p (message)
-  "Return non-nil when MESSAGE (a `gascity-mail') is unread.
-`gc mail inbox --json' gives each message a required boolean `read' field
-\(v1 `mail_message' schema); unread is its negation.  JSON `false' decodes
-to nil (see `gascity-reader-parse-json'), so an unread message reads nil."
-  (not (gascity-mail-read message)))
-
-(defun gascity-mail-inbox--match-p (message unread)
-  "Return non-nil when MESSAGE (a `gascity-mail') passes the UNREAD-only filter.
-A nil UNREAD keeps every message."
-  (or (not unread) (gascity-mail-inbox--unread-p message)))
-
-(defun gascity-mail-inbox--entry (message)
-  "Map MESSAGE (a `gascity-mail') to a tabulated-list entry.
-Columns follow the `gc mail inbox --json' v1 `mail_message' schema —
-`from', `subject', `created_at', and the boolean `read' (for the unread
-marker).  The entry id is the typed message, so `RET' can show every field."
-  (list message
-        (vector (gascity-tabulated--str (gascity-mail-from message))
-                (gascity-tabulated--str (gascity-mail-subject message))
-                (gascity-ui-time (gascity-mail-created-at message))
-                (if (gascity-mail-inbox--unread-p message) "●" ""))))
-
-(cl-defmethod gascity-at-point-visit ((message gascity-mail))
-  "Visit MESSAGE: show its typed fields in a read-only view buffer.
-Renders the data already fetched, without contacting `gc'; each slot of the
-`gascity-mail' is shown as \"slot: value\".  The buffer is keyed and
-pinned to the inbox's city (`gascity-view-get-buffer-create'), so a
-remote city's message view carries that host's `default-directory'."
-  (let ((buf (gascity-view-get-buffer-create "*gascity-mail-message*")))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (dolist (slot (beads-meta-command-slots 'gascity-mail))
-          (insert (format "%-14s %s\n"
-                          (concat (symbol-name slot) ":")
-                          (gascity-tabulated--str (slot-value message slot)))))
-        (goto-char (point-min)))
-      (view-mode 1))
-    (pop-to-buffer buf)))
-
-(defun gascity-mail-inbox-show ()
-  "Show the fields of the mail message at point in a view buffer."
-  (interactive)
-  (let ((message (tabulated-list-get-id)))
-    (if (gascity-mail-p message)
-        (gascity-at-point-visit message)
-      (user-error "No message at point"))))
-
-(defun gascity-mail-inbox-refresh ()
-  "Refresh the mail inbox, applying the current filter.
-Asynchronous (`gascity-tabulated--refresh-async')."
-  (interactive)
-  (let ((cmd (apply #'gascity-command-mail-inbox gascity-mail-inbox--filter)))
-    (gascity-tabulated--refresh-async
-     "Mail" cmd
-     (lambda (payload)
-       (let ((messages (gascity-domain-decode-list
-                        'gascity-mail (alist-get 'messages payload))))
-         (mapcar #'gascity-mail-inbox--entry
-                 (seq-filter (lambda (m)
-                               (gascity-mail-inbox--match-p m (oref cmd unread)))
-                             messages))))
-     gascity-mail-inbox--filter)))
-
-(gascity-filter-define-toggle gascity-mail-inbox-filter-unread
-  :unread "unread only")
-
-(beads-define-prefix gascity-mail-inbox-filter ()
-  "Filter the mail inbox; each change applies at once (§5.5)."
-  ["Filter mail"
-   ("-u" gascity-mail-inbox-filter-unread)
-   ("-S" gascity-tabulated-sort-by)
-   ("x" gascity-filter-reset)])
-
-(defvar-keymap gascity-mail-inbox-mode-map
-  :doc "Keymap for `gascity-mail-inbox-mode'."
-  :parent gascity-tabulated-base-map
-  "g"   #'gascity-mail-inbox-refresh
-  "/"   #'gascity-mail-inbox-filter
-  "RET" #'gascity-mail-inbox-show
-  ;; Write verbs.  `RET' stays the cheap, gc-free field view; `r' is the
-  ;; gc-contacting read (shows the body and marks read).  `a' archives
-  ;; (confirmed); `u' marks unread.  Phase 2 adds `R' reply (compose) and
-  ;; `c' for the mail-dispatch menu (which also exposes send).
-  "r"   #'gascity-mail-read-at-point
-  "R"   #'gascity-mail-reply-at-point
-  "a"   #'gascity-mail-archive-at-point
-  "u"   #'gascity-mail-mark-unread-at-point
-  "c"   #'gascity-mail-dispatch)
-
-(define-derived-mode gascity-mail-inbox-mode tabulated-list-mode "GC-Mail"
-  "Major mode showing the current agent's mail inbox.
-`RET' shows the cached message fields; `r' reads it via gc (shows the body,
-marks read); `a' archives (confirmed); `u' marks unread.
-\\{gascity-mail-inbox-mode-map}"
-  :group 'gascity
-  (setq tabulated-list-format
-        `[("From" 24 t) ("Subject" 50 t)
-          ("When" 10 ,(gascity-tabulated--time-sorter 2))
-          ("New" 3 nil)])
-  (setq tabulated-list-padding 1)
-  (setq tabulated-list-sort-key nil)
-  (tabulated-list-init-header)
-  (gascity-tabulated--setup-things)
-  (gascity-tabulated--install-filter 'gascity-mail-inbox--filter
-                                     #'gascity-mail-inbox-refresh))
-
-;;;###autoload
-(defun gascity-mail-inbox ()
-  "Show the current agent's mail inbox in a tabulated list."
-  (interactive)
-  (gascity-tabulated--show gascity-mail-inbox-buffer-name
-                           #'gascity-mail-inbox-mode
-                           #'gascity-mail-inbox-refresh))
-
-(cl-defmethod gascity-command-execute-interactive ((_cmd gascity-command-mail-inbox))
-  "Open the mail inbox buffer."
-  (gascity-mail-inbox))
 
 ;;; ============================================================
 ;;; Orders

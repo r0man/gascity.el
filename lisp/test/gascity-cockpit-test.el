@@ -647,10 +647,11 @@ SPC on a header folds that section, and the fold is re-applied."
               #'gascity-dashboard-rig-log)))
 
 (ert-deftest gascity-test-cockpit-jump-needs-a-command ()
-  "A jump target must be a command: `gascity-mail' is also a class
-constructor, so `j m' falls through to the mail inbox command."
+  "A jump target must be a command: `j m' opens the `gascity-mail' inbox
+\(the mail class is `gascity-mail-message', so the name is free)."
+  (should (commandp 'gascity-mail))
   (let (called)
-    (cl-letf (((symbol-function 'gascity-mail-inbox)
+    (cl-letf (((symbol-function 'gascity-mail)
                (lambda () (interactive) (setq called 'inbox))))
       (gascity-jump-mail)
       (should (eq called 'inbox))))

@@ -267,7 +267,7 @@ beads.el).")
 
 ;;; Mail — `gc mail inbox' -> `messages' vector (v1 mail_message schema)
 
-(defclass gascity-mail ()
+(defclass gascity-mail-message ()
   ((id
     :initarg :id :initform nil :type (or null string) :json-key id
     :accessor gascity-mail-id
@@ -296,8 +296,14 @@ beads.el).")
     :initarg :read :initform nil :type (or null boolean) :json-key read
     :accessor gascity-mail-read
     :documentation "Non-nil when the message has been read; unread is its
-negation (gc decodes `false' to nil)."))
-  :documentation "A mail message as reported by `gc mail inbox'.")
+negation (gc decodes `false' to nil).")
+   (thread-id
+    :initarg :thread-id :initform nil :type (or null string) :json-key thread_id
+    :accessor gascity-mail-thread-id
+    :documentation "The thread the message belongs to (`gc mail thread')."))
+  :documentation "A mail message as reported by `gc mail inbox'.
+Named `gascity-mail-message', not `gascity-mail': that is the inbox
+command (`j m', dashboard-v3 §7.9).")
 
 ;;; Order — `gc order list' -> `orders' vector
 

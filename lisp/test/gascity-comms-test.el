@@ -6,9 +6,10 @@
 
 ;;; Commentary:
 
-;; dashboard-v3 §7.8 (Events), driven from the real gc payloads in
-;; fixtures/v3.  The gc boundary is stubbed: reads at
-;; `gascity-events--read' / `gascity-store-fetch'.
+;; dashboard-v3 §7.8 (Events) and §7.9 (mail inbox, thread, compose),
+;; driven from the real gc payloads in fixtures/v3.  The gc boundary is
+;; stubbed: reads at `gascity-events--read' / `gascity-store-fetch',
+;; actions at the store's async runner (`gascity-test-with-store-stubs').
 
 ;;; Code:
 
@@ -310,6 +311,230 @@ the queue when it lands."
   (dolist (key '("-W" "-t" "-a" "-l" "-c" "-q" "x"))
     (should (gascity-test--prefix-has-key 'gascity-events-filter key)))
   (should (commandp 'gascity-events)))
+
+;;; Mail inbox
+
+(defmacro gascity-comms-test--with-inbox (spec &rest body)
+  "Run BODY in a fresh inbox holding the bright-lights inbox fixture.
+SPEC is (READS ACTIONS), recorded by `gascity-test-with-store-stubs'."
+  (declare (indent 1))
+  `(let ((default-directory "/tmp/gascity-comms-city/"))
+     (gascity-test-with-store-stubs ,(car spec) ,(cadr spec)
+      (cl-letf (((symbol-function 'beads-pager-window-page-size)
+                 (lambda (&rest _) 10000)))
+       (with-temp-buffer
+         (gascity-mail-inbox-mode)
+         (setq gascity-mail--city "bright-lights")
+         (gascity-mail-inbox-refresh)
+         (funcall (nth 1 (car ,(car spec)))
+                  (gascity-comms-test--json "bright-lights.mail-inbox.json"))
+         ,@body)))))
+
+(defun gascity-comms-test--finish (action &optional code)
+  "Answer the parked store ACTION with exit CODE (default 0)."
+  (funcall (nth 1 action)
+           (list :exit-code (or code 0) :stdout "{}"
+                 :stderr (if (eql code 1) "boom\n" ""))))
+
+(ert-deftest gascity-test-comms-inbox-renders ()
+  "Every unread message shows ● and bold; the header counts unread / total."
+  (gascity-comms-test--with-inbox (reads _actions)
+    (should (= (length gascity-tabulated--all-entries) 4))
+    (dolist (e gascity-tabulated--all-entries)
+      (should (equal (substring-no-properties (aref (cadr e) 0)) "●"))
+      (should (eq (get-text-property 0 'face (aref (cadr e) 2)) 'bold)))
+    (should (string-search "4 unread / 4" (gascity-mail-inbox--header-line)))
+    (should (string-search "bright-lights" (gascity-mail-inbox--header-line)))))
+
+(ert-deftest gascity-test-comms-inbox-ret-no-gc ()
+  "RET shows the message from the payload: no gc call, stays unread."
+  (gascity-comms-test--with-inbox (reads actions)
+    (let ((n (length reads)))
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (goto-char (point-min))
+        (forward-line 1)
+        (let* ((m (tabulated-list-get-id))
+               (buf (gascity-mail-inbox-show)))
+          (unwind-protect
+              (progn
+                (should (= (length reads) n))
+                (should (null actions))
+                (should (gascity-mail--unread-p m))
+                (should (string-search "Latency:" (with-current-buffer buf (buffer-string)))))
+            (kill-buffer buf)))))))
+
+(ert-deftest gascity-test-comms-inbox-read-opens-thread ()
+  "`r' opens the thread at once with `…', fills it from `gc mail
+thread', and marks the message read with a separate async call."
+  (gascity-comms-test--with-inbox (reads actions)
+    (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) (set-buffer b) b)))
+      (let ((inbox (current-buffer)))
+        (goto-char (point-min))
+        (while (not (and (tabulated-list-get-id)
+                                (equal (gascity-mail-id (tabulated-list-get-id))
+                                       "bl-wisp-a7gsqc")))
+          (forward-line 1))
+        (gascity-mail-read-at-point)
+        (let ((thread (current-buffer)))
+          (unwind-protect
+              (progn
+                (should (derived-mode-p 'gascity-mail-thread-mode))
+                (should (string-search "…" (buffer-string)))
+                (should (equal (car (car reads)) '("mail" "thread" "thread-b1b8bd38a599")))
+                (should (equal (car (car actions)) '("mail" "mark-read" "bl-wisp-a7gsqc")))
+                ;; The row is pending meanwhile.
+                (with-current-buffer inbox
+                  (should (seq-some (lambda (e) (equal (substring-no-properties
+                                                        (aref (cadr e) 0))
+                                                       "…"))
+                                    tabulated-list-entries)))
+                (funcall (nth 1 (car reads))
+                         (gascity-comms-test--json "bright-lights.mail-thread.json"))
+                (should-not (string-search "\n…\n" (buffer-string)))
+                (should (string-search "Dolt health advisory" (buffer-string)))
+                (should (string-search "From  human" (buffer-string)))
+                (should (string-search "R reply  a archive  u unread  q quit" (buffer-string)))
+                (gascity-comms-test--finish (car actions))
+                ;; Read here: kept in the list, without ●.
+                (with-current-buffer inbox
+                  (let ((row (seq-find (lambda (e) (equal (gascity-mail-id (car e))
+                                                          "bl-wisp-a7gsqc"))
+                                       gascity-tabulated--all-entries)))
+                    (should row)
+                    (should (equal (substring-no-properties (aref (cadr row) 0)) " ")))
+                  (should (string-search "3 unread / 4" (gascity-mail-inbox--header-line)))))
+            (kill-buffer thread)))))))
+
+(ert-deftest gascity-test-comms-inbox-bulk-archive ()
+  "`a' on a region archives every row in it: one call per message, `…'
+until each returns, one summary naming the failures and the log."
+  (gascity-comms-test--with-inbox (_reads actions)
+    (let (echo)
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq echo (apply #'format fmt args)))))
+        (transient-mark-mode 1)
+        (goto-char (point-min))
+        (forward-line 1)
+        (set-mark (point))
+        (forward-line 3)
+        (activate-mark)
+        (gascity-mail-archive-at-point)
+        (should (= (length actions) 3))
+        (should (= 3 (seq-count (lambda (e) (equal (substring-no-properties (aref (cadr e) 0))
+                                                   "…"))
+                                tabulated-list-entries)))
+        (gascity-comms-test--finish (nth 0 actions))
+        (gascity-comms-test--finish (nth 1 actions) 1)
+        (gascity-comms-test--finish (nth 2 actions))
+        (should (string-match-p
+                 "\\`Archived 2 of 3; 1 failed, see \\*gascity-log: gascity-comms-city\\*\\'"
+                 echo))
+        (should (= (length gascity-tabulated--all-entries) 2))))))
+
+(ert-deftest gascity-test-comms-inbox-unread-after-read ()
+  "`u' on a message read here marks it unread again (async, one call)."
+  (gascity-comms-test--with-inbox (_reads actions)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (goto-char (point-min))
+      (forward-line 1)
+      (let ((id (gascity-mail-id (tabulated-list-get-id))))
+        (gascity-mail-mark-read-at-point)
+        (gascity-comms-test--finish (car actions))
+        (should-not (gascity-mail--unread-p (gascity-mail-message :id id)))
+        (goto-char (point-min))
+        (while (not (and (tabulated-list-get-id)
+                                (equal (gascity-mail-id (tabulated-list-get-id)) id)))
+          (forward-line 1))
+        (gascity-mail-mark-unread-at-point)
+        (should (equal (car (car actions)) (list "mail" "mark-unread" id)))
+        (gascity-comms-test--finish (car actions))
+        (should (gascity-mail--unread-p (gascity-mail-message :id id :read t)))))))
+
+(ert-deftest gascity-test-comms-inbox-filters ()
+  "`-u' unread only, `-a' from, `-q' search; applied to the rows in hand."
+  (gascity-comms-test--with-inbox (reads _actions)
+    (let ((n (length reads)))
+      (gascity-mail--set-filter :search "12h old")
+      (should (= (length gascity-tabulated--all-entries) 2))
+      (gascity-mail--set-filter :from "nobody")
+      (should (= (length gascity-tabulated--all-entries) 0))
+      (should (string-search "from=nobody" (gascity-mail-inbox--header-line)))
+      (funcall gascity-filter-reset-function)
+      (should (= (length gascity-tabulated--all-entries) 4))
+      (should (= (length reads) n)))))
+
+(ert-deftest gascity-test-comms-inbox-error-keeps-rows ()
+  "A failed inbox re-read keeps the rows and shows the error in the header."
+  (gascity-comms-test--with-inbox (reads _actions)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (gascity-mail-inbox-refresh t)
+      (funcall (nth 2 (car reads)) "gc mail inbox failed: boom")
+      (should (= (length gascity-tabulated--all-entries) 4))
+      (should (string-search "boom" (gascity-mail-inbox--header-line))))))
+
+(ert-deftest gascity-test-comms-mail-command-and-keys ()
+  "`gascity-mail' is the inbox command (`j m'); the class is
+`gascity-mail-message'; the inbox binds the §5.3 mail keys."
+  (should (commandp 'gascity-mail))
+  (should (gascity-mail-message-p (gascity-mail-message :id "x")))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "RET") #'gascity-mail-inbox-show))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "r") #'gascity-mail-read-at-point))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "a") #'gascity-mail-archive-at-point))
+  (should (eq (keymap-lookup gascity-mail-inbox-mode-map "u")
+              #'gascity-mail-mark-unread-at-point))
+  (should (eq (keymap-lookup gascity-mail-thread-mode-map "R") #'gascity-mail-reply-at-point))
+  (should (eq (keymap-lookup gascity-mail-thread-mode-map "a")
+              #'gascity-mail-archive-at-point))
+  (dolist (key '("-u" "-a" "-W" "-q" "x"))
+    (should (gascity-test--prefix-has-key 'gascity-mail-inbox-filter key))))
+
+;;; Compose
+
+(ert-deftest gascity-test-comms-compose-notify-and-async-send ()
+  "C-c C-n toggles Notify; C-c C-c closes the draft at once and starts
+`gc mail reply … --notify --message BODY' (the body is argv)."
+  (let ((default-directory "/tmp/gascity-comms-city/")
+        (m (gascity-mail-message :id "bl-1" :from "mayor" :subject "hi"))
+        (popped nil))
+    (gascity-test-with-store-stubs _reads actions
+      (cl-letf (((symbol-function 'gascity-mail-at-point) (lambda () m))
+                ((symbol-function 'read-string) (lambda (_p d &rest _) d))
+                ((symbol-function 'pop-to-buffer) (lambda (b &rest _) (setq popped b))))
+        (gascity-mail-reply-at-point)
+        (let ((buf popped))
+          (with-current-buffer buf
+            (should (string-search "Notify: no" (buffer-string)))
+            (should (string-search "--text follows this line--" (buffer-string)))
+            (gascity-compose-toggle-notify)
+            (should (string-search "Notify: yes" (buffer-string)))
+            (goto-char (point-max))
+            (insert "line one\n# not a comment")
+            (gascity-compose-finish))
+          (should-not (buffer-live-p buf))
+          (should (= (length actions) 1))
+          (let ((args (car (car actions))))
+            (should (equal (seq-take args 3) '("mail" "reply" "bl-1")))
+            (should (member "--notify" args))
+            (should (equal (cadr (member "--message" args))
+                           "line one\n# not a comment"))
+            (should (equal (cadr (member "--subject" args)) "RE: hi"))))))))
+
+(ert-deftest gascity-test-comms-compose-failure-keeps-draft ()
+  "A failed send puts the body on the kill ring."
+  (let ((default-directory "/tmp/gascity-comms-city/")
+        (kill-ring nil)
+        (popped nil))
+    (gascity-test-with-store-stubs _reads actions
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) (setq popped b)))
+                ((symbol-function 'message) #'ignore))
+        (gascity-mail-send "mayor" "subject")
+        (with-current-buffer popped
+          (goto-char (point-max))
+          (insert "precious body")
+          (gascity-compose-finish))
+        (gascity-comms-test--finish (car actions) 1)
+        (should (equal (car kill-ring) "precious body"))))))
 
 (provide 'gascity-comms-test)
 ;;; gascity-comms-test.el ends here

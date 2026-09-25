@@ -76,6 +76,7 @@
 (require 'gascity-run)
 (require 'gascity-session)
 (require 'gascity-events)
+(require 'gascity-mail)
 
 ;;; City targeting
 
@@ -128,7 +129,7 @@ the lists and the status dashboard."
     ("r" "Rigs" gascity-rig-list)
     ("a" "Sessions" gascity-session-list)
     ("c" "Convoys" gascity-convoy-list)
-    ("m" "Mail inbox" gascity-mail-inbox)
+    ("m" "Mail inbox" gascity-mail)
     ("e" "Events" gascity-events)
     ("o" "Orders" gascity-order-list)
     ("D" "Dolt databases" gascity-dolt-list)]

@@ -3637,42 +3637,43 @@ bead (matched by assignee) stays on the hook."
 (ert-deftest gascity-test-mail-filter-match ()
   "Mail unread-only filter keeps unread messages; nil keeps all.
 Unread is the negation of the v1 `read' boolean (gc decodes `false' to nil)."
-  (let ((unread (gascity-domain-decode 'gascity-mail '((read . nil))))
-        (seen (gascity-domain-decode 'gascity-mail '((read . t)))))
+  (let ((unread (gascity-domain-decode 'gascity-mail-message '((read . nil))))
+        (seen (gascity-domain-decode 'gascity-mail-message '((read . t)))))
     (should (gascity-mail-inbox--match-p unread nil))
     (should (gascity-mail-inbox--match-p seen nil))
-    (should (gascity-mail-inbox--match-p unread t))
-    (should-not (gascity-mail-inbox--match-p seen t))))
+    (should (gascity-mail-inbox--match-p unread '(:unread t)))
+    (should-not (gascity-mail-inbox--match-p seen '(:unread t)))))
 
 (ert-deftest gascity-test-mail-entry ()
   "A mail entry reads the v1 schema keys and marks unread rows.
 `from'/`subject'/`created_at' (relative) become the columns, the typed
 message is the id, and a non-`read' message shows the ● marker."
   (let* ((message (gascity-domain-decode
-                   'gascity-mail
+                   'gascity-mail-message
                    '((id . "msg-1") (from . "mayor/") (to . "gce/furiosa")
                      (subject . "Re: status") (body . "...")
                      (created_at . "2026-06-01T19:18:18Z") (read . nil))))
          (entry (gascity-mail-inbox--entry message)))
     (should (eq (car entry) message))
-    (should (gascity-mail-p (car entry)))
+    (should (gascity-mail-message-p (car entry)))
     (let ((cols (gascity-test--plain-cols entry)))
-      (should (equal (nth 0 cols) "mayor/"))
-      (should (equal (nth 1 cols) "Re: status"))
+      ;; Unread `●' leads (dashboard-v3 §7.9), then from, subject, when.
+      (should (equal (nth 0 cols) "●"))
+      (should (equal (nth 1 cols) "mayor/"))
+      (should (equal (nth 2 cols) "Re: status"))
       ;; Relative time, ISO in help-echo (dashboard-v3 §6.1).
-      (should (equal (nth 2 cols)
+      (should (equal (nth 3 cols)
                      (gascity-ui-relative-time "2026-06-01T19:18:18Z")))
-      (should (equal (get-text-property 0 'help-echo (aref (cadr entry) 2))
-                     "2026-06-01T19:18:18Z"))
-      (should (equal (nth 3 cols) "●"))))
+      (should (equal (get-text-property 0 'help-echo (aref (cadr entry) 3))
+                     "2026-06-01T19:18:18Z"))))
   ;; A read message clears the marker.
-  (should (equal (nth 3 (gascity-test--plain-cols
+  (should (equal (nth 0 (gascity-test--plain-cols
                          (gascity-mail-inbox--entry
                           (gascity-domain-decode
-                           'gascity-mail
+                           'gascity-mail-message
                            '((from . "a") (subject . "s")
                              (created_at . "2026-06-01T00:00:00Z") (read . t))))))
-                 "")))
+                 " ")))
 
 (ert-deftest gascity-test-order-filter-match ()
   "Order filter ANDs enabled-only and exact type; nil/empty values match all."
@@ -3904,7 +3905,6 @@ seconds per `g' over TRAMP."
   (dolist (spec '((gascity-rig-list-refresh ("rig" "list"))
                   (gascity-session-list-refresh ("session" "list"))
                   (gascity-convoy-list-refresh ("convoy" "list"))
-                  (gascity-mail-inbox-refresh ("mail" "inbox"))
                   (gascity-order-list-refresh ("order" "list"))
                   (gascity-dolt-list-refresh ("dolt" "health"))))
     (gascity-test--with-async-list (calls)
@@ -4211,8 +4211,8 @@ from either list now refreshes it in place like every other view."
 (ert-deftest gascity-test-mail-at-point ()
   "`gascity-mail-at-point' narrows to a mail message; `--id-at-point' guards."
   (cl-letf (((symbol-function 'gascity-object-at-point)
-             (lambda () (gascity-mail :id "m1"))))
-    (should (gascity-mail-p (gascity-mail-at-point)))
+             (lambda () (gascity-mail-message :id "m1"))))
+    (should (gascity-mail-message-p (gascity-mail-at-point)))
     (should (equal (gascity-mail--id-at-point) "m1")))
   ;; A non-mail object at point yields nil / a clean error.
   (cl-letf (((symbol-function 'gascity-object-at-point)
@@ -4276,7 +4276,7 @@ and `c' mail-dispatch."
   ;; Mail archive (at point) — `no' answer must not execute.
   (let (ran)
     (cl-letf (((symbol-function 'gascity-mail-at-point)
-               (lambda () (gascity-mail :id "m1")))
+               (lambda () (gascity-mail-message :id "m1")))
               ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
               ((symbol-function 'gascity-command-execute-interactive)
                (lambda (&rest _) (setq ran t)))
@@ -6394,8 +6394,8 @@ message view — and never reuses a local city's message buffer (the
 gce-cvu repro: the shared name kept a stale local `default-directory')."
   (gascity-test--with-mock-remote
     (let* ((remote-prefix (file-remote-p default-directory))
-           (name (format "*gascity-mail-message@%s*" remote-prefix))
-           (message (gascity-mail :id "m1" :from "qa@example.com" :to "you"
+           (name (format "*gascity-mail-thread: m1@%s*" remote-prefix))
+           (message (gascity-mail-message :id "m1" :from "qa@example.com" :to "you"
                                   :subject "s" :body "b"
                                   :created-at "2026-01-01" :read nil)))
       (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
@@ -6410,20 +6410,24 @@ gce-cvu repro: the shared name kept a stale local `default-directory')."
           (when (get-buffer name) (kill-buffer name)))))))
 
 (ert-deftest gascity-test-remote-mail-body-view ()
-  "`r' on a remote inbox row shows the body in a host-qualified,
-remotely pinned buffer."
+  "`r' on a remote inbox row opens the thread in a host-qualified,
+remotely pinned buffer, showing `…' until gc answers."
   (gascity-test--with-mock-remote
     (let* ((remote-prefix (file-remote-p default-directory))
-           (name (format "*gc-mail: m1@%s*" remote-prefix)))
-      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+           (name (format "*gascity-mail-thread: t1@%s*" remote-prefix)))
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b))
+                ((symbol-function 'gascity-store-fetch) #'ignore))
         (unwind-protect
             (progn
-              (gascity-mail--show-body "m1" "body text")
+              (gascity-mail-thread-show
+               (gascity-mail-message :id "m1" :thread-id "t1" :body "body text"))
               (let ((buf (get-buffer name)))
                 (should buf)
                 (should (equal (file-remote-p
                                 (buffer-local-value 'default-directory buf))
-                               remote-prefix))))
+                               remote-prefix))
+                (should (string-search "…" (with-current-buffer buf
+                                             (buffer-string))))))
           (when (get-buffer name) (kill-buffer name)))))))
 
 (ert-deftest gascity-test-remote-peek-view ()
