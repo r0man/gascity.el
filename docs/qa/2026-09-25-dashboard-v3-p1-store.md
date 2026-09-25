@@ -69,3 +69,20 @@ remote reads in Emacs (4 with one action on its own lane); host peak
 (3 reads + 1 action + the city's own). Stalls: the first-contact one
 (1.0 s) and one 262 ms render on the warm reopen. Actions unchanged
 (1–7 ms to return); `bl-wisp-lu30rp` left unread as found.
+
+## Round 2 (QA baseline F1/F3/F4/F8/F10)
+
+- F1/F8: ssh pipes are built with no TRAMP round trip
+  (`gascity-remote-ssh-pipe-argv :resolve nil`: pure PATH fragment,
+  gascity's own ControlPath `gascity-ssh-%C`), so the handshake runs in
+  the ssh process; a TRAMP fallback's connection setup is bounded by the
+  R5 deadline (→ offline). Remote views open in 28–156 ms; the first open
+  of a city still pays the synchronous `city.toml` walk (≈1 s cold,
+  including TRAMP's own connection; bounded, cached).
+- F3: native JSON (`json-parse-buffer`, null/false → nil), chunks joined
+  once in the filters. Local cockpit: no main-loop gap > 250 ms.
+- F4: rig/session/order prompts from memory + background refresh
+  (`gascity-rig-names-for-prompt`, `gascity-store-peek`,
+  `gascity-context-rig-name-cached`).
+- F10: one local cockpit open = 9 gc spawns (status, session list, mail
+  count, events, rig list ×1, convoy list, escalations, 2 work stores).
