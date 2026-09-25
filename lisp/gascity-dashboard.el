@@ -1165,8 +1165,9 @@ properties.  The row is a thing whose SPC toggles the drawer."
              (ladder (gascity-dashboard--ladder root graph))
              (label (gascity-dashboard--ladder-label ladder))
              (rig (alist-get 'gascity-rig root))
-             (nested (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) id))
-                                 in-progress)))
+             (nested (gascity-dashboard--one-per-worker
+                      (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) id))
+                                  in-progress))))
         (push (append
                (gascity-dashboard--object-row
                 (concat "run:" id)
@@ -1200,6 +1201,22 @@ properties.  The row is a thing whose SPC toggles the drawer."
                   workers (if (= workers 1) "" "s")))
      (gascity-dashboard--cap-groups items "moving" #'gascity-jump-runs)
      ctx :loads '(:work) :label "bd list")))
+
+(defun gascity-dashboard--one-per-worker (beads)
+  "Return BEADS with one bead per assignee, the most specific kept.
+A looping step and its current iteration are both in progress under
+the same worker; the iteration (it carries `gc.logical_bead_id') names
+what the worker does now."
+  (let ((seen (make-hash-table :test 'equal))
+        (out nil))
+    (dolist (b (sort (copy-sequence beads)
+                     (lambda (a _) (alist-get 'gc.logical_bead_id
+                                              (gascity-dashboard--meta a)))))
+      (let ((who (or (alist-get 'assignee b) (alist-get 'id b))))
+        (unless (gethash who seen)
+          (puthash who t seen)
+          (push b out))))
+    (nreverse out)))
 
 (defun gascity-dashboard--worker-row (bead sessions ctx indent &optional nested)
   "Return the lines of in-progress BEAD's worker, joined to SESSIONS.

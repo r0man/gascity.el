@@ -661,5 +661,52 @@ constructor, so `j m' falls through to the mail inbox command."
       (gascity-jump--call '(gascity-no-such-view) "Health")
       (should (equal msg "The Health view is not available yet")))))
 
+(ert-deftest gascity-test-cockpit-moving-run-with-worker ()
+  "Moving shows an active run's ladder, active step and progress, with its
+live worker nested once (a looping step and its iteration share a worker)."
+  (let* ((graph (mapcar
+                 (lambda (b)
+                   (let ((ref (alist-get 'gc.step_ref (alist-get 'metadata b))))
+                     (cond ((equal ref "build-basic.prepare")
+                            (cons '(status . "closed") b))
+                           ((member ref '("build-basic.requirements"
+                                          "requirements.iteration.1"))
+                            (append `((status . "in_progress")
+                                      (assignee . "gc__requirements-planner-ec-fl8o")
+                                      (updated_at . ,(gascity-cockpit-test--ts 180)))
+                                    b))
+                           (t (cons '(status . "open") b)))))
+                 (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) "be-52m5"))
+                             (append (gascity-cockpit-test--json
+                                      "emacs-city.bd-list-all-beads.el-runs.json")
+                                     nil))))
+         (root `((id . "be-52m5") (status . "in_progress") (title . "build-basic")
+                 (created_at . ,(gascity-cockpit-test--ts 7200))
+                 (updated_at . ,(gascity-cockpit-test--ts 100))
+                 (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+                 (gascity-rig . "beads.el")))
+         (beads (cons root (seq-filter (lambda (b) (equal (alist-get 'status b)
+                                                          "in_progress"))
+                                       graph)))
+         (graphs (let ((h (make-hash-table :test 'equal)))
+                   (puthash "be-52m5" graph h) h))
+         (sessions (list `((id . "ec-fl8o")
+                           (agent_name . "beads.el/gc.requirements-planner-1")
+                           (state . "active")
+                           (session_name . "gc__requirements-planner-ec-fl8o")
+                           (last_active . ,(gascity-cockpit-test--ts 180)))))
+         (ctx (plist-put (gascity-cockpit-test--ctx :beads beads :sessions sessions)
+                         :graphs graphs))
+         (text (gascity-cockpit-test--text
+                (let ((gascity-dashboard--view nil))
+                  (gascity-dashboard--moving-lines ctx)))))
+    (should (string-match-p "^Moving  1 run · 1 worker" text))
+    (should (string-match-p
+             "⬣ be-52m5 +build-basic +◆⬣········ +requirements +1/10 +2h +beads.el"
+             text))
+    (should (string-match-p "└ ● requirements-planner-1 +be-bcb5 +Generate requirements"
+                            text))
+    (should (= 1 (cl-count ?└ text)))))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here
