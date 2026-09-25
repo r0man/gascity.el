@@ -92,15 +92,20 @@ invoke the at-point detail command.  Falls back to the first row."
     (gascity-polecat-detail-at-point))
   (window-buffer (selected-window)))
 
+(defun gascity-shots--cockpit-buffer ()
+  "Open the city cockpit and return its (city-keyed) buffer."
+  (gascity-dashboard)
+  (window-buffer (selected-window)))
+
 (defun gascity-shots--dispatch-frame ()
-  "Show the `gascity' dispatcher transient over the status dashboard."
-  (gascity-status)
-  (screenshot-settle 12)
-  (switch-to-buffer "*gascity-status*")
+  "Show the `?' dispatch transient over the city cockpit."
+  (let ((buf (gascity-shots--cockpit-buffer)))
+    (screenshot-settle 12)
+    (switch-to-buffer buf))
   (delete-other-windows)
   (set-frame-size (selected-frame) 128 34)
   (redisplay t)
-  (transient-setup 'gascity)
+  (transient-setup 'gascity-dispatch)
   (redisplay t)
   nil)
 
@@ -108,9 +113,7 @@ invoke the at-point detail command.  Falls back to the first row."
   "Return the full alist of shots: (NAME THUNK . PROPS)."
   (list
    ;; vui dashboards — auto-fit height.
-   (list "status"
-         (lambda () (gascity-status) "*gascity-status*")
-         :settle 15)
+   (list "cockpit" #'gascity-shots--cockpit-buffer :settle 15)
    (list "rig-dashboard"
          (lambda () (gascity-rig-dashboard gascity-shots-rig)
            (gascity-rig-dashboard--buffer-name gascity-shots-rig))

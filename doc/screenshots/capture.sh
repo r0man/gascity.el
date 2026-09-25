@@ -44,10 +44,10 @@ THUMB_COLORS=128  # a preview needs fewer colours
 
 # ---- Capture manifest --------------------------------------------------
 # One line per theme: "THEME  SUFFIX  view view view ...".  A view named
-# in two themes is captured twice (e.g. the status board, to show theming).
+# in two themes is captured twice (e.g. the cockpit, to show theming).
 read -r -d '' MANIFEST <<'EOF' || true
-ef-elea-dark  -dark   status rig-dashboard session-list convoy-list dolt-list dispatch
-ef-cyprus     -light  status session-detail rig-list order-list
+ef-elea-dark  -dark   cockpit rig-dashboard session-list convoy-list dolt-list dispatch
+ef-cyprus     -light  cockpit session-detail rig-list order-list
 EOF
 
 log() { printf '\033[1;36m[capture]\033[0m %s\n' "$*" >&2; }

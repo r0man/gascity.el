@@ -11,13 +11,11 @@ its commands, keyboard-first, the way Magit fronts git. The UI is hand-built in
 the magit/forge style — deliberately designed, sectioned, keyboard-driven
 buffers — not auto-generated. See [docs/DESIGN.md](docs/DESIGN.md).
 
-[![The gascity status dashboard](doc/images/status-dark-thumb.png)](doc/images/status-dark.png)
-
 ## Documentation
 
 A full **[user manual](doc/gascity.texi)** (Texinfo) covers installation, every
-dashboard and list, the navigation and section model, the keymaps, the actions,
-and customization — with screenshots. Build it to Info and styled HTML:
+view, the navigation model, the keymaps, the actions, remote cities and
+customization. Build it to Info and styled HTML:
 
 ```sh
 make -C doc          # doc/gascity.info and doc/gascity.html/
@@ -27,17 +25,21 @@ make -C doc html     # styled multi-page HTML only
 
 Screenshots are produced by a reusable, documented pipeline under
 [doc/screenshots/](doc/screenshots/README.md) (`make -C doc screenshots`).
+They predate dashboard v3 and are regenerated once all v3 views have landed.
 
 ## Status
 
 A usable porcelain: a city cockpit (what needs you, what is moving, who
-works, what is queued, what just happened); tabulated list views with
-window-sized pagination (`]`/`[`/`G`) and per-list `/` filters; agent actions
-(Dired into a worktree, attach to a tmux session); mutating-command dispatch
-(rig suspend/resume/restart, session nudge/suspend/kill/wake/drain, sling, order
-run, city start/stop); and vui detail views — a rig dashboard and a
-session/polecat detail. Bead-UI delegation and polish are planned (DESIGN.md §7,
-§11).
+works, what is queued, what just happened); the Agents view (table and tree)
+and agent detail; Runs and run detail; a rig dashboard;
+Health (supervisor, versions, stores, `gc doctor` on demand); Cities (every
+city on every host); `gc costs`; an opt-in mode-line lighter; tabulated lists
+with window-sized pagination and per-list `/` filters; and at-point actions
+(nudge/suspend/kill/wake/drain/reset, rig suspend/resume/restart, sling, order
+run, city lifecycle) that run in the background. Views refresh from one live
+`gc events --follow` stream per city, never on a timer, and every view works
+on a remote city over TRAMP. Still in progress (dashboard v3): the Events view
+and the Mail view.
 
 ## Requirements
 
@@ -66,21 +68,28 @@ With the dependencies on your `load-path`:
 | Command | View |
 |---|---|
 | `M-x gascity-dashboard` | City cockpit: Needs you, Moving, Agents, Work, Activity, Rigs |
+| `M-x gascity-agents` | Every agent (`T` toggles the rig/pool tree) |
+| `M-x gascity-runs` | Workflow runs; `RET` run detail |
 | `M-x gascity-rig-dashboard` | Rig dashboard (agents, beads, orders, Dolt) |
+| `M-x gascity-health` | Supervisor, versions, stores, rig stores, `gc doctor` |
+| `M-x gascity-cities` | Every city on this machine and the remote hosts |
+| `M-x gascity-costs` | `gc costs` output |
 | `M-x gascity-rig-list` | Rigs |
 | `M-x gascity-session-list` | Agent sessions |
 | `M-x gascity-convoy-list` | Convoys |
 | `M-x gascity-mail-inbox` | Mail inbox |
 | `M-x gascity-order-list` | Orders |
 | `M-x gascity-dolt-list` | Dolt databases |
+| `M-x gascity-mode-line-mode` | Global lighter: `GC[ec ■1▲2 · bl ▲1]` |
 
 ### Keys
 
 Everywhere: `g` refreshes, `q` buries, `RET` drills in (never folds), `?`
 shows every verb under the key it has in the views, `j` jumps to another view
-(`j j` cockpit, `j a` agents, `j b` beads, `j m` mail, `j o`/`j v`/`j d`
-orders/convoys/Dolt, `j g` rig dashboard), `/` opens the view's filter (changes
-apply at once, `x` resets), and `S` slings. `TAB`/`S-TAB` move to the
+(`j j` cockpit, `j a` agents, `j r` runs, `j b` beads, `j m` mail, `j h` health, `j c`
+cities, `j o`/`j v`/`j d` orders/convoys/Dolt, `j g` rig dashboard, `j $`
+costs), `/` opens the view's filter (changes apply at once, `x` resets), and
+`S` slings. `TAB`/`S-TAB` move to the
 next/previous thing (a section header, a row, a fold), `SPC` toggles the thing
 at point: it folds a section, expands a fold row, or opens a row's inline
 detail. In the tabulated lists `SPC` shows the row in a `*gascity-detail*` side
@@ -94,21 +103,40 @@ closes it first); `]`/`[`/`G` page, and sorting is a header click or `/ -S`.
   `d`/`t`/`v` Dired/tmux/peek, `M`/`s`/`K`/`w`/`D`/`R`/`U`
   nudge/suspend/kill/wake/drain/reset/undrain; on a rig row `RET` opens the rig
   dashboard, `l` its git log, `s`/`r`/`R` suspend/resume/restart. `W` toggles
-  live refresh.
+  the city's live event stream.
 - **Rig list:** `RET` opens the rig dashboard; `d` Dired into the rig directory;
   `s`/`r`/`R` suspend/resume/restart.
-- **Session list:** `RET` opens the session/polecat detail; `d` Dired; `t` tmux
-  attach; `M`/`s`/`K`/`w`/`D` session actions; `v` peeks at recent output;
-  `n`/`p` move by line.
+- **Agents:** every agent, stalled ones pinned first; `T` toggles the
+  city → rig → pool tree; `/` filters by state, rig, provider, search; the
+  agent keys above apply.
+- **Agent detail** (`i` anywhere): header, Work, Run, Transcript, Mail,
+  History; `f` follows the log, `v` peeks, the agent keys act on the
+  buffer's agent wherever point is.
+- **Runs:** active, waiting and failed runs as cards with their step
+  ladder; `RET` run detail (steps, loops, plan files, convoy; `C` shows
+  control nodes), `b` the root bead, `H` history, `/` rig/formula/state/window.
+- **Session list:** `RET` attaches; `i` detail; `d` Dired; the session
+  actions and `v` peek.
 - **Rig dashboard:** agents table, ready/in-progress beads (`RET` → beads.el),
   rig-scoped orders, and Dolt stats; the agent action keys above act on the
   agent at point, and `N`/`P` jump between sections.
-- **Session/polecat detail:** state, mail count, the bead on the hook, and
-  recent history (`RET` → beads.el); `v` peek, `M` nudge, `D` drain, `s` suspend,
-  `K` kill, `w` wake, `d` Dired, `t` tmux act on the subject agent; `n`/`p` move
-  by line, `N`/`P` jump between sections.
 - **Convoys:** `RET` opens the convoy bead via beads.el.
 - **Orders:** `RET` opens the order's source file; `x` runs the order manually.
+- **Health:** `!` runs `gc doctor` in the background (never on open or `g`;
+  the report is cached with its age), `F` runs `--fix` after confirmation;
+  failed and warned checks get a row each, `SPC` shows a check's fix hint.
+- **Cities:** `RET` opens that city's cockpit, on its host; hosts are the local
+  one, `gascity-remote-hosts`, and every remote host visited this session.
+- **Lighter:** `gascity-mode-line-mode` shows each open cockpit's Needs you
+  totals; `mouse-1` opens the cockpit. It never runs `gc` at redisplay.
+
+### Actions never block
+
+An action asks for what it needs (a confirmation, a nudge message, the sling
+transient), then starts `gc` in the background and returns. The row shows `…`
+until gc answers; success is echoed (`Suspended mayor`); a failure echoes gc's
+first error line and logs the rest to `*gascity-log: CITY*`. Every process has
+a deadline (`gascity-remote-async-timeout`, 30 s).
 
 ## Remote cities (TRAMP)
 
@@ -150,45 +178,33 @@ Notes:
 
 - Views are keyed per city: buffer names are host-qualified
   (`*gascity: city@/ssh:user@example.com:/home/user/city/*`), so a local and a
-  remote dashboard coexist, and each view pins its `default-directory` to
-  the city it was opened for — refresh timers keep hitting that host.
+  remote view coexist; the header line shows `@host`.
+- Transport: for a single-hop ssh-family city every background read and
+  action runs as a **local** `ssh -T` pipe process (`gascity-remote-transport`,
+  default `ssh`; `tramp` uses TRAMP's `make-process`). Starting one never
+  blocks Emacs, output is byte-exact, and the processes share one ssh master
+  (`gascity-remote-ssh-options`). ssh runs with `BatchMode=yes`: key or agent
+  authentication is required.
+- At most `gascity-remote-max-inflight` (3) gc processes run per host and lane;
+  each is killed after `gascity-remote-async-timeout` (30 s), keeping the
+  section's last good data marked `◐ timed out`. An unreachable host shows
+  once as `○ offline @host` and is retried with backoff.
 - Paths gc reports (agent worktrees, rig directories, order sources) are
   host-local; `d` (Dired) and `RET` re-prefix them and open them on the
   city's host.
-- `t`/`RET` tmux attach spawns a **local** `ssh -t HOST env -u TMUX tmux …`
-  in the terminal backend. Supported for the ssh-based TRAMP methods
-  (`ssh`/`sshx`/`scp`/`scpx`); other methods and multi-hop names signal a
-  clear error. The mode-line tmux status mirror probes the remote server on
-  its timer. `tmux` is resolved on the host like `gc` (profile probing
-  included), for the probes and for the ssh attach command alike.
-- TRAMP's faster direct-async process mode is fully supported — enable it
-  per connection via the connection-local variable
-  `tramp-direct-async-process` to cut per-read overhead on the dashboard.
-  Think twice before enabling it for gascity, though: direct-async spawns
-  a **fresh ssh login per read**, while the default tramp-sh handler
-  multiplexes every read over the one pooled connection.  Measured on a
-  live `/ssh:localhost:` city (W1, REQ-002): ten consecutive async
-  dashboard reads produced exactly one ssh process — established at
-  connection time — and zero new ssh logins on the host.  Keep
-  direct-async off unless you have another reason to want it.
-- Performance: views refresh only when the city's live event stream
-  (`gc events --follow`, one per city, over a local `ssh -T` pipe for a
-  remote city) reports a change, batched for 2.5 s — no polling timer.
-  Reads share gascity's ssh ControlMaster.  `W` turns the stream off,
-  `g` refreshes (and reconnects a stream that is down); the header shows
-  `● live`, `○ live off`, `○ live: reconnecting (Ns)`, `○ live:
+- Live refresh: one `gc events --follow` stream per city (a local `ssh -T`
+  pipe for a remote city) drives every refresh, batched for 2.5 s — no
+  polling timer. `W` turns it off, `g` refreshes and reconnects; the header
+  shows `● live`, `○ live off`, `○ live: reconnecting (Ns)`, `○ live:
   supervisor down` or `○ offline @host`.
-- Connection-count verification (live city): to confirm pooling on your
-  host, note the number of ssh connections first — `last | head`, the
-  sshd log, or simply `ps -eo args | grep -c '[s]sh'` — then open a
-  dashboard over `/ssh:HOST:…` and let it refresh (press `g`) at least
-  10 times, then count again. Expect **at most 2 new ssh connections**
-  total (normally zero: the burst rides the one connection Emacs opened
-  at setup). A fresh ssh login per refresh tick means TRAMP's
-  direct-async handler (which spawns a fresh ssh per read instead of
-  pooling) got enabled connection-locally. The same bound is asserted
-  in ERT over the mock-remote boundary
-  (`gascity-test-remote-async-reads-pool-connections`).
+- `t`/`RET` tmux attach spawns a **local** `ssh -t HOST env -u TMUX tmux …`
+  in the terminal backend, for the ssh-based TRAMP methods.
+- ssh configuration: TRAMP's own connection (Dired, first contact) can freeze
+  Emacs in two known ways. Turn off X11 forwarding for city hosts
+  (`ForwardX11 no` — with it on, xauth warnings can hide TRAMP's prompt), and
+  if a remote city ever freezes inside a TRAMP wait, set
+  `(setq tramp-use-connection-share 'suppress)` (costs one ssh handshake per
+  TRAMP connection). See the manual's *Remote Cities* chapter.
 
 ## Customization
 
@@ -204,6 +220,9 @@ Notes:
 - `gascity-tmux-socket` — tmux server socket the agents run on. `nil`
   auto-detects it as the city name (gc runs one tmux server per city); set a
   string to override.
+- `gascity-remote-hosts` — extra hosts the Cities view lists.
+- `gascity-remote-transport`, `gascity-remote-max-inflight`,
+  `gascity-remote-async-timeout` — remote cities, see above.
 
 ## Development
 

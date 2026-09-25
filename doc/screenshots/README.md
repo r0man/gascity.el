@@ -72,12 +72,12 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-ef-elea-dark  -dark   status rig-dashboard session-list convoy-list dolt-list dispatch
-ef-cyprus     -light  status session-detail rig-list order-list
+ef-elea-dark  -dark   cockpit rig-dashboard session-list convoy-list dolt-list dispatch
+ef-cyprus     -light  cockpit session-detail rig-list order-list
 ```
 
 Each line is `THEME  SUFFIX  view view …`. A view named under two themes
-is captured twice (the status board is, to show theming). Image geometry
+is captured twice (the cockpit is, to show theming). Image geometry
 (widths, palette sizes) is set just below the manifest.
 
 ## Reusing this for another package (e.g. beads.el)
