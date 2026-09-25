@@ -81,7 +81,7 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 * Installation::            Requirements and loading.
 * Getting Started::         Your first dashboard.
 * Buffers and Navigation::  The section model and the shared keys.
-* The Status Dashboard::    The city overview.
+* The Cockpit::             The city triage buffer.
 * The Rig Dashboard::       A single rig in detail.
 * Session Detail::          A single agent in detail.
 * The Lists::               Tabulated rigs, sessions, convoys, orders, mail, Dolt.
@@ -121,10 +121,9 @@ cached behind your back and nothing is guessed --- what you see is what
 
 @itemize @bullet
 @item
-@strong{A status dashboard} (@pxref{The Status Dashboard}) --- the whole
-city at a glance: the controller, each rig, every agent (pooled ones
-grouped under their template) and the beads store's health, colored by
-state and collapsible per rig and per pool.
+@strong{A cockpit} (@pxref{The Cockpit}) --- one short triage buffer
+per city: what needs you, what is moving, who is working, what is
+queued, what just happened, and the rigs.
 @item
 @strong{Detail views} (@pxref{The Rig Dashboard}, @pxref{Session
 Detail}) --- a single rig or a single agent, with its work, mail and
@@ -149,7 +148,7 @@ view:
 @table @asis
 @item vui
 A small React-like reconciler drives the heterogeneous
-@dfn{dashboards} --- the status board and the rig and session detail
+@dfn{dashboards} --- the cockpit and the rig and session detail
 views --- where sections of different shapes are stacked and refreshed
 independently.
 @item @code{tabulated-list-mode}
@@ -218,7 +217,7 @@ entry point, which loads every module:
 @end lisp
 
 @noindent
-You are ready: run @kbd{M-x gascity-status} (@pxref{Getting Started}).
+You are ready: run @kbd{M-x gascity-dashboard} (@pxref{Getting Started}).
 
 @c ====================================================================
 @node Getting Started
@@ -226,27 +225,24 @@ You are ready: run @kbd{M-x gascity-status} (@pxref{Getting Started}).
 @cindex getting started
 @cindex tour
 
-@findex gascity-status
-The fastest way in is the status dashboard.  With a city running, type
+@findex gascity-dashboard
+The fastest way in is the cockpit.  With a city running, type
 
 @example
-M-x gascity-status
+M-x gascity-dashboard
 @end example
 
 @noindent
-to open @file{*gascity-status*}: the controller, every rig, and every
-agent, in one scrollable, collapsible buffer.
+to open the city's cockpit: a header line with the city and whether it
+refreshes live, two summary lines, then six short sections --- Needs
+you, Moving, Agents, Work, Activity and Rigs.
 
-@shot{status-dark, The status dashboard (ef-elea-dark)}
-
-Each rig is a collapsible section, as is each scaled pool of agents
-within it; a filled bullet (@code{●}) marks a running agent and a hollow
-one (@code{○}) a stopped agent.  Move by line with @kbd{n} and @kbd{p},
-jump between sections with @kbd{N} and @kbd{P}, fold a rig or a pool
-with @key{TAB}, and reload with @kbd{g}.  Press
-@kbd{i} on an agent to open its detail view, or @key{RET} to attach its
-terminal.  These keys are shared by every gascity buffer; they are
-described once in @ref{Buffers and Navigation}.
+Move from thing to thing with @key{TAB} and @kbd{S-@key{TAB}}, toggle
+the thing at point with @key{SPC} (fold a section, expand a fold row,
+open a row's inline detail), act on it with @key{RET}, and reload with
+@kbd{g}.  @kbd{?} lists every verb under the key it has in the views and
+@kbd{j} jumps to another view.  These keys are shared by every gascity
+buffer; they are described once in @ref{Buffers and Navigation}.
 
 @section The dispatcher
 
@@ -259,8 +255,8 @@ menu.  Type @kbd{M-x gascity} to raise it:
 @shot{dispatch-dark, The command dispatcher (ef-elea-dark)}
 
 @noindent
-The left columns open the porcelain views --- @kbd{s} the status
-dashboard, the @strong{Lists} column the tabulated lists --- and the
+The left columns open the porcelain views --- @kbd{h} the cockpit, the
+@strong{Lists} column the tabulated lists --- and the
 @strong{Dispatch} column routes the mutating actions, prompting for their
 arguments (@pxref{Actions}).  The same actions are available at point in
 the views, so the dispatcher is a backend, not the primary interface.
@@ -270,8 +266,8 @@ the views, so the dispatcher is a backend, not the primary interface.
 The view-opening commands, all autoloaded, are:
 
 @table @code
-@item gascity-status
-The city status dashboard (@pxref{The Status Dashboard}).
+@item gascity-dashboard
+The city cockpit (@pxref{The Cockpit}).
 @item gascity-rig-dashboard
 A single rig in detail; prompts for the rig (@pxref{The Rig Dashboard}).
 @item gascity-rig-list
@@ -323,12 +319,37 @@ Jump to the next section header (the coarse counterpart to @kbd{n}).
 @findex gascity-section-previous
 Jump to the previous section header.
 @item @key{TAB}
+@itemx S-@key{TAB}
 @kindex TAB
-Toggle the collapse state of the section at point (status dashboard).
+@kindex S-TAB
+@findex gascity-thing-forward
+@findex gascity-thing-backward
+Move to the next (previous) @dfn{thing}: a section header, a row that
+carries an object, a fold row, or a @samp{@dots{} N more} line.
+Decoration is skipped; at the end the motion wraps and says so.
+@item @key{SPC}
+@kindex SPC
+@findex gascity-thing-toggle
+Toggle the thing at point: fold or unfold a section, expand or collapse
+a fold row, open or close a row's inline detail drawer.  Folds and
+drawers survive a refresh.
 @item @key{RET}
 @kindex RET
-Activate the thing at point --- the precise meaning depends on the view
-(attach a terminal, open a bead, toggle a section).
+Act on the thing at point --- the precise meaning depends on the view
+(attach a terminal, open a bead, open a section's full view).  @key{RET}
+never folds.
+@item ?
+@kindex ?
+@findex gascity-dispatch
+The dispatch menu: every verb, under the key it has in the views.
+@item j
+@kindex j
+Jump to another view: @kbd{j j} the cockpit, @kbd{j a} agents, @kbd{j b}
+beads, @kbd{j m} mail, @kbd{j o}, @kbd{j v}, @kbd{j d} orders, convoys and
+Dolt, @kbd{j g} a rig dashboard.
+@item /
+@kindex /
+The view's filter menu; every change applies at once, @kbd{x} resets.
 @item q
 @kindex q
 @findex quit-window
@@ -378,12 +399,18 @@ Previous page.
 Jump to a page number (prompts).
 @item S
 @kindex S
-@findex gascity-tabulated-sort
-Sort across @emph{all} pages by a column (overrides the built-in
-per-page sort).
+Sling (the same in every view); sort with a header click or @kbd{/ -S}
+instead, which sorts across @emph{all} pages.
+@item @key{SPC}
+@kindex SPC @r{(lists)}
+@findex gascity-tabulated-detail-toggle
+Show the row at point in a @file{*gascity-detail*} side window, or close
+it.  @kbd{C-o} shows it without selecting it and @kbd{C-c C-f} makes it
+follow point; @kbd{q} closes it before burying the list.
 @item /
 @kindex /
-Open the list's filter transient (every list but Dolt).
+Open the list's filter menu: changes apply at once, @kbd{x} resets,
+@kbd{-S} sorts.
 @end table
 
 @noindent
@@ -392,145 +419,106 @@ is truncated to its column with an ellipsis and a @code{help-echo}
 tooltip carrying the full value.
 
 @c ====================================================================
-@node The Status Dashboard
-@chapter The Status Dashboard
-@cindex status dashboard
-@findex gascity-status
+@node The Cockpit
+@chapter The Cockpit
+@cindex cockpit
+@findex gascity-dashboard
 
-@kbd{M-x gascity-status} opens @file{*gascity-status*} in
-@code{gascity-dashboard-mode}.  It joins three reads --- @code{gc
-status}, @code{gc session list} (so that every agent row also carries a
-worktree and a tmux target) and @code{gc agent list} (for each pool's
-bounds) --- and renders the result as a city overview showing what
-@code{gc status} prints.
-
-@shot{status-light, The status dashboard (ef-cyprus)}
+@kbd{M-x gascity-dashboard} opens the city's cockpit in
+@code{gascity-dashboard-mode}: one short triage buffer answering, top to
+bottom, what needs you, what is moving, who is working, what is queued
+and what just happened.  No section shows more than
+@code{gascity-dashboard-section-rows} rows (five); the rest is a
+@samp{@dots{} N more} line whose @key{RET} opens the full view.
 
 @section What it shows
 
-The header names the city and its path, then summarizes the controller
-(the mode it runs under and the PID holding authority, or @samp{down}),
-health (ok or degraded), whether the city is suspended, the running
-agent count and the session counts.
-
-A @strong{City} block lists the city-scope agents (dogs, the deacon, the
-mayor).  Then one collapsible section per rig shows the rig name (with
-@samp{(suspended)} when applicable) and its path, followed by its
-agents:
+The header line names the city (with @samp{@@host} for a remote one),
+whether it refreshes live (@kbd{W}) and how long ago it last did.  The
+buffer opens with the city and its path, then one summary line: agents
+running out of total, live sessions, active and failed runs, ready
+beads, unread mail and the beads store's size (@samp{◐} when
+@command{gc} reports partial errors, with the reason as a tooltip).
 
 @table @asis
-@item @code{● name}
-A running agent (the @code{gascity-running} face).
-@item @code{○ name}
-A stopped agent (the @code{gascity-stopped} face).
+@item Needs you
+Stalled agents (running without a live session), sessions that crashed
+or timed out and were not woken since, runs with no step progress for
+@code{gascity-dashboard-run-idle-threshold} seconds, runs that failed,
+beads reopened after their assignee died, beads labelled
+@samp{gc:escalation} or @samp{hold:*}, unread mail and store-health
+warnings --- @samp{■} before @samp{▲}.
+@item Moving
+Active runs with their step ladder (@samp{◆} done, @samp{⬣} active,
+@samp{·} pending, @samp{✕} failed) and their live workers; in-progress
+work outside a run is listed flat.
+@item Agents
+Running agents by recent activity, then idle ones; stopped agents fold
+into one @samp{▸ stopped} line.  Named sessions such as the mayor are
+agents too.
+@item Work
+Ready beads by priority, then age.  Wisps, nudge beads, order churn,
+message beads and session beads are hidden, always with a
+@samp{(N hidden)} count.
+@item Activity
+Recent events (@code{gascity-dashboard-window}, two hours by default).
+Order firings, noise-bead lifecycle and bead updates fold into
+@samp{×N} rows per 15 minutes; signal events never fold.
+@item Rigs
+One row per rig: prefix, path, agents running, work in progress.
 @end table
 
-@cindex pools
-@cindex scaled agents
-Within either scope, the members of a scaled pool are not siblings of
-the singletons: they nest under their template, whose header carries the
-pool's bounds, exactly as @code{gc status} prints them.
-
-@example
-▼ gastown.polecat  scaled (min=0, max=5)
-    ● gastown.furiosa
-    ○ gastown.nux
-@end example
-
-@noindent
-A pool group is collapsible in its own right --- @key{TAB} or @key{RET}
-on its header folds it away, and like a rig's, the fold survives a
-refresh.
-
-A @strong{Store health} block closes the buffer with the beads store's
-path, size, live row count and size-per-row ratio.  When that ratio
-crosses the threshold @command{gc} reports, the line switches to the
-@code{gascity-failed} face --- the store has accumulated garbage and
-wants a @code{gc dolt gc}.
-
-@cindex events, recent activity
-@noindent
-Below it, a dim @samp{recent activity: .gc/events.jsonl} line documents
-the one overview gap: @command{gc event} exposes no @command{list}
-subcommand and declares no JSON support, so there is no payload to
-render and the porcelain does not read gc-internal files.  Read the log
-directly, e.g.@ @kbd{tail -f .gc/events.jsonl}, until @command{gc} grows
-an event JSON surface.
-
-@cindex stale-while-revalidate
-The three reads run asynchronously, and @kbd{g} re-fetches them while
-leaving the last good snapshot on screen, so your point and your
-collapsed sections survive a refresh.  If the session read fails, a
-one-line note warns that the terminal and Dired keys are disabled for
-this refresh; if the agent read fails, the pool grouping is simply
-skipped and every agent renders as its own row.
-
-@quotation Note
-@command{gc status} additionally prints an API URL and a @samp{Named
-sessions} block (each named agent's @samp{always}/@samp{on_demand} mode
-and awake state).  Neither is exposed by any @code{--json} payload, so
-neither is shown here.
-@end quotation
+A section still loading shows @samp{@dots{}}; one whose read failed
+shows @samp{■ gc @dots{}: @var{reason}   g retry}; one that failed over
+good data keeps its rows and marks its header @samp{◐}; an empty one
+reads @samp{none}.
 
 @section Keys
 
-@table @kbd
-@item g
-@kindex g @r{(status)}
-@findex gascity-status-refresh
-Reload, preserving collapsed sections and point.
-@item @key{TAB}
-@kindex TAB @r{(status)}
-@findex gascity-status-toggle-section
-Toggle the rig section or pool group at point.
-@item @key{RET}
-@kindex RET @r{(status)}
-@findex gascity-status-activate
-On a rig or pool header, toggle collapse; on an agent row, attach its
-tmux terminal.
-@item i
-@kindex i @r{(status)}
-@findex gascity-polecat-detail-at-point
-Open the agent's detail view (@pxref{Session Detail}).
-@item b
-@kindex b @r{(status)}
-@findex gascity-beads-at-point
-Open beads: the agent's worktree store on a row, the rig's store on a
-header.
-@item d
-@kindex d @r{(status)}
-@findex gascity-dired-at-point
-Dired into the agent's worktree (or the rig directory on a header).
-@item t
-@kindex t @r{(status)}
-@findex gascity-tmux-at-point
-Attach to the agent's tmux session.
-@item M
-@kindex M @r{(status)}
-@findex gascity-session-nudge-at-point
-Nudge the agent (@code{gc session nudge}).
-@item s
-@kindex s @r{(status)}
-@findex gascity-session-suspend-at-point
-Suspend the agent (@code{gc session suspend}).
-@item K
-@kindex K @r{(status)}
-@findex gascity-session-kill-at-point
-Force-kill the agent's runtime (@code{gc session kill}).
-@item w
-@kindex w @r{(status)}
-@findex gascity-session-wake-at-point
-Wake the agent (@code{gc session wake}).
-@item D
-@kindex D @r{(status)}
-@findex gascity-session-drain-at-point
-Drain the agent (@code{gc runtime drain}).
-@end table
+Besides the shared keys (@pxref{Buffers and Navigation}):
 
-@noindent
-The line-motion and section-motion keys (@kbd{n}, @kbd{p}, @kbd{N},
-@kbd{P}, @kbd{q}) are the shared ones (@pxref{Buffers and Navigation}).
-On a rig header, @kbd{mouse-1} toggles collapse.
+@table @kbd
+@item /
+@kindex / @r{(cockpit)}
+@findex gascity-dashboard-filter
+The filter: @kbd{-w}, @kbd{-n}, @kbd{-o}, @kbd{-m} show wisps, nudge
+beads, order churn and message beads; @kbd{-r} narrows to a rig;
+@kbd{-W} sets the Activity window; @kbd{-c} unfolds churn.  Filters are
+remembered per city for the session.
+@item W
+@kindex W @r{(cockpit)}
+@findex gascity-dashboard-toggle-live
+Toggle live refresh (@code{gascity-dashboard-live-interval}).
+@item @key{RET}
+@kindex RET @r{(cockpit)}
+@findex gascity-dashboard-activate
+On a section header, open the section's view; on an agent, attach its
+terminal; on a run, open its detail; on a bead, open it in beads.el; on
+a rig, open its dashboard.
+@item i
+@itemx v
+@itemx d
+@itemx t
+Agent detail, peek, Dired and tmux on an agent row.
+@item M
+@itemx s
+@itemx K
+@itemx w
+@itemx D
+@itemx R
+@itemx U
+Nudge, suspend, kill, wake, drain, reset and undrain the agent at point;
+on a rig row @kbd{s}, @kbd{r} and @kbd{R} suspend, resume and restart
+the rig.
+@item l
+@kindex l @r{(cockpit)}
+@findex gascity-dashboard-rig-log
+The git log of the rig at point.
+@item S
+@itemx c
+@itemx m
+Sling, bead actions and mail actions.
+@end table
 
 @c ====================================================================
 @node The Rig Dashboard
@@ -541,7 +529,7 @@ On a rig header, @kbd{mouse-1} toggles collapse.
 @kbd{M-x gascity-rig-dashboard} prompts for a rig (defaulting to the
 contextual one) and opens @file{*gascity-rig:@: NAME*} in
 @code{gascity-rig-dashboard-mode}.  It is the single-rig counterpart to
-the status board, with five independently-loaded sections so that a slow
+the cockpit, with five independently-loaded sections so that a slow
 or failing one never blanks the rest.
 
 @shot{rig-dashboard-dark, The rig dashboard (ef-elea-dark)}
@@ -568,8 +556,9 @@ The rig's Dolt commit count.
 
 @section Keys
 
-The rig dashboard shares the status board's action keys (@kbd{i}, @kbd{d},
-@kbd{t}, @kbd{M}, @kbd{s}, @kbd{K}, @kbd{w}, @kbd{D}) and adds:
+The rig dashboard shares the cockpit's agent keys (@kbd{i}, @kbd{d},
+@kbd{t}, @kbd{M}, @kbd{s}, @kbd{K}, @kbd{w}, @kbd{D}) and adds @kbd{l},
+the rig repository's git log, and:
 
 @table @kbd
 @item g
@@ -595,7 +584,7 @@ Peek at the agent's recent output (@pxref{Actions}).
 @quotation Note
 The city HQ appears in the rig list (it owns beads) but is not a
 configured rig and has no dashboard; @key{RET} on it points you to
-@code{gascity-status} instead.
+@code{gascity-dashboard} instead.
 @end quotation
 
 @c ====================================================================
@@ -605,7 +594,7 @@ configured rig and has no dashboard; @key{RET} on it points you to
 @cindex polecat
 @findex gascity-polecat-detail
 
-Press @kbd{i} on an agent (in the status board, the rig dashboard, or the
+Press @kbd{i} on an agent (in the cockpit, the rig dashboard, or the
 session list) to open its detail view, @file{*gascity-agent:@: NAME*}, in
 @code{gascity-session-detail-mode}.
 
@@ -1170,10 +1159,17 @@ decoded from @command{gc}'s JSON.
 Resolves the current city and rig from @code{default-directory}.
 @item gascity-section.el
 The shared vui base mode and the section model.
+@item gascity-ui.el
+The shared visual language: glyphs, relative times, section states and
+the filter-menu builders.
+@item gascity-dashboard.el
+The city cockpit, the @kbd{?} dispatch and the @kbd{j} jump prefix.
 @item gascity-status.el
-@itemx gascity-rig.el
+The agent-tree joins and components (city, rigs, pools).
+@item gascity-rig.el
 @itemx gascity-session.el
-The three vui dashboards.
+@itemx gascity-run.el
+The rig dashboard and the agent and run detail views.
 @item gascity-tabulated.el
 The six tabulated lists, their pagination and their filter transients.
 @item gascity-action.el

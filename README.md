@@ -30,7 +30,8 @@ Screenshots are produced by a reusable, documented pipeline under
 
 ## Status
 
-A usable porcelain: an interactive status dashboard; tabulated list views with
+A usable porcelain: a city cockpit (what needs you, what is moving, who
+works, what is queued, what just happened); tabulated list views with
 window-sized pagination (`]`/`[`/`G`) and per-list `/` filters; agent actions
 (Dired into a worktree, attach to a tmux session); mutating-command dispatch
 (rig suspend/resume/restart, session nudge/suspend/kill/wake/drain, sling, order
@@ -64,7 +65,7 @@ With the dependencies on your `load-path`:
 
 | Command | View |
 |---|---|
-| `M-x gascity-status` | Status dashboard (city → rigs → agents), collapsible |
+| `M-x gascity-dashboard` | City cockpit: Needs you, Moving, Agents, Work, Activity, Rigs |
 | `M-x gascity-rig-dashboard` | Rig dashboard (agents, beads, orders, Dolt) |
 | `M-x gascity-rig-list` | Rigs |
 | `M-x gascity-session-list` | Agent sessions |
@@ -75,14 +76,25 @@ With the dependencies on your `load-path`:
 
 ### Keys
 
-Everywhere: `g` refreshes, `q` buries, `RET` drills in. In the tabulated lists,
-`]`/`[`/`G` page and `/` opens a filter.
+Everywhere: `g` refreshes, `q` buries, `RET` drills in (never folds), `?`
+shows every verb under the key it has in the views, `j` jumps to another view
+(`j j` cockpit, `j a` agents, `j b` beads, `j m` mail, `j o`/`j v`/`j d`
+orders/convoys/Dolt, `j g` rig dashboard), `/` opens the view's filter (changes
+apply at once, `x` resets), and `S` slings. `TAB`/`S-TAB` move to the
+next/previous thing (a section header, a row, a fold), `SPC` toggles the thing
+at point: it folds a section, expands a fold row, or opens a row's inline
+detail. In the tabulated lists `SPC` shows the row in a `*gascity-detail*` side
+window (`C-o` shows it without selecting, `C-c C-f` makes it follow point, `q`
+closes it first); `]`/`[`/`G` page, and sorting is a header click or `/ -S`.
 
-- **Status dashboard:** `TAB` toggles a rig section (the magit convention);
-  `RET` toggles the rig at point too, or attaches the agent's terminal (`i`
-  opens its detail); `d` Dired into the worktree; `t` tmux attach;
-  `M`/`s`/`K`/`w`/`D` nudge/suspend/kill/wake/drain the agent; `n`/`p` move by
-  line, `N`/`P` jump between sections (city/rig/…).
+- **Cockpit:** at most five rows per section with a `… N more` line into the
+  full view; noise (wisps, nudge beads, order churn, message beads) is hidden
+  with a `(N hidden)` count and shown again from `/`; churn events fold into
+  `×N` rows. On an agent row `RET` attaches its terminal, `i` opens its detail,
+  `d`/`t`/`v` Dired/tmux/peek, `M`/`s`/`K`/`w`/`D`/`R`/`U`
+  nudge/suspend/kill/wake/drain/reset/undrain; on a rig row `RET` opens the rig
+  dashboard, `l` its git log, `s`/`r`/`R` suspend/resume/restart. `W` toggles
+  live refresh.
 - **Rig list:** `RET` opens the rig dashboard; `d` Dired into the rig directory;
   `s`/`r`/`R` suspend/resume/restart.
 - **Session list:** `RET` opens the session/polecat detail; `d` Dired; `t` tmux
@@ -106,7 +118,7 @@ TRAMP and start a view from there — every read, action, and refresh then runs
 
 ```
 C-x d /ssh:user@example.com:/home/user/city/ RET
-M-x gascity-status
+M-x gascity-dashboard
 ```
 
 Setup: usually none. A bare program name is resolved on the host —
@@ -137,7 +149,7 @@ or set a per-host absolute path via connection-local profiles:
 Notes:
 
 - Views are keyed per city: buffer names are host-qualified
-  (`*gascity-status@/ssh:user@example.com:*`), so a local and a
+  (`*gascity: city@/ssh:user@example.com:/home/user/city/*`), so a local and a
   remote dashboard coexist, and each view pins its `default-directory` to
   the city it was opened for — refresh timers keep hitting that host.
 - Paths gc reports (agent worktrees, rig directories, order sources) are
@@ -163,8 +175,8 @@ Notes:
   connection — pooling holds by default (see above), so a refreshing
   dashboard costs one channel round trip per read, not one ssh login per
   read — and the dashboard skips an auto-refresh tick while a load is
-  still in flight; raise `gascity-status-auto-refresh-interval` on slow
-  links.
+  still in flight; raise `gascity-dashboard-live-interval` on slow
+  links, or turn live refresh off with `W`.
 - Connection-count verification (live city): to confirm pooling on your
   host, note the number of ssh connections first — `last | head`, the
   sshd log, or simply `ps -eo args | grep -c '[s]sh'` — then open a
