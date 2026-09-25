@@ -228,13 +228,18 @@ figures come from what the cockpits already read; the lighter never
 runs gc or touches a remote host at redisplay."
   :global t
   :group 'gascity
-  (setq global-mode-string (delq 'gascity-mode-line--string
-                                 (if (listp global-mode-string)
-                                     global-mode-string
-                                   (list global-mode-string))))
-  (when gascity-mode-line-mode
+  ;; `global-mode-string' must stay a mode-line construct: a list led
+  ;; by a symbol would read as (SYMBOL THEN ELSE), so it leads with "".
+  (let ((rest (delq 'gascity-mode-line--string
+                    (cond ((null global-mode-string) nil)
+                          ((listp global-mode-string) (copy-sequence global-mode-string))
+                          (t (list global-mode-string))))))
     (setq global-mode-string
-          (append global-mode-string '(gascity-mode-line--string))))
+          (cond (gascity-mode-line-mode
+                 (append (if (stringp (car rest)) rest (cons "" rest))
+                         '(gascity-mode-line--string)))
+                ((equal rest '("")) nil)
+                (t rest))))
   (if gascity-mode-line-mode
       (gascity-mode-line-update)
     (setq gascity-mode-line--string "")

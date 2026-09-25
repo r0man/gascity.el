@@ -356,6 +356,9 @@ whose cockpit is killed."
               ;; redisplay evaluates nothing (`format-mode-line' needs a
               ;; live frame, so the value is checked directly in batch).
               (should (memq 'gascity-mode-line--string global-mode-string))
+              ;; A valid construct: a list led by a symbol would be read
+              ;; as a (SYMBOL THEN ELSE) conditional (`*invalid*').
+              (should (stringp (car global-mode-string)))
               (should (stringp gascity-mode-line--string))
               (should (equal (substring-no-properties gascity-mode-line--string)
                              " GC[bl ▲1 · ec ■1▲2]"))
@@ -371,7 +374,17 @@ whose cockpit is killed."
           (should (null gascity-test-render-guard-violations)))
       (gascity-mode-line-mode -1)
       (dolist (b (list ec bl rbl)) (when (buffer-live-p b) (kill-buffer b))))
-    (should (equal gascity-mode-line--string ""))))
+    (should (equal gascity-mode-line--string ""))
+    (should (null global-mode-string))))
+
+(ert-deftest gascity-test-mode-line-keeps-other-segments ()
+  "Enabling and disabling the lighter keeps other `global-mode-string' parts."
+  (let ((global-mode-string '("" display-time-string)))
+    (gascity-mode-line-mode 1)
+    (should (equal global-mode-string
+                   '("" display-time-string gascity-mode-line--string)))
+    (gascity-mode-line-mode -1)
+    (should (equal global-mode-string '("" display-time-string)))))
 
 (ert-deftest gascity-test-mode-line-abbrev ()
   "City names shorten to their initials, one-word names to two letters."

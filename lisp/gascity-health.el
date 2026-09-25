@@ -323,7 +323,8 @@ rig is a row of its own)."
                                           (gascity-dashboard--bytes (apply #'max sizes)))))))))
     (gascity-dashboard--section-lines
      "store" "Store"
-     (and partial (gascity-ui-partial-mark (string-join partial "\n")))
+     (and partial (string-trim-left
+                   (gascity-ui-partial-mark (string-join partial "\n"))))
      (nreverse rows)
      ctx :loads '(:status :dolt) :label "status")))
 
