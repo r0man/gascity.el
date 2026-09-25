@@ -83,12 +83,18 @@ session, deduplicated, sorted.  Pure."
                           (gascity-store-hosts)))
                  #'string<)))
 
+(defun gascity-cities--local-home ()
+  "Return the local home directory, whatever `default-directory' is.
+Expanded against the local root: with a remote `default-directory' a bare
+`(expand-file-name \"~\")' dispatches to TRAMP (§8.3 R2)."
+  (file-name-as-directory (expand-file-name "~" "/")))
+
 (defun gascity-cities--host-dir (host)
   "Return the directory `gc cities' runs in on HOST.
 Locally the home directory; remotely the host's root, a directory that
 exists without asking the host where home is (§8.3 R2)."
   (if (string-empty-p host)
-      (file-name-as-directory (expand-file-name "~"))
+      (gascity-cities--local-home)
     (concat host "/")))
 
 (defun gascity-cities--city-dir (host path)
@@ -380,7 +386,7 @@ and city answers."
   (interactive)
   (let ((buf (gascity-view-get-buffer-create
               gascity-cities-buffer-name
-              (file-name-as-directory (expand-file-name "~")))))
+              (gascity-cities--local-home))))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-cities-mode)
         (gascity-cities-mode))
