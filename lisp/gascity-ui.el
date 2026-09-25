@@ -202,7 +202,12 @@ keeps rendering the cached snapshot — stale-while-revalidate — and only
 reports `error'/`pending' when no snapshot is in hand.  A failed refresh
 over a good snapshot rides along in `:error'."
   (let ((state (plist-get res :status)))
-    (cond ((eq state 'ready)
+    (cond ((and (eq state 'ready) (plist-get res :error))
+           ;; A store snapshot (`gascity-store-use'): the last good
+           ;; payload plus the failure of the refresh that followed it.
+           (list :state 'stale :data (setcar ref (plist-get res :data))
+                 :error (plist-get res :error)))
+          ((eq state 'ready)
            (list :state 'ready :data (setcar ref (plist-get res :data))))
           ((car ref)
            (list :state 'stale :data (car ref)

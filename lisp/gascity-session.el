@@ -53,6 +53,7 @@
 (require 'gascity-context)            ; pin-directory (view keyed to its city)
 (require 'gascity-domain)             ; typed agent (the detail view's subject)
 (require 'gascity-reader)
+(require 'gascity-store)              ; gascity-store-use (per-section loads)
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters
 (require 'gascity-ui)                ; relative times
@@ -284,37 +285,20 @@ when the load succeeded but BEADS is empty."
          (key1 (nth 1 keys))
          (work-dir (gascity-agent-work-dir agent))
          (sessions-res
-          (vui-use-async (list 'sessions refresh-tick name)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            '("session" "list") resolve reject))))
+          (gascity-store-use '("session" "list") :tick refresh-tick))
          (beads0-res
-          (vui-use-async (list 'beads0 refresh-tick key0 rig)
-                         (lambda (resolve reject)
-                           (if key0
-                               (gascity-reader-read-async
-                                (gascity-session--bead-args key0 rig) resolve reject)
-                             (funcall resolve [])))))
+          (gascity-store-use (and key0 (gascity-session--bead-args key0 rig))
+                             :tick refresh-tick :default []))
          (beads1-res
-          (vui-use-async (list 'beads1 refresh-tick key1 rig)
-                         (lambda (resolve reject)
-                           (if key1
-                               (gascity-reader-read-async
-                                (gascity-session--bead-args key1 rig) resolve reject)
-                             (funcall resolve [])))))
+          (gascity-store-use (and key1 (gascity-session--bead-args key1 rig))
+                             :tick refresh-tick :default []))
          (beads2-res
-          (vui-use-async (list 'beads2 refresh-tick work-dir rig)
-                         (lambda (resolve reject)
-                           (if (and (stringp work-dir)
-                                    (not (string-empty-p work-dir)))
-                               (gascity-reader-read-async
-                                (gascity-session--worked-args rig) resolve reject)
-                             (funcall resolve [])))))
+          (gascity-store-use (and (stringp work-dir)
+                                  (not (string-empty-p work-dir))
+                                  (gascity-session--worked-args rig))
+                             :tick refresh-tick :default []))
          (mail-res
-          (vui-use-async (list 'mail refresh-tick name)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            (list "mail" "inbox" name) resolve reject))))
+          (gascity-store-use (list "mail" "inbox" name) :tick refresh-tick))
          (sessions (and (eq (plist-get sessions-res :status) 'ready)
                         (alist-get 'sessions (plist-get sessions-res :data))))
          (session (and sessions (gascity-session--find sessions name)))

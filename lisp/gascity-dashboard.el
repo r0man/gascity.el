@@ -62,6 +62,7 @@
 (require 'gascity-domain)
 (require 'gascity-remote)
 (require 'gascity-reader)
+(require 'gascity-store)              ; section reads (shared, scheduled)
 (require 'gascity-command)
 (require 'gascity-command-status)
 (require 'gascity-section)
@@ -1597,28 +1598,28 @@ worker drawn under its run (not a top-level row of the section)."
 
 (defun gascity-dashboard--read-status (resolve reject)
   "Read `gc status' for the cockpit; RESOLVE with the payload or REJECT."
-  (gascity-reader-read-async '("status") resolve reject))
+  (gascity-store-fetch '("status") resolve reject))
 
 (defun gascity-dashboard--read-sessions (resolve reject)
   "Read `gc session list' for the cockpit."
-  (gascity-reader-read-async '("session" "list") resolve reject))
+  (gascity-store-fetch '("session" "list") resolve reject))
 
 (defun gascity-dashboard--read-mail (resolve reject)
   "Read `gc mail count' for the cockpit."
-  (gascity-reader-read-async '("mail" "count") resolve reject))
+  (gascity-store-fetch '("mail" "count") resolve reject))
 
 (defun gascity-dashboard--read-events (window resolve reject)
   "Read `gc events --since WINDOW' (JSON Lines) for the cockpit."
-  (gascity-reader-read-async (list "events" "--since" window) resolve reject
-                             :lines t))
+  (gascity-store-fetch (list "events" "--since" window) resolve reject
+                       :lines t))
 
 (defun gascity-dashboard--read-convoys (resolve reject)
   "Read `gc convoy list' for the cockpit."
-  (gascity-reader-read-async '("convoy" "list") resolve reject))
+  (gascity-store-fetch '("convoy" "list") resolve reject))
 
 (defun gascity-dashboard--read-escalations (resolve reject)
   "Read the city store's escalated and held beads (one label-regex read)."
-  (gascity-reader-read-async
+  (gascity-store-fetch
    '("bd" "list" "--label-regex" "^(gc:escalation|hold:.*)$" "-n" "0")
    resolve reject))
 
@@ -1630,6 +1631,7 @@ worker drawn under its run (not a top-level row of the section)."
   "Read the work beads of the city store and the rig stores NAMES in DIR.
 See `gascity-dashboard--read-work' for RESOLVE and REJECT."
   (let* ((default-directory dir)
+         (force gascity-store-loader-force)
          (stores (cons nil names))
          (pending (length stores))
          (batches (make-hash-table :test 'equal))
@@ -1646,7 +1648,7 @@ See `gascity-dashboard--read-work' for RESOLVE and REJECT."
                                                      stores))
                                :errors errors)))))))
     (dolist (name stores)
-      (gascity-reader-read-async
+      (gascity-store-fetch
        (append gascity-dashboard--work-args (and name (list "--rig" name)))
        (lambda (payload)
          (puthash name
@@ -1656,7 +1658,8 @@ See `gascity-dashboard--read-work' for RESOLVE and REJECT."
          (funcall settle))
        (lambda (err)
          (push (format "%s: %s" (or name "city") err) errors)
-         (funcall settle))))))
+         (funcall settle))
+       :force force))))
 
 (defun gascity-dashboard--read-work (resolve reject)
   "Read the work beads of the city store and every rig store.
@@ -1672,14 +1675,16 @@ current buffer is arbitrary, and the city must not be lost."
     (if cached
         (gascity-dashboard--read-work-stores
          (gascity-dashboard--rig-store-names cached) dir resolve reject)
-      (gascity-reader-read-async
-       '("rig" "list")
-       (lambda (payload)
-         (gascity-dashboard--read-work-stores
-          (gascity-dashboard--rig-store-names
-           (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload)))
-          dir resolve reject))
-       reject))))
+      (let ((force gascity-store-loader-force))
+        (gascity-store-fetch
+         '("rig" "list")
+         (lambda (payload)
+           (let ((gascity-store-loader-force force))
+             (gascity-dashboard--read-work-stores
+              (gascity-dashboard--rig-store-names
+               (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload)))
+              dir resolve reject)))
+         reject :force force)))))
 
 (defun gascity-dashboard--rig-store-names (rigs)
   "Return the names of RIGS that are rig stores (the city HQ excluded)."
@@ -1692,6 +1697,7 @@ RUNS is a list of (ID . RIG); one `bd list --all --metadata-field
 gc.root_bead_id=ID' read per run.  RESOLVE gets a hash ID → beads; a
 failed read leaves its run on the partial ladder the work read gives."
   (let ((table (make-hash-table :test 'equal))
+        (force gascity-store-loader-force)
         (pending (length runs)))
     (if (null runs)
         (funcall resolve table)
@@ -1699,14 +1705,15 @@ failed read leaves its run on the partial ladder the work read gives."
         (let ((settle (lambda ()
                         (setq pending (1- pending))
                         (when (zerop pending) (funcall resolve table)))))
-          (gascity-reader-read-async
+          (gascity-store-fetch
            (append (list "bd" "list" "--all" "-n" "0" "--brief"
                          "--metadata-field" (concat "gc.root_bead_id=" (car run)))
                    (and (cdr run) (list "--rig" (cdr run))))
            (lambda (payload)
              (puthash (car run) (gascity-section-beads payload) table)
              (funcall settle))
-           (lambda (_err) (funcall settle)))))
+           (lambda (_err) (funcall settle))
+           :force force)))
       (ignore reject))))
 
 ;;; Component
@@ -1718,16 +1725,8 @@ failed read leaves its run on the partial ladder the work read gives."
   "The §6.1 section vnode (kept for the run detail view).")
 
 (defvar-local gascity-dashboard--refreshed-at nil
-  "Time of the cockpit's last successful status read (for the header).")
-
-(defun gascity-dashboard--stamp (resolve)
-  "Return RESOLVE wrapped to record the refresh time in this buffer."
-  (let ((buffer (current-buffer)))
-    (lambda (data)
-      (when (buffer-live-p buffer)
-        (with-current-buffer buffer
-          (setq gascity-dashboard--refreshed-at (float-time))))
-      (funcall resolve data))))
+  "Time of the cockpit's last successful status read (for the header).
+The store's `:fetched-at' of the `gc status' entry, set on render.")
 
 (vui-defcomponent gascity-dashboard-app (initial-filters)
   "Root component of the city cockpit.
@@ -1740,24 +1739,22 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
   :render
   ;; Every async hook runs unconditionally, in order, every render.
   (let* ((window (or (plist-get filters :window) gascity-dashboard-window))
-         (status-res (vui-use-async (list 'status refresh-tick)
-                                    (lambda (resolve reject)
-                                      (gascity-dashboard--read-status
-                                       (gascity-dashboard--stamp resolve) reject))))
-         (sessions-res (vui-use-async (list 'sessions refresh-tick)
-                                      #'gascity-dashboard--read-sessions))
-         (mail-res (vui-use-async (list 'mail refresh-tick)
-                                  #'gascity-dashboard--read-mail))
-         (events-res (vui-use-async (list 'events refresh-tick window)
-                                    (lambda (resolve reject)
-                                      (gascity-dashboard--read-events
-                                       window resolve reject))))
-         (work-res (vui-use-async (list 'work refresh-tick)
-                                  #'gascity-dashboard--read-work))
-         (convoys-res (vui-use-async (list 'convoys refresh-tick)
-                                     #'gascity-dashboard--read-convoys))
-         (escalations-res (vui-use-async (list 'escalations refresh-tick)
-                                         #'gascity-dashboard--read-escalations))
+         ;; Every read goes through the store (dashboard-v3 §8.3 R3):
+         ;; shared with the other views, deduplicated, scheduled per
+         ;; host; `refresh-tick' forces a re-read.
+         (status-res (gascity-store-use '("status") :tick refresh-tick))
+         (sessions-res (gascity-store-use '("session" "list") :tick refresh-tick))
+         (mail-res (gascity-store-use '("mail" "count") :tick refresh-tick))
+         (events-res (gascity-store-use (list "events" "--since" window)
+                                        :tick refresh-tick :lines t))
+         (work-res (gascity-store-use '("bd" "list" :work-stores)
+                                      :tick refresh-tick
+                                      :loader #'gascity-dashboard--read-work))
+         (convoys-res (gascity-store-use '("convoy" "list") :tick refresh-tick))
+         (escalations-res (gascity-store-use
+                           '("bd" "list" "--label-regex"
+                             "^(gc:escalation|hold:.*)$" "-n" "0")
+                           :tick refresh-tick))
          (last-status (vui-use-ref nil))
          (last-sessions (vui-use-ref nil))
          (last-mail (vui-use-ref nil))
@@ -1773,10 +1770,11 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
                        (seq-take (gascity-dashboard--active-runs
                                   (plist-get (gascity-dashboard--data work) :beads))
                                  gascity-dashboard-section-rows)))
-         (graphs-res (vui-use-async (list 'graphs refresh-tick runs)
-                                    (lambda (resolve reject)
-                                      (gascity-dashboard--read-graphs
-                                       runs resolve reject))))
+         (graphs-res (gascity-store-use (list "bd" "list" :graphs runs)
+                                        :tick refresh-tick
+                                        :loader (lambda (resolve reject)
+                                                  (gascity-dashboard--read-graphs
+                                                   runs resolve reject))))
          (loads (list :status (gascity-dashboard--effective-load status-res last-status)
                       :sessions (gascity-dashboard--effective-load sessions-res
                                                                    last-sessions)
@@ -1790,6 +1788,8 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
                       :graphs (gascity-dashboard--effective-load graphs-res
                                                                  last-graphs)))
          (ctx (gascity-dashboard--context loads filters (float-time))))
+    (when-let* ((at (plist-get status-res :fetched-at)))
+      (setq gascity-dashboard--refreshed-at at))
     (when-let* ((status (plist-get ctx :status)))
       ;; Seed the rig memo from the payload in hand: the rig prompts
       ;; and the next work read then never spawn `gc rig list'.

@@ -50,7 +50,7 @@
 (require 'vui)
 (require 'gascity-custom)
 (require 'gascity-context)            ; gascity-view-get-buffer-create
-(require 'gascity-reader)             ; gascity-reader-read-async
+(require 'gascity-store)              ; gascity-store-use
 (require 'gascity-section)            ; mode, bead-at-point, refresh
 (require 'gascity-tabulated)          ; shared cell formatters (--str)
 (require 'gascity-dashboard)          ; shared section vnodes (header/body)
@@ -221,13 +221,10 @@ store on every row it hands the drill-in)."
   :state ((refresh-tick 0))
   :render
   (let* ((beads-res
-          (vui-use-async (list 'run run-id refresh-tick)
-            (lambda (resolve reject)
-              (gascity-reader-read-async
-               `("bd" "list" "--status"
-                 "open,in_progress,blocked,deferred,closed"
-                 ,@(and rig (list "--rig" rig)))
-               resolve reject))))
+          (gascity-store-use `("bd" "list" "--status"
+                               "open,in_progress,blocked,deferred,closed"
+                               ,@(and rig (list "--rig" rig)))
+                             :tick refresh-tick))
          (last-beads (vui-use-ref nil))
          (beads-load (gascity-dashboard--effective-load beads-res last-beads))
          (rows (and (memq (plist-get beads-load :state) '(ready stale))
@@ -237,12 +234,9 @@ store on every row it hands the drill-in)."
          (progress (gascity-run--progress steps))
          (convoy-id (and root (gascity-run--input-convoy-id root)))
          (convoy-res
-          (vui-use-async (list 'convoy convoy-id (and convoy t) refresh-tick)
-            (lambda (resolve reject)
-              (if (and convoy-id (not convoy))
-                  (gascity-reader-read-async
-                   (list "convoy" "status" convoy-id) resolve reject)
-                (funcall resolve nil)))))
+          (gascity-store-use (and convoy-id (not convoy)
+                                  (list "convoy" "status" convoy-id))
+                             :tick refresh-tick))
          (last-convoy (vui-use-ref nil))
          (convoy-load (gascity-dashboard--effective-load convoy-res
                                                           last-convoy))

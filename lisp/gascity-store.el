@@ -651,7 +651,8 @@ action, the plist of `gascity-reader-run-async'."
            (gascity-store--notify entry))))
       (:timeout
        (let ((msg (format "gc %s timed out after %ss (killed)"
-                          (mapconcat #'identity (gascity-store-entry-args entry) " ")
+                          (mapconcat (lambda (a) (format "%s" a))
+                                     (gascity-store-entry-args entry) " ")
                           (cadr result))))
          (when (eq (gascity-store--host-state host) 'probing)
            (gascity-store--go-offline host msg))
@@ -663,8 +664,17 @@ action, the plist of `gascity-reader-run-async'."
 
 ;;; Reads
 
-(defun gascity-store--read-start (entry)
-  "Return the start function of a read job for ENTRY."
+(defvar gascity-store-loader-force nil
+  "Non-nil while a composite loader runs for a forced refresh.
+A `:loader' (see `gascity-store-fetch') captures it when it starts and
+passes it as `:force' to the store reads it fans out to, so an explicit
+refresh of the composite re-reads its parts instead of answering from
+their TTL.")
+
+(defun gascity-store--read-start (entry &optional force)
+  "Return the start function of a read job for ENTRY.
+FORCE is bound as `gascity-store-loader-force' around a composite
+loader."
   (let ((args (gascity-store-entry-args entry))
         (lines (gascity-store-entry-lines entry))
         (loader (gascity-store-entry-loader entry))
@@ -673,7 +683,9 @@ action, the plist of `gascity-reader-run-async'."
       (let ((ok (lambda (data) (funcall finish (list :ok data))))
             (err (lambda (msg) (funcall finish (list :error msg)))))
         (cond
-         (loader (funcall loader ok err) nil)
+         (loader (let ((gascity-store-loader-force force))
+                   (funcall loader ok err))
+                 nil)
          (t
           (let ((gascity-reader-skip-dir-probe
                  (or gascity-reader-skip-dir-probe
@@ -701,7 +713,7 @@ in flight afterwards."
                    :lane (if (gascity-store-entry-loader entry) 'virtual 'read)
                    :host (gascity-store--host (gascity-store--dir-host dir))
                    :dir dir
-                   :start (gascity-store--read-start entry)
+                   :start (gascity-store--read-start entry force)
                    :entry entry
                    :buffers (and buffer (list buffer)))))
         (setf (gascity-store-entry-job entry) job)
@@ -766,17 +778,21 @@ never unmounts on refresh — plus the store flags (:pending :timed-out
 :offline :stale :fetched-at).  The component re-renders whenever the
 entry changes, whoever caused it.
 
+ARGS nil means \"nothing to read\" (a conditional load): the hook then
+returns (:status ready :data DEFAULT) without touching the store.
+
 KEYS: :tick — a refresh counter (the view's `refresh-tick'); a change
 re-reads (joining a read already in flight, so several views
-refreshing together cost one process).  :lines, :loader and :dir as
-for `gascity-store-fetch'."
+refreshing together cost one process).  :default — the data returned
+for a nil ARGS.  :lines, :loader and :dir as for `gascity-store-fetch'."
   (let* ((instance vui--current-instance)
          (buffer (current-buffer))
          (tick (plist-get keys :tick))
-         (entry (gascity-store--entry (gascity-store--dir (plist-get keys :dir))
-                                      args (plist-get keys :lines)
-                                      (plist-get keys :loader)))
-         (key (gascity-store-entry-key entry))
+         (entry (and args
+                     (gascity-store--entry
+                      (gascity-store--dir (plist-get keys :dir))
+                      args (plist-get keys :lines) (plist-get keys :loader))))
+         (key (and entry (gascity-store-entry-key entry)))
          (ref (vui-use-ref nil)))
     (vui-use-effect ()
       (lambda ()
@@ -788,15 +804,19 @@ for `gascity-store-fetch'."
          ((not (equal (plist-get state :key) key))
           (gascity-store-unsubscribe (plist-get state :sub))
           (setcar ref (list :key key :tick tick
-                            :sub (gascity-store--subscribe-entry
-                                  entry
-                                  (gascity-store--vui-notifier instance buffer)
-                                  buffer)))
-          (gascity-store--request entry :buffer buffer))
+                            :sub (and entry
+                                      (gascity-store--subscribe-entry
+                                       entry
+                                       (gascity-store--vui-notifier instance buffer)
+                                       buffer))))
+          (when entry (gascity-store--request entry :buffer buffer)))
          ((not (equal (plist-get state :tick) tick))
           (setcar ref (plist-put state :tick tick))
-          (gascity-store--request entry :force t :buffer buffer)))))
-    (gascity-store-snapshot entry)))
+          (when entry
+            (gascity-store--request entry :force t :buffer buffer))))))
+    (if entry
+        (gascity-store-snapshot entry)
+      (list :status 'ready :data (plist-get keys :default) :error nil))))
 
 ;;; Invalidation
 

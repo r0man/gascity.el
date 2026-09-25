@@ -42,7 +42,7 @@
 (require 'gascity-custom)
 (require 'gascity-context)            ; pin-directory (view keyed to its city)
 (require 'gascity-domain)             ; typed agent + at-point visit generic
-(require 'gascity-reader)             ; gascity-reader-read-async (per-section loads)
+(require 'gascity-store)              ; gascity-store-use (per-section loads)
 (require 'gascity-types)             ; gascity-command-rig-list! (rig-name completion)
 (require 'gascity-section)
 (require 'gascity-ui)
@@ -235,20 +235,11 @@ the last payload keeps rendering while a reload is in flight."
   :render
   ;; All async hooks run unconditionally, in order, every render.
   (let* ((status-res
-          (vui-use-async (list 'rig refresh-tick rig-name)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            (list "rig" "status" rig-name) resolve reject))))
+          (gascity-store-use (list "rig" "status" rig-name) :tick refresh-tick))
          (sessions-res
-          (vui-use-async (list 'sessions refresh-tick)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            '("session" "list") resolve reject))))
+          (gascity-store-use '("session" "list") :tick refresh-tick))
          (ready-res
-          (vui-use-async (list 'ready refresh-tick rig-name)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            (list "bd" "ready" "--rig" rig-name) resolve reject))))
+          (gascity-store-use (list "bd" "ready" "--rig" rig-name) :tick refresh-tick))
          (inprog-res
           (vui-use-async (list 'inprog refresh-tick rig-name)
                          (lambda (resolve reject)
@@ -256,15 +247,9 @@ the last payload keeps rendering while a reload is in flight."
                             (list "bd" "list" "--rig" rig-name
                                   "--status" "in_progress") resolve reject))))
          (orders-res
-          (vui-use-async (list 'orders refresh-tick)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            '("order" "list") resolve reject))))
+          (gascity-store-use '("order" "list") :tick refresh-tick))
          (dolt-res
-          (vui-use-async (list 'dolt refresh-tick)
-                         (lambda (resolve reject)
-                           (gascity-reader-read-async
-                            '("dolt" "health") resolve reject))))
+          (gascity-store-use '("dolt" "health") :tick refresh-tick))
          (status (gascity-ui-effective-load status-res (vui-use-ref nil)))
          (sessions (gascity-ui-effective-load sessions-res (vui-use-ref nil)))
          (ready (gascity-ui-effective-load ready-res (vui-use-ref nil)))
