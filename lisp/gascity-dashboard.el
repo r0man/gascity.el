@@ -480,14 +480,36 @@ control kind (§3.2)."
       (dolist (b beads) (d (alist-get 'id b) nil)))
     depth))
 
+(defun gascity-dashboard--step-path (bead formula)
+  "Return BEAD's step path: its `gc.step_ref' without the FORMULA prefix.
+Top-level and nested steps carry the prefix (`build-basic.review'),
+iteration beads do not (`review.iteration.1'); stripping it puts both
+on one path tree (`review', `review.iteration.1').  Nil without a ref."
+  (let ((ref (alist-get 'gc.step_ref (gascity-dashboard--meta bead))))
+    (and (stringp ref)
+         (if (and (stringp formula) (string-prefix-p (concat formula ".") ref))
+             (substring ref (1+ (length formula)))
+           ref))))
+
 (defun gascity-dashboard--ladder (root graph)
   "Return the step ladder of run ROOT from its GRAPH beads.
 GRAPH is every bead anchored to ROOT (`gc.root_bead_id'), any status.
 Returns a list of plists (:name :id :state), one per top-level step, in
 formula order (by blocks-dependency depth).  A step's state is its
 latest iteration bead's (`gc.logical_bead_id' → step, max
-`gc.attempt'), else its own."
+`gc.attempt'), else its own.  In a failed run (root `gc.outcome'
+fail) a closed step with a failed bead beneath it (a nested loop that
+failed) is the failed step."
   (let* ((formula (alist-get 'gc.formula_name (gascity-dashboard--meta root)))
+         (failed-paths
+          (and (equal (alist-get 'gc.outcome (gascity-dashboard--meta root)) "fail")
+               (delq nil (mapcar (lambda (b)
+                                   (and (equal (alist-get
+                                                'gc.outcome
+                                                (gascity-dashboard--meta b))
+                                               "fail")
+                                        (gascity-dashboard--step-path b formula)))
+                                 graph))))
          (steps (seq-filter (lambda (b)
                               (gascity-dashboard--top-level-step-p b formula))
                             graph))
@@ -508,11 +530,15 @@ latest iteration bead's (`gc.logical_bead_id' → step, max
                      (own (gascity-dashboard--bead-state step))
                      (state (if (and iter (not (eq own 'done)))
                                 (gascity-dashboard--bead-state iter)
-                              own)))
-                (list :name (substring (alist-get 'gc.step_ref
-                                                  (gascity-dashboard--meta step))
-                                       (1+ (length formula)))
-                      :id id :state state)))
+                              own))
+                     (name (substring (alist-get 'gc.step_ref
+                                                 (gascity-dashboard--meta step))
+                                      (1+ (length formula)))))
+                (when (and (eq state 'done)
+                           (seq-some (lambda (p) (string-prefix-p (concat name ".") p))
+                                     failed-paths))
+                  (setq state 'failed))
+                (list :name name :id id :state state)))
             (sort steps (lambda (a b)
                           (let ((da (gethash (alist-get 'id a) depth 0))
                                 (db (gethash (alist-get 'id b) depth 0)))
@@ -1631,20 +1657,22 @@ worker drawn under its run (not a top-level row of the section)."
   '("bd" "list" "--status" "in_progress,open,blocked" "-n" "0")
   "The per-store work read: split client-side into Moving, Work, runs.")
 
-(defun gascity-dashboard--read-work-stores (names dir resolve reject)
+(defun gascity-dashboard--read-work-stores (names dir resolve reject
+                                                  &optional argvs)
   "Read the work beads of the city store and the rig stores NAMES in DIR.
-See `gascity-dashboard--read-work' for RESOLVE and REJECT."
+See `gascity-dashboard--read-work' for RESOLVE, REJECT and ARGVS."
   (let* ((default-directory dir)
          (force gascity-store-loader-force)
+         (argvs (or argvs (list gascity-dashboard--work-args)))
          (stores (cons nil names))
-         (pending (length stores))
+         (pending (* (length stores) (length argvs)))
          (batches (make-hash-table :test 'equal))
          (errors nil)
          (settle
           (lambda ()
             (setq pending (1- pending))
             (when (zerop pending)
-              (if (= (length errors) (length stores))
+              (if (= (length errors) (* (length stores) (length argvs)))
                   (funcall reject (car errors))
                 (funcall resolve
                          (list :beads (apply #'append
@@ -1652,20 +1680,23 @@ See `gascity-dashboard--read-work' for RESOLVE and REJECT."
                                                      stores))
                                :errors errors)))))))
     (dolist (name stores)
-      (gascity-store-fetch
-       (append gascity-dashboard--work-args (and name (list "--rig" name)))
-       (lambda (payload)
-         (puthash name
-                  (mapcar (lambda (b) (append b (list (cons 'gascity-rig name))))
-                          (gascity-section-beads payload))
-                  batches)
-         (funcall settle))
-       (lambda (err)
-         (push (format "%s: %s" (or name "city") err) errors)
-         (funcall settle))
-       :force force))))
+      (dolist (args argvs)
+        (gascity-store-fetch
+         (append args (and name (list "--rig" name)))
+         (lambda (payload)
+           (puthash name
+                    (append (gethash name batches)
+                            (mapcar (lambda (b)
+                                      (append b (list (cons 'gascity-rig name))))
+                                    (gascity-section-beads payload)))
+                    batches)
+           (funcall settle))
+         (lambda (err)
+           (push (format "%s: %s" (or name "city") err) errors)
+           (funcall settle))
+         :force force)))))
 
-(defun gascity-dashboard--read-work (resolve reject)
+(defun gascity-dashboard--read-work (resolve reject &optional argvs)
   "Read the work beads of the city store and every rig store.
 One `bd list --status in_progress,open,blocked' read per store, all
 async; RESOLVE gets (:beads BEADS :errors ERRORS), BEADS stamped with
@@ -1673,12 +1704,15 @@ async; RESOLVE gets (:beads BEADS :errors ERRORS), BEADS stamped with
 the stores that did not answer.  REJECT only when every store failed.
 The rigs come from the rig memo, else one `gc rig list' read.  Reads
 started from a callback run in the loader's directory: a sentinel's
-current buffer is arbitrary, and the city must not be lost."
+current buffer is arbitrary, and the city must not be lost.
+ARGVS, when non-nil, replaces the one per-store read by these `bd'
+argvs, all read in every store and concatenated (the Runs view reads
+its run roots and step beads this way)."
   (let ((dir default-directory)
         (cached (gascity-rigs-cached)))
     (if cached
         (gascity-dashboard--read-work-stores
-         (gascity-dashboard--rig-store-names cached) dir resolve reject)
+         (gascity-dashboard--rig-store-names cached) dir resolve reject argvs)
       (let ((force gascity-store-loader-force))
         (gascity-store-fetch
          '("rig" "list")
@@ -1687,7 +1721,7 @@ current buffer is arbitrary, and the city must not be lost."
              (gascity-dashboard--read-work-stores
               (gascity-dashboard--rig-store-names
                (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload)))
-              dir resolve reject)))
+              dir resolve reject argvs)))
          reject :force force)))))
 
 (defun gascity-dashboard--rig-store-names (rigs)
