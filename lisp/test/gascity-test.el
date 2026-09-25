@@ -16,6 +16,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'gascity)
+(require 'gascity-test-helpers)     ; fresh store per test, mock TRAMP, render guard
 
 (defun gascity-test--plain-cols (entry)
   "Return ENTRY's column vector as a list of property-stripped values."

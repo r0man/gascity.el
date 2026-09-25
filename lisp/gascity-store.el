@@ -121,13 +121,6 @@ The Nth retry waits the Nth element; the last element repeats."
   :type '(repeat number)
   :group 'gascity)
 
-(defcustom gascity-store-refresh-coalesce 1
-  "Seconds within which a view refresh reuses a just-fetched payload.
-Several views of one city refresh on their own ticks; a payload
-fetched less than this long ago answers them all."
-  :type 'number
-  :group 'gascity)
-
 (defvar gascity-store-offline-regexp
   (concat "\\(?:Connection \\(?:refused\\|closed\\|reset\\|timed out\\)"
           "\\|Could not resolve hostname\\|No route to host\\|Host is down"
@@ -183,7 +176,7 @@ never runs inside a TRAMP operation.")
                                   (:copier nil))
   "One scheduled gc process."
   lane host dir start entry buffers
-  process timer done
+  process timer done result
   ;; Actions only.
   target args label json on-success on-error echo invalidate)
 
@@ -306,6 +299,22 @@ the last good payload, :error the last failure text.  Flags: :pending
           :offline (and (gascity-store-offline-p (gascity-store-entry-dir entry)) t)
           :stale (gascity-store-entry-stale entry)
           :fetched-at (gascity-store-entry-fetched-at entry))))
+
+(defun gascity-store-buffer-pending-p (&optional buffer)
+  "Return non-nil when a read BUFFER subscribes to is in flight.
+BUFFER defaults to the current buffer.  Pure; auto-refresh timers use
+it to skip a tick while the previous refresh is still loading."
+  (let ((buffer (or buffer (current-buffer)))
+        (pending nil))
+    (maphash (lambda (_key entry)
+               (when (and (not pending)
+                          (gascity-store-entry-job entry)
+                          (cl-some (lambda (sub)
+                                     (eq (gascity-store--sub-buffer sub) buffer))
+                                   (gascity-store-entry-subscribers entry)))
+                 (setq pending t)))
+             gascity-store--entries)
+    pending))
 
 (defun gascity-store-get (args &optional dir)
   "Return the snapshot of ARGS read in DIR, or nil when never requested.
@@ -469,8 +478,19 @@ deferred for a remote host."
   (gascity-store--adjust-running job 1)
   (let* ((finish
           (lambda (result)
-            (unless (gascity-store--job-done job)
-              (setf (gascity-store--job-done job) t)
+            (if (gascity-store--job-done job)
+                ;; A second answer of the same read: only a good payload
+                ;; after a good first answer counts (newest data wins);
+                ;; the killed process's errback after a deadline, or
+                ;; anything after a failure, is dropped.
+                (when (and (eq (car result) :ok)
+                           (eq (car (gascity-store--job-result job)) :ok)
+                           (gascity-store--job-entry job))
+                  (gascity-store--after
+                   (gascity-store--job-host job)
+                   (lambda () (gascity-store--complete-read job result))))
+              (setf (gascity-store--job-done job) t
+                    (gascity-store--job-result job) result)
               (when (timerp (gascity-store--job-timer job))
                 (cancel-timer (gascity-store--job-timer job)))
               (gascity-store--adjust-running job -1)
@@ -582,12 +602,17 @@ action, the plist of `gascity-reader-run-async'."
   "Settle read JOB with RESULT: update its entry, waiters, subscribers."
   (let* ((entry (gascity-store--job-entry job))
          (host (gascity-store--job-host job))
-         (waiters (gascity-store-entry-waiters entry)))
+         ;; A late answer of a superseded job (another read of the
+         ;; entry is in flight) updates the payload but leaves that
+         ;; read, and the waiters it will answer, alone.
+         (own (memq (gascity-store-entry-job entry) (list job nil)))
+         (waiters (and own (gascity-store-entry-waiters entry))))
+    (when own
+      (setf (gascity-store-entry-job entry) nil
+            (gascity-store-entry-waiters entry) nil))
     (pcase (car result)
       (:ok
-       (setf (gascity-store-entry-job entry) nil
-             (gascity-store-entry-waiters entry) nil
-             (gascity-store-entry-data entry) (cadr result)
+       (setf (gascity-store-entry-data entry) (cadr result)
              (gascity-store-entry-has-data entry) t
              (gascity-store-entry-error entry) nil
              (gascity-store-entry-timed-out entry) nil
@@ -601,7 +626,8 @@ action, the plist of `gascity-reader-run-async'."
        (gascity-store--notify entry))
       (:error
        (let ((msg (cadr result)))
-         (if (and (not (eq (gascity-store--job-lane job) 'virtual))
+         (if (and own
+                  (not (eq (gascity-store--job-lane job) 'virtual))
                   (gascity-store--offline-error-p host msg))
              ;; Connection-level: the read is not wrong, the host is
              ;; gone.  Re-queue it at the head (waiters kept) and pause
@@ -612,14 +638,13 @@ action, the plist of `gascity-reader-run-async'."
                            :start (gascity-store--job-start job)
                            :entry entry
                            :buffers (gascity-store--job-buffers job))))
-               (setf (gascity-store-entry-job entry) retry)
+               (setf (gascity-store-entry-job entry) retry
+                     (gascity-store-entry-waiters entry) waiters)
                (push retry (gascity-store--host-reads host))
                (gascity-store--go-offline host msg))
            (when (eq (gascity-store--host-state host) 'probing)
              (gascity-store--go-online host))
-           (setf (gascity-store-entry-job entry) nil
-                 (gascity-store-entry-waiters entry) nil
-                 (gascity-store-entry-error entry) msg
+           (setf (gascity-store-entry-error entry) msg
                  (gascity-store-entry-timed-out entry) nil)
            (dolist (w (reverse waiters))
              (when (cdr w) (gascity-store--safe-call (cdr w) msg)))
@@ -630,9 +655,7 @@ action, the plist of `gascity-reader-run-async'."
                           (cadr result))))
          (when (eq (gascity-store--host-state host) 'probing)
            (gascity-store--go-offline host msg))
-         (setf (gascity-store-entry-job entry) nil
-               (gascity-store-entry-waiters entry) nil
-               (gascity-store-entry-error entry) msg
+         (setf (gascity-store-entry-error entry) msg
                (gascity-store-entry-timed-out entry) t)
          (dolist (w (reverse waiters))
            (when (cdr w) (gascity-store--safe-call (cdr w) msg)))
@@ -744,9 +767,9 @@ never unmounts on refresh — plus the store flags (:pending :timed-out
 entry changes, whoever caused it.
 
 KEYS: :tick — a refresh counter (the view's `refresh-tick'); a change
-re-reads unless the payload is younger than
-`gascity-store-refresh-coalesce'.  :lines, :loader and :dir as for
-`gascity-store-fetch'."
+re-reads (joining a read already in flight, so several views
+refreshing together cost one process).  :lines, :loader and :dir as
+for `gascity-store-fetch'."
   (let* ((instance vui--current-instance)
          (buffer (current-buffer))
          (tick (plist-get keys :tick))
@@ -772,8 +795,7 @@ re-reads unless the payload is younger than
           (gascity-store--request entry :buffer buffer))
          ((not (equal (plist-get state :tick) tick))
           (setcar ref (plist-put state :tick tick))
-          (gascity-store--request entry :max-age gascity-store-refresh-coalesce
-                                  :buffer buffer)))))
+          (gascity-store--request entry :force t :buffer buffer)))))
     (gascity-store-snapshot entry)))
 
 ;;; Invalidation
