@@ -165,6 +165,45 @@ view's entries go stale and are re-read when it is displayed again."
             (should (equal (car (car reads)) '("session" "list"))))
         (kill-buffer buf)))))
 
+(ert-deftest gascity-test-store-batch-invalidation-foreground-first ()
+  "A debounced batch invalidates the union of its kinds once; foreground
+reads (mail) are requested before background ones (events, bd), and a
+capped remote host dispatches them first; a read in flight when its
+entry is invalidated is re-run once after it lands."
+  (gascity-test-store--remote-host
+    (gascity-test-with-store-stubs reads _actions
+      (let ((default-directory gascity-test-store--remote)
+            (gascity-remote-max-inflight 1)
+            (gascity-store-refetch-hidden t))
+        (with-current-buffer (get-buffer-create " *gascity-batch-view*")
+          (setq default-directory gascity-test-store--remote)
+          (dolist (args '(("events" "--since" "2h") ("bd" "list") ("mail" "count")))
+            (gascity-store-subscribe args #'ignore)
+            (gascity-store-fetch args #'ignore)))
+        ;; Drain the initial reads (one slot).
+        (dotimes (_ 3) (funcall (nth 1 (car reads)) 'v0))
+        (setq reads nil)
+        (should (= 3 (gascity-store-invalidate-event
+                      '("order.fired" "bead.created" "mail.sent")
+                      gascity-test-store--remote)))
+        ;; One slot: the mail read goes first, the heavy ones wait.
+        (should (equal (mapcar #'car reads) '(("mail" "count"))))
+        ;; Invalidated again while it runs: rerun once after it lands.
+        (gascity-store-invalidate-event '("mail.read") gascity-test-store--remote)
+        (should (= 1 (length reads)))
+        (funcall (nth 1 (car reads)) 'v1)
+        ;; The rerun is scheduled (queued ahead of the waiting heavy reads).
+        (should (gascity-test-store--wait
+                 (lambda () (plist-get (gascity-store-get '("mail" "count")) :pending))))
+        ;; …and it is what the next free slot takes.
+        (should (equal (car (gascity-store-entry-args
+                             (gascity-store--job-entry
+                              (gascity-store--pop
+                               (gascity-store--host (file-remote-p gascity-test-store--remote))
+                               'read))))
+                       "mail"))
+        (kill-buffer " *gascity-batch-view*")))))
+
 ;;; Scheduler: per-host cap, priority, deadline, offline
 
 (ert-deftest gascity-test-store-remote-cap-and-fifo ()

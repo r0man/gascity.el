@@ -172,14 +172,14 @@ never runs inside a TRAMP operation.")
   "One cached read."
   key dir args lines loader kind
   data has-data error timed-out fetched-at stale
-  job waiters subscribers)
+  job waiters subscribers rerun)
 
 (cl-defstruct (gascity-store--host (:constructor gascity-store--make-host)
                                    (:copier nil))
   "Scheduler state of one host."
   name
   (reads nil) (actions nil)             ; FIFO job queues
-  (running-reads 0) (running-actions 0)
+  (running-reads 0) (running-actions 0) (running-fg 0)
   (state 'online) reason (backoff 0) retry-timer
   primed pump-timer)
 
@@ -187,7 +187,7 @@ never runs inside a TRAMP operation.")
                                   (:copier nil))
   "One scheduled gc process."
   lane host dir start entry buffers
-  process timer done result
+  process timer done result deferrable
   ;; Actions only.
   target args label json on-success on-error echo invalidate)
 
@@ -436,13 +436,46 @@ A remote completion must never run inside the TRAMP operation whose
                     0 1))
       (_ (if (numberp cap) (max 0 (- cap running)) most-positive-fixnum)))))
 
+(defcustom gascity-store-background-kinds '(events bd convoy order)
+  "Read kinds that yield to every other kind in a host's read queue.
+Their reads are the heavy or high-churn ones (activity feeds, bead
+lists, convoys, orders): an `order.*' / `bead.*' burst invalidates them
+together with, say, a mail count, and on a capped remote host they must
+not make the light read wait (dashboard-v3 §8.3 R9)."
+  :type '(repeat symbol)
+  :group 'gascity)
+
+(defun gascity-store--job-background-p (job)
+  "Return non-nil when JOB reads a `gascity-store-background-kinds' kind."
+  (let ((entry (gascity-store--job-entry job)))
+    (and entry (memq (gascity-store-entry-kind entry)
+                     gascity-store-background-kinds))))
+
 (defun gascity-store--pop (host lane)
-  "Remove and return the next LANE job of HOST: visible first, else FIFO."
+  "Remove and return the next LANE job of HOST, or nil to wait.
+Order: visible foreground, other foreground, other non-deferrable
+jobs, then — only while no non-deferrable read runs on HOST — visible
+deferrable ones, then FIFO.  A job is foreground unless its kind is in
+`gascity-store-background-kinds'; deferrable jobs are background kinds
+being re-read (their entry already holds data): first loads never wait."
   (let* ((queue (if (eq lane 'action)
                     (gascity-store--host-actions host)
                   (gascity-store--host-reads host)))
-         (job (or (cl-find-if #'gascity-store--job-visible-p queue)
-                  (car queue))))
+         (fg (lambda (j) (not (gascity-store--job-background-p j))))
+         (job (or (cl-find-if (lambda (j) (and (gascity-store--job-visible-p j)
+                                               (funcall fg j)))
+                              queue)
+                  (cl-find-if fg queue)
+                  (cl-find-if (lambda (j) (not (gascity-store--job-deferrable j)))
+                              queue)
+                  ;; A deferrable read (a background kind re-read by an
+                  ;; invalidation) starts only once no other read runs on
+                  ;; the host: even uncapped (local) it would slow gc's
+                  ;; answer to the light read of its batch (§8.3 R9).
+                  ;; The read deadline bounds the wait.
+                  (and (= 0 (gascity-store--host-running-fg host))
+                       (or (cl-find-if #'gascity-store--job-visible-p queue)
+                           (car queue))))))
     (when job
       (if (eq lane 'action)
           (setf (gascity-store--host-actions host) (delq job queue))
@@ -511,11 +544,15 @@ From inside a vui render the pump runs from a timer instead
         (gascity-store--pump host)))))
 
 (defun gascity-store--adjust-running (job delta)
-  "Add DELTA to the running count of JOB's host lane (not for virtual)."
+  "Add DELTA to the running count of JOB's host lane (not for virtual).
+Foreground reads are also counted apart (`running-fg'): background
+reads wait for them (`gascity-store--pop')."
   (let ((host (gascity-store--job-host job)))
     (pcase (gascity-store--job-lane job)
       ('action (cl-incf (gascity-store--host-running-actions host) delta))
-      ('read (cl-incf (gascity-store--host-running-reads host) delta)))))
+      ('read (cl-incf (gascity-store--host-running-reads host) delta)
+             (unless (gascity-store--job-deferrable job)
+               (cl-incf (gascity-store--host-running-fg host) delta))))))
 
 (defun gascity-store--start (job)
   "Start JOB: count its slot, arm its deadline, run its start function.
@@ -667,7 +704,14 @@ action, the plist of `gascity-reader-run-async'."
          (waiters (and own (gascity-store-entry-waiters entry))))
     (when own
       (setf (gascity-store-entry-job entry) nil
-            (gascity-store-entry-waiters entry) nil))
+            (gascity-store-entry-waiters entry) nil)
+      ;; Invalidated while this read ran: read once more (after the
+      ;; delivery below), so the event's effect is not missed.
+      (when (gascity-store-entry-rerun entry)
+        (setf (gascity-store-entry-rerun entry) nil)
+        (run-at-time 0 nil (lambda ()
+                             (unless (gascity-store-entry-job entry)
+                               (gascity-store--request entry :force t))))))
     (pcase (car result)
       (:ok
        (setf (gascity-store-entry-data entry) (cadr result)
@@ -752,7 +796,7 @@ loader."
                 (gascity-reader-read-async args ok err :lines t)
               (gascity-reader-read-async args ok err)))))))))
 
-(cl-defun gascity-store--request (entry &key force max-age buffer)
+(cl-defun gascity-store--request (entry &key force max-age buffer deferrable)
   "Make sure ENTRY is fresh: join its read in flight or schedule one.
 FORCE re-reads even a fresh entry (joining one in flight all the
 same); MAX-AGE overrides the TTL; BUFFER is the requesting buffer
@@ -773,7 +817,14 @@ in flight afterwards."
                    :dir dir
                    :start (gascity-store--read-start entry force)
                    :entry entry
-                   :buffers (and buffer (list buffer)))))
+                   :buffers (and buffer (list buffer))
+                   ;; A background kind's RE-read (it already shows data)
+                   ;; may wait for the light reads of its batch; a first
+                   ;; load never does.
+                   :deferrable (or deferrable
+                                   (and (gascity-store--entry-background-p entry)
+                                        (gascity-store-entry-has-data entry)
+                                        t)))))
         (setf (gascity-store-entry-job entry) job)
         (gascity-store--enqueue job)
         (and (gascity-store-entry-job entry) t))))))
@@ -961,7 +1012,7 @@ number of entries matched.  The entry point of the event router
 \(§8.2)."
   (let ((dir (and dir (gascity-store--dir dir)))
         (kinds (if (listp kind) kind (list kind)))
-        (n 0))
+        (matched nil))
     (maphash
      (lambda (_key entry)
        (when (and (or (null dir)
@@ -970,14 +1021,29 @@ number of entries matched.  The entry point of the event router
                   (or (null prefix)
                       (equal prefix (seq-take (gascity-store-entry-args entry)
                                               (length prefix)))))
-         (cl-incf n)
-         (setf (gascity-store-entry-stale entry) t)
-         (when (and refetch
-                    (cl-some #'gascity-store--sub-wants-refetch-p
-                             (gascity-store-entry-subscribers entry)))
-           (gascity-store--request entry :force t))))
+         (push entry matched)))
      gascity-store--entries)
-    n))
+    ;; Foreground kinds first, so they reach the queue (and, uncapped,
+    ;; the host) ahead of the heavy background reads of the same batch.
+    (dolist (entry (append (seq-remove #'gascity-store--entry-background-p matched)
+                           (seq-filter #'gascity-store--entry-background-p matched)))
+      (setf (gascity-store-entry-stale entry) t)
+      (when (and refetch
+                 (cl-some #'gascity-store--sub-wants-refetch-p
+                          (gascity-store-entry-subscribers entry)))
+        (if (and (gascity-store-entry-job entry)
+                 (not (eq (gascity-store--job-lane (gascity-store-entry-job entry))
+                          'virtual)))
+            ;; A read already in flight may predate the event: joining
+            ;; it would show pre-event data.  Read once more after it.
+            (setf (gascity-store-entry-rerun entry) t)
+          (gascity-store--request entry :force t
+                                  :deferrable (gascity-store--entry-background-p entry)))))
+    (length matched)))
+
+(defun gascity-store--entry-background-p (entry)
+  "Return non-nil when ENTRY's kind is in `gascity-store-background-kinds'."
+  (memq (gascity-store-entry-kind entry) gascity-store-background-kinds))
 
 (defcustom gascity-store-refetch-hidden nil
   "Non-nil re-reads an invalidated entry even when no view of it is visible.
@@ -1020,13 +1086,22 @@ run from a timer, outside redisplay; finding them is pure."
 
 (add-hook 'window-buffer-change-functions #'gascity-store--refresh-shown)
 
+(defun gascity-store-event-kinds (types)
+  "Return the read kinds the gc event TYPES (a list of strings) route to."
+  (delete-dups
+   (cl-loop for type in types
+            append (cl-loop for (prefix . ks) in gascity-store-event-routes
+                            when (string-prefix-p prefix type) append ks))))
+
 (defun gascity-store-invalidate-event (type &optional dir)
   "Invalidate the kinds gc event TYPE routes to, under DIR.
-TYPE is an event type string (\"session.woke\"); the routing table is
-`gascity-store-event-routes'.  Returns the number of entries matched."
-  (let ((kinds (cl-loop for (prefix . ks) in gascity-store-event-routes
-                        when (string-prefix-p prefix type) append ks)))
-    (if kinds (gascity-store-invalidate :dir dir :kind (delete-dups kinds)) 0)))
+TYPE is an event type string (\"session.woke\"), or a list of them —
+a debounced batch: its kinds are invalidated ONCE, so an entry that
+several of the batch's types touch is re-read once, not once per type.
+The routing table is `gascity-store-event-routes'.  Returns the number
+of entries matched."
+  (let ((kinds (gascity-store-event-kinds (if (listp type) type (list type)))))
+    (if kinds (gascity-store-invalidate :dir dir :kind kinds) 0)))
 
 (defun gascity-store--invalidate-for-action (args dir)
   "Invalidate what a completed action with gc ARGS in DIR touched.

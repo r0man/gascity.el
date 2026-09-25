@@ -307,7 +307,7 @@ report means gc itself exited.  gc API failures mean supervisor down."
       (should (equal flushed '((all)))))))
 
 (ert-deftest gascity-test-live-invalidate-reaches-views-and-store ()
-  "A batch calls the store per type, the hook, and matching views only."
+  "A batch calls the store ONCE with its types, the hook, and matching views."
   (gascity-live-test--with-clean-state
     (let ((root (file-name-as-directory (make-temp-file "gascity-live-city" t)))
           (gascity-live-enabled nil)
@@ -330,7 +330,7 @@ report means gc itself exited.  gc API failures mean supervisor down."
                         (gascity-live-attach nil :kinds (nth 1 spec)
                                              :refresh (nth 2 spec))))
                     (gascity-live--invalidate root '(agents) '("session.woke"))
-                    (should (equal store-calls (list (cons "session.woke" root))))
+                    (should (equal store-calls (list (cons '("session.woke") root))))
                     (should (equal hook-calls
                                    (list (list root '(agents) '("session.woke")))))
                     (should (equal agents-hits '(t)))

@@ -326,12 +326,14 @@ REFRESH whose kinds intersect KINDS.  Views reading through the store
 repaint from the store's own refetch; REFRESH is for the others."
   ;; The store matches entry directories as spelled (a view's
   ;; \"/mock::/c/\" is not the canonical \"/mock:host:/c/\"): invalidate
-  ;; under the stream root and under each attached view's directory.
+  ;; under the stream root and under each attached view's directory —
+  ;; once per directory for the whole batch (the union of its kinds):
+  ;; per type, an entry several types touch would be re-read again
+  ;; each time its previous read had already finished.
   (dolist (dir (gascity-live--store-dirs root))
     (if (eq kinds 'all)
         (gascity-store-invalidate :dir dir)
-      (dolist (type types)
-        (gascity-store-invalidate-event type dir))))
+      (gascity-store-invalidate-event types dir)))
   (run-hook-with-args 'gascity-live-invalidate-functions root kinds types)
   (when-let* ((stream (gethash root gascity-live--streams)))
     (dolist (buf (gascity-live--stream-views stream))
