@@ -3019,6 +3019,40 @@ pre-step: missing forces the fallback, found is cached (no probe next time)."
             (gascity-test--tmux-answer script))
         (gascity-terminal-attach-tmux "sess" nil nil)))))
 
+(ert-deftest gascity-test-terminal-preload-backend-once ()
+  "The first view schedules a one-shot idle preload of the terminal
+backend; later views and a loaded backend schedule nothing; batch never."
+  (let ((gascity-terminal--preload-state nil)
+        (scheduled 0) (loaded 0) (noninteractive nil)
+        (gascity-terminal-backend 'vterm))
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (_secs _repeat fn &rest _) (cl-incf scheduled) (funcall fn)))
+              ((symbol-function 'gascity-terminal--client-term)
+               (lambda () (should-not (file-remote-p default-directory))
+                 (cl-incf loaded) "xterm-256color"))
+              ((symbol-function 'featurep)
+               (lambda (f &rest _) (and (eq f 'vterm) (> loaded 0)))))
+      (let ((default-directory "/ssh:u@h:/city/"))
+        (run-hook-with-args 'gascity-view-created-functions (current-buffer))
+        (run-hook-with-args 'gascity-view-created-functions (current-buffer)))
+      (should (= scheduled 1))
+      (should (= loaded 1))
+      (should (eq gascity-terminal--preload-state 'done))))
+  ;; Already loaded: nothing scheduled.
+  (let ((gascity-terminal--preload-state nil) (noninteractive nil) (scheduled 0)
+        (gascity-terminal-backend 'term))
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (&rest _) (cl-incf scheduled)))
+              ((symbol-function 'featurep) (lambda (f &rest _) (eq f 'term))))
+      (gascity-terminal--schedule-preload)
+      (should (= scheduled 0))))
+  ;; Batch: never.
+  (let ((gascity-terminal--preload-state nil) (scheduled 0))
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (&rest _) (cl-incf scheduled))))
+      (gascity-terminal--schedule-preload)
+      (should (= scheduled 0)))))
+
 (ert-deftest gascity-test-agent-dired-prefers-recorded-work-dir ()
   "A recorded `:work-dir' is used directly, without a tmux pane query."
   (let (opened)

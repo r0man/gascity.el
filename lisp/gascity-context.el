@@ -185,6 +185,10 @@ resolves the memoized city-root walk, never spawns gc."
   (when-let* ((root (gascity-context-city-root)))
     (list "--city" (file-local-name root))))
 
+(defvar gascity-view-created-functions nil
+  "Abnormal hook run with each buffer `gascity-view-get-buffer-create' returns.
+Functions must be cheap and do no I/O: they run on every view open.")
+
 (defun gascity-view-get-buffer-create (base &optional dir)
   "Return the view buffer named BASE, keyed and pinned to DIR's city.
 The one factory behind every buffer a gascity view opens — dashboards,
@@ -237,6 +241,7 @@ with a local `default-directory' — new views must come through here."
       (with-current-buffer buf
         (when (boundp 'beads-issue-id-prefixes)
           (setq-local beads-issue-id-prefixes prefixes))))
+    (run-hook-with-args 'gascity-view-created-functions buf)
     buf))
 
 ;;; An I/O-free `project' for every gascity buffer

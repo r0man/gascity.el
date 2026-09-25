@@ -82,6 +82,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 (require 'beads-terminal)
 (require 'gascity-custom)
 (require 'gascity-context)          ; install-project, rig memo (no cycle)
@@ -929,6 +930,48 @@ from a timer: reports problems in the echo area, never signals."
               (gascity-terminal--status-install buf session socket remote
                                                 status-off)))
           buf))))))
+
+;;; Backend preload
+
+;; The first attach of a session loads the terminal backend's library
+;; (vterm, eat, term …) while deciding the TERM — ~240 ms of blocked
+;; command loop on a cold Emacs (docs/qa/2026-09-25-dashboard-v3-terminal-async.md).
+;; The first gascity view to open schedules that load for the next idle
+;; moment instead, once per session.
+
+(defvar gascity-terminal--preload-state nil
+  "nil (not scheduled), `scheduled', or `done'.")
+
+(defun gascity-terminal--backend-loaded-p ()
+  "Return non-nil when the configured backend's library is already loaded.
+The `auto' backend counts as loaded once any known backend is."
+  (pcase gascity-terminal-backend
+    ('vterm (featurep 'vterm))
+    ('eat (featurep 'eat))
+    ('term (featurep 'term))
+    (_ (seq-some #'featurep '(vterm eat ghostel term)))))
+
+(defun gascity-terminal-preload-backend ()
+  "Load the terminal backend's library now, unless it already is.
+Resolves the backend exactly as an attach would (loading its package),
+from a local `default-directory'.  Errors are swallowed: a preload must
+never disturb the user; the attach reports any real problem later."
+  (setq gascity-terminal--preload-state 'done)
+  (unless (gascity-terminal--backend-loaded-p)
+    (let ((default-directory (file-name-as-directory temporary-file-directory))
+          (inhibit-message t))
+      (ignore-errors (gascity-terminal--client-term)))))
+
+(defun gascity-terminal--schedule-preload (&rest _)
+  "Schedule the one-shot backend preload for the next idle moment.
+On `gascity-view-created-functions': the first gascity view opened in
+an interactive session schedules it; later views do nothing."
+  (unless (or gascity-terminal--preload-state noninteractive
+              (gascity-terminal--backend-loaded-p))
+    (setq gascity-terminal--preload-state 'scheduled)
+    (run-with-idle-timer 2 nil #'gascity-terminal-preload-backend)))
+
+(add-hook 'gascity-view-created-functions #'gascity-terminal--schedule-preload)
 
 (provide 'gascity-terminal)
 ;;; gascity-terminal.el ends here
