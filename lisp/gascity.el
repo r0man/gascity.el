@@ -48,6 +48,7 @@
 (require 'transient)
 (require 'beads-prefix)
 (require 'gascity-custom)
+(require 'gascity-timer)
 (require 'gascity-ui)
 (require 'gascity-event)
 (require 'gascity-error)

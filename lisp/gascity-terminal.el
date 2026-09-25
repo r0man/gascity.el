@@ -87,6 +87,7 @@
 (require 'gascity-custom)
 (require 'gascity-context)          ; install-project, rig memo (no cycle)
 (require 'gascity-remote)
+(require 'gascity-timer)
 
 (declare-function gascity--log "gascity")
 
@@ -339,9 +340,11 @@ so starting it does no remote I/O.  Returns the process, or nil."
          (finish (lambda (exit)
                    (unless done
                      (setq done t)
-                     (when (timerp timer) (cancel-timer timer))
+                     (gascity-timer-cancel timer)
                      (let ((result (cons exit out)))
-                       (run-at-time 0 nil callback result)))))
+                       ;; From the sentinel: a plain timer here can be
+                       ;; lost to TRAMP's timer suspension (B1).
+                       (gascity-timer-at 0 callback result)))))
          (proc (condition-case err
                    (let ((default-directory
                           (if (gascity-remote-prefix dir)
@@ -365,7 +368,7 @@ so starting it does no remote I/O.  Returns the process, or nil."
     (when (and proc (not done)
                (numberp gascity-remote-async-timeout)
                (> gascity-remote-async-timeout 0))
-      (setq timer (run-at-time gascity-remote-async-timeout nil
+      (setq timer (gascity-timer-at gascity-remote-async-timeout
                                (lambda ()
                                  (when (process-live-p proc)
                                    (delete-process proc))

@@ -74,6 +74,7 @@
 (require 'gascity-error)
 (require 'gascity-remote)
 (require 'gascity-reader)
+(require 'gascity-timer)
 
 (declare-function gascity--log "gascity")
 (declare-function tramp-dissect-file-name "tramp" (name &optional nodefault))
@@ -162,7 +163,7 @@ hardening, item 4).")
 
 (defvar gascity-store-synchronous-delivery nil
   "Non-nil delivers remote completions synchronously (tests only).
-Normally a remote completion is deferred with `run-at-time' 0 so it
+Normally a remote completion is deferred (`gascity-timer-at' 0) so it
 never runs inside a TRAMP operation.")
 
 ;;; Data structures
@@ -358,7 +359,9 @@ sees current data.  Never blocks.  DIR defaults to `default-directory'."
 
 (defun gascity-store-get (args &optional dir)
   "Return the snapshot of ARGS read in DIR, or nil when never requested.
-Never spawns anything; DIR defaults to `default-directory'."
+Never spawns anything; DIR defaults to `default-directory'.  First
+runs completions whose deferral was lost (`gascity-timer-rescue')."
+  (gascity-timer-rescue)
   (when-let* ((entry (gethash (gascity-store-key args dir) gascity-store--entries)))
     (gascity-store-snapshot entry)))
 
@@ -408,13 +411,15 @@ as for `gascity-store-fetch'.  Subscribing does not read; pair it with
 ;;; Deferral
 
 (defun gascity-store--after (host fn)
-  "Run FN now for a local HOST, else from `run-at-time' 0.
+  "Run FN now for a local HOST, else deferred (`gascity-timer-at' 0).
 A remote completion must never run inside the TRAMP operation whose
-`accept-process-output' dispatched the sentinel."
+`accept-process-output' dispatched the sentinel — and that operation
+may suspend timers, discarding a plain `run-at-time' made here, which
+lost the completion for good (B1): the deferred call survives it."
   (if (or gascity-store-synchronous-delivery
           (string-empty-p (gascity-store--host-name* host)))
       (funcall fn)
-    (run-at-time 0 nil fn)))
+    (gascity-timer-at 0 fn)))
 
 (defun gascity-store--host-name* (host)
   "Return HOST's name (HOST a host struct or a name string)."
@@ -490,9 +495,9 @@ being re-read (their entry already holds data): first loads never wait."
 
 (defun gascity-store--pump-later (host &optional delay)
   "Pump HOST from a timer after DELAY seconds (default 0), once."
-  (unless (timerp (gascity-store--host-pump-timer host))
+  (unless (gascity-timer-pending-p (gascity-store--host-pump-timer host))
     (setf (gascity-store--host-pump-timer host)
-          (run-at-time (or delay 0) nil
+          (gascity-timer-at (or delay 0)
                        (lambda ()
                          (setf (gascity-store--host-pump-timer host) nil)
                          (gascity-store--pump host t))))))
@@ -504,6 +509,7 @@ dispatch — the synchronous first-contact resolution of gc — runs from
 a timer, FROM-TIMER non-nil) and while its TRAMP channel is not
 mid-command (a spawn from inside another TRAMP call would be
 reentrant); otherwise the pump is retried from a timer."
+  (gascity-timer-rescue)
   (let ((name (gascity-store--host-name host)))
     (cond
      ((and (not (string-empty-p name))
@@ -582,8 +588,9 @@ deferred for a remote host."
                    (lambda () (gascity-store--complete-read job result))))
               (setf (gascity-store--job-done job) t
                     (gascity-store--job-result job) result)
-              (when (timerp (gascity-store--job-timer job))
-                (cancel-timer (gascity-store--job-timer job)))
+              ;; The deadline stays armed until the completion has run
+              ;; (`gascity-store--complete' cancels it): it is a second
+              ;; way out if the deferred completion were ever stuck.
               (gascity-store--adjust-running job -1)
               (gascity-store--after
                (gascity-store--job-host job)
@@ -592,12 +599,15 @@ deferred for a remote host."
                (> gascity-remote-async-timeout 0)
                (not (eq (gascity-store--job-lane job) 'virtual)))
       (setf (gascity-store--job-timer job)
-            (run-at-time gascity-remote-async-timeout nil
-                         (lambda ()
-                           (let ((proc (gascity-store--job-process job)))
-                             (funcall finish (list :timeout gascity-remote-async-timeout))
-                             (when (process-live-p proc)
-                               (ignore-errors (delete-process proc))))))))
+            (gascity-timer-at gascity-remote-async-timeout
+                              (lambda ()
+                                ;; Finished already: its completion is
+                                ;; still pending — run it now.
+                                (gascity-timer-drain)
+                                (let ((proc (gascity-store--job-process job)))
+                                  (funcall finish (list :timeout gascity-remote-async-timeout))
+                                  (when (process-live-p proc)
+                                    (ignore-errors (delete-process proc))))))))
     (let ((proc (condition-case err
                     (let ((default-directory (gascity-store--job-dir job)))
                       ;; A TRAMP `make-process' sets its connection up
@@ -642,17 +652,16 @@ deferred for a remote host."
 
 (defun gascity-store--go-offline (host reason)
   "Flip HOST offline for REASON and schedule the next reconnect probe."
-  (when (timerp (gascity-store--host-retry-timer host))
-    (cancel-timer (gascity-store--host-retry-timer host)))
+  (gascity-timer-cancel (gascity-store--host-retry-timer host))
   (let* ((steps gascity-store-offline-backoff)
          (n (gascity-store--host-backoff host))
          (delay (or (nth n steps) (car (last steps)) 60)))
     (setf (gascity-store--host-backoff host) (1+ n)
           (gascity-store--host-retry-timer host)
-          (run-at-time delay nil
-                       (lambda ()
-                         (setf (gascity-store--host-retry-timer host) nil)
-                         (gascity-store--probe host)))))
+          (gascity-timer-at delay
+                            (lambda ()
+                              (setf (gascity-store--host-retry-timer host) nil)
+                              (gascity-store--probe host)))))
   (when (fboundp 'gascity--log)
     (gascity--log 'error "Host %s offline: %s"
                   (gascity-store--host-name host) reason))
@@ -668,8 +677,7 @@ deferred for a remote host."
 
 (defun gascity-store--go-online (host)
   "Mark HOST reachable again: reset the backoff and resume its queues."
-  (when (timerp (gascity-store--host-retry-timer host))
-    (cancel-timer (gascity-store--host-retry-timer host)))
+  (gascity-timer-cancel (gascity-store--host-retry-timer host))
   (setf (gascity-store--host-retry-timer host) nil
         (gascity-store--host-backoff host) 0)
   (unless (eq (gascity-store--host-state host) 'online)
@@ -682,8 +690,7 @@ The manual `g' path: skips the remaining backoff delay."
   (let ((host (gascity-store--host
                (gascity-store--dir-host (gascity-store--dir dir)))))
     (when (eq (gascity-store--host-state host) 'offline)
-      (when (timerp (gascity-store--host-retry-timer host))
-        (cancel-timer (gascity-store--host-retry-timer host)))
+      (gascity-timer-cancel (gascity-store--host-retry-timer host))
       (setf (gascity-store--host-retry-timer host) nil)
       (gascity-store--probe host))))
 
@@ -693,6 +700,7 @@ The manual `g' path: skips the remaining backoff delay."
   "Settle JOB with RESULT and start whatever its host can run next.
 RESULT is (:ok DATA), (:error MESSAGE), (:timeout SECONDS) or, for an
 action, the plist of `gascity-reader-run-async'."
+  (gascity-timer-cancel (gascity-store--job-timer job))
   (let ((host (gascity-store--job-host job)))
     (if (eq (gascity-store--job-lane job) 'action)
         (gascity-store--complete-action job result)
@@ -808,6 +816,7 @@ FORCE re-reads even a fresh entry (joining one in flight all the
 same); MAX-AGE overrides the TTL; BUFFER is the requesting buffer
 \(visible buffers are served first).  Returns non-nil when a read is
 in flight afterwards."
+  (gascity-timer-rescue)
   (let ((job (gascity-store-entry-job entry)))
     (cond
      (job
@@ -863,6 +872,7 @@ overrides its TTL.  BUFFER (default the current buffer) is the
 requester, for priority.  Returns the process of the read joined or
 started when one is running (for liveness checks only: it is shared,
 never kill it), else nil — answered from the store, or queued."
+  (gascity-timer-rescue)
   (let* ((entry (gascity-store--entry (gascity-store--dir dir) args lines loader)))
     (if (and (not force) (not (gascity-store-entry-job entry))
              (gascity-store--fresh-p entry max-age))
@@ -929,9 +939,9 @@ notification that changes nothing the view shows re-renders nothing
                 (when (cdr item)
                   (unless (member item gascity-store--rerender-queue)
                     (push item gascity-store--rerender-queue))
-                  (unless (timerp gascity-store--rerender-timer)
+                  (unless (gascity-timer-pending-p gascity-store--rerender-timer)
                     (setq gascity-store--rerender-timer
-                          (run-at-time 0 nil #'gascity-store--flush-rerenders))))))))))))
+                          (gascity-timer-at 0 #'gascity-store--flush-rerenders))))))))))))
 
 (defun gascity-store-use (args &rest keys)
   "Read gc ARGS through the store from inside a vui component.
@@ -1080,8 +1090,8 @@ On `window-buffer-change-functions': a view buried while its reads were
 invalidated catches up the moment it is displayed again.  The requests
 run from a timer, outside redisplay; finding them is pure."
   (let ((buffers (delete-dups (mapcar #'window-buffer (window-list frame 'no-mini)))))
-    (run-at-time
-     0 nil
+    (gascity-timer-at
+     0
      (lambda ()
        (maphash (lambda (_key entry)
                   (when (and (gascity-store-entry-stale entry)
@@ -1322,13 +1332,12 @@ Subscribers are dropped too.  For tests and a hard reset."
   (maphash (lambda (_name host)
              (dolist (timer (list (gascity-store--host-retry-timer host)
                                   (gascity-store--host-pump-timer host)))
-               (when (timerp timer) (cancel-timer timer))))
+               (gascity-timer-cancel timer)))
            gascity-store--hosts)
   (maphash (lambda (_key entry)
              (when-let* ((job (gascity-store-entry-job entry)))
                (setf (gascity-store--job-done job) t)
-               (when (timerp (gascity-store--job-timer job))
-                 (cancel-timer (gascity-store--job-timer job)))
+               (gascity-timer-cancel (gascity-store--job-timer job))
                (when (process-live-p (gascity-store--job-process job))
                  (delete-process (gascity-store--job-process job)))))
            gascity-store--entries)

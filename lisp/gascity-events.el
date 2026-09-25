@@ -49,6 +49,7 @@
 (require 'gascity-event)
 (require 'gascity-context)
 (require 'gascity-store)
+(require 'gascity-timer)
 (require 'gascity-live)                 ; raw events appended live (§8.2)
 (require 'gascity-domain)
 (require 'gascity-section)
@@ -428,9 +429,11 @@ type filter are dropped."
       (with-current-buffer buffer
         (when (derived-mode-p 'gascity-events-mode)
           (setq gascity-events--queue (append (reverse events) gascity-events--queue))
-          (unless (timerp gascity-events--flush-timer)
+          ;; Called from the live stream's filter: a timer that TRAMP's
+          ;; timer suspension could lose would wedge this guard.
+          (unless (gascity-timer-pending-p gascity-events--flush-timer)
             (setq gascity-events--flush-timer
-                  (run-at-time gascity-events-append-delay nil
+                  (gascity-timer-at gascity-events-append-delay
                                #'gascity-events--flush buffer))))))))
 
 (defun gascity-events--live-setup ()
@@ -448,8 +451,7 @@ which the `seq' dedup absorbs."
 
 (defun gascity-events--teardown ()
   "Drop the live subscription and the pending flush of this view."
-  (when (timerp gascity-events--flush-timer)
-    (cancel-timer gascity-events--flush-timer))
+  (gascity-timer-cancel gascity-events--flush-timer)
   (when gascity-events--live
     (gascity-live-unsubscribe gascity-events--live))
   (setq gascity-events--live nil))

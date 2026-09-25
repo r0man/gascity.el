@@ -160,10 +160,9 @@ Paths with spaces in the program, PATH and city survive one shell."
   "Each failed attempt waits the next delay; a stable run resets it."
   (let ((s (gascity-live-test--stream))
         delays)
-    (cl-letf (((symbol-function 'run-at-time)
+    (cl-letf (((symbol-function 'gascity-timer-at)
                (lambda (secs &rest _) (push secs delays) 'fake-timer))
-              ((symbol-function 'timerp) (lambda (x) (eq x 'fake-timer)))
-              ((symbol-function 'cancel-timer) #'ignore))
+              ((symbol-function 'gascity-timer-cancel) #'ignore))
       (dotimes (_ 5) (gascity-live--schedule-retry s))
       (should (equal (nreverse delays) '(2 5 15 60 60)))
       ;; An exit after a long uptime starts over at 2 s.

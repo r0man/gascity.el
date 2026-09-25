@@ -54,6 +54,7 @@
 (require 'gascity-custom)
 (require 'gascity-remote)
 (require 'gascity-reader)
+(require 'gascity-timer)
 (require 'gascity-store)
 
 (declare-function tramp-dissect-file-name "tramp")
@@ -311,10 +312,13 @@ feeds, and queue their invalidation."
 (defun gascity-live--queue (stream type)
   "Add event TYPE to STREAM's debounce batch, arming the timer."
   (push type (gascity-live--stream-pending stream))
-  (unless (gascity-live--stream-debounce-timer stream)
+  ;; Armed from the stream's filter, maybe inside TRAMP's timer
+  ;; suspension: a plain timer could be lost, and this guard would then
+  ;; keep the batch from ever flushing (`gascity-timer').
+  (unless (gascity-timer-pending-p (gascity-live--stream-debounce-timer stream))
     (setf (gascity-live--stream-debounce-timer stream)
-          (run-at-time gascity-live-debounce nil
-                       #'gascity-live--flush stream))))
+          (gascity-timer-at gascity-live-debounce
+                            #'gascity-live--flush stream))))
 
 (defun gascity-live--flush (stream)
   "Invalidate what STREAM's pending batch touched; empty the batch."
@@ -527,15 +531,14 @@ dropped, which is `offline'."
 
 (defun gascity-live--cancel-confirm (stream)
   "Cancel STREAM's pending live confirmation."
-  (when (timerp (gascity-live--stream-confirm-timer stream))
-    (cancel-timer (gascity-live--stream-confirm-timer stream)))
+  (gascity-timer-cancel (gascity-live--stream-confirm-timer stream))
   (setf (gascity-live--stream-confirm-timer stream) nil))
 
 (defun gascity-live--arm-confirm (stream proc)
   "Mark STREAM live once PROC has stayed up `gascity-live-confirm-after'."
   (gascity-live--cancel-confirm stream)
   (setf (gascity-live--stream-confirm-timer stream)
-        (run-at-time gascity-live-confirm-after nil
+        (gascity-timer-at gascity-live-confirm-after
                      (lambda ()
                        (setf (gascity-live--stream-confirm-timer stream) nil)
                        (when (and (eq proc (gascity-live--stream-process stream))
@@ -579,8 +582,7 @@ dropped, which is `offline'."
 
 (defun gascity-live--cancel-retry (stream)
   "Cancel STREAM's pending reconnect."
-  (when (timerp (gascity-live--stream-retry-timer stream))
-    (cancel-timer (gascity-live--stream-retry-timer stream)))
+  (gascity-timer-cancel (gascity-live--stream-retry-timer stream))
   (setf (gascity-live--stream-retry-timer stream) nil
         (gascity-live--stream-retry-at stream) nil))
 
@@ -591,8 +593,10 @@ dropped, which is `offline'."
          (delay (gascity-live-backoff-delay attempt)))
     (setf (gascity-live--stream-attempt stream) (1+ attempt)
           (gascity-live--stream-retry-at stream) (+ (float-time) delay)
+          ;; Scheduled from the exit sentinel: must survive TRAMP's
+          ;; timer suspension, or the stream never reconnects.
           (gascity-live--stream-retry-timer stream)
-          (run-at-time delay nil
+          (gascity-timer-at delay
                        (lambda ()
                          (setf (gascity-live--stream-retry-timer stream) nil)
                          (when (and (gascity-live--stream-views stream)
@@ -607,9 +611,9 @@ dropped, which is `offline'."
   (setf (gascity-live--stream-stopping stream) t)
   (gascity-live--cancel-retry stream)
   (gascity-live--cancel-confirm stream)
-  (dolist (timer (list (gascity-live--stream-debounce-timer stream)
-                       (gascity-live--stream-poll-timer stream)))
-    (when (timerp timer) (cancel-timer timer)))
+  (gascity-timer-cancel (gascity-live--stream-debounce-timer stream))
+  (when (timerp (gascity-live--stream-poll-timer stream))
+    (cancel-timer (gascity-live--stream-poll-timer stream)))
   (setf (gascity-live--stream-debounce-timer stream) nil
         (gascity-live--stream-poll-timer stream) nil
         (gascity-live--stream-pending stream) nil)
@@ -745,7 +749,7 @@ a resume.  Killing BUFFER detaches it.  Returns the stream."
       (when (and (gascity-live--allowed-p)
                  (gascity-live--stream-enabled stream)
                  (not (process-live-p (gascity-live--stream-process stream)))
-                 (not (gascity-live--stream-retry-timer stream))
+                 (not (gascity-timer-pending-p (gascity-live--stream-retry-timer stream)))
                  (not (timerp (gascity-live--stream-poll-timer stream))))
         (gascity-live--start stream))
       stream)))
@@ -931,7 +935,7 @@ out."
                           (gascity-live--stream-views stream)
                           (not (gascity-live--running-p stream)))
                  (setf (gascity-live--stream-attempt stream) 0)
-                 (run-at-time 0 nil #'gascity-live--start stream)))
+                 (gascity-timer-at 0 #'gascity-live--start stream)))
              gascity-live--streams)))
 
 (add-hook 'gascity-store-host-state-functions #'gascity-live--host-state-changed)

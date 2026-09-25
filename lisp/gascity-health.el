@@ -102,7 +102,7 @@ The loader's process is bounded by `gascity-health-doctor-timeout'."
            (settle (lambda (fn value)
                      (unless done
                        (setq done t)
-                       (when (timerp timer) (cancel-timer timer))
+                       (gascity-timer-cancel timer)
                        (funcall fn value))))
            (proc (gascity-reader-run-async
                   (append '("doctor" "--json") (and fix '("--fix")))
@@ -113,7 +113,7 @@ The loader's process is bounded by `gascity-health-doctor-timeout'."
                         (funcall settle resolve payload)))))))
       (unless done
         (setq timer
-              (run-at-time gascity-health-doctor-timeout nil
+              (gascity-timer-at gascity-health-doctor-timeout
                            (lambda ()
                              (when (process-live-p proc)
                                (ignore-errors (delete-process proc)))

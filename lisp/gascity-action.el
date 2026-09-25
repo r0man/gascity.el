@@ -42,6 +42,7 @@
 (require 'gascity-ui)
 (require 'gascity-error)
 (require 'gascity-reader)
+(require 'gascity-timer)
 (require 'gascity-store)
 (require 'gascity-context)
 (require 'gascity-command)
@@ -1313,10 +1314,11 @@ meanwhile."
     (gascity-formula-refresh-async
      (plist-get (transient-scope) :formula)
      (lambda ()
-       ;; A process callback: rebuild from a timer, and only while the
-       ;; menu is still the active transient.
-       (run-at-time
-        0 nil
+       ;; A process callback: rebuild from a timer (one TRAMP's timer
+       ;; suspension cannot lose), and only while the menu is still the
+       ;; active transient.
+       (gascity-timer-at
+        0
         (lambda ()
           (when-let* ((prefix (transient-active-prefix 'gascity-sling-dispatch)))
             (condition-case nil
