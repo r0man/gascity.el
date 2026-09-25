@@ -1900,6 +1900,8 @@ command with `--dry-run' via the formula dispatch."
                (lambda () (list :formula nil :target nil :arg nil)))
               ((symbol-function 'transient-args)
                (lambda (_p) nil))
+              ;; `p' keeps the menu (S-2): it sets the menu up again.
+              ((symbol-function 'transient-setup) #'ignore)
               ((symbol-function 'read-string)
                (lambda (_p &rest _) "gce-1"))
               ((symbol-function 'gascity-action--read-session)

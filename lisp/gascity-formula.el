@@ -97,6 +97,14 @@ city root, which embeds the remote prefix — so a local and a remote
 city never cross-contaminate.  Session-lifetime; cleared per city by
 `gascity-formula-invalidate'.")
 
+(defvar gascity-formula-list-cache nil
+  "Per-city memo of `gc formula list': every formula the city can run.
+An alist of (CITY-KEY . (CITY-PATH . ROWS)), ROWS the payload's raw
+`formulas' rows ((name . N) (source . PATH)) and CITY-PATH its
+`city_path'.  The catalog lists only formulas that opt in with a
+`[catalog]' block; this list also has the city's own formulas, so the
+picker offers the union (bug S-1).  Keyed like the catalog cache.")
+
 (defvar gascity-formula-recipe-cache nil
   "Per-(city, formula) compiled-recipe memo.
 An alist of ((CITY-KEY . FORMULA-NAME) . RECIPE), RECIPE a
@@ -176,24 +184,43 @@ a catalog edited mid-session is re-read from gc on the next pick."
     (setq gascity-formula-catalog-cache
           (seq-filter (lambda (entry) (not (equal (car entry) key)))
                       gascity-formula-catalog-cache))
+    (setq gascity-formula-list-cache
+          (seq-filter (lambda (entry) (not (equal (car entry) key)))
+                      gascity-formula-list-cache))
     (setq gascity-formula-recipe-cache
           (seq-filter (lambda (entry) (not (equal (caar entry) key)))
                       gascity-formula-recipe-cache)))
   nil)
 
-(defun gascity-formula-refresh-async (formula done)
-  "Re-read this city's formula catalog, and FORMULA's recipe, without blocking.
-The async `g' of the sling transient (dashboard-v3 §8.5): both reads go
-through the store (forced, deadline-bounded), and each answer replaces
-its cache entry only when it arrives — until then the menu keeps the
-entries it has.  FORMULA nil refreshes the catalog alone.  DONE is
-called once with no arguments after every read has answered; a failed
-read is echoed and leaves its old entry in place.  Returns nil."
+(defun gascity-formula-refresh-async (formula done &optional cached)
+  "Re-read this city's formulas, and FORMULA's recipe, without blocking.
+The async `g' of the sling transient (dashboard-v3 §8.5): the catalog,
+`gc formula list' and the recipe are read through the store (forced
+unless CACHED, deadline-bounded), and each answer replaces its cache
+entry only when it arrives — until then the menu keeps the entries it
+has.  FORMULA nil skips the recipe.  DONE is called once with no
+arguments after every read has answered; a failed read is echoed
+\(unless CACHED: the silent prefetch on menu entry) and leaves its old
+entry in place.  Returns nil."
   (let* ((key (gascity-context-scope-key))
-         (outstanding (if formula 2 1))
+         (outstanding (if formula 3 2))
+         (force (not cached))
          (finish (lambda ()
                    (when (zerop (setq outstanding (1- outstanding)))
                      (funcall done)))))
+    (gascity-store-fetch
+     '("formula" "list")
+     (lambda (payload)
+       (setq gascity-formula-list-cache
+             (cons (cons key (cons (alist-get 'city_path payload)
+                                   (append (alist-get 'formulas payload) nil)))
+                   (seq-remove (lambda (e) (equal (car e) key))
+                               gascity-formula-list-cache)))
+       (funcall finish))
+     (lambda (msg)
+       (unless cached (message "Cannot refresh the formula list: %s" msg))
+       (funcall finish))
+     :force force)
     (gascity-store-fetch
      '("formula" "catalog")
      (lambda (payload)
@@ -206,9 +233,9 @@ read is echoed and leaves its old entry in place.  Returns nil."
                                  gascity-formula-catalog-cache))))
        (funcall finish))
      (lambda (msg)
-       (message "Cannot refresh the formula catalog: %s" msg)
+       (unless cached (message "Cannot refresh the formula catalog: %s" msg))
        (funcall finish))
-     :force t)
+     :force force)
     (when formula
       (gascity-store-fetch
        (list "formula" "show" formula)
@@ -220,10 +247,64 @@ read is echoed and leaves its old entry in place.  Returns nil."
                                    gascity-formula-recipe-cache))))
          (funcall finish))
        (lambda (msg)
-         (message "Cannot refresh formula %s: %s" formula msg)
+         (unless cached (message "Cannot refresh formula %s: %s" formula msg))
          (funcall finish))
-       :force t))
+       :force force))
     nil))
+
+(defun gascity-formula-choices ()
+  "Return this city's pickable formulas as (NAME . ANNOTATION), or nil.
+The union of the catalog (annotated with its description) and `gc
+formula list' (bug S-1): a formula outside the catalog is annotated
+`(city)' when its source lies in the city's tree, else `(not in
+catalog)'.  Catalog entries first, then the rest, each by name.  Nil
+while neither read has answered.  Pure over the caches."
+  (let* ((key (gascity-context-scope-key))
+         (catalog (cdr (assoc key gascity-formula-catalog-cache)))
+         (listed (cdr (assoc key gascity-formula-list-cache)))
+         (city-path (car listed))
+         (names (mapcar #'gascity-formula-catalog-entry-name catalog))
+         (extra nil))
+    (dolist (row (cdr listed))
+      (let ((name (alist-get 'name row))
+            (source (alist-get 'source row)))
+        (unless (or (null name) (member name names)
+                    (assoc name extra))
+          (push (cons name
+                      (if (and (stringp city-path) (stringp source)
+                               (string-prefix-p (file-name-as-directory city-path)
+                                                source))
+                          "(city)"
+                        "(not in catalog)"))
+                extra))))
+    (append
+     (mapcar (lambda (e)
+               (cons (gascity-formula-catalog-entry-name e)
+                     (or (gascity-formula-catalog-entry-description e) "")))
+             (sort (copy-sequence catalog)
+                   (lambda (a b) (string< (gascity-formula-catalog-entry-name a)
+                                          (gascity-formula-catalog-entry-name b)))))
+     (sort extra (lambda (a b) (string< (car a) (car b)))))))
+
+(defun gascity-formula-choices-wait ()
+  "Return `gascity-formula-choices', reading the formulas first when cold.
+The picker is input collection (D9): when the menu's prefetch has not
+answered yet, wait for the store reads — deadline-bounded by the store,
+`C-g' quits — rather than read gc synchronously.  Signals `user-error'
+when there is still nothing to offer."
+  (or (gascity-formula-choices)
+      (let ((done nil)
+            (deadline (+ (float-time)
+                         (if (numberp gascity-remote-async-timeout)
+                             (1+ gascity-remote-async-timeout)
+                           31))))
+        (message "Reading formulas…")
+        (gascity-formula-refresh-async nil (lambda () (setq done t)) 'cached)
+        (with-local-quit
+          (while (and (not done) (< (float-time) deadline))
+            (accept-process-output nil 0.05)))
+        (or (gascity-formula-choices)
+            (user-error "No formulas to pick — gc formula catalog/list returned none or failed")))))
 
 ;;; ============================================================
 ;;; Enum mapping (plan D1, REQ-005)
@@ -684,26 +765,20 @@ required-var business (REQ-008)."
 ;;; ---- Picker, dispatch, preview -------------------------------
 
 (defun gascity-sling-formula--read-formula ()
-  "Read a formula name from the cached catalog (REQ-001).
-Each candidate is annotated with the formula's `description' via the
-completion `:annotation-function'.  An empty or unreadable catalog is
-`gascity-formula-catalog''s clear `user-error' (REQ-002)."
-  (let ((entries (gascity-formula-catalog-cached)))
-    (let ((completion-extra-properties
-           (list :annotation-function
-                 (lambda (candidate)
-                   (when-let* ((entry (seq-find
-                                       (lambda (e)
-                                         (equal
-                                          (gascity-formula-catalog-entry-name e)
-                                          candidate))
-                                       entries)))
-                     (concat "  "
-                             (or (gascity-formula-catalog-entry-description entry)
-                                 "")))))))
-      (completing-read "Formula: "
-                       (mapcar #'gascity-formula-catalog-entry-name entries)
-                       nil t nil 'gascity-sling-formula-picker-history))))
+  "Read a formula name from every formula the city can run (REQ-001, S-1).
+The candidates are `gascity-formula-choices': the catalog, annotated
+with each formula's `description', plus the formulas only `gc formula
+list' has (the city's own), annotated `(city)'.  The reads go through
+the store (`gascity-formula-choices-wait'); nothing to offer is a clear
+`user-error' (REQ-002)."
+  (let* ((choices (gascity-formula-choices-wait))
+         (completion-extra-properties
+          (list :annotation-function
+                (lambda (candidate)
+                  (when-let* ((note (cdr (assoc candidate choices))))
+                    (concat "  " note))))))
+    (completing-read "Formula: " (mapcar #'car choices)
+                     nil t nil 'gascity-sling-formula-picker-history)))
 
 (defun gascity-sling-formula--dispatch (recipe target arg values &optional dry-run)
   "Validate and sling RECIPE with VALUES; return the command acted on.

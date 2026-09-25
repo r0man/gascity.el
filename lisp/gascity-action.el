@@ -1098,6 +1098,33 @@ empty) scope key (ga-4ia4, bright-lights dogfood §5)."
   (or (plist-get (or scope (transient-scope)) :city)
       default-directory))
 
+(defvar gascity-sling--remembered nil
+  "The sling menu's last state per city: an alist CITY-DIR → (SCOPE . VALUE).
+SCOPE is the menu scope (formula, target, arg), VALUE its infix values
+\(flags and formula vars).  Saved whenever the menu is set up again
+\(pick, target, arg, refresh, preview), restored when `S' re-enters the
+menu for that city, cleared by `x' and by a real sling — so a preview
+followed by `S s' slings what was previewed (bug S-2).")
+
+(defun gascity-sling--remember (scope value)
+  "Remember SCOPE and VALUE as the sling menu state of SCOPE's city."
+  (let ((city (plist-get scope :city)))
+    (when city
+      (setf (alist-get city gascity-sling--remembered nil nil #'equal)
+            (cons (copy-sequence scope) (copy-sequence value))))))
+
+(defun gascity-sling--forget (&optional city)
+  "Forget the remembered sling menu state of CITY (default: the scope's)."
+  (let ((city (or city (plist-get (ignore-errors (transient-scope)) :city))))
+    (setq gascity-sling--remembered
+          (seq-remove (lambda (e) (equal (car e) city)) gascity-sling--remembered))))
+
+(defun gascity-sling--resetup (scope)
+  "Set the sling menu up again with SCOPE and the current values; remember both."
+  (let ((value (transient-args 'gascity-sling-dispatch)))
+    (gascity-sling--remember scope value)
+    (transient-setup 'gascity-sling-dispatch nil nil :scope scope :value value)))
+
 (defun gascity-sling--show-plan (command)
   "Run COMMAND (a `--dry-run' sling) and show gc's routing plan.
 Pops a read-only view buffer at once with `…', filled with gc's
@@ -1120,18 +1147,20 @@ fallback).  With PREVIEW non-nil, force `--dry-run' and show gc's
 routing plan instead of executing."
   (let ((default-directory (gascity-sling--city-dir)))
     (let* ((scope (transient-scope))
-           (formula (plist-get scope :formula)))
+           (formula (plist-get scope :formula))
+           ;; The plain path's arg: what the scope holds (seeded at
+           ;; point, edited with `A', or read by a preview), else read.
+           (arg (if formula
+                    (plist-get scope :arg)
+                  (or (plist-get scope :arg)
+                      (read-string "Bead id or task text: " (gascity-bead-at-point)))))
+           (target (or (plist-get scope :target)
+                       (gascity-action--read-session "Sling to target: "))))
       (if formula
           (gascity-sling-formula--dispatch
            (gascity-formula-recipe-cached formula)
-           (or (plist-get scope :target)
-               (gascity-action--read-session "Sling to target: "))
-           (plist-get scope :arg)
-           (gascity-sling-formula--current-values)
-           preview)
+           target arg (gascity-sling-formula--current-values) preview)
         (let* ((plist (gascity-sling--parse-transient-args args))
-               (arg (read-string "Bead id or task text: " (gascity-bead-at-point)))
-               (target (gascity-action--read-session "Sling to target: "))
                (command (apply #'gascity-command-sling
                                :target target :arg arg
                                (append (when preview (list :dry-run t))
@@ -1141,24 +1170,45 @@ routing plan instead of executing."
             ;; `gc sling --json': the dispatch result is summarized
             ;; from the payload when the async call answers (D9).
             (oset command json t)
-            (gascity-command-act-async command)))))))
+            (gascity-command-act-async command))))
+      ;; What was read goes into the scope: a preview keeps the menu
+      ;; open showing it, and the `s' that follows slings exactly it.
+      (plist-put (plist-put (copy-sequence scope) :target target) :arg arg))))
 
 (transient-define-suffix gascity-sling-dispatch-run (args)
-  "Sling for real using the dispatch flags ARGS."
+  "Sling for real using the dispatch flags ARGS.
+The city's remembered menu state is cleared: the next `S' starts fresh."
   (interactive (list (transient-args 'gascity-sling-dispatch)))
-  (gascity-sling--run args nil))
+  (let ((city (plist-get (transient-scope) :city)))
+    (gascity-sling--run args nil)
+    (gascity-sling--forget city)))
 
 (transient-define-suffix gascity-sling-dispatch-preview (args)
-  "Preview the sling (gc `--dry-run' routing plan) for the dispatch ARGS."
+  "Preview the sling (gc `--dry-run' routing plan) for the dispatch ARGS.
+The menu stays open with its formula, target, arg and vars — the target
+and arg read for the preview now in the header — so `s' slings exactly
+what was previewed (bug S-2).  The state is also remembered for the
+city, so re-entering `S' after leaving restores it."
+  :transient t
   (interactive (list (transient-args 'gascity-sling-dispatch)))
-  (gascity-sling--run args t))
+  (gascity-sling--resetup (gascity-sling--run args t)))
+
+(transient-define-suffix gascity-sling-dispatch-reset ()
+  "Clear the formula, target, arg and values; forget the city's saved state."
+  :transient t
+  (interactive)
+  (let ((scope (transient-scope)))
+    (gascity-sling--forget (plist-get scope :city))
+    (transient-setup 'gascity-sling-dispatch nil nil
+                     :scope (list :city (plist-get scope :city)
+                                  :formula nil :target nil :arg nil))))
 
 (defconst gascity-sling--reserved-keys
-  '("f" "g" "T" "A" "c" "a" "n" "m" "t" "s" "p" "r" "q")
+  '("f" "g" "T" "A" "c" "a" "n" "m" "t" "s" "p" "r" "x" "q")
   "Every single letter statically bound in `gascity-sling-dispatch':
 the Formula group (`-f' pick, `g' refresh), the Destination `-T' and
 `A' (arg edit), the routing flags `-c -a -n -m -t' and the Actions
-\(`s', `p', `r', `q').
+\(`s', `p', `r', `x', `q').
 The generated variable infix keys avoid exactly this list; it lives
 beside the layout it keys so a re-binding cannot silently collide
 \(OQ-2), and a test asserts the two stay in sync.")
@@ -1215,6 +1265,7 @@ the header (ga-4ia4)."
               '("s" "Sling…" gascity-sling-dispatch-run)
               '("p" "Preview (dry-run)…" gascity-sling-dispatch-preview)
               '("r" "Preview recipe…" gascity-sling-dispatch-recipe)
+              '("x" "Reset (clear formula, target, vars)" gascity-sling-dispatch-reset)
               '("q" "Quit" transient-quit-one)))
      (when-let* ((group (gascity-sling-formula--var-children
                          recipe gascity-sling--reserved-keys)))
@@ -1242,10 +1293,8 @@ wrong scope key (ga-4ia4, bright-lights dogfood §5)."
   (interactive)
   (let ((default-directory (gascity-sling--city-dir)))
     (let ((name (gascity-sling-formula--read-formula)))
-      (transient-setup 'gascity-sling-dispatch nil nil
-                       :scope (plist-put (copy-sequence (transient-scope))
-                                         :formula name)
-                       :value (transient-args 'gascity-sling-dispatch)))))
+      (gascity-sling--resetup
+       (plist-put (copy-sequence (transient-scope)) :formula name)))))
 
 (transient-define-suffix gascity-sling-dispatch-refresh ()
   "Re-read this city's formulas in the background, then rebuild the menu.
@@ -1291,10 +1340,8 @@ dispatch."
   (interactive)
   (let ((arg (read-string "Bead id or task text: "
                           (plist-get (transient-scope) :arg))))
-    (transient-setup 'gascity-sling-dispatch nil nil
-                     :scope (plist-put (copy-sequence (transient-scope))
-                                       :arg arg)
-                     :value (transient-args 'gascity-sling-dispatch))))
+    (gascity-sling--resetup
+     (plist-put (copy-sequence (transient-scope)) :arg arg))))
 
 (transient-define-suffix gascity-sling-dispatch-target ()
   "Read the sling target with session completion; the header shows it.
@@ -1305,10 +1352,8 @@ set target wins at dispatch; an unset one is read once there."
   (interactive)
   (let ((default-directory (gascity-sling--city-dir)))
     (let ((target (gascity-action--read-session "Sling to target: ")))
-      (transient-setup 'gascity-sling-dispatch nil nil
-                       :scope (plist-put (copy-sequence (transient-scope))
-                                         :target target)
-                       :value (transient-args 'gascity-sling-dispatch)))))
+      (gascity-sling--resetup
+       (plist-put (copy-sequence (transient-scope)) :target target)))))
 
 (transient-define-suffix gascity-sling-dispatch-recipe ()
   "Preview the picked formula's recipe with the current var values.
@@ -1346,10 +1391,21 @@ catalog/recipe read and dispatch on the entered-from city
 \(ga-4ia4, bright-lights dogfood §5)."
   [ :class transient-subgroups :setup-children gascity-sling--setup-children ]
   (interactive)
-  (transient-setup 'gascity-sling-dispatch nil nil
-                   :scope (list :city default-directory
-                                :formula nil :target nil
-                                :arg (gascity-sling-formula--bead-or-convoy-at-point))))
+  (let* ((at-point (gascity-sling-formula--bead-or-convoy-at-point))
+         (saved (cdr (assoc default-directory gascity-sling--remembered)))
+         ;; The city's last menu state (after a preview, say) comes
+         ;; back; a bead or convoy at point still names the arg.
+         (scope (if saved
+                    (plist-put (copy-sequence (car saved)) :arg
+                               (or at-point (plist-get (car saved) :arg)))
+                  (list :city default-directory
+                        :formula nil :target nil :arg at-point))))
+    ;; Warm the formula caches (catalog + `gc formula list') through the
+    ;; store so `-f' answers from memory (bug S-1, D9).
+    (let ((default-directory (plist-get scope :city)))
+      (ignore-errors (gascity-formula-refresh-async nil #'ignore 'cached)))
+    (transient-setup 'gascity-sling-dispatch nil nil
+                     :scope scope :value (cdr saved))))
 
 ;;; ============================================================
 ;;; Sub-transients — hand-built command-dispatch backends
