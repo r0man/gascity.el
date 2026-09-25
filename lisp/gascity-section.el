@@ -262,6 +262,9 @@ commands (see `beads-thing-define-keys'), `?' opens the dispatch and
   "q" #'quit-window)
 
 (gascity-thing-define-keys gascity-section-mode-map)
+;; `S' is sling in every view (dashboard-v3 §5.3); defined in
+;; gascity-action, resolved at key time.
+(keymap-set gascity-section-mode-map "S" 'gascity-sling-dispatch)
 
 (define-derived-mode gascity-section-mode beads-section-mode "GasCity"
   "Base major mode for gascity vui section buffers.
