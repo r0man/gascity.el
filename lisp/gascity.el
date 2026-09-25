@@ -52,6 +52,7 @@
 (require 'gascity-error)
 (require 'gascity-remote)
 (require 'gascity-reader)
+(require 'gascity-store)
 (require 'gascity-command)
 (require 'gascity-context)
 (require 'gascity-types)

@@ -608,6 +608,14 @@ environment instead — see `gascity-reader--city-env-pair'."
 
 ;;; Asynchronous reader
 
+(defvar gascity-reader-skip-dir-probe nil
+  "Non-nil skips the up-front directory probe of `gascity-reader-read-async'.
+The probe is one synchronous TRAMP round trip per async read (gce-q84:
+a missing remote directory would otherwise wedge a channel forever).
+The store (`gascity-store') binds this to t for a directory that has
+already answered a read this session — the probe then costs nothing
+on every later read of a known-good city (dashboard-v3 §8.5).")
+
 (defun gascity-reader--remote-dir-absent-bounded-p ()
   "One bounded `file-directory-p' round trip (see the wrapper)."
   (condition-case nil
@@ -783,7 +791,8 @@ turns it on, at the cost of a fresh ssh per read."
   ;; through to the spawn, whose own failure carries the real reason.  A
   ;; clean negative answer is retried once past a TRAMP cache flush
   ;; before it is believed (`gascity-reader--async-dir-probe').
-  (let ((probe (gascity-reader--async-dir-probe)))
+  (let ((probe (and (not gascity-reader-skip-dir-probe)
+                    (gascity-reader--async-dir-probe))))
     (cond
      ((eq probe 'timed-out)
       (when (fboundp 'gascity--log)
@@ -829,7 +838,10 @@ turns it on, at the cost of a fresh ssh per read."
             ;; (and so `default-directory' and any connection-locally
             ;; applied `gascity-executable') happens to be current then.
             (remote (file-remote-p default-directory))
-            (executable (gascity-remote-find-executable gascity-executable))
+            ;; First contact with a host resolves gc there — synchronous
+            ;; channel round trips, cached per connection afterwards; a
+            ;; wedged connection must not freeze the caller (§8.5).
+            (executable (gascity-reader--bounded-executable))
             ;; Remotely, stderr separation and the PATH export for gc's
             ;; subprocesses both happen on the host via the /bin/sh
             ;; wrapper — a string :stderr crashes direct-async, a buffer
@@ -904,6 +916,128 @@ turns it on, at the cost of a fresh ssh per read."
                               (error-message-string err)
                               remote 'gascity-executable)))
           nil))))))))
+
+;;; Asynchronous runner (actions)
+
+(defun gascity-reader--bounded-executable ()
+  "Return `gascity-executable' resolved for `default-directory', bounded.
+The first resolution on a remote host is a chain of synchronous channel
+round trips (`gascity-remote-find-executable', cached per connection
+afterwards) — one of the explicit sync exceptions of dashboard-v3
+§8.5, so it runs under `gascity-remote-with-timeout'.  Also primes the
+per-connection PATH fragment (`gascity-remote-path-assignment') inside
+the same bound, so the command builder that follows only reads the
+cache."
+  (gascity-remote-with-timeout gascity-remote-sync-timeout
+    (prog1 (gascity-remote-find-executable gascity-executable)
+      (gascity-remote-path-assignment))))
+
+(defun gascity-reader--targeted-args (args)
+  "Return (CITY-ENV . ARGV) — ARGS with the calling buffer's city targeting.
+The env-city override (`gascity-reader--city-env-overrides') is
+answered on the caller's ARGS first; when it fires the `--city' tokens
+are withheld, otherwise they lead the argv — the same rule both reader
+entry points and `gascity-command-execute' apply."
+  (let ((city-env (gascity-reader--city-env-overrides args)))
+    (cons city-env
+          (if city-env args (append (gascity-reader--city-args) args)))))
+
+(defun gascity-reader-run-async (args callback)
+  "Start `gc ARGS...' asynchronously; call CALLBACK with its result plist.
+The non-blocking twin of `gascity-reader-run' for the mutating verbs
+\(dashboard-v3 D9, §8.5): ARGS are passed through verbatim (no
+`--json' is appended) behind the calling buffer's city-targeting tokens
+\(`gascity-reader--targeted-args').  CALLBACK receives exactly once a
+plist (:exit-code CODE :stdout OUT :stderr ERR :executable EXE); CODE
+is nil when the process could not be launched, ERR then carrying the
+reason.
+
+Standard error is captured on the running host by the capture-mode
+wrapper of `gascity-reader--command' — stdout, a random delimiter line,
+then the stderr file — locally and remotely alike, so ONE output
+stream carries both and no stderr pipe, fifo or remote temp file is
+involved (the \"Forbidden reentrant call of Tramp\" class).  Under
+direct-async the local login program's own chatter goes to a scratch
+buffer that is discarded.  The sentinel only concatenates and splits
+strings; it does no file operation.  Returns the process, or nil when
+none was started (CALLBACK has then already been called)."
+  (with-connection-local-variables
+   (let* ((targeted (gascity-reader--targeted-args args))
+          (city-env (car targeted))
+          (argv (cdr targeted))
+          (remote (file-remote-p default-directory))
+          (executable
+           (condition-case err
+               (gascity-reader--bounded-executable)
+             (gascity-remote-sync-timeout
+              (funcall callback
+                       (list :exit-code nil :stdout ""
+                             :stderr (error-message-string err)
+                             :executable gascity-executable))
+              nil)))
+          (delimiter (gascity-reader--stderr-delimiter))
+          (command (and executable
+                        (if remote
+                            (gascity-reader--command executable argv delimiter)
+                          (gascity-reader--capture-command
+                           executable argv delimiter))))
+          (stderr-buffer (and executable remote
+                              (fboundp 'tramp-direct-async-process-p)
+                              (tramp-direct-async-process-p)
+                              (generate-new-buffer " *gascity-gc-stderr*")))
+          (output ""))
+     (when executable
+       (when (fboundp 'gascity--log)
+         (gascity--log 'info "Running async action: %s %s"
+                       executable (mapconcat #'identity argv " ")))
+       (condition-case err
+           (let ((process-environment
+                  (if city-env
+                      (append (gascity-reader--env-entries city-env)
+                              process-environment)
+                    process-environment)))
+             (make-process
+              :name "gascity-gc-action"
+              :command command
+              :noquery t
+              :connection-type 'pipe
+              :file-handler t
+              :stderr stderr-buffer
+              :filter (lambda (_proc chunk) (setq output (concat output chunk)))
+              :sentinel
+              (lambda (proc _event)
+                (when (memq (process-status proc) '(exit signal))
+                  (when (buffer-live-p stderr-buffer)
+                    (kill-buffer stderr-buffer))
+                  (let ((split (gascity-reader--split-output output delimiter)))
+                    (funcall callback
+                             (list :exit-code (process-exit-status proc)
+                                   :stdout (car split)
+                                   :stderr (cdr split)
+                                   :executable executable)))))))
+         (error
+          (when (buffer-live-p stderr-buffer)
+            (kill-buffer stderr-buffer))
+          (funcall callback
+                   (list :exit-code nil :stdout ""
+                         :stderr (gascity-remote-spawn-error-hint
+                                  executable (error-message-string err)
+                                  remote 'gascity-executable)
+                         :executable executable))
+          nil))))))
+
+(defun gascity-reader--capture-command (executable args delimiter)
+  "Return the LOCAL capture-mode argv running EXECUTABLE with ARGS.
+The local counterpart of the remote capture wrapper in
+`gascity-reader--command' (same /bin/sh script, no PATH assignment):
+stdout, then \"\\nDELIMITER\\n\", then the command's stderr, exiting
+with the command's own status."
+  (append (list "/bin/sh" "-c"
+                (concat "t=$(mktemp) || exec \"$0\" \"$@\" 2>/dev/null; "
+                        "\"$0\" \"$@\" 2>\"$t\"; rc=$?; "
+                        "printf '\\n%s\\n' " delimiter "; "
+                        "cat \"$t\"; rm -f \"$t\"; exit $rc"))
+          (cons executable args)))
 
 ;; Named per-subcommand reads are the `gascity-command-*!' bang
 ;; functions (see `gascity-command'/`gascity-types'); there is no
