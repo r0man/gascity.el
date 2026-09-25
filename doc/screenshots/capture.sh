@@ -32,7 +32,7 @@ SHOTS_EL="$HERE/gascity-shots.el"
 
 export BEADS_REPO="${BEADS_REPO:-$HOME/workspace/beads.el}"
 export GASCITY_REPO="$REPO"
-export GASCITY_SHOT_DIR="${GASCITY_SHOT_DIR:-$HOME/bright-lights}"
+export GASCITY_SHOT_DIR="${GASCITY_SHOT_DIR:-$HOME/emacs-city}"
 export GASCITY_SHOT_RIG="${GASCITY_SHOT_RIG:-gascity.el}"
 
 # Output image geometry.  UI screenshots are flat-colour, so 8-bit palette
@@ -46,8 +46,8 @@ THUMB_COLORS=128  # a preview needs fewer colours
 # One line per theme: "THEME  SUFFIX  view view view ...".  A view named
 # in two themes is captured twice (e.g. the cockpit, to show theming).
 read -r -d '' MANIFEST <<'EOF' || true
-ef-elea-dark  -dark   cockpit rig-dashboard session-list convoy-list dolt-list dispatch
-ef-cyprus     -light  cockpit session-detail rig-list order-list
+ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter
+ef-cyprus     -light  cockpit agents-tree agent-detail mail-inbox mail-thread cities rig-list order-list
 EOF
 
 log() { printf '\033[1;36m[capture]\033[0m %s\n' "$*" >&2; }
@@ -103,7 +103,7 @@ capture() {
     GASCITY_SHOT_SUFFIX="$suffix" \
     GASCITY_SHOT_VIEWS="$views" \
     GASCITY_SHOT_OUTDIR="$STAGING" \
-      timeout 150 emacs -Q -l "$SHOTS_EL" 2>>"$STAGING/emacs.log" || \
+      timeout 450 emacs -Q -l "$SHOTS_EL" 2>>"$STAGING/emacs.log" || \
         log "emacs run for $theme exited non-zero (see $STAGING/emacs.log)"
   done <<< "$MANIFEST"
   log "raw captures:"; ls -l "$STAGING"/*.png 2>/dev/null | awk '{print "  "$5, $NF}' >&2 || true

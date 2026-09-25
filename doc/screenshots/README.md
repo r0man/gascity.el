@@ -53,7 +53,7 @@ never `--batch`.
 make -C .. screenshots    # same, via the doc Makefile
 ```
 
-The committed image footprint is small (≈0.5 MiB for all views, full +
+The committed image footprint is small (≈0.8 MiB for 20 views, full +
 thumbnail). The capture is read-only with respect to the city — it only
 opens dashboards; it never mutates.
 
@@ -64,7 +64,8 @@ opens dashboards; it never mutates.
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `BEADS_REPO` | `~/workspace/beads.el` | beads.el checkout (load path) |
-| `GASCITY_SHOT_DIR` | `~/bright-lights` | directory `gc` resolves the city from |
+| `GASCITY_SHOT_DIR` | `~/emacs-city` | directory `gc` resolves the city from |
+| `GASCITY_SHOT_WATCHDOG` | `400` | seconds before a capture Emacs kills itself |
 | `GASCITY_SHOT_RIG` | `gascity.el` | rig featured in the rig dashboard |
 | `GASCITY_SHOT_STAGING` | `/tmp/gascity-shots` | raw PNG staging dir |
 
@@ -72,8 +73,8 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-ef-elea-dark  -dark   cockpit rig-dashboard session-list convoy-list dolt-list dispatch
-ef-cyprus     -light  cockpit session-detail rig-list order-list
+ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter
+ef-cyprus     -light  cockpit agents-tree agent-detail mail-inbox mail-thread cities rig-list order-list
 ```
 
 Each line is `THEME  SUFFIX  view view …`. A view named under two themes

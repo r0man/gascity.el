@@ -90,7 +90,7 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 * The Mode-Line Lighter::   Needs-you totals in every mode line.
 * Runs::                    Workflow runs and one run in detail.
 * Live Refresh::            One event stream per city.
-* Views in Progress::       Events and the Mail view (TODO).
+* Events and Mail::         The event log, inbox, threads, compose.
 * The Lists::               Tabulated rigs, sessions, convoys, orders, mail, Dolt.
 * Actions::                 Mutating commands, run asynchronously.
 * Remote Cities::           Cities on other hosts, over TRAMP and ssh.
@@ -462,8 +462,8 @@ reset.)
 @item @kbd{j a} @tab agents (@pxref{Agents})
 @item @kbd{j r} @tab runs (@pxref{Runs})
 @item @kbd{j b} @tab beads in beads.el, scoped to the rig at point, else chosen: a rig or the city
-@item @kbd{j m} @tab the mail inbox (@pxref{Mail})
-@item @kbd{j e} @tab events (TODO, @pxref{Views in Progress})
+@item @kbd{j m} @tab the mail inbox (@pxref{Mail View})
+@item @kbd{j e} @tab events (@pxref{Events})
 @item @kbd{j h} @tab Health (@pxref{Health})
 @item @kbd{j c} @tab Cities (@pxref{Cities})
 @item @kbd{j o} @kbd{j v} @kbd{j d} @tab the order, convoy and Dolt lists (@pxref{The Lists})
@@ -504,6 +504,8 @@ filter.
 @noindent
 Its heading names the city and its path.
 
+@shot{dispatch-dark, The ? dispatch over the cockpit (ef-elea-dark)}
+
 @node Filter menus
 @section Filter menus
 
@@ -516,22 +518,22 @@ letter means one thing in every menu:
 @multitable @columnfractions .12 .48 .40
 @headitem Key @tab Meaning @tab Views
 @item @kbd{-w} @kbd{-n} @kbd{-o} @kbd{-m} @tab show wisps / nudge beads / order churn / message beads @tab cockpit
-@item @kbd{-c} @tab unfold churn @tab cockpit
+@item @kbd{-c} @tab unfold churn @tab cockpit, Events
 @item @kbd{-r} @tab rig@dots{} @tab cockpit, Agents, Runs, sessions
-@item @kbd{-W} @tab time window@dots{} @tab cockpit, Runs
+@item @kbd{-W} @tab time window@dots{} @tab cockpit, Runs, Events, Mail
 @item @kbd{-s} @tab state@dots{} @tab Agents, Runs, sessions, rigs, convoys
-@item @kbd{-q} @tab search@dots{} @tab Agents
+@item @kbd{-q} @tab search@dots{} @tab Agents, Events, Mail
+@item @kbd{-t} @tab event type@dots{} @tab Events
+@item @kbd{-l} @tab signal level@dots{} @tab Events
+@item @kbd{-a} @tab actor / sender@dots{} @tab Events, Mail
 @item @kbd{-p} @tab provider@dots{} @tab Agents
 @item @kbd{-F} @tab formula@dots{} @tab Runs
-@item @kbd{-u} @tab unread only @tab mail
+@item @kbd{-u} @tab unread only @tab Mail
 @item @kbd{-e} @kbd{-t} @tab enabled only / type@dots{} @tab orders
 @item @kbd{-S} @tab sort by@dots{} (across all pages) @tab every list
 @item @kbd{x} @tab reset all @tab every menu
 @end multitable
 
-@noindent
-The views still being built reuse the same letters: @kbd{-t} event
-type, @kbd{-l} signal level, @kbd{-a} actor, @kbd{-q} search.
 
 @node Visual language
 @section Visual language
@@ -647,6 +649,8 @@ and what just happened.  No section shows more than
 @code{gascity-dashboard-section-rows} rows (five); the rest is a
 @samp{@dots{} N more} line whose @key{RET} opens the full view.
 
+@shot{cockpit-dark, The cockpit of emacs-city (ef-elea-dark)}
+
 @section What it shows
 
 The header line names the city (with @samp{@@host} for a remote one),
@@ -695,6 +699,8 @@ publishes its Needs you @samp{■}/@samp{▲} totals and active-run count
 for the session; the mode-line lighter (@pxref{The Mode-Line Lighter})
 and the Cities view (@pxref{Cities}) show them from there, without a
 @command{gc} call of their own.
+
+@shot{cockpit-light, The same cockpit in a light theme (ef-cyprus)}
 
 @section Keys
 
@@ -772,6 +778,8 @@ such as the mayor.  Each row shows the agent's state, last activity, the
 bead on its hook and its provider.  Stalled agents (@samp{■}: running
 by @command{gc}'s account, with no live session) are pinned to the top.
 
+@shot{agents-dark, The Agents view (ef-elea-dark)}
+
 @table @kbd
 @item T
 @kindex T @r{(agents)}
@@ -802,6 +810,8 @@ Agent detail, peek, Dired.
 Nudge, suspend, kill, wake, drain, reset, undrain (@pxref{Actions}).
 @end table
 
+@shot{agents-tree-light, The Agents tree: city rigs pools agents (ef-cyprus)}
+
 @noindent
 The list shares the keys of every tabulated list (@pxref{Lists}); the
 tree is a vui view with the section keys.
@@ -812,6 +822,8 @@ tree is a vui view with the section keys.
 @findex gascity-polecat-detail-at-point
 
 @kbd{i} on an agent anywhere opens @file{*gascity-agent:@: NAME*}:
+
+@shot{agent-detail-light, The mayor in detail (ef-cyprus)}
 
 @table @asis
 @item The header
@@ -954,6 +966,8 @@ Doctor  88 passed · 5 warned · 0 failed · ran 4m ago   ! run  F run --fix
   ▸ 88 checks ok
 @end example
 
+@shot{health-dark, Health of emacs-city (ef-elea-dark)}
+
 @section What it shows
 
 @table @asis
@@ -1042,6 +1056,8 @@ reach, one row each, in @file{*gascity-cities*}:
  ● bright-lights    /ssh:localhost:~/bright-lights/    2/4         ▲4   ●
 @end example
 
+@shot{cities-light, The Cities view (ef-cyprus)}
+
 @cindex hosts, Cities view
 @vindex gascity-remote-hosts
 The rows come from @code{gc cities} run on each host: the local one,
@@ -1105,6 +1121,8 @@ that shows what needs you in every open city in every mode line:
  GC[bl ▲1 · ec ■1▲2]
 @end example
 
+@shot{lighter-dark, The lighter in the mode line (ef-elea-dark)}
+
 @noindent
 One segment per open cockpit: the city's initials (@samp{emacs-city}
 @result{} @samp{ec}; a remote one adds @samp{@@host}), then its Needs
@@ -1157,6 +1175,8 @@ Failed  1 · last 24h
   ✕ be-bn2   build-basic                              beads.el   2h
      ◆◆◆◆◆◆◆✕◆◆  review         9/10   control_dispatch_error
 @end example
+
+@shot{runs-dark, The Runs view (ef-elea-dark)}
 
 @noindent
 A card's second line is the step ladder (@pxref{Visual language}), the
@@ -1213,6 +1233,8 @@ Steps  1/10                                    C show control nodes
       · setup-build-basic-review  be-bdcr
       ▸ build-basic-review-loop   be-zdon   loop
 @end example
+
+@shot{run-detail-dark, A failed build-basic run in detail (ef-elea-dark)}
 
 @noindent
 The steps are the run's beads arranged by step: iterations hang under
@@ -1293,36 +1315,82 @@ gascity polls @code{gc events} every @code{gascity-live-poll-interval}
 seconds (30) instead.
 
 @c ====================================================================
-@node Views in Progress
-@chapter Views in Progress
-@cindex TODO
-
-The views in this chapter are still being built.  Each section says what
-exists today; replace it when the view merges.
+@node Events and Mail
+@chapter Events and Mail
 
 @menu
-* Events::         @kbd{j e}.
-* Mail View::      Inbox, thread and compose.
+* Events::         @kbd{j e}: the city's event log.
+* Mail View::      @kbd{j m}: inbox, thread and compose.
 @end menu
 
 @node Events
 @section Events
+@cindex events
+@findex gascity-events
+@kindex j e
 
-@quotation TODO
-The Events view (@code{gascity-events}, dashboard-v3 §7.8): the city's
-@code{gc events} with churn folded, filtered by type, signal level,
-actor, search and window.  Today @kbd{j e} echoes that it is not
-available yet; recent events show in the cockpit's Activity section.
-@end quotation
+@kbd{j e} (or @kbd{M-x gascity-events}) lists the city's
+@code{gc events} for a time window in
+@file{*gascity-events:@: CITY*}, newest first.  Churn --- order
+firings and noise-bead lifecycles --- folds into one @samp{▸ @dots{} ×N}
+row per 15 minutes; signal events (@code{gascity-dashboard-event-levels})
+never fold and carry their @samp{■}/@samp{▲} in the Sig column.  With
+live refresh on, new events are appended as they arrive.
+
+@shot{events-dark, The Events view (ef-elea-dark)}
+
+@table @kbd
+@item @key{RET}
+@findex gascity-events-visit
+Drill in: a bead subject opens in beads.el, a session subject opens the
+agent's detail, a @samp{×N} row narrows the view to that churn group,
+any other event shows its fields.
+@item b
+@itemx i
+Open the event's bead, or its agent's detail.
+@item /
+Filter by window (@kbd{-W}), type (@kbd{-t}), actor (@kbd{-a}), signal
+level (@kbd{-l}), search (@kbd{-q}); @kbd{-c} unfolds churn.
+@item W
+Toggle the city's live event stream.
+@end table
 
 @node Mail View
 @section Mail View
+@cindex mail
+@findex gascity-mail
+@kindex j m
 
-@quotation TODO
-The Mail view (dashboard-v3 §7.9): inbox, threads, and a compose buffer
-for replies and new mail (@kbd{C-c C-c} sends).  Today @kbd{j m} opens
-the mail inbox list (@pxref{Mail}).
-@end quotation
+@kbd{j m} (or @kbd{M-x gascity-mail}) opens the city's inbox in
+@file{*gascity-mail:@: CITY*}: sender, subject and age, unread rows in
+bold with @samp{●}.
+
+@shot{mail-inbox-light, The mail inbox (ef-cyprus)}
+
+@table @kbd
+@item @key{RET}
+Show the message in its thread buffer from the data already loaded ---
+no @command{gc} call, and the message stays unread.
+@item r
+Read: fetch the whole thread and mark it read.
+@item R
+@itemx a
+@itemx u
+Reply (in a compose buffer), archive, mark unread.
+@item c
+The mail actions menu (compose new mail and more).
+@item /
+Filter to unread (@kbd{-u}), by sender (@kbd{-a}), window (@kbd{-W}) or
+search (@kbd{-q}).
+@end table
+
+@shot{mail-thread-light, A mail thread (ef-cyprus)}
+
+@noindent
+A reply or a new message opens a compose buffer: write the body,
+@kbd{C-c C-c} sends (the buffer closes at once and the send runs in the
+background), @kbd{C-c C-k} cancels, @kbd{C-c C-n} toggles
+@option{--notify}.
 
 @c ====================================================================
 @node The Lists
@@ -2265,12 +2333,6 @@ compositor), ImageMagick @command{convert}, a running city, and the
 @code{ef-themes} package.  @file{doc/screenshots/README.md} documents the
 configuration variables and how to reuse the engine.
 
-@quotation TODO
-The screenshots predate dashboard v3.  The status board they used to
-open with is gone (the cockpit replaced it), so the cockpit, Health,
-Cities and the views still in progress have no screenshots yet; they
-will be regenerated once every v3 view has landed.
-@end quotation
 
 @c ====================================================================
 @node Capability Gaps

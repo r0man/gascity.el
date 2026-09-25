@@ -11,6 +11,8 @@ its commands, keyboard-first, the way Magit fronts git. The UI is hand-built in
 the magit/forge style — deliberately designed, sectioned, keyboard-driven
 buffers — not auto-generated. See [docs/DESIGN.md](docs/DESIGN.md).
 
+[![The gascity cockpit](doc/images/cockpit-dark-thumb.png)](doc/images/cockpit-dark.png)
+
 ## Documentation
 
 A full **[user manual](doc/gascity.texi)** (Texinfo) covers installation, every
@@ -25,7 +27,6 @@ make -C doc html     # styled multi-page HTML only
 
 Screenshots are produced by a reusable, documented pipeline under
 [doc/screenshots/](doc/screenshots/README.md) (`make -C doc screenshots`).
-They predate dashboard v3 and are regenerated once all v3 views have landed.
 
 ## Status
 

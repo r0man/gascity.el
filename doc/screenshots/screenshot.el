@@ -251,6 +251,8 @@ include:
 
   :settle SECONDS   wait budget for this shot's async data
   :fixed-rows N     keep the frame N rows tall (paginated lists)
+  :row-pad N        extra rows past the content (default `screenshot-row-pad')
+  :col-pad N        extra columns past the content (default `screenshot-col-pad')
   :whole-frame t    export the entire frame via THUNK's own arrangement
                     (THUNK's return value is ignored)
 
@@ -270,7 +272,9 @@ run."
                        (redisplay t)
                        (funcall thunk)))
                 (screenshot-row-pad (or (plist-get props :row-pad)
-                                        screenshot-row-pad)))
+                                        screenshot-row-pad))
+                (screenshot-col-pad (or (plist-get props :col-pad)
+                                        screenshot-col-pad)))
             (screenshot-settle (plist-get props :settle))
             (if (plist-get props :whole-frame)
                 (screenshot-export-frame name)
