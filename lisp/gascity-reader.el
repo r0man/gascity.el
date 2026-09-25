@@ -764,18 +764,28 @@ the process, or nil when none was started."
                    (while (and (> n 0) (process-live-p stderr-proc)
                                (accept-process-output stderr-proc 0.01 nil t))
                      (setq n (1- n))))
-                 (when (process-live-p stderr-proc) (delete-process stderr-proc))
+                 (gascity-reader--kill-pipe stderr-proc)
                  (funcall callback (list :exit-code (process-exit-status proc)
                                          :stdout (apply #'concat (nreverse out))
                                          :stderr (apply #'concat (reverse err))
                                          :executable executable)))))
           (error
-           (delete-process stderr-proc)
+           (gascity-reader--kill-pipe stderr-proc)
            (funcall callback (list :exit-code nil :stdout ""
                                    :stderr (format "Cannot run ssh: %s"
                                                    (error-message-string e))
                                    :executable executable))
            nil))))))
+
+(defun gascity-reader--kill-pipe (proc)
+  "Delete pipe process PROC and the buffer `make-pipe-process' gave it.
+A pipe process always gets a buffer named after it, which outlives
+the process: without this, one \"gascity-gc-stderr\" buffer stayed
+behind (QA #11)."
+  (when (processp proc)
+    (let ((buf (process-buffer proc)))
+      (when (process-live-p proc) (delete-process proc))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
 
 ;;; Asynchronous reader
 
