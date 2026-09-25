@@ -147,9 +147,9 @@ Views that render `…' on a pending row re-render from here.")
 
 (defvar gascity-store-live-p-function nil
   "Function of a directory answering whether a live event stream covers it.
-When it answers non-nil, a completed action leaves invalidation to the
-stream (§8.5 \"Refresh\"); nil (the default, no stream yet) means
-actions invalidate the kinds they touch themselves.")
+When it answers non-nil, a completed action leaves the event log
+\(kind `events') to the stream; the kinds the action touched are
+invalidated either way (§8.5 \"Refresh\").")
 
 (defvar gascity-store-inline-render-dispatch nil
   "Non-nil lets a read requested during a vui render spawn inline (tests).
@@ -981,12 +981,16 @@ TYPE is an event type string (\"session.woke\"); the routing table is
     (if kinds (gascity-store-invalidate :dir dir :kind (delete-dups kinds)) 0)))
 
 (defun gascity-store--invalidate-for-action (args dir)
-  "Invalidate what a completed action with gc ARGS in DIR touched."
-  (unless (and gascity-store-live-p-function
-               (funcall gascity-store-live-p-function dir))
-    (let ((prefixes (alist-get (gascity-store-kind args) gascity-store-action-routes)))
-      (dolist (p prefixes)
-        (gascity-store-invalidate-event p dir))
+  "Invalidate what a completed action with gc ARGS in DIR touched.
+Always, live stream or not (§8.5 \"Refresh\"): not every verb emits
+an event (`gc session nudge' does not), so waiting for the stream
+left views stale (QA A1).  Only the event log itself is left to a
+running stream, which keeps it current."
+  (let ((prefixes (alist-get (gascity-store-kind args) gascity-store-action-routes)))
+    (dolist (p prefixes)
+      (gascity-store-invalidate-event p dir))
+    (unless (and gascity-store-live-p-function
+                 (funcall gascity-store-live-p-function dir))
       (gascity-store-invalidate :dir dir :kind 'events))))
 
 ;;; Actions

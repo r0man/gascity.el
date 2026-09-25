@@ -413,6 +413,25 @@ the last returns; another target runs concurrently."
         (funcall (nth 1 (car actions)) (list :exit-code 0 :stdout "" :stderr ""))
         (should (member '("session" "list") (mapcar #'car reads)))))))
 
+(ert-deftest gascity-test-store-action-invalidates-with-live-stream ()
+  "With a live stream up, a completed action still re-reads the kinds it
+touched: `gc session nudge' emits no event, and the Agents row stayed
+stale (QA A1).  Only the event log is left to the stream."
+  (gascity-test-with-store-stubs reads actions
+    (let ((default-directory "/tmp/city/")
+          (gascity-store-refetch-hidden t)
+          (gascity-store-live-p-function (lambda (_dir) t)))
+      (with-temp-buffer
+        (dolist (args '(("session" "list") ("events" "--since" "2h")))
+          (gascity-store-subscribe args #'ignore)
+          (gascity-store-fetch args #'ignore))
+        (dolist (r reads) (funcall (nth 1 r) 'payload))
+        (setq reads nil)
+        (gascity-store-action '("session" "nudge" "a" "hi") :target "a" :echo nil)
+        (funcall (nth 1 (car actions)) (list :exit-code 0 :stdout "" :stderr ""))
+        (should (member '("session" "list") (mapcar #'car reads)))
+        (should-not (member '("events" "--since" "2h") (mapcar #'car reads)))))))
+
 (ert-deftest gascity-test-store-action-lane-not-behind-reads ()
   "Actions have their own lane: a full read lane never delays them."
   (gascity-test-store--remote-host
