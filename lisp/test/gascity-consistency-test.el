@@ -41,11 +41,14 @@
     (session-list   gascity-session-list-mode-map   list t)
     (convoy-list    gascity-convoy-list-mode-map    list nil)
     (mail-inbox     gascity-mail-inbox-mode-map     list nil)
+    (events         gascity-events-mode-map         list nil)
+    (mail-thread    gascity-mail-thread-mode-map    text nil)
     (order-list     gascity-order-list-mode-map     list nil)
     (dolt-list      gascity-dolt-list-mode-map      list nil))
   "Every gascity view: (NAME MAP KIND SHOWS-AGENTS &rest PLIST).
-KIND is `vui' (sectioned: `N'/`P' jump sections) or `list' (tabulated:
-no sections, SPC opens the detail window, `q' closes it first).
+KIND is `vui' (sectioned: `N'/`P' jump sections), `list' (tabulated:
+no sections, SPC opens the detail window, `q' closes it first) or
+`text' (a `special-mode' reader such as a mail thread: globals only).
 PLIST :skip names agent keys the view does not bind on purpose (the
 agent detail is already the agent's detail: no `i').")
 
@@ -92,7 +95,7 @@ The cockpit's `s'/`R' decide by row (agent or rig).")
     ("R" gascity-rig-restart-at-point gascity-mail-reply-at-point)
     ("d" gascity-rig-list-dired)
     ("t" gascity-runs-agent-tmux)
-    ("i" gascity-runs-agent-detail)
+    ("i" gascity-runs-agent-detail gascity-events-agent)
     ("v" gascity-runs-agent-peek))
   "Other members of an agent key's verb family, allowed in views without
 agent rows (§4.5: `s' suspends a rig too; `R' reply shares with the

@@ -48,6 +48,7 @@
 (require 'transient)
 (require 'beads-prefix)
 (require 'beads-pager)
+(require 'beads-thing)
 (require 'gascity-custom)
 (require 'gascity-ui)
 (require 'gascity-context)
@@ -528,10 +529,15 @@ No gc call: the inbox payload carries the body."
 (defun gascity-mail-thread--message-text (message)
   "Return the text block of MESSAGE in a thread, stamped with the message."
   (propertize
-   (concat (gascity-ui-fit (concat (propertize "From  " 'face 'gascity-dim)
-                                   (or (gascity-mail-from message) ""))
-                           40)
-           (propertize "To  " 'face 'gascity-dim) (or (gascity-mail-to message) "")
+   (concat (beads-thing-propertize
+            (concat (gascity-ui-fit (concat (propertize "From  " 'face 'gascity-dim)
+                                            (or (gascity-mail-from message) ""))
+                                    40)
+                    (propertize "To  " 'face 'gascity-dim)
+                    (or (gascity-mail-to message) ""))
+            ;; Each message's From line is a §5.4 thing: TAB moves
+            ;; message to message.
+            (list :kind 'message :id (gascity-mail-id message)))
            "\n"
            (propertize "Date  " 'face 'gascity-dim)
            (gascity-mail--date (gascity-mail-created-at message))
@@ -623,36 +629,28 @@ message of the thread."
            (gascity-mail-thread--render))))
      :force t)))
 
-(defun gascity-mail-thread-next (&optional n)
-  "Move to the Nth next message of the thread."
-  (interactive "p")
-  (dotimes (_ (abs (or n 1)))
-    (let ((match (if (> (or n 1) 0)
-                     (progn (end-of-line)
-                            (text-property-search-forward 'gascity-mail-message nil nil t))
-                   (text-property-search-backward 'gascity-mail-message nil nil t))))
-      (when match (goto-char (prop-match-beginning match))))))
-
-(defun gascity-mail-thread-previous (&optional n)
-  "Move to the Nth previous message of the thread."
-  (interactive "p")
-  (gascity-mail-thread-next (- (or n 1))))
+(defun gascity-mail-thread-visit ()
+  "Open the message at point in beads.el (RET): a message is a bead.
+Scoped to its store from the rig memo, as the Events view does."
+  (interactive)
+  (let* ((message (or (gascity-mail-at-point) (user-error "No message at point")))
+         (id (gascity-mail-id message)))
+    (gascity-bead-show id (gascity-beads--bead-path-cached id))))
 
 (defvar-keymap gascity-mail-thread-mode-map
   :doc "Keymap for `gascity-mail-thread-mode'."
   :parent special-mode-map
   "g" #'gascity-mail-thread-refresh
+  "RET" #'gascity-mail-thread-visit
+  "S" #'gascity-sling-dispatch
   "R" #'gascity-mail-reply-at-point
   "a" #'gascity-mail-archive-at-point
   "u" #'gascity-mail-mark-unread-at-point
   "c" #'gascity-mail-dispatch
-  "TAB" #'gascity-mail-thread-next
-  "<tab>" #'gascity-mail-thread-next
-  "<backtab>" #'gascity-mail-thread-previous
-  "S-TAB" #'gascity-mail-thread-previous
-  "S-<tab>" #'gascity-mail-thread-previous
-  "j" 'gascity-jump-prefix
-  "?" 'gascity-dispatch)
+  "W" #'gascity-live-toggle)
+
+;; §5.4: TAB/S-TAB between messages, SPC, `?' and `j' as everywhere.
+(gascity-thing-define-keys gascity-mail-thread-mode-map)
 
 (define-derived-mode gascity-mail-thread-mode special-mode "GC-Thread"
   "Major mode of a mail thread (dashboard-v3 §7.9).

@@ -454,12 +454,6 @@ which the `seq' dedup absorbs."
     (gascity-live-unsubscribe gascity-events--live))
   (setq gascity-events--live nil))
 
-(defun gascity-events-toggle-live ()
-  "Toggle the city's live event stream (`W', §5.1)."
-  (interactive)
-  (gascity-live-toggle)
-  (gascity-events--live-setup))
-
 ;;; Things at point
 
 (defun gascity-events--row ()
@@ -487,22 +481,19 @@ which the `seq' dedup absorbs."
                   (format "%-10s %s" "seq" (alist-get 'seq row)))
             (gascity-event-fields row))))
 
-(defun gascity-events-toggle ()
-  "Toggle the thing at point (SPC, §5.4).
-A `×N' row unfolds in place (again folds it); an event row shows its
-fields in the `*gascity-detail*' side window."
-  (interactive)
-  (let ((row (gascity-events--row)))
-    (cond
-     ((gascity-events--churn-p row)
-      (let ((key (nth 1 row)))
-        (setq gascity-events--expanded
-              (if (member key gascity-events--expanded)
-                  (delete key gascity-events--expanded)
-                (cons key gascity-events--expanded)))
-        (gascity-events--render t t)))
-     (row (gascity-tabulated-detail-toggle))
-     (t (message "Nothing to toggle here")))))
+(defun gascity-events--toggle-churn (row)
+  "Unfold churn ROW in place, or fold it again (a `beads-thing' handler).
+SPC on a `×N' row lands here; any other row falls through to the
+shared list handler, the `*gascity-detail*' window (§5.4).  Returns
+non-nil when ROW was a churn row."
+  (when (gascity-events--churn-p row)
+    (let ((key (nth 1 row)))
+      (setq gascity-events--expanded
+            (if (member key gascity-events--expanded)
+                (delete key gascity-events--expanded)
+              (cons key gascity-events--expanded)))
+      (gascity-events--render t t))
+    t))
 
 (defun gascity-events--open-agent (agent)
   "Open the agent detail (§7.4) of AGENT, a `gascity-agent'."
@@ -663,10 +654,9 @@ fields."
   "g"   #'gascity-events-refresh
   "/"   #'gascity-events-filter
   "RET" #'gascity-events-visit
-  "SPC" #'gascity-events-toggle
   "b"   #'gascity-events-bead
   "i"   #'gascity-events-agent
-  "W"   #'gascity-events-toggle-live)
+  "W"   #'gascity-live-toggle)
 
 (define-derived-mode gascity-events-mode tabulated-list-mode "GC-Events"
   "Major mode of the Events view: `gc events', churn folded (§7.8).
@@ -682,6 +672,8 @@ fields."
         tabulated-list-use-header-line nil)
   (tabulated-list-init-header)
   (gascity-tabulated--setup-things)
+  ;; Ahead of the shared row handler: SPC on a ×N row unfolds it.
+  (add-hook 'beads-thing-toggle-functions #'gascity-events--toggle-churn -10 t)
   (setq header-line-format '(:eval (gascity-events--header-line)))
   (setq-local gascity-tabulated-detail-function #'gascity-events--detail-lines)
   (gascity-events--install-filter)

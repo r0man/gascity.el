@@ -202,7 +202,6 @@ session looks after its first view opened.  Streams stay off (batch)."
     ("rig list" gascity-rig-list)
     ("session list" gascity-session-list)
     ("convoy list" gascity-convoy-list)
-    ("mail inbox" gascity-mail-inbox)
     ("order list" gascity-order-list)
     ("dolt list" gascity-dolt-list)
     ("costs" gascity-costs :text t)
@@ -213,10 +212,13 @@ session looks after its first view opened.  Streams stay off (batch)."
           (setq-local gascity-section--agent (gascity-audit--agent))
           (gascity-session-follow-log)))
      :wait-output t :text t)
-    ;; Views still being built join here: skipped until their command
-    ;; exists (comms: Events §7.8, Mail §7.9).
-    ("events" gascity-events :pending t)
-    ("mail" gascity-mail :pending t))
+    ("events" gascity-events)
+    ("mail" gascity-mail)
+    ("mail thread"
+     ,(lambda ()
+        (gascity-mail-thread-show
+         (gascity-mail-message :id "bl-wisp-a7gsqc" :thread-id "thread-b1b8bd38a599"
+                               :from "human" :subject "Dolt health advisory")))))
   "Every view the render guard opens: (NAME OPENER . PROPS).
 OPENER is a command (called interactively) or a function of no
 arguments; the view is the buffer it leaves selected.  With `:pending'

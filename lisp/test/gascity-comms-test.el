@@ -233,11 +233,11 @@ rows with ×N, signal rows with their glyph, and the header summary."
       (goto-char (point-min))
       (while (not (gascity-events--churn-p (tabulated-list-get-id))) (forward-line 1))
       (let ((size (length (nth 4 (tabulated-list-get-id)))))
-        (gascity-events-toggle)
+        (gascity-thing-toggle)
         (should (= (length gascity-tabulated--all-entries) (+ n size)))
         (goto-char (point-min))
         (while (not (gascity-events--churn-p (tabulated-list-get-id))) (forward-line 1))
-        (gascity-events-toggle)
+        (gascity-thing-toggle)
         (should (= (length gascity-tabulated--all-entries) n))))))
 
 (ert-deftest gascity-test-comms-events-ret ()
@@ -368,9 +368,9 @@ the queue when it lands."
 
 (ert-deftest gascity-test-comms-events-keys ()
   "The Events view binds the §5/§7.8 keys and the filter letters."
-  (should (eq (keymap-lookup gascity-events-mode-map "SPC") #'gascity-events-toggle))
+  (should (eq (keymap-lookup gascity-events-mode-map "SPC") #'gascity-thing-toggle))
   (should (eq (keymap-lookup gascity-events-mode-map "RET") #'gascity-events-visit))
-  (should (eq (keymap-lookup gascity-events-mode-map "W") #'gascity-events-toggle-live))
+  (should (eq (keymap-lookup gascity-events-mode-map "W") #'gascity-live-toggle))
   (should (eq (keymap-lookup gascity-events-mode-map "/") #'gascity-events-filter))
   (dolist (key '("-W" "-t" "-a" "-l" "-c" "-q" "x"))
     (should (gascity-test--prefix-has-key 'gascity-events-filter key)))
