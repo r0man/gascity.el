@@ -1432,7 +1432,8 @@ worker drawn under its run (not a top-level row of the section)."
     (gascity-dashboard--section-lines
      "work" "Work" summary
      (gascity-dashboard--cap-groups rows "work" #'gascity-jump-beads)
-     ctx :loads '(:work) :label "bd list"
+     ;; The convoy count rides in the summary: its failure marks ◐ too.
+     ctx :loads '(:work :convoys) :label "bd list"
      :hidden (gascity-dashboard--hidden-label (plist-get work :hidden)))))
 
 (defun gascity-dashboard--activity-lines (ctx)
