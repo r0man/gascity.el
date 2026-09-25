@@ -28,6 +28,7 @@
 (require 'vui)
 (require 'gascity-custom)
 (require 'gascity-store)             ; pending actions (the `…' marks)
+(require 'gascity-live)              ; live state in every header line
 
 ;;; Glyphs (§6.1)
 
@@ -52,6 +53,43 @@ KIND is a key of `gascity-ui-glyphs'; an unknown KIND yields a space."
     (if entry
         (propertize (nth 1 entry) 'face (nth 2 entry))
       " ")))
+
+;;; Header lines (§8.3 R1): city, @host, title, live state, hints
+
+(defun gascity-ui-live-string (&optional dir)
+  "Return the live/offline fragment for DIR's city, or nil.
+`gascity-live-header-string' when the city has a stream; else
+`○ offline @host' while the store has paused DIR's host.  Pure: stream
+and scheduler tables only, safe at redisplay."
+  (let ((dir (or dir default-directory)))
+    (or (gascity-live-header-string dir)
+        (and (gascity-store-offline-p dir)
+             (let ((host (and (gascity-remote-prefix dir)
+                              (file-remote-p dir 'host))))
+               (propertize (format "○ offline @%s" (or host "localhost"))
+                           'face 'error
+                           'help-echo (plist-get (gascity-store-host-status dir)
+                                                 :reason)))))))
+
+(defun gascity-ui-header-line (title &optional city hints)
+  "Return a view header line: CITY, `@host' when remote, TITLE, live, HINTS.
+CITY defaults to the base name of the buffer's pinned directory (its
+city root), HINTS to the global `? help  j jump  g refresh'.  The live
+fragment is `gascity-ui-live-string'.  Pure: buffer-local state and
+the TRAMP name only (§8.3 R2), for `header-line-format' `:eval'."
+  (let* ((city (or city (file-name-nondirectory
+                         (directory-file-name (file-local-name default-directory)))))
+         (host (and (gascity-remote-prefix default-directory)
+                    (file-remote-p default-directory 'host)))
+         (live (gascity-ui-live-string))
+         (hints (propertize (or hints "? help  j jump  g refresh") 'face 'gascity-dim)))
+    (concat " " (propertize (or city "?") 'face 'gascity-city)
+            (if host (concat " " (propertize (concat "@" host) 'face 'gascity-dim)) "")
+            (if (and title (not (string-empty-p title))) (concat "  " title) "")
+            (if live (concat "  " live) "")
+            (propertize " " 'display
+                        `(space :align-to (- right ,(1+ (string-width hints)))))
+            hints)))
 
 ;;; Pending actions (§8.5): the `…' in a row's status slot
 

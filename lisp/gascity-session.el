@@ -643,13 +643,12 @@ TRAMP as a local ssh pipe.  `q' in the log buffer stops it."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              '(:eval (concat " " (propertize
-                                   (or (and gascity-section--agent
+              '(:eval (gascity-ui-header-line
+                       (propertize (or (and gascity-section--agent
                                             (gascity-agent-name gascity-section--agent))
                                        "Agent")
                                    'face 'gascity-header)
-                              (propertize "   f follow  v peek  ? help  j jump  g refresh"
-                                          'face 'gascity-dim)))))
+                       nil "f follow  v peek  ? help  j jump  g refresh"))))
 
 (provide 'gascity-session)
 ;;; gascity-session.el ends here

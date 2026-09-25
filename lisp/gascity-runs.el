@@ -627,16 +627,9 @@ list' read (user-initiated, never at render)."
 ;;; Mode
 
 (defun gascity-runs-header-line (title &optional city)
-  "Return a view header line: CITY, `@host' when remote, TITLE, hints.
-Pure: buffer-local state and the TRAMP name only (§8.3 R2)."
-  (let ((host (file-remote-p default-directory 'host))
-        (hints (gascity-dashboard--dim "? help  j jump  g refresh")))
-    (concat " " (propertize (or city "?") 'face 'gascity-city)
-            (if host (concat " " (gascity-dashboard--dim (concat "@" host))) "")
-            "  " title
-            (propertize " " 'display
-                        `(space :align-to (- right ,(1+ (string-width hints)))))
-            hints)))
+  "Return a view header line: CITY, `@host' when remote, TITLE, live, hints.
+The shared `gascity-ui-header-line'.  Pure (§8.3 R2)."
+  (gascity-ui-header-line title city))
 
 (defvar-keymap gascity-runs-mode-map
   :doc "Keymap for `gascity-runs-mode'."

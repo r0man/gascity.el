@@ -695,7 +695,10 @@ after confirmation; `g' re-reads everything else.
 \\{gascity-health-mode-map}"
   :interactive nil
   :group 'gascity
-  (setq truncate-lines t))
+  (setq truncate-lines t)
+  (setq-local header-line-format
+              '(:eval (gascity-ui-header-line "Health" nil
+                                              "! doctor  F fix  ? help  j jump  g refresh"))))
 
 ;;;###autoload
 (defun gascity-health ()

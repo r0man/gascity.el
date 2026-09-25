@@ -335,7 +335,9 @@ the §5.3 agent keys act on the row at point.
    (lambda () (gascity-agents--render)))
   ;; `x' resets to every state, not to nothing shown.
   (setq-local gascity-filter-reset-function
-              (lambda () (setq gascity-agents--filter nil) (gascity-agents--render))))
+              (lambda () (setq gascity-agents--filter nil) (gascity-agents--render)))
+  ;; The city's live event stream re-reads what this table shows (§8.2).
+  (gascity-tabulated-attach-live))
 
 (defun gascity-agents--city (dir)
   "Return the city name for the buffer names of a view opened in DIR."
@@ -467,9 +469,8 @@ SPC folds a rig or a pool, `T' returns to the table.
   (setq truncate-lines t)
   (setq-local gascity-status-toggle-function #'gascity-agents-tree--toggle)
   (setq-local header-line-format
-              (concat " Agents (tree)"
-                      (propertize "   T table  ? help  j jump  g refresh"
-                                  'face 'gascity-dim))))
+              '(:eval (gascity-ui-header-line
+                       "Agents (tree)" nil "T table  ? help  j jump  g refresh"))))
 
 ;;;###autoload
 (defun gascity-agents-tree ()

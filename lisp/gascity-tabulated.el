@@ -246,8 +246,23 @@ host — regardless of where they are invoked from."
   (let ((buf (gascity-view-get-buffer-create buffer-name)))
     (with-current-buffer buf
       (unless (derived-mode-p mode-sym) (funcall mode-sym))
+      (gascity-tabulated-attach-live)
       (funcall refresh-fn))
     (pop-to-buffer buf)))
+
+(defun gascity-tabulated-attach-live (&optional buffer)
+  "Join BUFFER's (default current) list to its city's live event stream.
+The list's store subscription repaints it when the stream invalidates
+its read; the mode line shows the stream state
+\(`gascity-ui-live-string').  A list that attached itself already
+\(with its own refresh function, like the session list) is left as
+is.  Idempotent."
+  (with-current-buffer (or buffer (current-buffer))
+    (setq-local mode-line-process
+                '(:eval (let ((live (gascity-ui-live-string)))
+                          (if live (concat " " live) ""))))
+    (unless gascity-live--root
+      (gascity-live-attach (current-buffer)))))
 
 ;;; ============================================================
 ;;; Pagination
@@ -1156,7 +1171,7 @@ agent events (the mode line shows the stream state); `W' toggles it.
   (gascity-tabulated--install-filter 'gascity-session-list--filter
                                      #'gascity-session-list-refresh)
   (setq-local mode-line-process
-              '(:eval (let ((live (gascity-live-header-string)))
+              '(:eval (let ((live (gascity-ui-live-string)))
                         (if live (concat " " live) ""))))
   (gascity-live-attach (current-buffer)
                        :refresh #'gascity-session-list--live-refresh

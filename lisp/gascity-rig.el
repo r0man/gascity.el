@@ -373,10 +373,9 @@ rig path is host-qualified first, so a remote rig logs on its host."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              '(:eval (concat " " (propertize (or gascity-rig-dashboard--rig-name "rig")
-                                              'face 'gascity-rig)
-                              (propertize "   ? help  j jump  g refresh"
-                                          'face 'gascity-dim)))))
+              '(:eval (gascity-ui-header-line
+                       (propertize (concat "rig " (or gascity-rig-dashboard--rig-name "?"))
+                                   'face 'gascity-rig)))))
 
 ;;;###autoload
 (defun gascity-rig-dashboard (rig-name)

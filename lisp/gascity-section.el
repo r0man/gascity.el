@@ -36,6 +36,7 @@
 (require 'gascity-remote)        ; host-local path localization (remote cities)
 (require 'gascity-types)         ; gascity-command-rig-list! (rig-store lookup)
 (require 'gascity-store)         ; background rig-list refresh for prompts
+(require 'gascity-live)          ; every view joins its city's event stream
 (require 'gascity-terminal)
 
 ;; Bead UI is delegated to beads.el (DESIGN.md §4.3).  Its entry points
@@ -281,9 +282,14 @@ commands (see `beads-thing-define-keys'), `?' opens the dispatch and
 Derives from `beads-section-mode' for the vui reconciler and widget
 navigation.  The vui keymap chain binds no `q', so this mode binds
 `q' to `quit-window' (bury); concrete views (the status dashboard,
-detail views) derive from this, inherit `q', and add their own keys."
+detail views) derive from this, inherit `q', and add their own keys.
+Every such view joins its city's live event stream on creation
+\(`gascity-live-attach', dashboard-v3 §8.2): its store reads are
+invalidated by the stream and re-render on their own; killing the
+buffer detaches it.  `W' toggles the stream."
   :interactive nil
-  :group 'gascity)
+  :group 'gascity
+  (gascity-live-attach (current-buffer)))
 
 ;;; Semantic cursor preservation across vui re-renders
 ;;

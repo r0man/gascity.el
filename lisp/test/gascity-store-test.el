@@ -106,7 +106,9 @@ The `manual' TTL (doctor) never expires; FORCE always re-reads."
   "Invalidation re-reads entries with live subscribers; others go stale.
 Routing by event type maps `session.' onto the session/status kinds."
   (gascity-test-with-store-stubs reads _actions
-    (let ((default-directory "/tmp/city/") seen)
+    (let ((default-directory "/tmp/city/") seen
+          ;; A temp buffer is never visible: refetch it all the same.
+          (gascity-store-refetch-hidden t))
       (with-temp-buffer
         (gascity-store-subscribe '("session" "list")
                                  (lambda (snap) (push (plist-get snap :data) seen)))
@@ -126,6 +128,36 @@ Routing by event type maps `session.' onto the session/status kinds."
         (should (plist-get (gascity-store-get '("mail" "inbox")) :stale))
         (gascity-store-fetch '("mail" "inbox") #'ignore)
         (should (equal (car (car reads)) '("mail" "inbox")))))))
+
+(ert-deftest gascity-test-store-invalidation-spares-buried-views ()
+  "An invalidation re-reads only entries a VISIBLE view shows; a buried
+view's entries go stale and are re-read when it is displayed again."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((default-directory "/tmp/city/")
+          (shown nil)
+          (buf (generate-new-buffer " *gascity-buried*")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'get-buffer-window)
+                     (lambda (b &rest _) (and shown (eq b buf) 'window))))
+            (with-current-buffer buf
+              (setq default-directory "/tmp/city/")
+              (gascity-store-subscribe '("session" "list") #'ignore)
+              (gascity-store-fetch '("session" "list") #'ignore))
+            (funcall (nth 1 (car reads)) 's1)
+            (setq reads nil)
+            ;; Buried: stale only, nothing spawned.
+            (gascity-store-invalidate-event "session.woke" "/tmp/city/")
+            (should (null reads))
+            (should (plist-get (gascity-store-get '("session" "list")) :stale))
+            ;; Shown again: the stale entry is re-read (from a timer).
+            (setq shown t)
+            (cl-letf (((symbol-function 'window-list)
+                       (lambda (&rest _) (list 'w)))
+                      ((symbol-function 'window-buffer) (lambda (_w) buf)))
+              (gascity-store--refresh-shown nil))
+            (should (gascity-test-store--wait (lambda () reads)))
+            (should (equal (car (car reads)) '("session" "list"))))
+        (kill-buffer buf)))))
 
 ;;; Scheduler: per-host cap, priority, deadline, offline
 
@@ -364,7 +396,8 @@ the last returns; another target runs concurrently."
 (ert-deftest gascity-test-store-action-success-invalidates-routes ()
   "A completed session action re-reads the watched session reads."
   (gascity-test-with-store-stubs reads actions
-    (let ((default-directory "/tmp/city/"))
+    (let ((default-directory "/tmp/city/")
+          (gascity-store-refetch-hidden t))
       (with-temp-buffer
         (gascity-store-subscribe '("session" "list") #'ignore)
         (gascity-store-fetch '("session" "list") #'ignore)

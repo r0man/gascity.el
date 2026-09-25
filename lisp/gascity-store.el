@@ -925,13 +925,52 @@ number of entries matched.  The entry point of the event router
          (cl-incf n)
          (setf (gascity-store-entry-stale entry) t)
          (when (and refetch
-                    (cl-some (lambda (sub)
-                               (let ((b (gascity-store--sub-buffer sub)))
-                                 (or (null b) (buffer-live-p b))))
+                    (cl-some #'gascity-store--sub-wants-refetch-p
                              (gascity-store-entry-subscribers entry)))
            (gascity-store--request entry :force t))))
      gascity-store--entries)
     n))
+
+(defcustom gascity-store-refetch-hidden nil
+  "Non-nil re-reads an invalidated entry even when no view of it is visible.
+By default an invalidation (a live event, a completed action) re-reads
+only entries some VISIBLE buffer shows; a buried view's entries are
+just marked stale and re-read when the view is displayed again
+\(`gascity-store--refresh-shown'), so a city's event stream does not
+make hidden views spawn gc."
+  :type 'boolean
+  :group 'gascity)
+
+(defun gascity-store--sub-wants-refetch-p (sub)
+  "Return non-nil when subscription SUB should get an immediate refetch.
+A subscription without a buffer (a plain callback) always does; a
+buffer one only while its buffer is shown in a visible window, unless
+`gascity-store-refetch-hidden'.  Pure."
+  (let ((b (gascity-store--sub-buffer sub)))
+    (or (null b)
+        (and (buffer-live-p b)
+             (or gascity-store-refetch-hidden
+                 (get-buffer-window b 'visible))))))
+
+(defun gascity-store--refresh-shown (frame)
+  "Re-read the stale entries of the buffers FRAME now shows.
+On `window-buffer-change-functions': a view buried while its reads were
+invalidated catches up the moment it is displayed again.  The requests
+run from a timer, outside redisplay; finding them is pure."
+  (let ((buffers (delete-dups (mapcar #'window-buffer (window-list frame 'no-mini)))))
+    (run-at-time
+     0 nil
+     (lambda ()
+       (maphash (lambda (_key entry)
+                  (when (and (gascity-store-entry-stale entry)
+                             (not (gascity-store-entry-job entry))
+                             (cl-some (lambda (sub)
+                                        (memq (gascity-store--sub-buffer sub) buffers))
+                                      (gascity-store-entry-subscribers entry)))
+                    (gascity-store--request entry :force t)))
+                gascity-store--entries)))))
+
+(add-hook 'window-buffer-change-functions #'gascity-store--refresh-shown)
 
 (defun gascity-store-invalidate-event (type &optional dir)
   "Invalidate the kinds gc event TYPE routes to, under DIR.

@@ -58,7 +58,7 @@
 
 (declare-function tramp-dissect-file-name "tramp")
 (declare-function tramp-file-name-hop "tramp")
-(declare-function gascity-context-city-root "gascity-context" (&optional dir))
+(declare-function gascity-context-city-root-cached "gascity-context" (&optional dir))
 
 ;;; Options
 
@@ -147,10 +147,12 @@ Called with (ROOT STATE REASON).  Views redraw their header here.")
 
 (defun gascity-live--root (&optional dir)
   "Return the city root for DIR (default `default-directory').
-The memoized city walk; view buffers are pinned to their root, so
-this is a cache hit for them."
+The memoized city walk only (`gascity-context-city-root-cached'); view
+buffers are pinned to their root, so DIR itself is the answer there."
+  ;; Memo only (never the walk, which is TRAMP I/O on a remote city):
+  ;; a view buffer's `default-directory' IS its pinned city root.
   (let ((dir (or dir default-directory)))
-    (or (ignore-errors (gascity-context-city-root dir))
+    (or (gascity-context-city-root-cached dir)
         (file-name-as-directory dir))))
 
 (defun gascity-live--find (&optional dir)
@@ -617,7 +619,9 @@ The last view out stops the stream and forgets the city."
         (gascity-live--stop stream)
         (let ((stderr (gascity-live--stream-stderr-buffer stream)))
           (when (buffer-live-p stderr) (kill-buffer stderr)))
-        (remhash root gascity-live--streams)))))
+        (remhash root gascity-live--streams)
+        ;; The city is gone from the stream table: let the lighter know.
+        (run-hook-with-args 'gascity-live-state-functions root 'gone nil)))))
 
 (defun gascity-live-subscribe (fn &optional buffer)
   "Call FN with every raw event of BUFFER's city, as it arrives.
@@ -681,6 +685,19 @@ One of `● live', `● live (polling)', `○ live off',
             "○ live: reconnecting")
           'face 'warning 'help-echo (plist-get status :reason))))))
 
+(defun gascity-live-cities ()
+  "Return (ROOT . STATUS) for every city with a stream, sorted by name.
+STATUS is the `gascity-live-status' plist plus :name.  Pure: the
+stream table only, safe at redisplay (the mode-line lighter)."
+  (let (out)
+    (maphash (lambda (root stream)
+               (push (cons root (append (list :name (gascity-live--stream-name stream))
+                                        (gascity-live-status root)))
+                     out))
+             gascity-live--streams)
+    (sort out (lambda (a b) (string< (format "%s" (plist-get (cdr a) :name))
+                                     (format "%s" (plist-get (cdr b) :name)))))))
+
 (defun gascity-live-active-p (&optional dir)
   "Return non-nil when a running live stream covers DIR.
 The store's `gascity-store-live-p-function': while it answers non-nil,
@@ -707,10 +724,25 @@ out its backoff (or offline) retries at once.  A no-op while live."
   (when (gascity-store-offline-p dir)
     (gascity-store-reconnect dir)))
 
+(defvar-local gascity-live-city-function nil
+  "Function of no arguments returning the city directory `W' acts on, or nil.
+For views that are not about one city (Cities: the city at point).
+Nil means the buffer's own city.")
+
 (defun gascity-live-toggle (&optional dir)
-  "Turn DIR's city stream off, or back on (`W' in gascity views)."
+  "Turn DIR's city stream off, or back on (`W' in every gascity view).
+DIR defaults to the buffer's city — or, in a view listing several
+cities, the one `gascity-live-city-function' names.  A city with no
+open view has no stream: that says so instead of starting one for a
+buffer that is not its view."
   (interactive)
-  (let ((stream (or (gascity-live--find dir) (gascity-live-attach))))
+  (let* ((dir (or dir (and gascity-live-city-function
+                           (or (funcall gascity-live-city-function)
+                               (user-error "No city at point")))))
+         (stream (or (gascity-live--find dir)
+                     (if gascity-live-city-function
+                         (user-error "No live stream for that city (open one of its views)")
+                       (gascity-live-attach)))))
     (if (gascity-live--stream-enabled stream)
         (progn
           (setf (gascity-live--stream-enabled stream) nil)

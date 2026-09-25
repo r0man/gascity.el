@@ -144,6 +144,15 @@ around a directory already looked up)."
                        (file-name-as-directory (expand-file-name found)))))
                  gascity-context--root-cache)))))
 
+(defun gascity-context-city-root-cached (&optional dir)
+  "Return the memoized city root governing DIR, or nil when not memoized.
+Honours `gascity-context-city'.  Never walks the file system: the
+render- and attach-time twin of `gascity-context-city-root' (§8.3 R2)."
+  (if gascity-context-city
+      (file-name-as-directory gascity-context-city)
+    (let ((cached (gethash (or dir default-directory) gascity-context--root-cache 'miss)))
+      (and (not (eq cached 'miss)) cached))))
+
 (defun gascity-context-pin-directory (&optional dir)
   "Return the directory a gascity view opened from DIR should pin.
 The city root governing DIR when DIR sits inside a city tree, else DIR

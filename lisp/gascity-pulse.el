@@ -29,6 +29,7 @@
 (require 'subr-x)
 (require 'gascity-custom)
 (require 'gascity-ui)
+(require 'gascity-live)              ; cities with a live stream
 
 (declare-function gascity-dashboard "gascity-dashboard")
 
@@ -178,7 +179,7 @@ The range min..max maps onto the eight levels; a flat series is all
 
 (defun gascity-mode-line--segment (key entry)
   "Return the lighter segment of city KEY with published ENTRY."
-  (let* ((host (file-remote-p key 'host))
+  (let* ((host (and (gascity-remote-prefix key) (file-remote-p key 'host)))
          (label (concat (gascity-pulse-abbrev (plist-get entry :name))
                         (if host (concat "@" host) "")))
          (fail (plist-get entry :fail))
@@ -200,16 +201,52 @@ The range min..max maps onto the eight levels; a flat series is all
                 'help-echo (format "%s: %d attention, %d watch — mouse-1: cockpit"
                                    (plist-get entry :name) fail watch))))
 
+(defun gascity-mode-line--stream-segment (root status)
+  "Return the lighter segment of city ROOT known only by its live STATUS.
+A city with a stream but no open cockpit (its Agents, Runs, a list…):
+`●' while live, `○' otherwise, `@host' when remote (§7.12).  mouse-1
+opens its cockpit."
+  (let* ((host (and (gascity-remote-prefix root) (file-remote-p root 'host)))
+         (state (plist-get status :state))
+         (label (concat (gascity-pulse-abbrev (or (plist-get status :name) "city"))
+                        (if host (concat "@" host) "")))
+         (map (make-sparse-keymap)))
+    (define-key map [mode-line mouse-1]
+                (lambda (event)
+                  (interactive "e")
+                  (ignore event)
+                  (let ((default-directory root)) (gascity-dashboard))))
+    (propertize (concat label " " (gascity-ui-glyph (if (memq state '(live polling))
+                                                        'ok 'idle)))
+                'mouse-face 'mode-line-highlight
+                'local-map map
+                'help-echo (format "%s: live %s%s — mouse-1: cockpit"
+                                   (plist-get status :name) state
+                                   (let ((r (plist-get status :reason)))
+                                     (if r (concat " (" r ")") ""))))))
+
 (defun gascity-mode-line-string ()
-  "Return the lighter text from the published cockpit figures.
-Empty when no cockpit is open.  Pure (no gc, no file operation)."
-  (let ((cities (gascity-pulse-cities)))
-    (if (null cities)
+  "Return the lighter text: every open cockpit and every live stream.
+Cities with a cockpit show its published Needs you figures; cities that
+only have a live stream (another view of theirs is open) show the
+stream state (`gascity-mode-line--stream-segment'), remote ones
+included.  Empty when there is neither.  Pure (no gc, no file
+operation): the pulse and stream tables only."
+  (let* ((cities (gascity-pulse-cities))
+         (streams (seq-remove (lambda (s) (assoc (gascity-pulse-city-key (car s)) cities))
+                              (gascity-live-cities)))
+         (segments (append
+                    (mapcar (lambda (c) (gascity-mode-line--segment (car c) (cdr c)))
+                            cities)
+                    (mapcar (lambda (s) (gascity-mode-line--stream-segment
+                                         (car s) (cdr s)))
+                            streams))))
+    (if (null segments)
         ""
-      (concat " GC["
-              (mapconcat (lambda (c) (gascity-mode-line--segment (car c) (cdr c)))
-                         cities " · ")
-              "]"))))
+      (concat " GC[" (mapconcat #'identity segments " · ") "]"))))
+
+(add-hook 'gascity-live-state-functions
+          (lambda (&rest _) (gascity-mode-line-update)))
 
 (defvar gascity-mode-line-mode)
 

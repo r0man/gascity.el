@@ -365,6 +365,10 @@ without a new read."
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (setq gascity-tabulated--base-name "Cities")
+  ;; `W' toggles the stream of the city at point: this list belongs to
+  ;; no city, so it joins no stream itself.
+  (setq-local gascity-live-city-function
+              (lambda () (alist-get 'dir (tabulated-list-get-id))))
   (tabulated-list-init-header))
 
 ;;;###autoload
