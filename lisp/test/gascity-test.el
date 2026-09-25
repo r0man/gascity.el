@@ -2807,30 +2807,60 @@ window list with the current window emphasised; nil when the session is gone."
   (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 1)))
     (should (null (gascity-terminal--status-string "gone" nil)))))
 
+;;; The tmux host stub: every attach/status tmux call is one async
+;;; host script (`gascity-terminal--run-async'); tests answer it.
+
+(defvar gascity-test--host-scripts nil
+  "(DIR SCRIPT) of every host script the terminal ran, newest first.")
+
+(defun gascity-test--tmux-answer (script)
+  "Default answer of a healthy host to SCRIPT: (EXIT . STDOUT)."
+  (cond
+   ((string-match-p "has-session" script)
+    (cons 0 (concat "gascity-tmux:/opt/bin/tmux\n"
+                    (if (string-match-p "\\[ -d " script) "gascity-dir-ok\n" "")
+                    (if (string-match-p "infocmp" script) "gascity-term-ok\n" "")
+                    "gascity-ok\n")))
+   ((string-match-p "list-windows" script)
+    (cons 0 "1\t1:claude*\n0\t0:bash\ngascity-status-left\ngastown.mayor\n"))
+   (t (cons 0 ""))))
+
+(defmacro gascity-test--with-tmux-host (answer &rest body)
+  "Run BODY with the terminal's host scripts answered by ANSWER.
+ANSWER is a function of the script returning (EXIT . STDOUT), or nil
+for `gascity-test--tmux-answer'.  The callback runs at once."
+  (declare (indent 1))
+  `(let ((gascity-test--host-scripts nil))
+     (cl-letf (((symbol-function 'gascity-terminal--run-async)
+                (lambda (dir script callback)
+                  (push (list dir script) gascity-test--host-scripts)
+                  (funcall callback (funcall (or ,answer #'gascity-test--tmux-answer)
+                                             script))
+                  nil))
+               ;; Nothing here may run a synchronous process.
+               ((symbol-function 'process-file)
+                (lambda (&rest a) (error "Synchronous process-file %S" a)))
+               ((symbol-function 'call-process)
+                (lambda (&rest a) (error "Synchronous call-process %S" a))))
+       ,@body)))
+
+(defun gascity-test--host-script-p (regexp)
+  "Return non-nil when a recorded host script matches REGEXP."
+  (seq-some (lambda (e) (string-match-p regexp (nth 1 e))) gascity-test--host-scripts))
+
 (ert-deftest gascity-test-terminal-status-install-teardown ()
   "Install turns the session's tmux status bar off, adds a mode-line segment
 and a refresh timer; teardown (via `kill-buffer-hook') cancels the timer and
-reverts the override with `set-option -u'.  All tmux ops are session-scoped."
+reverts the override with `set-option -u'.  All tmux ops are session-scoped
+and asynchronous (one host script each), never a synchronous process."
   (let ((buf (generate-new-buffer "*gc-agent-install-test*"))
-        (cmds nil)
         (gascity-terminal-status-interval 3600)) ; far enough to never fire
     (unwind-protect
-        (cl-letf (((symbol-function 'call-process)
-                   (lambda (_prog _in bufarg _disp &rest args)
-                     (push args cmds)
-                     ;; SOCKET is non-nil here, so args start with
-                     ;; ("-L" "sock" …); match the subcommand by membership.
-                     (when (eq bufarg t)
-                       (cond
-                        ((member "list-windows" args)
-                         (insert "1\t1:claude*\n"))
-                        ((member "display-message" args)
-                         (insert "gastown.mayor\n"))))
-                     0)))
+        (gascity-test--with-tmux-host nil
           (gascity-terminal--status-install buf "sess" "sock")
           (with-current-buffer buf
-            (should (member '("-L" "sock" "set-option" "-t" "sess" "status" "off")
-                            cmds))
+            (should (gascity-test--host-script-p
+                     "tmux -L sock set-option -t sess status off"))
             ;; Segment present AND before the trailing fill, or it renders
             ;; off-screen (gce-hjj regression: appending after
             ;; `mode-line-end-spaces' hid it).
@@ -2842,34 +2872,152 @@ reverts the override with `set-option -u'.  All tmux ops are session-scoped."
               (should (> (length seg) (length end))))
             (should (timerp gascity-terminal--status-timer))
             (should (equal gascity-terminal--status-session "sess"))
-            (should (stringp gascity-terminal--status-string)))
+            (should (equal (substring-no-properties gascity-terminal--status-string)
+                           "gastown.mayor  1:claude* 0:bash")))
           ;; Killing the buffer must revert the override, scoped to the session.
-          (setq cmds nil)
+          (setq gascity-test--host-scripts nil)
           (kill-buffer buf)
-          (should (member '("-L" "sock" "set-option" "-t" "sess" "-u" "status")
-                          cmds)))
+          (should (gascity-test--host-script-p
+                   "tmux -L sock set-option -t sess -u status")))
       (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-terminal-status-refresh-async ()
+  "The status refresh runs one host script, skips a tick while one is in
+flight, keeps the last string on a failure and stops once the session is
+gone (exit 3)."
+  (let ((buf (generate-new-buffer "*gc-agent-refresh-test*"))
+        (answers nil) (pending nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'gascity-terminal--run-async)
+                   (lambda (_dir script callback)
+                     (push script answers)
+                     (setq pending callback)
+                     ;; A live process stands for the query in flight.
+                     (start-process "gascity-test-inflight" nil "sleep" "5")))
+                  ((symbol-function 'process-file)
+                   (lambda (&rest a) (error "Synchronous process-file %S" a))))
+          (with-current-buffer buf
+            (setq gascity-terminal--status-session "sess"
+                  gascity-terminal--status-timer (run-with-timer 3600 nil #'ignore))
+            (gascity-terminal--status-refresh)
+            (should (= (length answers) 1))
+            ;; In flight: the next tick starts nothing.
+            (gascity-terminal--status-tick buf)
+            (should (= (length answers) 1))
+            (delete-process gascity-terminal--status-process)
+            (funcall pending (cons 0 "1\t1:claude*\ngascity-status-left\nmayor\n"))
+            (should (equal (substring-no-properties gascity-terminal--status-string)
+                           "mayor  1:claude*"))
+            ;; A timeout keeps the last good string.
+            (gascity-terminal--status-refresh)
+            (delete-process gascity-terminal--status-process)
+            (funcall pending (cons nil ""))
+            (should (equal (substring-no-properties gascity-terminal--status-string)
+                           "mayor  1:claude*"))
+            ;; The session is gone: cleared, timer stopped.
+            (gascity-terminal--status-refresh)
+            (delete-process gascity-terminal--status-process)
+            (funcall pending (cons 3 ""))
+            (should (null gascity-terminal--status-string))
+            (should (null gascity-terminal--status-timer))))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-run-async-remote-is-local-ssh ()
+  "A remote host script runs as a LOCAL ssh pipe from a local directory,
+with no file handler: starting it does no TRAMP I/O."
+  (gascity-test-ensure-mock-method)
+  (let (spawned)
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest plist) (setq spawned plist) nil))
+              ((symbol-function 'gascity-remote-ssh-pipe-argv)
+               (lambda (dir argv &rest keys) (list 'ssh dir argv keys))))
+      (let ((tramp-verbose 0))
+        (gascity-test-with-render-guard
+          (gascity-terminal--run-async "/ssh:u@h:/city/" "tmux list-sessions" #'ignore)
+          (should (null gascity-test-render-guard-violations)))))
+    (should (equal (plist-get spawned :command)
+                   '(ssh "/ssh:u@h:/city/" ("sh" "-c" "tmux list-sessions")
+                         (:resolve nil))))
+    (should (null (plist-get spawned :file-handler)))
+    (should (eq (plist-get spawned :connection-type) 'pipe))))
 
 (ert-deftest gascity-test-terminal-attach-honours-status-toggle ()
   "`gascity-terminal-attach-tmux' installs the status mirror only when
 `gascity-terminal-mode-line-status' is non-nil."
   (let ((buf (generate-new-buffer "*gc-agent-toggle*")) installed)
     (unwind-protect
-        (cl-letf (((symbol-function 'gascity-terminal-tmux-session-exists-p)
-                   (lambda (&rest _) t))
-                  ((symbol-function 'gascity-terminal-run)
-                   (lambda (&rest _) buf))
-                  ((symbol-function 'gascity-terminal--status-install)
-                   (lambda (&rest _) (setq installed t))))
-          (let ((gascity-terminal-mode-line-status t))
-            (setq installed nil)
-            (gascity-terminal-attach-tmux "sess" "sock" nil)
-            (should installed))
-          (let ((gascity-terminal-mode-line-status nil))
-            (setq installed nil)
-            (gascity-terminal-attach-tmux "sess" "sock" nil)
-            (should-not installed)))
+        (gascity-test--with-tmux-host nil
+          (cl-letf (((symbol-function 'gascity-terminal-run)
+                     (lambda (&rest _) buf))
+                    ((symbol-function 'gascity-terminal--status-install)
+                     (lambda (&rest _) (setq installed t))))
+            (let ((gascity-terminal-mode-line-status t))
+              (setq installed nil)
+              (gascity-terminal-attach-tmux "sess" "sock" nil)
+              (should installed)
+              ;; The status bar went off in the pre-step's one round trip.
+              (should (gascity-test--host-script-p "set-option -t sess status off")))
+            (let ((gascity-terminal-mode-line-status nil))
+              (setq installed nil gascity-test--host-scripts nil)
+              (gascity-terminal-attach-tmux "sess" "sock" nil)
+              (should-not installed)
+              (should-not (gascity-test--host-script-p "status off")))))
       (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest gascity-test-terminal-attach-async-missing-session ()
+  "A missing session is echoed from the pre-step's answer; nothing is
+spawned and nothing signals (the callback runs from a timer)."
+  (let (spawned said)
+    (gascity-test--with-tmux-host (lambda (_s) (cons 0 "gascity-no-session\n"))
+      (cl-letf (((symbol-function 'gascity-terminal-run)
+                 (lambda (&rest _) (setq spawned t)))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (should (null (gascity-terminal-attach-tmux "gone" nil nil)))))
+    (should-not spawned)
+    (should (string-match-p "Can't find tmux session: gone" said))))
+
+(ert-deftest gascity-test-terminal-attach-live-buffer-no-probe ()
+  "Re-attaching to a live terminal raises it at once, with no host script."
+  (let ((raised nil))
+    (gascity-test--with-tmux-host (lambda (s) (error "Probed: %s" s))
+      (cl-letf (((symbol-function 'gascity-terminal--live-buffer)
+                 (lambda (&rest _) (current-buffer)))
+                ((symbol-function 'gascity-terminal-run)
+                 (lambda (argv name &rest _) (setq raised (list argv name)) 'buf)))
+        (should (eq (gascity-terminal-attach-tmux "sess" nil nil) 'buf))))
+    (should (equal (car raised) nil))
+    (should (null gascity-test--host-scripts))))
+
+(ert-deftest gascity-test-terminal-attach-term-probe ()
+  "A remote attach asks the host for the backend TERM's terminfo in its one
+pre-step: missing forces the fallback, found is cached (no probe next time)."
+  (let ((default-directory "/ssh:u@h:/city/")
+        (gascity-terminal-remote-term "xterm-256color")
+        (gascity-remote--executable-cache (make-hash-table :test 'equal))
+        argvs)
+    (cl-letf (((symbol-function 'gascity-terminal--client-term)
+               (lambda () "xterm-ghostty"))
+              ((symbol-function 'gascity-terminal--status-install) #'ignore)
+              ((symbol-function 'gascity-context-city-root) #'ignore)
+              ((symbol-function 'gascity-terminal-run)
+               (lambda (argv &rest _) (push argv argvs) nil)))
+      ;; Missing on the host: the fallback is forced host-side.
+      (gascity-test--with-tmux-host
+          (lambda (script)
+            (should (string-match-p "infocmp xterm-ghostty" script))
+            (cons 0 "gascity-tmux:/opt/bin/tmux\ngascity-term-missing\ngascity-ok\n"))
+        (gascity-terminal-attach-tmux "sess" nil nil))
+      (should (member (shell-quote-argument "TERM=xterm-256color") (car argvs)))
+      ;; Found: nothing forced, and remembered.
+      (gascity-test--with-tmux-host nil
+        (gascity-terminal-attach-tmux "sess" nil nil))
+      (should-not (seq-find (lambda (a) (string-prefix-p "TERM" a)) (car argvs)))
+      (gascity-test--with-tmux-host
+          (lambda (script)
+            (should-not (string-match-p "infocmp" script))
+            (gascity-test--tmux-answer script))
+        (gascity-terminal-attach-tmux "sess" nil nil)))))
 
 (ert-deftest gascity-test-agent-dired-prefers-recorded-work-dir ()
   "A recorded `:work-dir' is used directly, without a tmux pane query."
@@ -6297,20 +6445,11 @@ local (never the city's host-local path), and the terminal buffer name
 is host-qualified."
   (let ((default-directory "/ssh:u@h:/city/")
         spawn)
-    (cl-letf (((symbol-function 'gascity-terminal-tmux-session-exists-p)
-               (lambda (&rest _) t))
-              ;; The post-probe tmux resolution must not open a real
-              ;; connection to the fictitious host; a resolved host
-              ;; path must land in the ssh argv.
-              ((symbol-function 'gascity-remote-find-executable)
-               (lambda (name &optional _dir)
-                 (concat "/opt/bin/" name)))
-              ;; The remote TERM decision must stay out of this test:
-              ;; it is argv-shape coverage (TERM splicing has its own
-              ;; test), and an undecided probe would dial the
-              ;; fictitious host whenever the local backend's TERM
-              ;; differs from the fallback (runner legs without vterm).
-              ((symbol-function 'gascity-terminal--remote-term)
+    (gascity-test--with-tmux-host nil
+    (cl-letf (;; The host path the pre-step reports (gascity-tmux:)
+              ;; must land in the ssh argv.  The remote TERM decision
+              ;; stays out of this test (TERM splicing has its own).
+              ((symbol-function 'gascity-terminal--term-to-probe)
                (lambda (&rest _) nil))
               ((symbol-function 'gascity-terminal--status-install)
                (lambda (&rest _) nil))
@@ -6332,9 +6471,11 @@ is host-qualified."
                              "env" "-u" "TMUX" "/opt/bin/tmux" "-L" "sock"
                              "attach-session" "-t" "sess")))
             (should-not (file-remote-p (nth 2 spawn)))
-            (should (equal (nth 0 spawn) "*gc-agent-sess@/ssh:u@h:*")))
+            (should (equal (nth 0 spawn) "*gc-agent-sess@/ssh:u@h:*"))
+            ;; One pre-step on the host, run from the remote city.
+            (should (equal (car (car gascity-test--host-scripts)) "/ssh:u@h:/city/")))
         (when (get-buffer "*gc-agent-sess@/ssh:u@h:*")
-          (kill-buffer "*gc-agent-sess@/ssh:u@h:*"))))))
+          (kill-buffer "*gc-agent-sess@/ssh:u@h:*")))))))
 
 ;;; The view-buffer factory (gce-cvu) — every buffer a view opens must
 ;;; carry its city's `default-directory'.  The user-visible failure: on
@@ -6512,10 +6653,10 @@ user repro)."
            (workdir (file-local-name
                      (expand-file-name (make-temp-file "gascity-test-wd" t))))
            spawn-dir)
-      (cl-letf (((symbol-function 'gascity-terminal-tmux-session-exists-p)
-                 (lambda (&rest _) t))
-                ((symbol-function 'gascity-remote-find-executable)
-                 (lambda (n &optional _) n))
+      (cl-letf (((symbol-function 'gascity-terminal--run-async)
+                 (lambda (_dir script callback)
+                   (funcall callback (gascity-test--tmux-answer script))
+                   nil))
                 ((symbol-function 'gascity-terminal--attach-argv)
                  (lambda (&rest _) '("true")))
                 ((symbol-function 'gascity-terminal--status-install)

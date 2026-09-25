@@ -388,6 +388,10 @@ the lighter never reads gc, starts a process or touches a remote name."
                  ;; The stream's ssh pipe, played by a local shell that
                  ;; emits two events and stays up.
                  ((symbol-function 'gascity-live--ssh-p) (lambda (&rest _) t))
+               ;; tmux host scripts: a harmless local shell stands in for
+               ;; the ssh pipe (the mock host is no ssh host).
+               ((symbol-function 'gascity-terminal--host-argv)
+                (lambda (&rest _) (list "sh" "-c" "echo gascity-no-session")))
                  ((symbol-function 'gascity-live-command)
                   (lambda (&rest _)
                     (list "sh" "-c"
@@ -501,6 +505,8 @@ Bind `gascity-audit--sync' to the list of the calls attempted."
   (declare (indent 0))
   `(let ((gascity-audit--sync nil)
          (gascity-executable "true")
+         ;; The mock method stands in for ssh (attach builds ssh argvs).
+         (beads-remote-ssh-methods (cons "mock" beads-remote-ssh-methods))
          (gascity-live--streams (make-hash-table :test 'equal))
          (gascity-live-in-batch t))
      (cl-letf (((symbol-function 'gascity-reader-run)
@@ -526,12 +532,10 @@ Bind `gascity-audit--sync' to the list of the calls attempted."
 (defvar gascity-audit--sync nil
   "Synchronous gc/process calls a verb attempted (see the guard macro).")
 
-(defconst gascity-audit--start-verb-exempt
-  '((agent-attach-t
-     . "reported 2026-09-25: attach probes tmux synchronously (session
-exists, status off, remote TERM) and the status mirror's timer keeps
-running tmux through `process-file' — over TRAMP for a remote city."))
-  "Start verbs knowingly exempt from the guard, with the reason.")
+(defconst gascity-audit--start-verb-exempt nil
+  "Start verbs knowingly exempt from the guard, with the reason.
+Empty: tmux attach was the last (its synchronous tmux probes became one
+asynchronous host script on the v3-terminal branch).")
 
 (defun gascity-audit--check-start-verbs ()
   "Run every start verb; assert none blocks or runs anything synchronously."
