@@ -280,6 +280,26 @@ a doctor error with no report renders one `■' line."
         (should (= (length gascity-health-test--doctor-calls) 1))
         (should (plist-get (gascity-store-get gascity-health--doctor-args) :pending))))))
 
+(ert-deftest gascity-test-health-stale-and-offline ()
+  "A refresh that times out over good data marks the section `◐ timed
+out'; an offline host shows `○ offline @host' on the top line."
+  (gascity-health-test--with-health "/tmp/"
+    (let ((ctx (list :loads (list :status (gascity-health--load
+                                           (list :status 'ready
+                                                 :data (gascity-health-test--json
+                                                        "emacs-city.status.json")
+                                                 :error "gc status timed out"
+                                                 :timed-out t)))
+                     :view nil)))
+      (should (string-match-p "^Supervisor +◐ timed out"
+                              (substring-no-properties
+                               (car (gascity-health--supervisor-lines ctx)))))))
+  (cl-letf (((symbol-function 'gascity-store-offline-p) (lambda (&rest _) t)))
+    (let ((default-directory "/mock::/home/roman/emacs-city/"))
+      (should (string-match-p "○ offline @"
+                              (substring-no-properties
+                               (gascity-health--top-line (list :loads nil))))))))
+
 ;;; Store-size sparkline (P5)
 
 (ert-deftest gascity-test-pulse-sparkline ()

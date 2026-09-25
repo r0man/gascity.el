@@ -158,7 +158,8 @@ rig is a row of its own)."
   (let ((status (plist-get res :status)))
     (cond ((eq status 'ready)
            (list :state 'ready :data (plist-get res :data)
-                 :error (and (not (plist-get res :pending)) (plist-get res :error))))
+                 :error (and (not (plist-get res :pending)) (plist-get res :error))
+                 :timed-out (plist-get res :timed-out)))
           ((eq status 'error) (list :state 'error :error (plist-get res :error)))
           (t (list :state 'pending)))))
 
@@ -534,14 +535,23 @@ DBS is nil when `gc dolt health' has not answered."
   (let* ((status (gascity-health--data ctx :status))
          (city (or (alist-get 'city_name status) (plist-get ctx :city) "?"))
          (host (file-remote-p default-directory 'host))
+         (offline (and host (gascity-store-offline-p)))
          (overall (gascity-health--overall ctx)))
     (gascity-ui-right-align
      (concat (propertize "Health" 'face 'gascity-header) "  "
              (propertize city 'face 'gascity-city)
              (if host (concat " " (gascity-dashboard--dim (concat "@" host))) ""))
-     (if overall
-         (concat (gascity-ui-glyph (car overall)) " " (cdr overall))
-       "")
+     (cond
+      ;; The store paused this host (§8.3 R5): one state, not an error
+      ;; per section.
+      (offline (propertize (concat (gascity-ui-glyph 'idle)
+                                   (propertize (concat " offline @" host)
+                                               'face 'gascity-failed))
+                           'help-echo
+                           (or (plist-get (gascity-store-host-status) :reason)
+                               "host unreachable; retrying")))
+      (overall (concat (gascity-ui-glyph (car overall)) " " (cdr overall)))
+      (t ""))
      gascity-dashboard--width)))
 
 (defun gascity-health--lines (ctx)
