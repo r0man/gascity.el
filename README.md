@@ -182,7 +182,9 @@ Notes:
   remote view coexist; the header line shows `@host`.
 - Transport: for a single-hop ssh-family city every background read and
   action runs as a **local** `ssh -T` pipe process (`gascity-remote-transport`,
-  default `ssh`; `tramp` uses TRAMP's `make-process`). Starting one never
+  default `ssh`; `tramp` uses TRAMP's `make-process` and is a fallback
+  without the responsiveness guarantees: over ssh each read pays TRAMP's
+  remote-shell setup, so prefer `ssh` or TRAMP direct-async). Starting one never
   blocks Emacs, output is byte-exact, and the processes share one ssh master
   (`gascity-remote-ssh-options`). ssh runs with `BatchMode=yes`: key or agent
   authentication is required.
