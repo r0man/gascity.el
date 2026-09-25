@@ -7,7 +7,8 @@
 ;;; Commentary:
 
 ;; `tabulated-list-mode' views for the homogeneous `gc' lists: rigs,
-;; sessions, convoys, mail, orders, and Dolt databases.  Per the design
+;; sessions, convoys, mail, orders, and Dolt databases (the Events view
+;; lives in gascity-events).  Per the design
 ;; matrix, lists use tabulated-list (sorting, navigation, and
 ;; `tabulated-list-get-id' for free); the heterogeneous status overview
 ;; and detail views use vui instead.
@@ -732,6 +733,12 @@ printed form.  Pure over the row already in hand (no gc call)."
                        collect (format "%-14s %s" (car col)
                                        (if (consp cell) (car cell) cell)))))))
 
+(defvar-local gascity-tabulated-detail-function nil
+  "Function of the row ID and ENTRY returning its detail lines, or nil.
+A list that knows its rows better than the generic slot dump sets it
+\(the Events view shows an event's fields, the inbox a message body);
+nil uses `gascity-tabulated--detail-lines'.")
+
 (defun gascity-tabulated--detail-window ()
   "Return the live window showing the detail buffer of this list, or nil."
   (let ((buf (get-buffer (gascity-remote-buffer-name
@@ -747,7 +754,9 @@ The list keeps focus, like `C-o' in occur, compilation and Dired."
     (unless id (user-error "No row at point"))
     (let ((buf (get-buffer-create (gascity-remote-buffer-name
                                    gascity-tabulated-detail-buffer-name)))
-          (lines (gascity-tabulated--detail-lines id entry)))
+          (lines (funcall (or gascity-tabulated-detail-function
+                              #'gascity-tabulated--detail-lines)
+                          id entry)))
       (with-current-buffer buf
         (let ((inhibit-read-only t))
           (erase-buffer)
