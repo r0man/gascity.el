@@ -55,6 +55,7 @@
 (require 'gascity-reader)
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters
+(require 'gascity-ui)                ; relative times
 
 ;; Agent actions and the shared bead visitor live in sibling modules
 ;; loaded alongside this one; reference them by name.
@@ -206,7 +207,7 @@ or nil."
                              provider
                            "—"))
                        (if (and session (alist-get 'attached session)) "yes" "no")
-                       (let ((ts (gascity-tabulated--format-timestamp
+                       (let ((ts (gascity-ui-time
                                   (and session
                                        (alist-get 'last_active session)))))
                          (if (string-empty-p ts) "—" ts)))
@@ -256,8 +257,8 @@ when the load succeeded but BEADS is empty."
          (vui-text (format "%s (%d)" title (length beads))
                    :face 'gascity-header 'gascity-section t)
          (pcase status
-           ('pending (list (vui-text "  loading…" :face 'gascity-dim)))
-           ('error   (list (vui-text "  (unavailable)" :face 'gascity-dim)))
+           ('pending (list (gascity-ui-loading-line)))
+           ('error   (list (gascity-ui-error-line "bd list" nil)))
            (_ (or (mapcar #'gascity-session--bead-row beads)
                   (list (vui-text (concat "  " empty-msg) :face 'gascity-dim)))))))
 
@@ -341,10 +342,7 @@ when the load succeeded but BEADS is empty."
      (gascity-session--beads-section "On hook" hook beads-status
                                      "idle — no work on hook")
      (gascity-session--beads-section "Recent history" history beads-status
-                                     "no recent beads")
-     (vui-text (concat "g refresh · RET open bead · p peek · M nudge · D drain · "
-                       "d dired · t tmux · N/P section · q bury")
-               :face 'gascity-dim))))
+                                     "no recent beads"))))
 
 ;;; Commands
 
@@ -427,9 +425,8 @@ dashboard agent row, or a rig dashboard agent row."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Agent detail  (g refresh · RET open bead · v peek"
-                      " · M nudge · s/K/w/D/R/U session · c note · d dired · t tmux"
-                      " · N/P section · q bury)")))
+              (concat " Agent detail"
+                      (propertize "   ? help  j jump  g refresh" 'face 'gascity-dim))))
 
 (provide 'gascity-session)
 ;;; gascity-session.el ends here

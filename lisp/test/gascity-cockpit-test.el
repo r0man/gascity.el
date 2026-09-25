@@ -587,5 +587,65 @@ wrapping at the end; decoration is skipped."
     (funcall gascity-filter-reset-function)
     (should-not (gascity-dashboard--filters))))
 
+;;; Movement in the other views (§5.4)
+
+(ert-deftest gascity-test-vui-views-stamp-things-and-fold ()
+  "A vui view without its own stamps gets things from its row identities;
+SPC on a header folds that section, and the fold is re-applied."
+  (with-temp-buffer
+    (gascity-section-mode)
+    (let ((inhibit-read-only t))
+      (insert (propertize "Agents  1 running" 'gascity-section t) "\n"
+              "  " (propertize "● rig/a" 'gascity-bead "ga-1") "\n"
+              "\n"
+              (propertize "Ready  none" 'gascity-section t) "\n"))
+    (goto-char (point-min))              ; on the first thing already
+    (gascity-thing-forward 1)
+    (should (looking-at "● rig/a"))
+    (gascity-thing-forward 1)
+    (should (looking-at "Ready"))
+    (gascity-thing-forward 1)            ; wraps
+    (should (looking-at "Agents"))
+    (gascity-thing-toggle)
+    (should (invisible-p (save-excursion (forward-line 1) (point))))
+    (gascity-section--apply-folds)       ; as after a re-render
+    (should (invisible-p (save-excursion (forward-line 1) (point))))
+    (gascity-thing-toggle)
+    (should-not (invisible-p (save-excursion (forward-line 1) (point))))))
+
+(ert-deftest gascity-test-tabulated-detail-window ()
+  "SPC shows the row's detail in a side window; `q' closes it first."
+  (let ((buf (get-buffer-create "*gascity-detail-test*")))
+    (unwind-protect
+        (save-window-excursion
+          (delete-other-windows)
+          (switch-to-buffer buf)
+          (cl-letf (((symbol-function 'gascity-convoy-list-refresh) #'ignore))
+            (gascity-convoy-list-mode))
+          (setq tabulated-list-entries
+                (list (list '((id . "ga-1ekj") (title . "sling-ga-rs12"))
+                            (vector "ga-1ekj" "sling-ga-rs12" "open" "1/1"))))
+          (tabulated-list-print)
+          (goto-char (point-min))
+          (gascity-tabulated-detail-toggle)
+          (let ((win (gascity-tabulated--detail-window)))
+            (should (window-live-p win))
+            (should (string-match-p "ga-1ekj"
+                                    (with-current-buffer (window-buffer win)
+                                      (buffer-string))))
+            (should (eq (selected-window) (get-buffer-window buf))))
+          (gascity-tabulated-quit)
+          (should-not (gascity-tabulated--detail-window))
+          (should (eq (window-buffer) buf)))
+      (kill-buffer buf)
+      (when (get-buffer "*gascity-detail*") (kill-buffer "*gascity-detail*")))))
+
+(ert-deftest gascity-test-rig-dashboard-keys ()
+  "The rig dashboard gains `l' (git log) and keeps the agent keys (§7.13)."
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "l")
+              #'gascity-rig-dashboard-log))
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "l")
+              #'gascity-dashboard-rig-log)))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here

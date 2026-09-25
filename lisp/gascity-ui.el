@@ -193,6 +193,56 @@ and a `gascity-section' flag (the `N'/`P' target) there."
                   'help-echo (format "%s" err))
     ""))
 
+;;; Section vnodes for the vui detail views
+
+(defun gascity-ui-effective-load (res ref)
+  "Return the normalized load plist for async result RES with snapshot REF.
+`ready' adopts fresh data (and refreshes the REF cache); any other state
+keeps rendering the cached snapshot — stale-while-revalidate — and only
+reports `error'/`pending' when no snapshot is in hand.  A failed refresh
+over a good snapshot rides along in `:error'."
+  (let ((state (plist-get res :status)))
+    (cond ((eq state 'ready)
+           (list :state 'ready :data (setcar ref (plist-get res :data))))
+          ((car ref)
+           (list :state 'stale :data (car ref)
+                 :error (and (eq state 'error) (plist-get res :error))))
+          ((eq state 'error)
+           (list :state 'error :error (plist-get res :error)))
+          (t (list :state 'pending)))))
+
+(defun gascity-ui-section (name label load collapsed rows-fn
+                           &optional count-fn)
+  "Return a section vnode in the §6.1 style, for the vui detail views.
+NAME is the section's identity, LABEL its title, LOAD an
+`gascity-ui-effective-load' plist, COLLAPSED whether it is
+folded, ROWS-FN the body builder over the load's data and COUNT-FN the
+summary count (default: `length').  First load: `…' in the summary;
+error with no data: a `■ gc …' line; error over data: `◐' on the
+header; empty: `none'."
+  (let* ((state (plist-get load :state))
+         (data (plist-get load :data))
+         (usable (memq state '(ready stale)))
+         (count (and usable (funcall (or count-fn #'length) data)))
+         (summary (cond ((eq state 'pending) (propertize "…" 'face 'gascity-dim))
+                        ((not usable) nil)
+                        ((or (null count) (eql count 0)) "none")
+                        (t (number-to-string count))))
+         (header (gascity-ui-section-header
+                  (concat (if collapsed (concat (gascity-ui-glyph 'folded) " ") "")
+                          label)
+                  (concat (or summary "")
+                          (gascity-ui-partial-mark
+                           (and (eq state 'stale) (plist-get load :error))))
+                  'gascity-dashboard-section name)))
+    (apply #'vui-vstack
+           header
+           (unless collapsed
+             (cond ((eq state 'error)
+                    (list (gascity-ui-error-line name (plist-get load :error))))
+                   ((and usable rows-fn (not (eql count 0)))
+                    (funcall rows-fn data)))))))
+
 ;;; Filter menus (§5.5): apply on change, `x' resets
 
 ;; Every `/' menu edits its view's filter through three buffer-local

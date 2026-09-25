@@ -45,12 +45,15 @@
 (require 'gascity-reader)             ; gascity-reader-read-async (per-section loads)
 (require 'gascity-types)             ; gascity-command-rig-list! (rig-name completion)
 (require 'gascity-section)
+(require 'gascity-ui)
 (require 'gascity-tabulated)         ; shared cell formatters (--str, --vector->list)
 (require 'gascity-status)            ; session-map + agent join helpers
 
 ;; Detail/list openers and agent actions live in sibling modules loaded
 ;; alongside this one; reference them by name (resolved at call time).
 (declare-function gascity-polecat-detail-at-point "gascity-session")
+(declare-function magit-log-all "magit-log")
+(declare-function vc-print-root-log "vc")
 (declare-function gascity-dired-at-point "gascity-section")
 (declare-function gascity-tmux-at-point "gascity-section")
 (declare-function gascity-session-nudge-at-point "gascity-action")
@@ -99,123 +102,135 @@ City-wide orders carry a nil `rig' and are excluded."
   (seq-filter (lambda (o) (equal (alist-get 'rig o) rig-name))
               (append orders nil)))
 
-;;; Rendering (vnodes)
+;;; Rendering (vnodes, dashboard-v3 §6.1 / §7.13)
+
+(defun gascity-rig--path (path)
+  "Return host-local PATH with the home prefix shown as `~/' (pure)."
+  (let ((home (if (file-remote-p default-directory)
+                  (format "/home/%s/" (or (file-remote-p default-directory 'user)
+                                          user-login-name))
+                (file-name-as-directory (expand-file-name "~")))))
+    (if (and (stringp path) (string-prefix-p home path))
+        (concat "~/" (substring path (length home)))
+      (or path ""))))
 
 (defun gascity-rig--header-vnode (rig city-name)
-  "Return the header vnode for the RIG alist within CITY-NAME."
+  "Return the title line of the RIG alist within CITY-NAME.
+`beads.el  be · main · ~/workspace/beads.el   city emacs-city' — the
+line is a section header for `N'/`P'."
   (let* ((name (alist-get 'name rig))
-         (prefix (alist-get 'prefix rig))
-         (branch (alist-get 'default_branch rig))
          (suspended (alist-get 'suspended rig))
-         (beads (alist-get 'beads rig)))
-    (vui-vstack
-     (vui-hstack :spacing 1
-                 (vui-text "Rig:" :face 'gascity-header 'gascity-section t)
-                 (vui-text (or name "?")
-                           :face (if suspended 'gascity-suspended 'gascity-rig))
-                 (when suspended (vui-text "(suspended)" :face 'gascity-suspended)))
-     (vui-text (format "  prefix %s · branch %s · beads %s · city %s"
-                       (or prefix "?") (or branch "—")
-                       (or beads "?") (or city-name "?"))
-               :face 'gascity-dim))))
+         (facts (string-join
+                 (delq nil (list (alist-get 'prefix rig)
+                                 (alist-get 'default_branch rig)
+                                 (and (alist-get 'path rig)
+                                      (gascity-rig--path (alist-get 'path rig)))))
+                 " · ")))
+    (vui-text (concat (propertize (or name "?") 'face (if suspended 'gascity-suspended
+                                                        'gascity-rig))
+                      (if suspended (propertize "  suspended" 'face 'gascity-suspended) "")
+                      (if (string-empty-p facts) ""
+                          (concat "  " (propertize facts 'face 'gascity-dim)))
+                      (if city-name
+                          (propertize (concat "   city " city-name) 'face 'gascity-dim)
+                        ""))
+              'gascity-section t
+              'gascity-rig name
+              'gascity-rig-dir (alist-get 'path rig))))
 
 (defun gascity-rig--agent-row (agent rig-name session-map socket)
-  "Return a vnode for AGENT (a raw `gc status' agent entry) under RIG-NAME.
-SESSION-MAP and SOCKET join the row to its live session.  Reuses the
-status dashboard's session join so the row carries the action
-`gascity-agent' (with the tmux SOCKET) for the d/t/RET keys."
+  "Return a vnode for AGENT (a raw `gc rig status' agent entry) under RIG-NAME.
+SESSION-MAP and SOCKET join the row to its live session, whose last
+activity renders as a relative time; the row carries the action
+`gascity-agent' for the agent keys."
   (let* ((qname (alist-get 'qualified_name agent))
-         (short (or (alist-get 'name agent) qname "?"))
          (running (alist-get 'running agent))
          (suspended (alist-get 'suspended agent))
          (draining (alist-get 'draining agent))
          (state (cond (suspended "suspended") (draining "draining")
                       (running "running") (t "stopped")))
+         (session (and qname (gethash qname session-map)))
          (obj (gascity-status--agent agent rig-name session-map socket)))
-    (vui-text (format "  %s %-30s %-9s %s"
-                      (if running "●" "○") (or qname short) state short)
-              :face (gascity-section-state-face running suspended)
+    (vui-text (concat "  " (gascity-ui-glyph (if running 'ok 'idle))
+                      " " (gascity-ui-fit (or qname (alist-get 'name agent) "?") 40)
+                      " " (gascity-ui-fit state 10)
+                      (gascity-ui-time (and session (gascity-session-last-active session))))
               'gascity-agent obj)))
 
+(defun gascity-rig--agents-summary (agents)
+  "Return the Agents header summary: `1 running · 1 stopped'."
+  (let ((running (seq-count (lambda (a) (alist-get 'running a)) agents)))
+    (string-join (delq nil (list (and (> running 0) (format "%d running" running))
+                                 (and (> (- (length agents) running) 0)
+                                      (format "%d stopped" (- (length agents) running)))))
+                 " · ")))
+
 (defun gascity-rig--agents-vnode (agents rig-name session-map socket)
-  "Return the agents-table vnode for AGENTS under RIG-NAME.
+  "Return the Agents section vnode for AGENTS under RIG-NAME.
 SESSION-MAP and SOCKET join each row to its live session."
-  (let ((rows (mapcar (lambda (a)
-                        (gascity-rig--agent-row a rig-name session-map socket))
-                      (append agents nil))))
+  (let ((agents (append agents nil)))
     (apply #'vui-vstack
-           (vui-text (format "Agents (%d)" (length rows))
-                     :face 'gascity-header 'gascity-section t)
-           (or rows (list (vui-text "  (no agents)" :face 'gascity-dim))))))
+           (gascity-ui-section-header
+            "Agents" (if agents (gascity-rig--agents-summary agents) "none"))
+           (mapcar (lambda (a)
+                     (gascity-rig--agent-row a rig-name session-map socket))
+                   agents))))
 
 (defun gascity-rig--bead-row (bead)
   "Return a vnode for BEAD (an alist), stamped with its id for `RET'."
-  (let ((id (gascity-tabulated--str (alist-get 'id bead)))
-        (status (gascity-tabulated--str (alist-get 'status bead)))
-        (title (gascity-tabulated--str (alist-get 'title bead))))
-    (vui-text (format "  %-12s %-12s %s" id status title)
+  (let ((id (gascity-tabulated--str (alist-get 'id bead))))
+    (vui-text (concat "  " (gascity-ui-fit id 10)
+                      " " (gascity-ui-fit (format "P%s" (or (alist-get 'priority bead) "?")) 3)
+                      " " (gascity-ui-fit (gascity-tabulated--str (alist-get 'title bead)) 48)
+                      " " (gascity-ui-time (alist-get 'updated_at bead)))
               'gascity-bead id)))
 
-(defun gascity-rig--beads-section (title beads res)
-  "Return a vnode for a beads section TITLE from async RES holding BEADS.
-RES is a `vui-use-async' plist; while pending or on error the section
-degrades to a dim placeholder rather than blanking the dashboard."
-  (apply #'vui-vstack
-         (vui-text (format "%s (%d)" title (length beads))
-                   :face 'gascity-header 'gascity-section t)
-         (pcase (plist-get res :status)
-           ('pending (list (vui-text "  loading…" :face 'gascity-dim)))
-           ('error   (list (vui-text "  (unavailable)" :face 'gascity-dim)))
-           (_ (or (mapcar #'gascity-rig--bead-row beads)
-                  (list (vui-text "  (none)" :face 'gascity-dim)))))))
+(defun gascity-rig--beads-section (title load)
+  "Return the beads section TITLE for LOAD, a `gascity-ui-effective-load'.
+The load's data is the raw `gc bd …' payload."
+  (gascity-ui-section (downcase title) title load nil
+                      (lambda (data) (mapcar #'gascity-rig--bead-row
+                                             (gascity-section-beads data)))
+                      (lambda (data) (length (gascity-section-beads data)))))
 
-(defun gascity-rig--orders-vnode (orders res)
-  "Return the orders-section vnode for ORDERS, guarded by async RES."
-  (apply #'vui-vstack
-         (vui-text (format "Orders (%d)" (length orders))
-                   :face 'gascity-header 'gascity-section t)
-         (pcase (plist-get res :status)
-           ('pending (list (vui-text "  loading…" :face 'gascity-dim)))
-           ('error   (list (vui-text "  (unavailable)" :face 'gascity-dim)))
-           (_ (or (mapcar
-                   (lambda (o)
-                     (vui-text (format "  %-28s %-8s %s"
-                                       (gascity-tabulated--str
-                                        (or (alist-get 'scoped_name o)
-                                            (alist-get 'name o)))
-                                       (gascity-tabulated--str (alist-get 'type o))
-                                       (if (alist-get 'enabled o) "on" "off"))))
-                   orders)
-                  (list (vui-text "  (none)" :face 'gascity-dim)))))))
+(defun gascity-rig--orders-vnode (rig-name load)
+  "Return the Orders section for RIG-NAME from the `gc order list' LOAD."
+  (let ((orders (lambda (data) (gascity-rig--rig-orders (alist-get 'orders data)
+                                                        rig-name))))
+    (gascity-ui-section
+     "orders" "Orders" load nil
+     (lambda (data)
+       (mapcar (lambda (o)
+                 (vui-text (concat "  " (gascity-ui-glyph (if (alist-get 'enabled o) 'ok 'idle))
+                                   " " (gascity-ui-fit
+                                        (gascity-tabulated--str
+                                         (or (alist-get 'scoped_name o) (alist-get 'name o)))
+                                        40)
+                                   " " (gascity-tabulated--str (alist-get 'type o)))))
+               (funcall orders data)))
+     (lambda (data) (length (funcall orders data))))))
 
-(defun gascity-rig--dolt-vnode (db res)
-  "Return the Dolt-health vnode for database DB, guarded by async RES.
-Shows only the Dolt commit count, not `gc dolt health''s `open_beads':
-that metric reads 0 for every database in practice, so rendering it here
-contradicted the Ready/In-progress bead sections shown just above (gce-ziz).
-Open-bead counts belong to those sections, which read live `bd' data."
-  (vui-vstack
-   (vui-text "Dolt" :face 'gascity-header 'gascity-section t)
-   (pcase (plist-get res :status)
-     ('pending (vui-text "  loading…" :face 'gascity-dim))
-     ('error   (vui-text "  (unavailable)" :face 'gascity-dim))
-     (_ (if db
-            (vui-text (format "  %s: %s commits"
-                              (gascity-tabulated--str (alist-get 'name db))
-                              (gascity-tabulated--str (alist-get 'commits db))))
-          (vui-text "  (no database for this rig)" :face 'gascity-dim))))))
-
-(defun gascity-rig--error-vnode (message)
-  "Return a vnode reporting MESSAGE and how to retry."
-  (vui-vstack
-   (vui-text (format "Could not load rig: %s" (or message "?"))
-             :face 'gascity-failed)
-   (vui-text "Press g to retry." :face 'gascity-dim)))
+(defun gascity-rig--dolt-vnode (prefix load)
+  "Return the Dolt section: the rig's database (named PREFIX) from LOAD.
+Only the commit count: `gc dolt health''s `open_beads' reads 0 for every
+database in practice, contradicting the bead sections (gce-ziz)."
+  (let ((db (lambda (data) (gascity-rig--db-for-prefix (alist-get 'databases data)
+                                                       prefix))))
+    (gascity-ui-section
+     "dolt" "Dolt" load nil
+     (lambda (data)
+       (let ((d (funcall db data)))
+         (list (vui-text (format "  %s  %s commits"
+                                 (gascity-tabulated--str (alist-get 'name d))
+                                 (gascity-tabulated--str (alist-get 'commits d)))))))
+     (lambda (data) (if (funcall db data) 1 0)))))
 
 ;;; Component
 
 (vui-defcomponent gascity-rig-dashboard-app (rig-name)
-  "Root component of the rig dashboard for RIG-NAME."
+  "Root component of the rig dashboard for RIG-NAME.
+Each section reads independently and refreshes stale-while-revalidate:
+the last payload keeps rendering while a reload is in flight."
   :state ((refresh-tick 0))
   :render
   ;; All async hooks run unconditionally, in order, every render.
@@ -250,46 +265,35 @@ Open-bead counts belong to those sections, which read live `bd' data."
                          (lambda (resolve reject)
                            (gascity-reader-read-async
                             '("dolt" "health") resolve reject))))
-         (status-state (plist-get status-res :status)))
-    (cond
-     ((eq status-state 'error)
-      (gascity-rig--error-vnode (plist-get status-res :error)))
-     ((eq status-state 'pending)
-      (vui-text (format "Loading rig %s…" rig-name) :face 'gascity-dim))
-     (t
-      (let* ((data (plist-get status-res :data))
-             (rig (alist-get 'rig data))
-             (city-name (alist-get 'city_name data))
-             (prefix (alist-get 'prefix rig))
-             (agents (alist-get 'agents data))
-             (sessions (and (eq (plist-get sessions-res :status) 'ready)
-                            (alist-get 'sessions (plist-get sessions-res :data))))
-             (session-map (gascity-status--session-map (or sessions [])))
-             ;; Render: no synchronous gc fallback (`no-probe').
-             (socket (gascity-resolve-tmux-socket city-name 'no-probe))
-             (ready (and (eq (plist-get ready-res :status) 'ready)
-                         (gascity-section-beads (plist-get ready-res :data))))
-             (inprog (and (eq (plist-get inprog-res :status) 'ready)
-                          (gascity-section-beads (plist-get inprog-res :data))))
-             (orders (and (eq (plist-get orders-res :status) 'ready)
-                          (gascity-rig--rig-orders
-                           (alist-get 'orders (plist-get orders-res :data))
-                           rig-name)))
-             (db (and (eq (plist-get dolt-res :status) 'ready)
-                      (gascity-rig--db-for-prefix
-                       (alist-get 'databases (plist-get dolt-res :data)) prefix))))
-        (vui-vstack
-         :spacing 1
-         (gascity-rig--header-vnode rig city-name)
-         (gascity-rig--agents-vnode agents rig-name session-map socket)
-         (gascity-rig--beads-section "Ready" ready ready-res)
-         (gascity-rig--beads-section "In progress" inprog inprog-res)
-         (gascity-rig--orders-vnode orders orders-res)
-         (gascity-rig--dolt-vnode db dolt-res)
-         (vui-text (concat "g refresh · RET open/tmux · i detail · b beads · "
-                           "d dired · t tmux · M/s/K/w/D session · p peek · "
-                           "N/P section · q bury")
-                   :face 'gascity-dim)))))))
+         (status (gascity-ui-effective-load status-res (vui-use-ref nil)))
+         (sessions (gascity-ui-effective-load sessions-res (vui-use-ref nil)))
+         (ready (gascity-ui-effective-load ready-res (vui-use-ref nil)))
+         (inprog (gascity-ui-effective-load inprog-res (vui-use-ref nil)))
+         (orders (gascity-ui-effective-load orders-res (vui-use-ref nil)))
+         (dolt (gascity-ui-effective-load dolt-res (vui-use-ref nil))))
+    (pcase (plist-get status :state)
+      ('error (vui-vstack
+               (gascity-ui-section-header rig-name nil)
+               (gascity-ui-error-line (format "rig status %s" rig-name)
+                                      (plist-get status :error))))
+      ('pending (gascity-ui-section-header rig-name (propertize "…" 'face 'gascity-dim)))
+      (_
+       (let* ((data (plist-get status :data))
+              (rig (alist-get 'rig data))
+              (city-name (alist-get 'city_name data))
+              (session-map (gascity-status--session-map
+                            (or (alist-get 'sessions (plist-get sessions :data)) [])))
+              ;; Render: no synchronous gc fallback (`no-probe').
+              (socket (gascity-resolve-tmux-socket city-name 'no-probe)))
+         (vui-vstack
+          :spacing 1
+          (gascity-rig--header-vnode rig city-name)
+          (gascity-rig--agents-vnode (alist-get 'agents data) rig-name
+                                     session-map socket)
+          (gascity-rig--beads-section "Ready" ready)
+          (gascity-rig--beads-section "In progress" inprog)
+          (gascity-rig--orders-vnode rig-name orders)
+          (gascity-rig--dolt-vnode (alist-get 'prefix rig) dolt)))))))
 
 ;;; Commands
 
@@ -343,6 +347,19 @@ refuses the city HQ (which has no rig dashboard) with a clear message."
         (gascity-at-point-visit rig)
       (user-error "No rig at point"))))
 
+(defun gascity-rig-dashboard-log ()
+  "Show the git log of this dashboard's rig repository (`l', §7.13).
+`magit-log-all' when magit is installed, else `vc-print-root-log'; the
+rig path is host-qualified first, so a remote rig logs on its host."
+  (interactive)
+  (let ((path (get-text-property (point-min) 'gascity-rig-dir)))
+    (unless path (user-error "No repository path for this rig yet"))
+    (let ((default-directory (file-name-as-directory
+                              (gascity-remote-localize-path path))))
+      (if (require 'magit-log nil t)
+          (magit-log-all)
+        (vc-print-root-log)))))
+
 ;;; Mode
 
 (defvar-keymap gascity-rig-dashboard-mode-map
@@ -369,7 +386,8 @@ refuses the city HQ (which has no rig dashboard) with a clear message."
   "R"   #'gascity-session-reset-at-point
   "U"   #'gascity-session-undrain-at-point
   "c"   #'gascity-bead-dispatch
-  "S"   #'gascity-sling-dispatch)
+  "S"   #'gascity-sling-dispatch
+  "l"   #'gascity-rig-dashboard-log)
 
 (define-derived-mode gascity-rig-dashboard-mode gascity-section-mode "GC-Rig"
   "Major mode for the gascity rig dashboard.
@@ -379,9 +397,10 @@ refuses the city HQ (which has no rig dashboard) with a clear message."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Rig dashboard  (g refresh · RET open/tmux · i detail · b beads"
-                      " · d dired · t tmux · M/s/K/w/D/v/R/U session · c note"
-                      " · N/P section · q bury)")))
+              '(:eval (concat " " (propertize (or gascity-rig-dashboard--rig-name "rig")
+                                              'face 'gascity-rig)
+                              (propertize "   ? help  j jump  g refresh"
+                                          'face 'gascity-dim)))))
 
 ;;;###autoload
 (defun gascity-rig-dashboard (rig-name)

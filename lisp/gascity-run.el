@@ -284,9 +284,7 @@ store on every row it hands the drill-in)."
         (if pair
             (list (gascity-run--convoy-vnode (car pair) (cdr pair)))
           (list (vui-text "  (no input convoy)" :face 'gascity-dim))))
-      (lambda (pair) (and pair 1)))
-     (vui-text "g refresh · RET open bead · N/P section · q bury"
-               :face 'gascity-dim))))
+      (lambda (pair) (and pair 1))))))
 
 (defun gascity-run--affected-row (run)
   "Return a dim vnode for an affected RUN row (the not-found fallback).
@@ -319,7 +317,8 @@ with the owning rig resolved from the row's `gascity-rig' stamp."
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              " Run detail  (g refresh · RET open bead · N/P section · q bury)"))
+              (concat " Run detail"
+                      (propertize "   ? help  j jump  g refresh" 'face 'gascity-dim))))
 
 ;;; Commands
 

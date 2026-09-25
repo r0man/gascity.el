@@ -3363,15 +3363,18 @@ which read live `bd' data.  The field is dropped regardless of its value,
 so a non-zero `open_beads' here must still not surface."
   (let ((text (gascity-test--vnode-text
                (gascity-rig--dolt-vnode
-                '((name . "gce") (commits . 225) (open_beads . 7))
-                '(:status ready)))))
-    (should (string-match-p "gce: 225 commits" text))
+                "gce"
+                '(:state ready
+                  :data ((databases . [((name . "gce") (commits . 225)
+                                        (open_beads . 7))])))))))
+    (should (string-match-p "gce  225 commits" text))
     (should-not (string-match-p "open beads" text))
     (should-not (string-match-p "\\b7\\b" text)))
-  ;; No database for the rig → dim placeholder, still no bead count.
+  ;; No database for the rig → the section reads `none' (§6.1).
   (let ((text (gascity-test--vnode-text
-               (gascity-rig--dolt-vnode nil '(:status ready)))))
-    (should (string-match-p "no database" text))
+               (gascity-rig--dolt-vnode
+                "gce" '(:state ready :data ((databases . [])))))))
+    (should (string-match-p "Dolt  none" text))
     (should-not (string-match-p "open beads" text))))
 
 (ert-deftest gascity-test-rig-orders-filter ()
@@ -3963,20 +3966,20 @@ silently drops a section from N/P navigation."
   ;; Rig dashboard: header, agents, beads, orders, dolt.
   (should (equal (gascity-test--section-labels
                   (gascity-rig--header-vnode '((name . "gce")) "bl"))
-                 '("Rig:")))
+                 '("gce   city bl")))
   (should (equal (gascity-test--section-labels
                   (gascity-rig--agents-vnode
                    [] "gce" (make-hash-table :test 'equal) nil))
-                 '("Agents (0)")))
+                 '("Agents  none")))
   (should (equal (gascity-test--section-labels
-                  (gascity-rig--beads-section "Ready" nil '(:status ready)))
-                 '("Ready (0)")))
+                  (gascity-rig--beads-section "Ready" '(:state ready :data [])))
+                 '("Ready  none")))
   (should (equal (gascity-test--section-labels
-                  (gascity-rig--orders-vnode nil '(:status ready)))
-                 '("Orders (0)")))
+                  (gascity-rig--orders-vnode "gce" '(:state ready :data nil)))
+                 '("Orders  none")))
   (should (equal (gascity-test--section-labels
-                  (gascity-rig--dolt-vnode nil '(:status ready)))
-                 '("Dolt")))
+                  (gascity-rig--dolt-vnode "gce" '(:state ready :data nil)))
+                 '("Dolt  none")))
   ;; Session/polecat detail: state header + the two bead sections.
   (should (equal (gascity-test--section-labels
                   (gascity-session--state-vnode (gascity-test--agent :name "rig/agent") nil))
