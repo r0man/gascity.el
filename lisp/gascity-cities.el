@@ -309,6 +309,10 @@ FORCE re-reads even fresh store entries."
               (assoc-delete-all host gascity-cities--host-errors))
         (dolist (city (append (alist-get 'cities payload) nil))
           (let ((key (cons host (file-name-as-directory (alist-get 'path city)))))
+            ;; gc names the root: no city.toml walk (no TRAMP setup) for
+            ;; the reads run there.
+            (gascity-context-remember-city-root
+             (gascity-cities--city-dir (car key) (cdr key)))
             (gascity-cities--set key :name (alist-get 'name city))
             (gascity-cities--read-city key force)))))
      (gascity-cities--updater

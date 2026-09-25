@@ -114,6 +114,23 @@ re-resolution."
   (clrhash gascity-context--rigs-cache)
   (gascity-remote-forget-executables))
 
+(defun gascity-context--find-root (start marker)
+  "Walk up from directory START for the file MARKER (the city marker).
+Return the directory holding it (absolute, trailing slash), or nil.
+One `file-exists-p' per level and nothing else: unlike
+`locate-dominating-file' it never calls `abbreviate-file-name', whose
+TRAMP handler probes `file-name-case-insensitive-p' with a remote temp
+file (half a second per new directory over ssh).  Parents come from
+pure name operations, so a TRAMP START stops at its host's `/'."
+  (let ((dir (file-name-as-directory start))
+        (found nil))
+    (while (and dir (not found))
+      (if (file-exists-p (concat dir marker))
+          (setq found dir)
+        (let ((parent (file-name-directory (directory-file-name dir))))
+          (setq dir (and parent (not (equal parent dir)) parent)))))
+    found))
+
 (defun gascity-context-city-root (&optional dir)
   "Return the Gas City root governing DIR (default `default-directory').
 Honours `gascity-context-city'.  Otherwise walks up from DIR looking
@@ -139,10 +156,19 @@ around a directory already looked up)."
         (puthash start
                  (let ((default-directory start))
                    (gascity-remote-with-timeout gascity-remote-sync-timeout
-                     (when-let* ((found (locate-dominating-file
+                     (when-let* ((found (gascity-context--find-root
                                          start gascity-context-city-file)))
                        (file-name-as-directory (expand-file-name found)))))
                  gascity-context--root-cache)))))
+
+(defun gascity-context-remember-city-root (root)
+  "Record ROOT, a directory gc itself names as a city root, as its own root.
+The Cities view learns every city's root from `gc cities'; memoizing it
+spares the `city.toml' walk for reads run there — over TRAMP the first
+walk is a synchronous connection setup (§8.5)."
+  (let ((root (file-name-as-directory root)))
+    (puthash root root gascity-context--root-cache)
+    root))
 
 (defun gascity-context-city-root-cached (&optional dir)
   "Return the memoized city root governing DIR, or nil when not memoized.

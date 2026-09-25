@@ -148,13 +148,22 @@ city first instead, healing the dispatch for exactly this read."
             (cons "GC_CITY_RUNTIME_DIR"
                   (concat (directory-file-name root) "/.gc/runtime"))))))
 
-(defun gascity-reader--city-args ()
+(defconst gascity-reader-supervisor-subcommands '("cities")
+  "gc subcommands that act at supervisor scope, never on one city.
+They take no `--city', so the reader neither adds the tokens nor walks
+up for a city root to compute them — over TRAMP that walk is
+synchronous I/O (the Cities view reads `gc cities' from a host's `/').")
+
+(defun gascity-reader--city-args (&optional args)
   "Return the city-targeting argv tokens for the current buffer, or nil.
 Calls `gascity-reader-city-args-function' — nil when unset or the
-function answers nil.  Both runners call this in the calling buffer
-before any buffer switch, next to the executable capture."
-  (let ((f gascity-reader-city-args-function))
-    (and f (funcall f))))
+function answers nil, and never for a supervisor-scope ARGS
+\(`gascity-reader-supervisor-subcommands').  Both runners call this in
+the calling buffer before any buffer switch, next to the executable
+capture."
+  (unless (member (car args) gascity-reader-supervisor-subcommands)
+    (let ((f gascity-reader-city-args-function))
+      (and f (funcall f)))))
 
 ;;; Low-level invocation
 
@@ -682,7 +691,7 @@ environment instead — see `gascity-reader--city-env-pair'."
          (city-env (gascity-reader--city-env-overrides args))
          (args (if city-env
                    args
-                 (append (gascity-reader--city-args) args)))
+                 (append (gascity-reader--city-args args) args)))
          (full-args (if (member "--json" args)
                         args
                       (append args (list "--json")))))
@@ -988,7 +997,7 @@ turns it on, at the cost of a fresh ssh per read."
             (city-env (gascity-reader--city-env-overrides args))
             (args (if city-env
                        args
-                     (append (gascity-reader--city-args) args)))
+                     (append (gascity-reader--city-args args) args)))
             ;; JSONL leaves emit their lines natively; appending --json
             ;; there would be a rejected flag.
             (full-args (if (or lines (member "--json" args))
@@ -1145,7 +1154,7 @@ are withheld, otherwise they lead the argv — the same rule both reader
 entry points and `gascity-command-execute' apply."
   (let ((city-env (gascity-reader--city-env-overrides args)))
     (cons city-env
-          (if city-env args (append (gascity-reader--city-args) args)))))
+          (if city-env args (append (gascity-reader--city-args args) args)))))
 
 (defun gascity-reader-run-async (args callback)
   "Start `gc ARGS...' asynchronously; call CALLBACK with its result plist.

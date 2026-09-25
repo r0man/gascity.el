@@ -889,7 +889,7 @@ fictitious TRAMP directory is never contacted."
                    (lambda (&rest _)
                      (setq calls (1+ calls))
                      '((formulas . [((name . "do-work"))]))))
-                  ((symbol-function 'locate-dominating-file)
+                  ((symbol-function 'gascity-context--find-root)
                    (lambda (&rest _) nil)))
       ;; Local city first, then the remote identity: two independent reads.
       (let ((default-directory local))
@@ -990,7 +990,7 @@ leg's marker walk are stubbed."
               (should (= recipe-calls 2)))
             ;; Two cities under ONE TRAMP prefix stay distinct; the walk
             ;; is stubbed per directory, the host never contacted.
-            (cl-letf (((symbol-function 'locate-dominating-file)
+            (cl-letf (((symbol-function 'gascity-context--find-root)
                        (lambda (dir &rest _)
                          (if (string-prefix-p "/ssh:u@h:/b" dir)
                              "/ssh:u@h:/bright-lights/"
@@ -5224,7 +5224,7 @@ while outside any city today's host-only shapes still hold
           ;; (host AND city path) and never collides with a local city
           ;; name.  The city-root walk is stubbed — the fictitious host
           ;; must never be contacted.
-          (cl-letf (((symbol-function 'locate-dominating-file)
+          (cl-letf (((symbol-function 'gascity-context--find-root)
                      (lambda (&rest _) "/ssh:u@h:/city/")))
             (let ((buf-r (gascity-view-get-buffer-create
                           "*gascity-status*" "/ssh:u@h:/city/")))
@@ -5235,7 +5235,7 @@ while outside any city today's host-only shapes still hold
                                  (format "*gascity-status@%s*" city-a)))))
           ;; Outside any city, the 2-arg host-only shapes hold: the
           ;; remote prefix for a remote directory, bare locally.
-          (cl-letf (((symbol-function 'locate-dominating-file)
+          (cl-letf (((symbol-function 'gascity-context--find-root)
                      (lambda (&rest _) nil)))
             (let ((default-directory "/ssh:u@h:/elsewhere/"))
               (should (equal (buffer-name
@@ -6490,7 +6490,7 @@ is host-qualified."
               ;; The re-keyed rig memo resolves its city root first;
               ;; the fictitious host must never be contacted (the walk
               ;; is nil here — no city, remote-prefix key).
-              ((symbol-function 'locate-dominating-file)
+              ((symbol-function 'gascity-context--find-root)
                (lambda (&rest _) nil))
               ((symbol-function 'beads-terminal-spawn)
                (lambda (_term buffer-name argv dir _env)
@@ -6928,8 +6928,8 @@ the `gascity-context-city' override is honoured first and never cached."
          (dir (file-name-as-directory tmp))
          (walks 0))
     (unwind-protect
-        (cl-letf* ((real (symbol-function 'locate-dominating-file))
-                   ((symbol-function 'locate-dominating-file)
+        (cl-letf* ((real (symbol-function 'gascity-context--find-root))
+                   ((symbol-function 'gascity-context--find-root)
                     (lambda (&rest args) (cl-incf walks) (apply real args))))
           (let ((gascity-context-city nil))
             (should-not (gascity-context-city-root dir))
@@ -7073,7 +7073,7 @@ override wins over the walk and is never cached
                              (gascity-context-scope-key city-b)))
           ;; Outside any city: the remote-prefix fallback — \"\" for a
           ;; local directory (the walk stubbed: no disk, no connection).
-          (cl-letf (((symbol-function 'locate-dominating-file)
+          (cl-letf (((symbol-function 'gascity-context--find-root)
                      (lambda (&rest _) nil)))
             (should (equal (gascity-context-scope-key "/ssh:u@h:/elsewhere/")
                            "/ssh:u@h:"))
@@ -7131,7 +7131,7 @@ stays cold, a warm city's entry is never touched by another's."
               ;; Outside any city: the remote prefix is the key, and
               ;; the context is cold.  The city-root walk is stubbed —
               ;; the fictitious host must never be contacted.
-              (cl-letf (((symbol-function 'locate-dominating-file)
+              (cl-letf (((symbol-function 'gascity-context--find-root)
                          (lambda (&rest _) nil)))
                 (let ((default-directory "/ssh:u@h:/city/"))
                   (should-not (gascity-rigs-cached))
@@ -7388,7 +7388,7 @@ stays cold (REQ-005, REQ-006, REQ-007, REQ-014)."
                         '((name . "b-rig") (prefix . "bde") (path . "/p/b"))))
                (bare-a (gascity-test--rigs
                         '((name . "a-rig") (path . "/p/a")))))
-          (cl-letf (((symbol-function 'locate-dominating-file)
+          (cl-letf (((symbol-function 'gascity-context--find-root)
                      (lambda (dir _file)
                        (cond
                         ((string-prefix-p "/ssh:u@h:/c/a/" dir)
@@ -7443,10 +7443,10 @@ prefix, one clear leaves both cold — rig lists, root walk and all
                       '((name . "a-rig") (prefix . "gce") (path . "/p/a"))))
              (rigs-b (gascity-test--rigs
                       '((name . "b-rig") (prefix . "bde") (path . "/p/b"))))
-             (walk (symbol-function 'locate-dominating-file)))
+             (walk (symbol-function 'gascity-context--find-root)))
         ;; The local city walks the disk for real; the fictitious
         ;; remote host is dispatched by the stub, never contacted.
-        (cl-letf (((symbol-function 'locate-dominating-file)
+        (cl-letf (((symbol-function 'gascity-context--find-root)
                    (lambda (dir file)
                      (if (string-prefix-p "/ssh:u@h:" dir)
                          (when (string-prefix-p dir-b dir) dir-b)

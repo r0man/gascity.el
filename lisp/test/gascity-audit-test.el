@@ -637,7 +637,7 @@ look up the remote home.")
     ;; `gascity-context-clear-cache' the next tick walks synchronously
     ;; (bounded by `gascity-remote-sync-timeout') — reported.
     ((gascity-context-city-root . expand-file-name) . "memoized walk")
-    ((gascity-context-city-root . locate-dominating-file) . "memoized walk")
+    ((gascity-context--find-root . file-exists-p) . "memoized walk, no abbreviation")
     ;; The reader's bounded directory probe, reached from the live poll
     ;; (non-ssh methods) through `gascity-store-fetch': the store binds
     ;; `gascity-reader-skip-dir-probe' for a known-good directory, so it
@@ -734,8 +734,14 @@ particular none of `abbreviate-file-name', `file-exists-p' and
     ;; The list is exact: no reviewed pair that no longer occurs.
     (should (null (seq-remove (lambda (r) (member (car r) pairs))
                               gascity-audit--reviewed-callback-io)))
-    (should-not (seq-find (lambda (p) (memq (cdr p) '(abbreviate-file-name
-                                                      file-exists-p project-current)))
+    ;; The one exception is the memoized city-root walk: its
+    ;; `file-exists-p' used to be hidden inside `locate-dominating-file'
+    ;; (reviewed the same way); it is now called directly so the walk
+    ;; can skip `abbreviate-file-name'.
+    (should-not (seq-find (lambda (p) (and (memq (cdr p) '(abbreviate-file-name
+                                                           file-exists-p project-current))
+                                           (not (equal p '(gascity-context--find-root
+                                                           . file-exists-p)))))
                           pairs))))
 
 (provide 'gascity-audit-test)

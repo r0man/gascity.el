@@ -26,6 +26,7 @@
 (require 'cl-lib)
 (require 'gascity)
 (require 'gascity-cockpit-test)
+(require 'gascity-test-helpers)
 
 ;;; A controllable read stub
 
@@ -361,6 +362,84 @@ directory, whatever buffer is current when the callback fires (QA F5)."
         (goto-char (point-min))
         (gascity-thing-toggle)
         (should toggled)))))
+
+;;; Cities over ssh: no city walk, no abbreviation (runs matrix stall)
+
+(ert-deftest gascity-test-cities-read-never-walks-remote ()
+  "Opening Cities reads `gc cities' from a host's `/' with no file I/O at
+all: supervisor scope takes no `--city', so the reader does not walk up
+for a city root (the walk's `abbreviate-file-name' cost 0.53 s over ssh)."
+  (clrhash gascity-context--root-cache)
+  (let ((commands nil)
+        (default-directory "/ssh:localhost:/"))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest plist) (push (plist-get plist :command) commands) nil))
+              ((symbol-function 'make-pipe-process) (lambda (&rest _) nil)))
+      (gascity-test-with-render-guard
+        (gascity-reader-read-async '("cities") #'ignore #'ignore)
+        (should (null gascity-test-render-guard-violations))))
+    (should commands)
+    (should-not (string-search "--city" (car (last (car commands)))))
+    (should (string-search "cities" (car (last (car commands))))))
+  (should-not (gascity-reader--city-args '("cities")))
+  (should (equal (cdr (gascity-reader--targeted-args '("cities"))) '("cities"))))
+
+(ert-deftest gascity-test-city-root-walk-no-abbreviation ()
+  "The city-root walk does one `file-exists-p' per level and never calls
+`abbreviate-file-name' / `file-name-case-insensitive-p' (TRAMP temp-file
+probes); a miss is cached, so a second lookup does no I/O."
+  (gascity-test-with-mock-remote
+    (let* ((local (file-name-as-directory (make-temp-file "gascity-walk" t)))
+           (deep (expand-file-name "a/b/" local))
+           (ops nil)
+           (record (lambda (op &rest args)
+                     (push op ops)
+                     (let ((inhibit-file-name-handlers
+                            (cons 'gascity-inv--record inhibit-file-name-handlers))
+                           (inhibit-file-name-operation op))
+                       (apply op args)))))
+      (unwind-protect
+          (progn
+            (make-directory deep t)
+            (write-region "" nil (expand-file-name "city.toml" local))
+            (clrhash gascity-context--root-cache)
+            (defalias 'gascity-inv--record record)
+            (let ((file-name-handler-alist
+                   (cons (cons "\\`/mock:" 'gascity-inv--record) file-name-handler-alist))
+                  (remote-deep (concat "/mock::" deep)))
+              (let ((root (gascity-context-city-root remote-deep)))
+                (should (file-remote-p root))
+                (should (equal (file-local-name root) local)))
+              (should (memq 'file-exists-p ops))
+              (should-not (memq 'abbreviate-file-name ops))
+              (should-not (memq 'file-name-case-insensitive-p ops))
+              ;; A miss (the host's `/') is cached: no second walk.
+              (should-not (gascity-context-city-root "/mock::/"))
+              (setq ops nil)
+              (should-not (gascity-context-city-root "/mock::/"))
+              (should-not (memq 'file-exists-p ops))))
+        (delete-directory local t)
+        (clrhash gascity-context--root-cache)))))
+
+(ert-deftest gascity-test-cities-seed-city-roots ()
+  "The Cities view memoizes the roots `gc cities' names, so the reads run
+in a remote city never walk for `city.toml' (a TRAMP connection setup)."
+  (clrhash gascity-context--root-cache)
+  (let ((walked nil) (fetch nil))
+    (cl-letf (((symbol-function 'gascity-context--find-root)
+               (lambda (&rest a) (push a walked) nil))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (_args cb &rest _) (setq fetch cb)))
+              ((symbol-function 'gascity-cities--read-city) #'ignore)
+              ((symbol-function 'gascity-cities--redisplay) #'ignore))
+      (with-temp-buffer
+        (setq gascity-cities--rows (make-hash-table :test 'equal))
+        (gascity-cities--read-host "/ssh:h:" nil)
+        (funcall fetch '((cities . [((name . "bl") (path . "/home/u/bl"))]))))
+      (should (equal (gascity-context-city-root "/ssh:h:/home/u/bl/")
+                     "/ssh:h:/home/u/bl/"))
+      (should-not walked))
+    (clrhash gascity-context--root-cache)))
 
 (provide 'gascity-invariants-test)
 ;;; gascity-invariants-test.el ends here
