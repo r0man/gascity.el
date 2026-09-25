@@ -201,6 +201,31 @@ fall back to 5."
   :type 'number
   :group 'gascity)
 
+;;; Events and mail (dashboard-v3 §7.8, §7.9)
+
+(defcustom gascity-event-levels
+  '(("\\.crashed\\'" . attention)
+    ("\\.cold_start_timeout\\'" . attention)
+    ("\\.failed\\'" . attention)
+    ("quarantine" . attention)
+    ("\\.dead_assignee_reopened\\'" . watch)
+    ("\\.rate_limited\\'" . watch)
+    ("escalat" . watch))
+  "Signal level of a gc event type: (REGEXP . LEVEL), first match wins.
+LEVEL is `attention' (■) or `watch' (▲); a type no entry matches is a
+plain event.  Signal events are never folded into churn, in the
+cockpit's Activity section or the Events view (dashboard-v3 §7.8)."
+  :type '(alist :key-type regexp
+                :value-type (choice (const attention) (const watch)))
+  :group 'gascity)
+
+(defcustom gascity-events-window "2h"
+  "Default time window of the Events view (`gc events --since').
+A duration such as `1h', `2h', `24h' or `7d'; days are passed to gc
+as hours (gc's durations have no `d' unit)."
+  :type 'string
+  :group 'gascity)
+
 ;;; Faces
 
 (defgroup gascity-faces nil

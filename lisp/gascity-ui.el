@@ -209,6 +209,16 @@ The ISO TS rides along as `help-echo'."
         (propertize (format-time-string "%H:%M" time) 'help-echo ts)
       "")))
 
+(defun gascity-ui-duration-seconds (window &optional default)
+  "Return the duration WINDOW (`90s', `30m', `2h', `7d') in seconds.
+An unparsable WINDOW yields DEFAULT (a day when omitted)."
+  (if (and (stringp window)
+           (string-match "\\`\\([0-9]+\\)\\([smhd]\\)\\'" window))
+      (* (string-to-number (match-string 1 window))
+         (pcase (match-string 2 window)
+           ("s" 1) ("m" 60) ("h" 3600) ("d" 86400)))
+    (or default 86400)))
+
 ;;; Text helpers
 
 (defun gascity-ui-path (path)

@@ -290,15 +290,15 @@ the id is its trailing `ec-…' handle."
 
 (ert-deftest gascity-test-cockpit-noise-classes ()
   "Nudges, order churn, messages, wisps, sessions and convoys are noise."
-  (should (eq (gascity-dashboard--noise '((labels . ["nudge:x"]))) 'nudge))
-  (should (eq (gascity-dashboard--noise '((title . "nudge:nudge-1"))) 'nudge))
-  (should (eq (gascity-dashboard--noise '((labels . ["order-tracking"]))) 'order))
-  (should (eq (gascity-dashboard--noise '((labels . ["order-run:sweep"]))) 'order))
-  (should (eq (gascity-dashboard--noise '((issue_type . "message"))) 'message))
-  (should (eq (gascity-dashboard--noise '((id . "ec-wisp-3kvmdi"))) 'wisp))
-  (should (eq (gascity-dashboard--noise '((issue_type . "session"))) 'session))
-  (should (eq (gascity-dashboard--noise '((issue_type . "convoy"))) 'convoy))
-  (should-not (gascity-dashboard--noise '((id . "be-3z6o") (issue_type . "task")))))
+  (should (eq (gascity-event-noise '((labels . ["nudge:x"]))) 'nudge))
+  (should (eq (gascity-event-noise '((title . "nudge:nudge-1"))) 'nudge))
+  (should (eq (gascity-event-noise '((labels . ["order-tracking"]))) 'order))
+  (should (eq (gascity-event-noise '((labels . ["order-run:sweep"]))) 'order))
+  (should (eq (gascity-event-noise '((issue_type . "message"))) 'message))
+  (should (eq (gascity-event-noise '((id . "ec-wisp-3kvmdi"))) 'wisp))
+  (should (eq (gascity-event-noise '((issue_type . "session"))) 'session))
+  (should (eq (gascity-event-noise '((issue_type . "convoy"))) 'convoy))
+  (should-not (gascity-event-noise '((id . "be-3z6o") (issue_type . "task")))))
 
 (ert-deftest gascity-test-cockpit-work-hidden-counts ()
   "Work hides noise with a named tally; a show filter brings it back (D4)."
@@ -350,7 +350,7 @@ the id is its trailing `ec-…' handle."
 (ert-deftest gascity-test-cockpit-activity-folds-churn ()
   "Order firings fold into one ×N row per 15 minutes; signal never folds."
   (let* ((events (gascity-cockpit-test--jsonl "emacs-city.events-2h.jsonl"))
-         (model (gascity-dashboard--activity events nil))
+         (model (gascity-event-fold events nil))
          (orders (seq-count (lambda (e) (string-prefix-p "order." (alist-get 'type e)))
                             events)))
     (should (> (cdr model) orders))    ; orders + wisp lifecycle folded
@@ -358,10 +358,10 @@ the id is its trailing `ec-…' handle."
     (should (< (length (car model)) 20))
     (let ((signal '((type . "session.cold_start_timeout") (seq . 1)
                     (ts . "2026-09-25T13:03:00Z") (subject . "x"))))
-      (should (eq (car (car (car (gascity-dashboard--activity (list signal) nil))))
+      (should (eq (car (car (car (gascity-event-fold (list signal) nil))))
                   'event)))
     ;; Unfold shows every event as its own row.
-    (should (= (length (car (gascity-dashboard--activity events '(:unfold t))))
+    (should (= (length (car (gascity-event-fold events '(:unfold t))))
                (length events)))))
 
 ;;; Keys (§5, §6.2)

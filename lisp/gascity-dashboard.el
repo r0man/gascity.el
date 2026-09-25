@@ -58,6 +58,7 @@
 (require 'vui)
 (require 'gascity-custom)
 (require 'gascity-ui)
+(require 'gascity-event)
 (require 'gascity-context)
 (require 'gascity-domain)
 (require 'gascity-remote)
@@ -134,21 +135,6 @@ Only the Agents section's running/idle split reads it."
   :type 'string
   :group 'gascity)
 
-(defcustom gascity-dashboard-event-levels
-  '(("\\.crashed\\'" . attention)
-    ("\\.cold_start_timeout\\'" . attention)
-    ("\\.failed\\'" . attention)
-    ("quarantine" . attention)
-    ("\\.dead_assignee_reopened\\'" . watch)
-    ("\\.rate_limited\\'" . watch)
-    ("escalat" . watch))
-  "Signal level of an event type: (REGEXP . LEVEL), first match wins.
-LEVEL is `attention' (■) or `watch' (▲); unmatched types are plain
-events.  Signal events are never folded into churn (§7.8)."
-  :type '(alist :key-type regexp
-                :value-type (choice (const attention) (const watch)))
-  :group 'gascity)
-
 (defvar gascity-dashboard-filters nil
   "Cockpit filters remembered per city for the session.
 An alist (CITY-ROOT . PLIST); PLIST keys are `:wisps', `:nudges',
@@ -196,39 +182,6 @@ A plist (:collapsed :drawers :expanded) of the root component.")
   (let ((meta (alist-get 'metadata bead)))
     (and (listp meta) meta)))
 
-(defun gascity-dashboard--noise (bead)
-  "Return BEAD's noise category, or nil for real work.
-`nudge' — a nudge wisp (label `nudge:…' or title `nudge:…');
-`order' — order-tracking churn (label `order-tracking'/`order-run:…');
-`message' — a mail message bead; `wisp' — any other wisp (`…-wisp-…'
-id); `session' — an agent's session bead; `convoy' — a convoy (counted
-under Work's convoys, never a work row)."
-  (let ((labels (gascity-dashboard--labels bead))
-        (id (or (alist-get 'id bead) ""))
-        (title (or (alist-get 'title bead) ""))
-        (type (alist-get 'issue_type bead)))
-    (cond
-     ((or (seq-some (lambda (l) (string-prefix-p "nudge:" l)) labels)
-          (string-prefix-p "nudge:" title))
-      'nudge)
-     ((seq-some (lambda (l) (or (equal l "order-tracking")
-                                (string-prefix-p "order-run:" l)))
-                labels)
-      'order)
-     ((equal type "message") 'message)
-     ((string-match-p "-wisp-" id) 'wisp)
-     ((equal type "session") 'session)
-     ((equal type "convoy") 'convoy))))
-
-(defconst gascity-dashboard--noise-filters
-  '((wisp . :wisps) (nudge . :nudges) (order . :orders) (message . :messages))
-  "Noise category → the filter key that shows it (§7.2).")
-
-(defun gascity-dashboard--shown-p (category filters)
-  "Return non-nil when noise CATEGORY is shown under FILTERS."
-  (let ((key (alist-get category gascity-dashboard--noise-filters)))
-    (and key (plist-get filters key))))
-
 (defun gascity-dashboard--hidden-label (counts)
   "Return the dim `(N hidden)' tally for COUNTS, an alist (CATEGORY . N).
 Names each category, e.g. `(71 nudge · 2 session hidden)'; nil when
@@ -239,6 +192,20 @@ nothing is hidden."
     (when parts
       (propertize (format "(%s hidden)" (string-join parts " · "))
                   'face 'gascity-dim))))
+
+;; The event model moved to gascity-event (shared with the Events
+;; view); the old private names stay for code in flight on other
+;; dashboard-v3 branches.  Drop after P4.
+(defalias 'gascity-dashboard--noise #'gascity-event-noise)
+(defalias 'gascity-dashboard--shown-p #'gascity-event-noise-shown-p)
+(defalias 'gascity-dashboard--event-level #'gascity-event-level)
+(defalias 'gascity-dashboard--event-bead #'gascity-event-bead)
+(defalias 'gascity-dashboard--event-time #'gascity-event-time)
+(defalias 'gascity-dashboard--churn-group #'gascity-event-churn-group)
+(defalias 'gascity-dashboard--activity #'gascity-event-fold)
+(defalias 'gascity-dashboard--event-subject #'gascity-event-subject)
+(defalias 'gascity-dashboard--churn-detail #'gascity-event-churn-detail)
+(defalias 'gascity-dashboard--event-drawer #'gascity-event-fields)
 
 ;;; Sessions and agents
 
@@ -558,72 +525,6 @@ failed) is the failed step."
                   (seq-count (lambda (s) (eq (plist-get s :state) 'done)) ladder)
                   (length ladder)))))
 
-;;; Events (§7.8)
-
-(defun gascity-dashboard--event-level (event)
-  "Return EVENT's signal level: `attention', `watch' or nil."
-  (let ((type (or (alist-get 'type event) "")))
-    (cdr (seq-find (lambda (entry) (string-match-p (car entry) type))
-                   gascity-dashboard-event-levels))))
-
-(defun gascity-dashboard--event-bead (event)
-  "Return the bead a `bead.*' EVENT carries in its payload, or nil."
-  (let ((payload (alist-get 'payload event)))
-    (and (listp payload) (alist-get 'bead payload))))
-
-(defun gascity-dashboard--churn-group (event filters)
-  "Return EVENT's churn group, or nil when it is signal worth a row.
-Order firings, noise-bead lifecycle, bead updates and dog patrols fold
-into `×N' rows (§7.1); FILTERS showing a noise category make its events
-plain rows again.  Signal events never fold."
-  (unless (gascity-dashboard--event-level event)
-    (let ((type (or (alist-get 'type event) "")))
-      (cond
-       ((member type '("order.fired" "order.completed"))
-        (unless (plist-get filters :orders) "order.fired/completed"))
-       ((string-prefix-p "bead." type)
-        (let* ((bead (gascity-dashboard--event-bead event))
-               (noise (and bead (gascity-dashboard--noise bead))))
-          (cond ((and noise (memq noise '(wisp nudge order message))
-                      (not (gascity-dashboard--shown-p noise filters)))
-                 "wisp created/closed")
-                ((equal type "bead.updated") "bead.updated"))))
-       ((string-prefix-p "mol-dog-" type) "dog patrol")))))
-
-(defun gascity-dashboard--event-time (event)
-  "Return EVENT's time as a float, or 0."
-  (or (gascity-ui-parse-time (alist-get 'ts event)) 0))
-
-(defun gascity-dashboard--activity (events filters)
-  "Fold EVENTS into Activity rows under FILTERS, newest first.
-Returns (ROWS . FOLDED): each row is (event EVENT) or (churn KEY GROUP
-TIME EVENTS); FOLDED counts the events folded into churn rows.  Churn
-folds per GROUP per 15-minute bucket unless FILTERS unfold it."
-  (let ((buckets (make-hash-table :test 'equal))
-        (rows nil)
-        (folded 0))
-    (dolist (event events)
-      (let ((group (gascity-dashboard--churn-group event filters)))
-        (if (or (null group) (plist-get filters :unfold))
-            (push (list 'event event) rows)
-          (let* ((time (gascity-dashboard--event-time event))
-                 (key (format "%s@%d" group (floor time 900)))
-                 (row (gethash key buckets)))
-            (setq folded (1+ folded))
-            (if row
-                (progn (setf (nth 3 row) (max (nth 3 row) time))
-                       (push event (nth 4 row)))
-              (setq row (list 'churn key group time (list event)))
-              (puthash key row buckets)
-              (push row rows))))))
-    (cons (sort rows
-                (lambda (a b)
-                  (> (if (eq (car a) 'churn) (nth 3 a)
-                       (gascity-dashboard--event-time (nth 1 a)))
-                     (if (eq (car b) 'churn) (nth 3 b)
-                       (gascity-dashboard--event-time (nth 1 b))))))
-          folded)))
-
 ;;; Needs you (§7.1)
 
 (defun gascity-dashboard--session-id-of (event)
@@ -660,7 +561,7 @@ reopened beads, escalated/held beads, unread mail, store health."
             (let ((id (gascity-dashboard--session-id-of e)))
               (when id
                 (puthash id (max (gethash id woke 0)
-                                 (gascity-dashboard--event-time e))
+                                 (gascity-event-time e))
                          woke)))))
         (dolist (e (reverse events))
           (when (member (alist-get 'type e)
@@ -669,7 +570,7 @@ reopened beads, escalated/held beads, unread mail, store health."
                    (key (or id (alist-get 'subject e))))
               (unless (or (gethash key seen)
                           (and id (> (gethash id woke 0)
-                                     (gascity-dashboard--event-time e))))
+                                     (gascity-event-time e))))
                 (puthash key t seen)
                 (add :level 'fail :kind "session" :id (concat "session:" key)
                      :text (format "%s  %s"
@@ -710,7 +611,7 @@ reopened beads, escalated/held beads, unread mail, store health."
       ;; ■ runs that failed in the window (root closed, gc.outcome fail).
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
-          (let* ((bead (gascity-dashboard--event-bead e))
+          (let* ((bead (gascity-event-bead e))
                  (meta (and bead (gascity-dashboard--meta bead)))
                  (id (and bead (alist-get 'id bead))))
             (when (and (equal (alist-get 'type e) "bead.closed")
@@ -1114,7 +1015,7 @@ properties.  The row is a thing whose SPC toggles the drawer."
   "Return how many runs closed with OUTCOME in CTX's event window."
   (let ((seen (make-hash-table :test 'equal)))
     (dolist (e (plist-get ctx :events))
-      (let* ((bead (gascity-dashboard--event-bead e))
+      (let* ((bead (gascity-event-bead e))
              (meta (and bead (gascity-dashboard--meta bead))))
         (when (and (equal (alist-get 'type e) "bead.closed")
                    (equal (alist-get 'gc.kind meta) "workflow")
@@ -1157,7 +1058,7 @@ properties.  The row is a thing whose SPC toggles the drawer."
   "Return the drawer lines of a Needs you ITEM."
   (let ((event (plist-get (plist-get item :props) 'gascity-dashboard-event)))
     (cond ((plist-get item :drawer) (funcall (plist-get item :drawer)))
-          (event (gascity-dashboard--event-drawer event))
+          (event (gascity-event-fields event))
           (t (list (format "%s  %s" (plist-get item :kind) (plist-get item :text)))))))
 
 (defun gascity-dashboard--moving-lines (ctx)
@@ -1172,7 +1073,7 @@ properties.  The row is a thing whose SPC toggles the drawer."
                        (lambda (b)
                          (and (equal (alist-get 'status b) "in_progress")
                               (not (gascity-dashboard--run-root-p b))
-                              (not (gascity-dashboard--noise b))))
+                              (not (gascity-event-noise b))))
                        beads))
          (run-ids (mapcar (lambda (r) (alist-get 'id r)) runs))
          (flat (seq-remove (lambda (b) (member (gascity-dashboard--root-of b) run-ids))
@@ -1399,11 +1300,11 @@ worker drawn under its run (not a top-level row of the section)."
         (ready nil) (in-progress 0) (blocked 0) (hidden nil))
     (dolist (b (plist-get ctx :beads))
       (when (gascity-dashboard--in-rig-p b ctx)
-        (let ((noise (gascity-dashboard--noise b))
+        (let ((noise (gascity-event-noise b))
               (status (alist-get 'status b)))
           (cond
            ((eq noise 'convoy))
-           ((and noise (not (gascity-dashboard--shown-p noise filters)))
+           ((and noise (not (gascity-event-noise-shown-p noise filters)))
             (setf (alist-get noise hidden) (1+ (alist-get noise hidden 0))))
            ((equal status "in_progress")
             (unless (gascity-dashboard--run-root-p b)
@@ -1461,7 +1362,7 @@ worker drawn under its run (not a top-level row of the section)."
          (window (or (plist-get filters :window) gascity-dashboard-window))
          (events (seq-filter (lambda (e) (gascity-dashboard--event-in-rig-p e ctx))
                              (plist-get ctx :events)))
-         (model (gascity-dashboard--activity events filters))
+         (model (gascity-event-fold events filters))
          (rows (mapcar (lambda (row) (gascity-dashboard--activity-row row ctx))
                        (car model))))
     (gascity-dashboard--section-lines
@@ -1482,31 +1383,22 @@ worker drawn under its run (not a top-level row of the section)."
                 (and prefix (string-match-p (concat "\\_<" (regexp-quote prefix) "-")
                                             text))))))))
 
-(defun gascity-dashboard--event-subject (event)
-  "Return the subject column of EVENT."
-  (let ((subject (or (alist-get 'subject event) ""))
-        (bead (gascity-dashboard--event-bead event)))
-    (if bead
-        (format "%s %s" (alist-get 'id bead) (or (alist-get 'title bead) ""))
-      subject)))
-
 (defun gascity-dashboard--activity-row (row ctx)
   "Return the lines of Activity ROW (an event or a churn fold) in CTX."
   (pcase row
     (`(event ,event)
-     (let* ((level (gascity-dashboard--event-level event))
+     (let* ((level (gascity-event-level event))
             (id (format "event:%s" (alist-get 'seq event)))
-            (bead (gascity-dashboard--event-bead event)))
+            (bead (gascity-event-bead event)))
        (apply #'gascity-dashboard--object-row
               id
               (concat "  " (gascity-ui-clock (alist-get 'ts event)) "   "
-                      (pcase level ('attention (gascity-ui-glyph 'fail))
-                             ('watch (gascity-ui-glyph 'watch)) (_ " "))
+                      (gascity-event-level-glyph level)
                       "    " (gascity-ui-fit (or (alist-get 'type event) "") 28)
                       " " (gascity-ui-truncate
-                           (gascity-dashboard--event-subject event) 30))
+                           (gascity-event-subject event) 30))
               nil
-              (lambda () (gascity-dashboard--event-drawer event))
+              (lambda () (gascity-event-fields event))
               'gascity-dashboard-event event
               (and bead (list 'gascity-bead (alist-get 'id bead))))))
     (`(churn ,key ,group ,time ,events)
@@ -1518,47 +1410,13 @@ worker drawn under its run (not a top-level row of the section)."
                       (gascity-dashboard--dim (format "×%-3d" (length events)))
                       " " (gascity-ui-fit group 28)
                       " " (gascity-dashboard--dim
-                           (gascity-dashboard--churn-detail group events)))
+                           (gascity-event-churn-detail group events)))
               nil
               'beads-thing (gascity-dashboard--thing
                             'fold id (lambda () (gascity-dashboard--flip :expanded id))))
              (and open
                   (mapcan (lambda (e) (gascity-dashboard--activity-row (list 'event e) ctx))
                           (reverse events))))))))
-
-(defun gascity-dashboard--churn-detail (group events)
-  "Return the detail column of a churn GROUP row over EVENTS."
-  (cond
-   ((equal group "order.fired/completed")
-    (format "(%d orders)"
-            (length (delete-dups (mapcar (lambda (e) (alist-get 'subject e)) events)))))
-   ((equal group "wisp created/closed")
-    (format "(%s)"
-            (string-join
-             (delete-dups
-              (delq nil (mapcar (lambda (e)
-                                  (let ((b (gascity-dashboard--event-bead e)))
-                                    (and b (symbol-name (gascity-dashboard--noise b)))))
-                                events)))
-             ", ")))
-   (t (format "(%d beads)"
-              (length (delete-dups (mapcar (lambda (e) (alist-get 'subject e))
-                                           events)))))))
-
-(defun gascity-dashboard--event-drawer (event)
-  "Return EVENT's remaining fields as `key value' drawer lines."
-  (let (lines)
-    (dolist (field event)
-      (unless (or (memq (car field) '(ts type seq ok))
-                  (null (cdr field)))
-        (let ((v (cdr field)))
-          (push (format "%-10s %s" (car field)
-                        (truncate-string-to-width
-                         (replace-regexp-in-string
-                          "\n" " " (if (stringp v) v (format "%S" v)))
-                         60 nil nil "…"))
-                lines))))
-    (nreverse lines)))
 
 (defun gascity-dashboard--rigs-lines (ctx)
   "Return the Rigs section lines for CTX."
@@ -1575,7 +1433,7 @@ worker drawn under its run (not a top-level row of the section)."
                          (wip (seq-count (lambda (b)
                                            (and (equal (alist-get 'gascity-rig b) name)
                                                 (equal (alist-get 'status b) "in_progress")
-                                                (not (gascity-dashboard--noise b))))
+                                                (not (gascity-event-noise b))))
                                          beads)))
                     (gascity-dashboard--object-row
                      (concat "rig:" name)
@@ -1634,7 +1492,8 @@ worker drawn under its run (not a top-level row of the section)."
 
 (defun gascity-dashboard--read-events (window resolve reject)
   "Read `gc events --since WINDOW' (JSON Lines) for the cockpit."
-  (gascity-store-fetch (list "events" "--since" window) resolve reject
+  (gascity-store-fetch (list "events" "--since" (gascity-event-since-arg window))
+                       resolve reject
                        :lines t))
 
 (defun gascity-dashboard--read-convoys (resolve reject)
