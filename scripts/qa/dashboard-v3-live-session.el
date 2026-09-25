@@ -7,7 +7,7 @@
 (require 'cl-lib)
 (setq gascity-live-in-batch t gascity-store-refetch-hidden t)
 (defvar ls-dir (getenv "GCE_DIR"))
-(defvar ls-agent "bd.dog-1")
+(defvar ls-agent (or (getenv "GCE_AGENT") "bd.dog-1"))
 (defun ls-log (fmt &rest a) (princ (format "[%s] %s\n" (format-time-string "%T.%3N") (apply #'format fmt a))))
 (defun ls-pump (secs pred)
   (let ((deadline (+ (float-time) secs)) (cap 100000))
@@ -47,13 +47,21 @@
   (dolist (step '(("suspend" gascity-session-suspend)
                   ("wake" gascity-session-wake)))
     (let* ((t0 (float-time)) agents-at cockpit-at
-           (clean (lambda (l) (and l (replace-regexp-in-string " +" " " l))))
+           ;; The row's state word (not its age clock, not a truncation
+           ;; ellipsis); a pending `…' glyph leads the row.
+           (clean (lambda (l)
+                    (cond ((null l) 'gone)
+                          ;; A standalone `…' is the pending glyph (row
+                          ;; status slot); `word…' is a truncation.
+                          ((string-match-p "\\(?:^\\| \\)…\\(?: \\|$\\)" l) 'pending)
+                          ((string-match "\\(suspended\\|stopped\\|stalled\\|asleep\\|active\\|idle\\|running, no live\\)" l)
+                           (match-string 1 l))
+                          (t l))))
            (a0 (funcall clean (ls-line (alist-get 'gascity-agents views))))
            (c0 (funcall clean (ls-line (alist-get 'gascity-dashboard views))))
            (changed (lambda (buf before)
                       (let ((l (funcall clean (ls-line buf))))
-                        (and (not (equal l before))
-                             (not (and l (string-search "…" l))))))))
+                        (and (not (equal l before)) (not (eq l 'pending)))))))
       (funcall (nth 1 step) ls-agent)
       (ls-log "%s returned in %.3fs" (car step) (- (float-time) t0))
       (ls-pump 15 (lambda ()

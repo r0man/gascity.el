@@ -42,6 +42,25 @@ cockpit's Agents section, no `g`.
 | wake → cockpit (next visible change) | 1.5–4.2 s | 9.4 s |
 | agent active again in the cockpit | 19 s | 35 s |
 
+Second target, pool member `core.control-dispatcher` (after gc had
+stopped bd.dog-1 at the end of its patrol), state-word comparison:
+
+| | local | remote |
+|---|---|---|
+| suspend → Agents / cockpit | 1.6 s / 1.8 s | — / 1.7 s |
+| wake → Agents / cockpit | 3.1 s / 1.4 s | 1.1 s / 1.5 s |
+| active again in the cockpit | 4.1–24.8 s | 24.9–34.0 s |
+
+(Rows marked — were read off a line whose only change was the age
+clock; the script now compares the state word and ignores the pending
+`…'.)  Restored: core.control-dispatcher active (22:34:41, after the
+reconciler cycled it: session.stopped / session.woke).
+
+After rebasing on main 12bc90c (render coalescing, 26cfcdb) the burst
+numbers hold: local inbox p50 3.5 / max 3.6 s, count 3.5 / 3.6 s (one
+earlier 10.0 s count read, not reproducible); remote inbox 3.6 / 4.0 s,
+count 3.7 / 3.9 s.
+
 gc 1.4.2 emits no `session.*` event for the `gc session suspend` /
 `wake` calls themselves (documented gc gap, D6); the reconciler's own
 transitions do arrive later as `session.woke` / `session.stopped`, but
