@@ -228,11 +228,16 @@ A nil SECONDS means no bound."
          (or (null formula) (equal formula (plist-get run :formula))))))
 
 (defun gascity-runs--newest-first (runs)
-  "Return RUNS sorted by their time, newest first."
+  "Return RUNS sorted by their time, newest first, then by id.
+The id breaks ties (runs slung together share a second), so the order
+does not depend on which store answered first."
   (sort (copy-sequence runs)
         (lambda (a b)
-          (> (or (gascity-ui-parse-time (plist-get a :time)) 0)
-             (or (gascity-ui-parse-time (plist-get b :time)) 0)))))
+          (let ((ta (or (gascity-ui-parse-time (plist-get a :time)) 0))
+                (tb (or (gascity-ui-parse-time (plist-get b :time)) 0)))
+            (if (= ta tb)
+                (string< (plist-get a :id) (plist-get b :id))
+              (> ta tb))))))
 
 (defun gascity-runs-partition (runs filters now)
   "Split RUNS (summaries) into the view's sections under FILTERS at NOW.

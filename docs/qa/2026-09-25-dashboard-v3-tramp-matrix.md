@@ -140,3 +140,87 @@ mock are B1.
   - Correct: every view renders, cap 3, live streams.
   - Over the stall budget whenever several views are alive.
 - **tramp, mock:** not usable until B1 is fixed.
+
+## Re-run after B1, B2 and B3 (main 87612b4, 23:02–23:13)
+
+Same driver and target, all six modes, per-view wait 60 s. Main now has
+the B1 fix (deferred store work survives TRAMP's timer suspension), the
+B2 fix (live poll and canonical keys), the B3 fix (Cities city-root
+probe), the store latency and idle work, and the stderr leak fixes.
+
+| View | local | ssh | ssh-da | tramp | tramp-da | mock |
+|---|---|---|---|---|---|---|
+| cockpit | 2.6 s | 4.7 s | 5.2 s | 17.1 s | 5.1 s | 4.2 s |
+| agents | 0.4 | 0.5 | 0.8 | 3.0 | 0.8 | 0.5 |
+| agents tree | 0.1 | 0.8 | 1.1 | 0.0 (cached) | 0.8 | 1.5 |
+| agent detail | 1.1 | 1.1 | 1.4 | 3.0 ¹ | 1.1 | 1.5 |
+| runs | 1.2 | 0.8 | 1.2 | 4.4 | 1.6 | 1.2 |
+| run detail | 0.0 | 0.1 | 0.8 | 0.0 | 0.9 | 0.8 |
+| health | 2.1 | 2.2 | 2.3 | 9.5 | 2.2 | 2.3 |
+| cities | 3.2 | 4.1 | 3.4 | 6.6 | 3.3 | 3.4 |
+| rig | 1.5 | 1.5 | 1.4 | 7.8 | 1.4 | 1.9 |
+| mail | 0.8 | 1.4 | 1.1 | 1.6 | 1.1 | 1.1 |
+| convoys | 1.7 | 1.9 | 2.6 | 2.6 | 2.9 | 3.1 |
+| orders | 0.5 | 0.4 | 0.7 | 1.1 | 0.8 | 0.9 |
+| dolt | 2.1 | 2.0 | 2.3 | 6.7 | 2.2 | 3.0 |
+| sessions | 0.8 | 0.4 | 1.5 | 2.2 | 1.4 | 0.9 |
+| contention, all refresh | 6.9 | 9.9 | 10.2 | 62.0 | 11.8 | 10.2 |
+| max concurrent remote gc | n/a | 3 | 3 | 3 | 3 | 4 ² |
+| live stream | live, seq +3 | live, seq +3 | live, seq +3 | live, seq +1 | live, seq +1 | **polling, seq +7 in 5 s** |
+| stalls > 200 ms | none | cockpit 1.07 s | cockpit 1.24 s | many (below) | cockpit 1.27 s, one 0.93 s | cockpit 0.27 s |
+
+¹ One read failed once under contention ("gc transcript: … Process has
+died"). The agent detail rendered its other sections. Three follow-up
+opens were clean.
+² The mock counter also counts local helper processes; see above.
+
+### Results
+
+- **B1 fixed:** no view hangs at `…` in any mode. tramp and mock render
+  every view, the Runs view and run detail included.
+- **B2 fixed:** mock's live stream runs in `polling` state and advances
+  (seq 85523 → 85530 in 5 s). `gascity-live-status` finds it under the
+  view's directory, so the header shows it.
+- **B3 fixed:** Cities opens in ≤ 0.02 s in every ssh mode; it was
+  0.55–0.67 s before.
+- **ssh, ssh-da, tramp-da:**
+  - Every view renders the same as local; the only diffs are live data
+    (store size, ages, counts).
+  - At most 3 concurrent remote gc; live streams.
+  - The only stall over the budget is the first-contact cockpit open
+    (1.1–1.3 s, the §8.5 exception) and one 0.93 s gap during tramp-da's
+    refresh-all.
+- **mock** (non-ssh method, TRAMP `make-process`): now as good as ssh.
+  One 0.27 s gap on first contact.
+- **tramp (tramp-sh over ssh): correct, but not usable.**
+  - Every view settles, but opening a list blocks 0.7–2.3 s.
+  - Stalls of 0.6–4 s throughout, one of 45.6 s during the refresh-all,
+    and the contention phase took 62 s to settle.
+  - An instrumented re-run showed TRAMP's own channel dying ("Remote file
+    error: Process has died"). The main loop is not wedged between these
+    stalls.
+  - This is F8 mechanism 1 (qa/f8-root-cause.md): each tramp-sh async
+    read is an ssh mux client with a pty, and the ControlMaster blocks
+    writing a full pty while TRAMP waits on another channel. mock (no ssh
+    master) and direct-async (no pty) are unaffected.
+  - Recommendation for the lead: `gascity-remote-transport 'tramp` over
+    an ssh-family method should not be offered as is. Force direct-async
+    or `tramp-use-connection-share 'suppress` for gascity's processes, or
+    document that it is for non-ssh methods only.
+
+### Fixed on this branch
+
+- **Runs order:** two waiting runs with the same `created_at` (bl-0q8w,
+  bl-70ac, both 2026-09-23T21:21:16Z) swapped order between runs, because
+  the sort followed the order the stores answered in. Runs now break
+  time ties by id.
+
+### Budgets (R9), re-run
+
+- **ssh, ssh-da, tramp-da, mock:**
+  - Concurrency cap met.
+  - Warm first paint ≤ 2.5 s for every view except the cockpit
+    (4.2–5.2 s) and Cities (3.3–4.1 s). Those two read many entries under
+    the cap of 3.
+  - Stalls within 200 ms except first contact.
+- **tramp over ssh:** fails the stall budget (F8, above).

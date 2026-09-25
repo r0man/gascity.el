@@ -202,6 +202,17 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
                                          (funcall at "2026-09-25T20:00:00Z"))))
       (should (equal (funcall ids (plist-get parts :closed)) '("be-52m5" "be-bn2"))))))
 
+(ert-deftest gascity-test-runs-order-stable-on-equal-times ()
+  "Runs with the same time sort by id, whatever the payload order."
+  (let ((a (list :id "bl-70ac" :time "2026-09-23T21:21:16Z"))
+        (b (list :id "bl-0q8w" :time "2026-09-23T21:21:16Z"))
+        (c (list :id "bl-oyl4" :time "2026-09-24T07:47:00Z")))
+    (should (equal (mapcar (lambda (r) (plist-get r :id))
+                           (gascity-runs--newest-first (list a b c)))
+                   '("bl-oyl4" "bl-0q8w" "bl-70ac")))
+    (should (equal (gascity-runs--newest-first (list b c a))
+                   (gascity-runs--newest-first (list a b c))))))
+
 (ert-deftest gascity-test-runs-filter-rig-and-formula ()
   "`-r' and `-F' narrow every section and the counts; `city' is the HQ store."
   (let* ((runs (gascity-runs-test--summaries (gascity-runs-test--fixture-beads)))
