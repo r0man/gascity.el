@@ -79,7 +79,11 @@ and an `offline` host state with backoff probes. vui components use
 construction); callback code uses `gascity-store-fetch` /
 `gascity-store-subscribe`; the event router invalidates with
 `gascity-store-invalidate` / `-invalidate-event`. Remote completions are
-delivered from `run-at-time` 0, never inside a sentinel.
+delivered from `run-at-time` 0, never inside a sentinel. For single-hop
+ssh-family cities the async runners start a LOCAL `ssh -T` pipe process
+(`gascity-remote-transport`, default `ssh`; shared ControlMaster) instead
+of TRAMP's `make-process`, whose synchronous remote-shell setup froze the
+main loop ~0.5 s per spawn; other methods keep TRAMP.
 
 **Command layer (beads-meta, execution + parse only).**
 `gascity-defcommand` (`gascity-command.el`) defines an EIEIO class per gc
