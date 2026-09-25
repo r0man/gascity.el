@@ -18,11 +18,12 @@
 ;;   pools → agents, built from the gascity-status.el components, and
 ;;   `T' there switches back.
 ;;
-;; Reads (one named loader each, bounded by `gascity-ui-read-timeout'):
-;; `gc status', `gc session list', `gc agent list' (providers and pool
-;; bounds) and the cockpit's work read (the hooked bead).  A refresh
-;; keeps the previous rows while its reads are in flight and keeps the
-;; last good payload of any read that fails.
+;; Reads (one named loader each, through the store — shared with the
+;; cockpit, capped per host, bounded by its deadline): `gc status', `gc
+;; session list', `gc agent list' (providers and pool bounds) and the
+;; cockpit's work read (the hooked bead).  A refresh keeps the previous
+;; rows while its reads are in flight and keeps the last good payload of
+;; any read that fails.
 
 ;;; Code:
 
@@ -37,7 +38,7 @@
 (require 'gascity-ui)
 (require 'gascity-context)
 (require 'gascity-domain)
-(require 'gascity-reader)
+(require 'gascity-store)
 (require 'gascity-section)
 (require 'gascity-tabulated)
 (require 'gascity-status)
@@ -61,21 +62,28 @@
 
 ;;; Reads
 
+(defvar gascity-agents--force nil
+  "Non-nil while an explicit `g' refresh reads past the store's TTL.")
+
 (defun gascity-agents--read-status (resolve reject)
   "Read `gc status' for the Agents view; RESOLVE or REJECT."
-  (gascity-reader-read-async '("status") resolve reject))
+  (gascity-store-fetch '("status") resolve reject :force gascity-agents--force))
 
 (defun gascity-agents--read-sessions (resolve reject)
   "Read `gc session list' for the Agents view."
-  (gascity-reader-read-async '("session" "list") resolve reject))
+  (gascity-store-fetch '("session" "list") resolve reject
+                       :force gascity-agents--force))
 
 (defun gascity-agents--read-agents (resolve reject)
   "Read `gc agent list' (providers, pool bounds) for the Agents view."
-  (gascity-reader-read-async '("agent" "list") resolve reject))
+  (gascity-store-fetch '("agent" "list") resolve reject
+                       :force gascity-agents--force))
 
 (defun gascity-agents--read-work (resolve reject)
-  "Read the work beads (for each agent's hooked bead)."
-  (gascity-dashboard--read-work resolve reject))
+  "Read the work beads (for each agent's hooked bead), as the cockpit does."
+  (gascity-store-fetch '("bd" "list" :work-stores) resolve reject
+                       :loader #'gascity-dashboard--read-work
+                       :force gascity-agents--force))
 
 (defconst gascity-agents--loaders
   '((:status . gascity-agents--read-status)
@@ -210,15 +218,17 @@ substring of the name) narrow further."
              (if errors (gascity-ui-partial-mark (string-join errors "\n")) ""))
      (mapcar (lambda (a) (gascity-agents--entry a now)) shown))))
 
-(defun gascity-agents-refresh ()
-  "Re-read the Agents table's payloads; the old rows stay until they land."
+(defun gascity-agents-refresh (&optional cached)
+  "Re-read the Agents table's payloads; the old rows stay until they land.
+With CACHED (opening the view), fresh store entries answer at once."
   (interactive)
   (let ((gen (cl-incf gascity-agents--generation))
-        (buf (current-buffer)))
+        (buf (current-buffer))
+        (gascity-agents--force (not cached)))
     (setq gascity-agents--errors nil)
     (gascity-tabulated--set-loading)
     (pcase-dolist (`(,key . ,loader) gascity-agents--loaders)
-      (gascity-ui-with-deadline
+      (funcall
        loader
        (lambda (data)
          (when (buffer-live-p buf)
@@ -316,7 +326,7 @@ the §5.3 agent keys act on the row at point.
       (unless (derived-mode-p 'gascity-agents-mode)
         (gascity-agents-mode)
         (gascity-agents--render))
-      (gascity-agents-refresh))
+      (gascity-agents-refresh 'cached))
     (pop-to-buffer buf)))
 
 ;;; Tree (`T')
@@ -325,24 +335,12 @@ the §5.3 agent keys act on the row at point.
   "The Agents tree: city → rigs → pools → agents (dashboard-v3 §7.3)."
   :state ((refresh-tick 0) (collapsed-rigs nil) (collapsed-pools nil))
   :render
-  (let* ((status (gascity-ui-effective-load
-                  (vui-use-async (list 'status refresh-tick)
-                                 (lambda (resolve reject)
-                                   (gascity-ui-with-deadline
-                                    #'gascity-agents--read-status resolve reject)))
-                  (vui-use-ref nil)))
-         (sessions (gascity-ui-effective-load
-                    (vui-use-async (list 'sessions refresh-tick)
-                                   (lambda (resolve reject)
-                                     (gascity-ui-with-deadline
-                                      #'gascity-agents--read-sessions resolve reject)))
-                    (vui-use-ref nil)))
-         (agents (gascity-ui-effective-load
-                  (vui-use-async (list 'agents refresh-tick)
-                                 (lambda (resolve reject)
-                                   (gascity-ui-with-deadline
-                                    #'gascity-agents--read-agents resolve reject)))
-                  (vui-use-ref nil))))
+  (let* ((status (gascity-ui-store-load
+                  (gascity-store-use '("status") :tick refresh-tick)))
+         (sessions (gascity-ui-store-load
+                    (gascity-store-use '("session" "list") :tick refresh-tick)))
+         (agents (gascity-ui-store-load
+                  (gascity-store-use '("agent" "list") :tick refresh-tick))))
     (pcase (plist-get status :state)
       ('pending (vui-text (propertize "  …" 'face 'gascity-dim)))
       ('error (gascity-ui-error-line "status" (plist-get status :error)))

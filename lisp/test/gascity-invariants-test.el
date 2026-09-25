@@ -172,7 +172,7 @@ header ◐ with the error as help-echo."
 (defun gascity-inv--fanout (stub names)
   "Run the work fan-out over NAMES with read STUB; return (RESOLVED . REJECTED)."
   (let (resolved rejected)
-    (cl-letf (((symbol-function 'gascity-reader-read-async) stub))
+    (cl-letf (((symbol-function 'gascity-store-fetch) stub))
       (gascity-dashboard--read-work-stores
        names default-directory
        (lambda (v) (setq resolved v))
@@ -222,7 +222,7 @@ directory, whatever buffer is current when the callback fires (QA F5)."
   (let ((dirs nil)
         (rig-list-cb nil))
     (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
-              ((symbol-function 'gascity-reader-read-async)
+              ((symbol-function 'gascity-store-fetch)
                (lambda (args cb &rest _)
                  (if (equal args '("rig" "list"))
                      (setq rig-list-cb cb)

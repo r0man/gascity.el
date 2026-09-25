@@ -353,43 +353,6 @@ when a refresh failed over it), `error' with no data, else `pending'."
       ('error (list :state 'error :error err))
       (_ (list :state 'pending)))))
 
-;;; Bounded reads (§8.3 R5)
-
-(defcustom gascity-ui-read-timeout 30
-  "Seconds before a view's async read is abandoned as timed out.
-The read's process is killed and the section reports the timeout; the
-last good data keeps rendering."
-  :type 'number
-  :group 'gascity)
-
-(defun gascity-ui-with-deadline (loader resolve reject &optional seconds)
-  "Call LOADER with RESOLVE and REJECT, bounded by SECONDS.
-LOADER is a function of (RESOLVE REJECT) that starts an async read and
-may return its process.  Whichever of resolve, reject or the deadline
-\(`gascity-ui-read-timeout' by default) comes first wins; the others are
-ignored.  On the deadline a returned live process is deleted and REJECT
-gets `timed out after Ns'.  Returns the process, if any."
-  (let* ((settled nil)
-         (seconds (or seconds gascity-ui-read-timeout))
-         (proc nil)
-         (timer nil)
-         (finish (lambda (fn value)
-                   (unless settled
-                     (setq settled t)
-                     (when (timerp timer) (cancel-timer timer))
-                     (funcall fn value)))))
-    (setq timer (run-at-time seconds nil
-                             (lambda ()
-                               (when (and (processp proc) (process-live-p proc))
-                                 (delete-process proc))
-                               (funcall finish reject
-                                        (format "timed out after %ss" seconds)))))
-    (setq proc (funcall loader
-                        (lambda (data) (funcall finish resolve data))
-                        (lambda (err) (funcall finish reject err))))
-    (when settled (cancel-timer timer))
-    (and (processp proc) proc)))
-
 ;;; Filter menus (§5.5): apply on change, `x' resets
 
 ;; Every `/' menu edits its view's filter through three buffer-local

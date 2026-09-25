@@ -312,18 +312,18 @@ stopped agents take their template's provider from `gc agent list'."
       (kill-buffer "*gascity-log: mayor*"))))
 
 (ert-deftest gascity-test-agent-peek-opens-at-once ()
-  "`v' shows `…' before gc answers, then the captured pane."
-  (let (resolve)
+  "`v' shows `…' before gc answers, then the captured pane (§8.5)."
+  (let (on-success)
     (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
                (lambda (name &rest _) (get-buffer-create name)))
               ((symbol-function 'pop-to-buffer) #'ignore)
-              ((symbol-function 'gascity-reader-read-async)
-               (lambda (_args cb &rest _) (setq resolve cb) nil)))
+              ((symbol-function 'gascity-command-act-async)
+               (lambda (_cmd &rest keys) (setq on-success (plist-get keys :on-success)))))
       (gascity-session-peek--show "mayor" 20)
       (with-current-buffer (gascity-session-peek--buffer-name "mayor")
-        (should (equal (buffer-string) "…"))
-        (funcall resolve '((output . "pane text")))
-        (should (equal (buffer-string) "pane text")))
+        (should (string-match-p "…" (buffer-string)))
+        (funcall on-success "pane text")
+        (should (string-match-p "pane text" (buffer-string))))
       (kill-buffer (gascity-session-peek--buffer-name "mayor")))))
 
 (ert-deftest gascity-test-agent-detail-keys ()
