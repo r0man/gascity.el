@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-09-25T18:29:19Z",
+  "server": {
+    "running": true,
+    "reachable": true,
+    "external": false,
+    "pid": 3146,
+    "port": 37081,
+    "latency_ms": 19
+  },
+  "databases": [
+    {"name": "be", "commits": 43, "open_beads": 37},
+    {"name": "ga", "commits": 169, "open_beads": 8},
+    {"name": "hq", "commits": 166, "open_beads": 2}
+  ],
+  "backups": {
+    "dolt_freshness": "",
+    "dolt_age_sec": 0,
+    "dolt_stale": false
+  },
+  "orphans": [
+
+  ],
+  "processes": {
+    "zombie_count": 0,
+    "zombie_pids": []
+  }
+}

@@ -770,6 +770,8 @@ City start/stop keep their streaming `async-shell-command' buffer.")
       (gascity-order-run-at-point . gascity-order-run-at-point)
       (gascity-reload . ,(lambda () (gascity-reload)))
       (gascity-sling . ,(lambda () (gascity-sling "r/a" "task text")))
+      (gascity-costs-refresh
+       . ,(lambda () (with-temp-buffer (gascity-costs-mode) (gascity-costs-refresh))))
       (gascity-sling-formula--dispatch
        . ,(lambda ()
             (gascity-sling-formula--dispatch

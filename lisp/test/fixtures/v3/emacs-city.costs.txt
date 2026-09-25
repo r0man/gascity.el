@@ -1,0 +1,15 @@
+RUN      INVOCATIONS  IN  OUT  CACHE_R  CACHE_C  WALL_S     EST_USD  UNPRICED
+ec-0c4x  0            0   0    0        0        23.0       0.0000   0
+ec-16z9  0            0   0    0        0        75.2       0.0000   0
+ec-5khy  0            0   0    0        0        9360.4     0.0000   0
+ec-a9p2  0            0   0    0        0        243.9      0.0000   0
+ec-gkv   0            0   0    0        0        177892.7   0.0000   0
+ec-grfr  0            0   0    0        0        618574.4   0.0000   0
+ec-jdf   0            0   0    0        0        194152.9   0.0000   0
+ec-lvat  0            0   0    0        0        66.4       0.0000   0
+ec-ra2g  0            0   0    0        0        189.4      0.0000   0
+ec-thv8  0            0   0    0        0        27243.5    0.0000   0
+ec-y84f  0            0   0    0        0        2522.6     0.0000   0
+ec-zcj8  0            0   0    0        0        26490.9    0.0000   0
+TOTAL    0            0   0    0        0        1056835.3  0.0000   0
+Estimates are list-price decision-support, not authoritative charges.

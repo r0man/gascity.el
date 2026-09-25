@@ -65,7 +65,10 @@
 (require 'gascity-status)
 (require 'gascity-action)
 (require 'gascity-rig)
+(require 'gascity-pulse)
 (require 'gascity-dashboard)
+(require 'gascity-health)
+(require 'gascity-cities)
 (require 'gascity-run)
 (require 'gascity-session)
 

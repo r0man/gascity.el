@@ -287,6 +287,17 @@ to `default-directory'."
           :queued (+ (length (gascity-store--host-reads host))
                      (length (gascity-store--host-actions host))))))
 
+(defun gascity-store-hosts ()
+  "Return the remote hosts the store has scheduled work on this session.
+Each is a TRAMP prefix (\"/ssh:host:\"); the local host is left out.
+Pure: reads the scheduler table only.  The Cities view lists the
+cities of these hosts (dashboard-v3 §8.3 R8)."
+  (let (hosts)
+    (maphash (lambda (name _host)
+               (unless (string-empty-p name) (push name hosts)))
+             gascity-store--hosts)
+    (sort hosts #'string<)))
+
 (defun gascity-store-snapshot (entry)
   "Return ENTRY's state as a `vui-use-async'-compatible plist.
 :status is `ready' whenever a payload is held — also while a refetch
