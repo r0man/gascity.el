@@ -16,8 +16,9 @@
 ;; A caller pops a buffer with `gascity-compose', handing it the header
 ;; lines, the buffer to refresh afterward, and a *finish closure*.  `C-c
 ;; C-c' (`gascity-compose-finish') runs the closure with the body text —
-;; the closure builds and `gascity-command-act's the gc command — then
-;; refreshes the originating view and discards the buffer.  `C-c C-k'
+;; the closure builds the gc command and starts it asynchronously (D9;
+;; the origin view refreshes when gc answers) — then discards the
+;; buffer at once.  `C-c C-k'
 ;; (`gascity-compose-abort') throws the draft away.  The compose buffer
 ;; knows nothing about gc commands; it only collects a body and calls back.
 
@@ -29,7 +30,6 @@
 
 ;; The refresh helper lives in gascity-action, which requires this module;
 ;; call it by name (guarded) after a finish to avoid a load cycle.
-(declare-function gascity--refresh-current-view "gascity-action")
 
 (defvar-local gascity-compose--finish-function nil
   "Closure run with the body string when the compose buffer is finished.")
@@ -107,22 +107,18 @@ wherever a same-named draft buffer happened to be created earlier."
     buf))
 
 (defun gascity-compose-finish ()
-  "Finish the compose buffer: run its closure with the body, refresh, discard.
-The closure builds and acts the gc command; the originating view is then
-refreshed in place and this draft buffer is killed."
+  "Finish the compose buffer: run its closure with the body, then discard.
+The closure builds the gc command and STARTS it (dashboard-v3 D9, §8.5:
+the send runs async and refreshes the originating view when gc
+answers), so this draft buffer is killed at once."
   (interactive)
   (unless (derived-mode-p 'gascity-compose-mode)
     (user-error "Not in a gascity compose buffer"))
   (let ((finish gascity-compose--finish-function)
-        (origin gascity-compose--origin-buffer)
         (body (gascity-compose--body))
         (buf (current-buffer)))
     (unless finish (user-error "This compose buffer has no finish action"))
     (funcall finish body)
-    (when (and (buffer-live-p origin) (not (eq origin buf)))
-      (with-current-buffer origin
-        (when (fboundp 'gascity--refresh-current-view)
-          (gascity--refresh-current-view))))
     (when (buffer-live-p buf)
       (let ((win (get-buffer-window buf)))
         (when (window-live-p win) (ignore-errors (quit-window nil win))))

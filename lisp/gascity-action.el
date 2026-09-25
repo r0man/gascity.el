@@ -38,6 +38,7 @@
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'gascity-reader)
+(require 'gascity-store)
 (require 'gascity-context)
 (require 'gascity-command)
 (require 'gascity-types)
@@ -125,11 +126,107 @@ message in the echo area rather than a backtrace."
       (gascity-error
        (user-error "GC %s failed: %s" sub (or (cadr err) "unexpected error"))))))
 
+;;; ============================================================
+;;; Asynchronous action runner (dashboard-v3 D9, §8.5)
+;;; ============================================================
+
+(defconst gascity-action--done-verbs
+  '(("session suspend" . "Suspended")
+    ("session wake" . "Woke")
+    ("session kill" . "Killed the runtime of")
+    ("session reset" . "Reset")
+    ("session nudge" . "Nudged")
+    ("session close" . "Closed")
+    ("session pin" . "Pinned")
+    ("session unpin" . "Unpinned")
+    ("session rename" . "Renamed")
+    ("runtime drain" . "Draining")
+    ("runtime undrain" . "Undrained")
+    ("rig suspend" . "Suspended rig")
+    ("rig resume" . "Resumed rig")
+    ("rig restart" . "Restarted rig")
+    ("rig remove" . "Removed rig")
+    ("mail archive" . "Archived")
+    ("mail mark-read" . "Marked read")
+    ("mail mark-unread" . "Marked unread")
+    ("order run" . "Ran order"))
+  "Success echo verbs by gc subcommand: \"<verb> <target>\".
+Subcommands not listed echo \"GC <sub>: <summary>\" instead.")
+
+(defun gascity-action--command-target (command)
+  "Return the object id COMMAND acts on, or nil.
+The first non-blank of its `target', `name' or `id' slot: the session,
+rig, order, message or bead the action serializes on (§8.5)."
+  (cl-some (lambda (slot)
+             (and (slot-exists-p command slot)
+                  (slot-boundp command slot)
+                  (let ((v (slot-value command slot)))
+                    (and (stringp v) (not (string-empty-p v)) v))))
+           '(target name id)))
+
+(defun gascity-action--success-text (command target result)
+  "Return the success echo for COMMAND on TARGET with parsed RESULT."
+  (let* ((sub (or (gascity-command-subcommand command) "command"))
+         (verb (cdr (assoc sub gascity-action--done-verbs))))
+    (if (and verb target)
+        (format "%s %s" verb target)
+      (format "GC %s: %s" sub (gascity-action--summarize result)))))
+
+(cl-defun gascity-command-act-async (command &key target on-success on-error
+                                             (origin (current-buffer))
+                                             (invalidate t))
+  "Start mutating COMMAND and return at once; report when it finishes.
+The D9 runner behind every input-free verb: COMMAND is validated here
+\(a `user-error' on failure, before anything runs), then handed to
+`gascity-store-action', which runs it asynchronously on the action lane
+of the calling buffer's host, serialized per TARGET (default: the
+command's own target/name/id, see `gascity-action--command-target').
+On success ON-SUCCESS is called with the parsed result (JSON when the
+command asks for it, else stdout); without it the success text
+\(`gascity-action--success-text', e.g. \"Suspended mayor\") is
+echoed.  Either way ORIGIN (default the current buffer) is then
+refreshed if still live.  On failure the first stderr line is echoed
+\(or passed to ON-ERROR) and the full stderr lands in the city's
+`*gascity-log: CITY*' buffer — never a modal error.  With INVALIDATE
+nil (read-only verbs such as peek) the store's caches are left alone.
+Returns nil."
+  (let ((sub (or (gascity-command-subcommand command) "command")))
+    (when-let* ((msg (gascity-command-validate command)))
+      (user-error "GC %s: Command validation failed: %s" sub msg))
+    (let* ((target (or target (gascity-action--command-target command)))
+           (refresh (lambda ()
+                      (when (and invalidate (buffer-live-p origin))
+                        (with-current-buffer origin
+                          (gascity--refresh-current-view))))))
+      (gascity-store-action
+       (cdr (gascity-command-line command))
+       :target target
+       :json (and (slot-exists-p command 'json) (slot-value command 'json))
+       :invalidate invalidate
+       :on-success (lambda (result)
+                     (if on-success
+                         (funcall on-success result)
+                       (message "%s" (gascity-action--success-text
+                                      command target result)))
+                     (funcall refresh))
+       :on-error on-error)
+      nil)))
+
 (cl-defmethod gascity-command-execute-interactive ((command gascity-command-action))
-  "Run a mutating COMMAND synchronously and report via `gascity-command-act'.
-This is the interactive backend for the quick mutations; the streaming
-`async-shell-command' base method still serves read/long-running ones."
-  (gascity-command-act command))
+  "Start mutating COMMAND asynchronously via `gascity-command-act-async'.
+The interactive backend of the quick mutations (dashboard-v3 D9): input
+was gathered by the caller, the gc call now runs in the background and
+reports in the echo area.  City start/stop keep the streaming
+`async-shell-command' base method."
+  (gascity-command-act-async command))
+
+(defun gascity-action--bead-store (id)
+  "Return the store directory owning bead ID, preferring the rig memo.
+`gascity-beads--bead-path-cached' answers without spawning gc; only a
+cold memo falls back to the `gc rig list' read of
+`gascity-beads--bead-path'."
+  (or (gascity-beads--bead-path-cached id)
+      (gascity-beads--bead-path id)))
 
 ;;; ============================================================
 ;;; Helpers — confirmation, completion, target-at-point, refresh
@@ -260,16 +357,14 @@ defaults the name to PATH's basename and the prefix from the name."
    (gascity-command-rig-add
     :path path
     :name (and (stringp name) (not (string-empty-p name)) name)
-    :prefix (and (stringp prefix) (not (string-empty-p prefix)) prefix)))
-  (gascity--refresh-current-view))
+    :prefix (and (stringp prefix) (not (string-empty-p prefix)) prefix))))
 
 ;;;###autoload
 (defun gascity-rig-remove (name)
   "Remove rig NAME from the city configuration (prompted, confirmed), then refresh."
   (interactive (list (gascity-action--read-rig "Remove rig: ")))
   (when (gascity-action--confirm "Remove rig %s from the city config? " name)
-    (gascity-command-execute-interactive (gascity-command-rig-remove :name name))
-    (gascity--refresh-current-view)))
+    (gascity-command-execute-interactive (gascity-command-rig-remove :name name))))
 
 ;;;###autoload
 (defun gascity-session-nudge (target message)
@@ -348,16 +443,14 @@ orders across rigs (`gc order run --rig', DESIGN-write-actions.md §11 #9)."
   "Suspend the rig at point and refresh the list."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-rig-suspend :name (gascity-action--rig-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-rig-suspend :name (gascity-action--rig-at-point))))
 
 ;;;###autoload
 (defun gascity-rig-resume-at-point ()
   "Resume the rig at point and refresh the list."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-rig-resume :name (gascity-action--rig-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-rig-resume :name (gascity-action--rig-at-point))))
 
 ;;;###autoload
 (defun gascity-rig-restart-at-point ()
@@ -365,8 +458,7 @@ orders across rigs (`gc order run --rig', DESIGN-write-actions.md §11 #9)."
   (interactive)
   (let ((name (gascity-action--rig-at-point)))
     (when (gascity-action--confirm "Restart (kill agent sessions of) rig %s? " name)
-      (gascity-command-execute-interactive (gascity-command-rig-restart :name name))
-      (gascity--refresh-current-view))))
+      (gascity-command-execute-interactive (gascity-command-rig-restart :name name)))))
 
 ;;;###autoload
 (defun gascity-order-run-at-point ()
@@ -378,8 +470,7 @@ is never run by mistake (DESIGN-write-actions.md §11 #9)."
          (name (gascity-action--order-at-point))
          (rig (and (gascity-order-p order) (gascity-order-rig order))))
     (gascity-command-execute-interactive
-     (gascity-command-order-run :name name :rig rig))
-    (gascity--refresh-current-view)))
+     (gascity-command-order-run :name name :rig rig))))
 
 ;;;###autoload
 (defun gascity-session-nudge-at-point ()
@@ -388,16 +479,14 @@ is never run by mistake (DESIGN-write-actions.md §11 #9)."
   (let ((target (gascity-action--session-at-point)))
     (gascity-command-execute-interactive
      (gascity-command-session-nudge
-      :target target :message (read-string (format "Message to %s: " target))))
-    (gascity--refresh-current-view)))
+      :target target :message (read-string (format "Message to %s: " target))))))
 
 ;;;###autoload
 (defun gascity-session-suspend-at-point ()
   "Suspend the session/agent at point and refresh."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-session-suspend :target (gascity-action--session-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-session-suspend :target (gascity-action--session-at-point))))
 
 ;;;###autoload
 (defun gascity-session-kill-at-point ()
@@ -405,24 +494,21 @@ is never run by mistake (DESIGN-write-actions.md §11 #9)."
   (interactive)
   (let ((target (gascity-action--session-at-point)))
     (when (gascity-action--confirm "Force-kill the runtime of session %s? " target)
-      (gascity-command-execute-interactive (gascity-command-session-kill :target target))
-      (gascity--refresh-current-view))))
+      (gascity-command-execute-interactive (gascity-command-session-kill :target target)))))
 
 ;;;###autoload
 (defun gascity-session-wake-at-point ()
   "Wake the session/agent at point and refresh."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-session-wake :target (gascity-action--session-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-session-wake :target (gascity-action--session-at-point))))
 
 ;;;###autoload
 (defun gascity-session-drain-at-point ()
   "Signal the session/agent at point to drain (wind down gracefully), then refresh."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-runtime-drain :target (gascity-action--session-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-runtime-drain :target (gascity-action--session-at-point))))
 
 ;;; ============================================================
 ;;; Write verbs — bead note, session reset/undrain, city reload, mail
@@ -442,8 +528,7 @@ so the write lands in the owning rig's database even when the shared Dolt
 server would misroute the working directory (gce-bhr)."
   (gascity-command-execute-interactive
    (gascity-command-bd-note
-    :id id :text text :directory (gascity-beads--bead-path id)))
-  (gascity--refresh-current-view))
+    :id id :text text :directory (gascity-action--bead-store id))))
 
 ;;;###autoload
 (defun gascity-bead-note (id text)
@@ -501,8 +586,7 @@ REASON may be empty, in which case no `-r' is sent."
    (gascity-command-bd-close
     :id id
     :reason (and (stringp reason) (not (string-empty-p reason)) reason)
-    :directory (gascity-beads--bead-path id)))
-  (gascity--refresh-current-view))
+    :directory (gascity-action--bead-store id))))
 
 ;;;###autoload
 (defun gascity-bead-close (id reason)
@@ -526,8 +610,7 @@ ID defaults to the bead reference at point."
 (defun gascity-bead-reopen--run (id)
   "Reopen closed bead ID — store-routed by ID's prefix — then refresh."
   (gascity-command-execute-interactive
-   (gascity-command-bd-reopen :id id :directory (gascity-beads--bead-path id)))
-  (gascity--refresh-current-view))
+   (gascity-command-bd-reopen :id id :directory (gascity-action--bead-store id))))
 
 ;;;###autoload
 (defun gascity-bead-reopen (id)
@@ -546,8 +629,7 @@ ID defaults to the bead reference at point."
   "Assign bead ID to NAME — store-routed by ID's prefix — then refresh."
   (gascity-command-execute-interactive
    (gascity-command-bd-assign
-    :id id :name name :directory (gascity-beads--bead-path id)))
-  (gascity--refresh-current-view))
+    :id id :name name :directory (gascity-action--bead-store id))))
 
 ;;;###autoload
 (defun gascity-bead-assign (id name)
@@ -583,8 +665,7 @@ PROPS is a plist of `:status'/`:priority'/`:assignee'/`:description' values;
 nil entries are dropped by the command line so only supplied fields change."
   (gascity-command-execute-interactive
    (apply #'gascity-command-bd-update
-          :id id :directory (gascity-beads--bead-path id) props))
-  (gascity--refresh-current-view))
+          :id id :directory (gascity-action--bead-store id) props)))
 
 ;;;###autoload
 (defun gascity-bead-set-status (id status)
@@ -627,16 +708,17 @@ description with the buffer body via `gc bd update --description';
 focused field edits \(DESIGN-write-actions.md §6)."
   (interactive)
   (let* ((id (or (gascity-bead-at-point) (user-error "No bead at point")))
-         (dir (gascity-beads--bead-path id))
+         (dir (gascity-action--bead-store id))
          (origin (current-buffer)))
     (gascity-compose
      :buffer-name (format "*gc-bead %s description*" id)
      :header (list (cons "Bead" id) (cons "Field" "description"))
      :origin origin
      :finish (lambda (body)
-               (gascity-command-act
+               (gascity-command-act-async
                 (gascity-command-bd-update
-                 :id id :description body :directory dir))))))
+                 :id id :description body :directory dir)
+                :origin origin)))))
 
 ;;;###autoload
 (defun gascity-bead-note-compose-at-point ()
@@ -646,23 +728,23 @@ body with `gc bd note'; \\[gascity-compose-abort] aborts.  The one-line
 `gascity-bead-note-at-point' stays the quick minibuffer path."
   (interactive)
   (let* ((id (or (gascity-bead-at-point) (user-error "No bead at point")))
-         (dir (gascity-beads--bead-path id))
+         (dir (gascity-action--bead-store id))
          (origin (current-buffer)))
     (gascity-compose
      :buffer-name (format "*gc-bead %s note*" id)
      :header (list (cons "Bead" id) (cons "Field" "note (append)"))
      :origin origin
      :finish (lambda (body)
-               (gascity-command-act
+               (gascity-command-act-async
                 (gascity-command-bd-note
-                 :id id :text body :directory dir))))))
+                 :id id :text body :directory dir)
+                :origin origin)))))
 
 (defun gascity-bead-dep-add--run (id dependency)
   "Add a dependency — ID depends on DEPENDENCY — store-routed, then refresh."
   (gascity-command-execute-interactive
    (gascity-command-bd-dep-add
-    :id id :dependency dependency :directory (gascity-beads--bead-path id)))
-  (gascity--refresh-current-view))
+    :id id :dependency dependency :directory (gascity-action--bead-store id))))
 
 ;;;###autoload
 (defun gascity-bead-dep-add (id dependency)
@@ -684,8 +766,7 @@ ID defaults to the bead reference at point."
   "Remove ID's dependency on DEPENDENCY — store-routed, then refresh."
   (gascity-command-execute-interactive
    (gascity-command-bd-dep-remove
-    :id id :dependency dependency :directory (gascity-beads--bead-path id)))
-  (gascity--refresh-current-view))
+    :id id :dependency dependency :directory (gascity-action--bead-store id))))
 
 ;;;###autoload
 (defun gascity-bead-dep-remove (id dependency)
@@ -741,24 +822,25 @@ destination are echoed for hand-off to beads.el for deeper authoring
            (gascity-action--read-assignee "Assignee (empty for none): ")
            store)))
   (let* ((dir (gascity-beads--create-store store))
-         (result (gascity-command-act
-                  (gascity-command-bd-create
-                   :title title
-                   :type (and (stringp type) (not (string-empty-p type)) type)
-                   :priority (and (stringp priority) (not (string-empty-p priority)) priority)
-                   :assignee (and (stringp assignee) (not (string-empty-p assignee)) assignee)
-                   ;; gc runs on the store's host (`process-file' from the
-                   ;; city-pinned buffer), so `-C' must be host-local.
-                   :directory (and dir (file-local-name dir)))))
          ;; The label mirrors the resolution: an explicit choice, else the
          ;; contextual rig, else the city, else the ambient directory.
          (label (cond ((and (stringp store) (not (string-empty-p store)))
                        store)
                       (dir (or (gascity-context-rig-name) "city"))
                       (t "ambient"))))
-    (message "gc bd create: %s in %s store"
-             (gascity-action--summarize result) label)
-    (gascity--refresh-current-view)))
+    (gascity-command-act-async
+     (gascity-command-bd-create
+      :title title
+      :type (and (stringp type) (not (string-empty-p type)) type)
+      :priority (and (stringp priority) (not (string-empty-p priority)) priority)
+      :assignee (and (stringp assignee) (not (string-empty-p assignee)) assignee)
+      ;; gc runs on the store's host (the city-pinned buffer's
+      ;; `default-directory'), so `-C' must be host-local.
+      :directory (and dir (file-local-name dir)))
+     :target title
+     :on-success (lambda (result)
+                   (message "gc bd create: %s in %s store"
+                            (gascity-action--summarize result) label)))))
 
 ;;; Session — reset (fresh restart) and undrain (clear the drain flag)
 
@@ -775,8 +857,7 @@ destination are echoed for hand-off to beads.el for deeper authoring
   (interactive)
   (let ((target (gascity-action--session-at-point)))
     (when (gascity-action--confirm "Restart session %s fresh (keep its bead)? " target)
-      (gascity-command-execute-interactive (gascity-command-session-reset :target target))
-      (gascity--refresh-current-view))))
+      (gascity-command-execute-interactive (gascity-command-session-reset :target target)))))
 
 ;;;###autoload
 (defun gascity-session-undrain (target)
@@ -789,8 +870,7 @@ destination are echoed for hand-off to beads.el for deeper authoring
   "Clear the drain flag on the session/agent at point and refresh."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-runtime-undrain :target (gascity-action--session-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-runtime-undrain :target (gascity-action--session-at-point))))
 
 ;;; Session — rename / close / pin / unpin / prune (phase 3 lifecycle)
 ;;
@@ -805,30 +885,26 @@ destination are echoed for hand-off to beads.el for deeper authoring
    (let ((target (gascity-action--read-session "Rename session: ")))
      (list target (read-string (format "New title for %s: " target)))))
   (gascity-command-execute-interactive
-   (gascity-command-session-rename :target target :title title))
-  (gascity--refresh-current-view))
+   (gascity-command-session-rename :target target :title title)))
 
 ;;;###autoload
 (defun gascity-session-close (target)
   "Close session TARGET permanently (prompted, confirmed), then refresh."
   (interactive (list (gascity-action--read-session "Close session: ")))
   (when (gascity-action--confirm "Close session %s permanently? " target)
-    (gascity-command-execute-interactive (gascity-command-session-close :target target))
-    (gascity--refresh-current-view)))
+    (gascity-command-execute-interactive (gascity-command-session-close :target target))))
 
 ;;;###autoload
 (defun gascity-session-pin (target)
   "Pin session TARGET awake (prompted), then refresh."
   (interactive (list (gascity-action--read-session "Pin session: ")))
-  (gascity-command-execute-interactive (gascity-command-session-pin :target target))
-  (gascity--refresh-current-view))
+  (gascity-command-execute-interactive (gascity-command-session-pin :target target)))
 
 ;;;###autoload
 (defun gascity-session-unpin (target)
   "Remove the awake pin on session TARGET (prompted), then refresh."
   (interactive (list (gascity-action--read-session "Unpin session: ")))
-  (gascity-command-execute-interactive (gascity-command-session-unpin :target target))
-  (gascity--refresh-current-view))
+  (gascity-command-execute-interactive (gascity-command-session-unpin :target target)))
 
 ;;;###autoload
 (defun gascity-session-prune (before state)
@@ -846,8 +922,7 @@ suspended).  City-wide, so confirm first."
            (if before (format " older than %s" before) "")
            (if state (format " in state %s" state) ""))
       (gascity-command-execute-interactive
-       (gascity-command-session-prune :before before :state state))
-      (gascity--refresh-current-view))))
+       (gascity-command-session-prune :before before :state state)))))
 
 ;;; City — reload config (gc reload)
 
@@ -857,8 +932,7 @@ suspended).  City-wide, so confirm first."
 With a prefix arg SOFT, pass `--soft' — absorb config drift on open
 sessions instead of draining them.  City-level (gc has no `rig reload')."
   (interactive "P")
-  (gascity-command-execute-interactive (gascity-command-reload :soft (and soft t)))
-  (gascity--refresh-current-view))
+  (gascity-command-execute-interactive (gascity-command-reload :soft (and soft t))))
 
 ;;; Mail — read / archive / mark-read / mark-unread (at point in the inbox)
 
@@ -870,20 +944,57 @@ sessions instead of draining them.  City-level (gc has no `rig reload')."
         id
       (user-error "No message at point"))))
 
+(defun gascity-action--fill-text (buf text empty)
+  "Replace read-only view BUF's text with TEXT, or EMPTY when TEXT is blank.
+TEXT `:pending' shows the `…' placeholder of a call still in flight
+\(dashboard-v3 §8.5: the view opens at once and fills in).  A killed
+BUF is left alone — the late answer of an async call must not
+resurrect it.  Returns BUF."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (cond ((eq text :pending) "…")
+                      ((and (stringp text) (not (string-empty-p (string-trim text))))
+                       text)
+                      (t empty)))
+        (goto-char (point-min)))
+      (unless view-mode (view-mode 1))))
+  buf)
+
+(defun gascity-action--async-text-view (buffer-name command empty &optional origin)
+  "Pop view buffer BUFFER-NAME at once and fill it with COMMAND's output.
+The buffer (keyed and pinned by `gascity-view-get-buffer-create') shows
+`…' until the async call answers; then its stdout, or EMPTY when blank.
+A failure replaces the placeholder with the failure line (also echoed
+and logged by the store).  COMMAND is a read-only verb (peek, mail
+read, a sling dry run), so the store's caches are not invalidated
+unless the verb itself mutates (mail read marks the message read);
+ORIGIN, when non-nil, is the view refreshed after such a mutation."
+  (let ((buf (gascity-view-get-buffer-create buffer-name)))
+    (gascity-action--fill-text buf :pending empty)
+    (pop-to-buffer buf)
+    (with-current-buffer buf
+      (gascity-command-act-async
+       command
+       ;; A view read, not a mutation of the target: it must not mark
+       ;; the target's row pending, nor queue behind its actions.
+       :target (list 'view buffer-name)
+       :origin origin
+       :invalidate (gascity-command-mail-read-p command)
+       :on-success (lambda (text) (gascity-action--fill-text buf text empty))
+       :on-error (lambda (msg)
+                   (message "%s" msg)
+                   (gascity-action--fill-text buf msg empty))))
+    buf))
+
 (defun gascity-mail--show-body (id text)
   "Pop a read-only view buffer showing body TEXT of message ID.
 The buffer is keyed and pinned to the inbox's city
 \(`gascity-view-get-buffer-create'), so a remote city's message body
 carries that host's `default-directory'."
   (let ((buf (gascity-view-get-buffer-create (format "*gc-mail: %s*" id))))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (if (and (stringp text) (not (string-empty-p (string-trim text))))
-                    text
-                  "(no message body)"))
-        (goto-char (point-min)))
-      (view-mode 1))
+    (gascity-action--fill-text buf text "(no message body)")
     (pop-to-buffer buf)))
 
 ;;;###autoload
@@ -891,12 +1002,16 @@ carries that host's `default-directory'."
   "Read the message at point and mark it read, show its body, then refresh.
 `RET' shows the cached fields without contacting gc; this `r' action runs
 `gc mail read', which also marks the message read, so the default
-unread-filtered inbox drops it on refresh."
+unread-filtered inbox drops it on refresh.  The body buffer opens at
+once with `…' and fills in when gc answers (D9)."
   (interactive)
-  (let* ((id (gascity-mail--id-at-point))
-         (text (gascity-command-act (gascity-command-mail-read :id id))))
-    (gascity-mail--show-body id text)
-    (gascity--refresh-current-view)))
+  (let ((id (gascity-mail--id-at-point)))
+    (gascity-action--async-text-view
+     (format "*gc-mail: %s*" id)
+     (gascity-command-mail-read :id id)
+     "(no message body)"
+     ;; Marking read changes the inbox: refresh it once gc has answered.
+     (current-buffer))))
 
 ;;;###autoload
 (defun gascity-mail-archive-at-point ()
@@ -904,24 +1019,21 @@ unread-filtered inbox drops it on refresh."
   (interactive)
   (let ((id (gascity-mail--id-at-point)))
     (when (gascity-action--confirm "Archive message %s? " id)
-      (gascity-command-execute-interactive (gascity-command-mail-archive :id id))
-      (gascity--refresh-current-view))))
+      (gascity-command-execute-interactive (gascity-command-mail-archive :id id)))))
 
 ;;;###autoload
 (defun gascity-mail-mark-read-at-point ()
   "Mark the message at point read without opening it, then refresh."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-mail-mark-read :id (gascity-mail--id-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-mail-mark-read :id (gascity-mail--id-at-point))))
 
 ;;;###autoload
 (defun gascity-mail-mark-unread-at-point ()
   "Mark the message at point unread and refresh."
   (interactive)
   (gascity-command-execute-interactive
-   (gascity-command-mail-mark-unread :id (gascity-mail--id-at-point)))
-  (gascity--refresh-current-view))
+   (gascity-command-mail-mark-unread :id (gascity-mail--id-at-point))))
 
 ;;; ============================================================
 ;;; Peek — read-only output capture (no mutation, no refresh)
@@ -941,28 +1053,14 @@ unread-filtered inbox drops it on refresh."
 
 (defun gascity-session-peek--show (target lines)
   "Capture TARGET's last LINES of output via `gc session peek' and show it.
-Pops a read-only view buffer with the captured text.  A validation or gc
-error surfaces as a `user-error'."
-  (let* ((cmd (gascity-command-session-peek
-               :target target :lines (number-to-string lines)))
-         (text (condition-case err
-                   (oref (gascity-command-execute cmd) result)
-                 (gascity-validation-error
-                  (user-error "GC session peek: %s" (cadr err)))
-                 (gascity-command-error
-                  (user-error "GC session peek failed: %s"
-                              (gascity-error-detail err))))))
-    (let ((buf (gascity-view-get-buffer-create
-                (gascity-session-peek--buffer-name target))))
-      (with-current-buffer buf
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (insert (if (and (stringp text) (not (string-empty-p (string-trim text))))
-                      text
-                    "(no output captured)"))
-          (goto-char (point-min)))
-        (view-mode 1))
-      (pop-to-buffer buf))))
+Pops a read-only view buffer at once — `…' until the async capture
+answers (dashboard-v3 §8.5) — then the captured text.  An invalid
+command is a `user-error'; a gc failure replaces the placeholder."
+  (gascity-action--async-text-view
+   (gascity-session-peek--buffer-name target)
+   (gascity-command-session-peek
+    :target target :lines (number-to-string lines))
+   "(no output captured)"))
 
 ;;;###autoload
 (defun gascity-session-peek (target &optional lines)
@@ -1051,25 +1149,12 @@ empty) scope key (ga-4ia4, bright-lights dogfood §5)."
       default-directory))
 
 (defun gascity-sling--show-plan (command)
-  "Execute COMMAND (a `--dry-run' sling) and show gc's routing plan.
-Pops a read-only view buffer with gc's captured stdout; a validation or gc
-error surfaces as a clean `user-error'."
-  (let* ((text (condition-case err
-                   (oref (gascity-command-execute command) result)
-                 (gascity-validation-error
-                  (user-error "GC sling: %s" (cadr err)))
-                 (gascity-command-error
-                  (user-error "GC sling failed: %s" (gascity-error-detail err)))))
-         (buf (gascity-view-get-buffer-create "*gc-sling: dry-run*")))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (if (and (stringp text) (not (string-empty-p (string-trim text))))
-                    text
-                  "(no plan output)"))
-        (goto-char (point-min)))
-      (view-mode 1))
-    (pop-to-buffer buf)))
+  "Run COMMAND (a `--dry-run' sling) and show gc's routing plan.
+Pops a read-only view buffer at once with `…', filled with gc's
+captured stdout when the async dry run answers (D9); an invalid
+command is a clean `user-error'."
+  (gascity-action--async-text-view "*gc-sling: dry-run*" command
+                                   "(no plan output)"))
 
 (defun gascity-sling--run (args preview)
   "Build and run a sling from transient ARGS (its flag list).
@@ -1103,8 +1188,10 @@ routing plan instead of executing."
                                        plist))))
           (if preview
               (gascity-sling--show-plan command)
-            (gascity-command-act command)
-            (gascity--refresh-current-view)))))))
+            ;; `gc sling --json': the dispatch result is summarized
+            ;; from the payload when the async call answers (D9).
+            (oset command json t)
+            (gascity-command-act-async command)))))))
 
 (transient-define-suffix gascity-sling-dispatch-run (args)
   "Sling for real using the dispatch flags ARGS."
@@ -1326,9 +1413,10 @@ accepts any address."
      :header (list (cons "To" to) (cons "Subject" subject))
      :origin origin
      :finish (lambda (body)
-               (gascity-command-act
+               (gascity-command-act-async
                 (gascity-command-mail-send
-                 :to to :subject subject :message body))))))
+                 :to to :subject subject :message body)
+                :target to :origin origin)))))
 
 ;;;###autoload
 (defun gascity-mail-reply-at-point ()
@@ -1347,9 +1435,10 @@ The subject defaults to the original prefixed with \"RE: \"."
                    (cons "Subject" subject))
      :origin origin
      :finish (lambda (body)
-               (gascity-command-act
+               (gascity-command-act-async
                 (gascity-command-mail-reply
-                 :id id :subject subject :message body))))))
+                 :id id :subject subject :message body)
+                :origin origin)))))
 
 ;;; ============================================================
 ;;; Sub-transients — hand-built command-dispatch backends

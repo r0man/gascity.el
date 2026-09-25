@@ -78,8 +78,7 @@
 ;; Action verbs are wired across files: this module is loaded before
 ;; `gascity-action' (which carries the sling entry and runners) and
 ;; before `gascity-section' (the at-point ladder).
-(declare-function gascity-command-act "gascity-action")
-(declare-function gascity--refresh-current-view "gascity-action")
+(declare-function gascity-command-act-async "gascity-action")
 (declare-function gascity-sling--show-plan "gascity-action")
 (declare-function gascity-object-at-point "gascity-section")
 (declare-function gascity-view-get-buffer-create "gascity-context")
@@ -666,8 +665,9 @@ completion `:annotation-function'.  An empty or unreadable catalog is
 TARGET is the session target, ARG the bead/convoy pre-seeded at point.
 Validation runs first — a missing required var refuses before any gc
 invocation (REQ-008), and a convoy-requiring formula with no bead or
-convoy at point refuses too (REQ-013).  On success the sling runs
-through `gascity-command-act' and the originating view refreshes.
+convoy at point refuses too (REQ-013).  On success the sling is
+started through `gascity-command-act-async' (D9) and the originating
+view refreshes once gc answers.
 With DRY-RUN non-nil the same command carries `--dry-run' and gc's
 routing plan is shown instead of acting."
   (gascity-formula--validate-values recipe values)
@@ -695,8 +695,10 @@ routing plan is shown instead of acting."
                             (when dry-run (list :dry-run t)))))))
     (if dry-run
         (gascity-sling--show-plan command)
-      (gascity-command-act command)
-      (gascity--refresh-current-view))
+      ;; Started asynchronously (D9): `gc sling --json' reports its
+      ;; dispatch in the echo area and refreshes the view when it lands.
+      (oset command json t)
+      (gascity-command-act-async command))
     command))
 
 (defun gascity-sling-formula--show-recipe (name values)

@@ -185,7 +185,7 @@ never runs inside a TRAMP operation.")
   lane host dir start entry buffers
   process timer done
   ;; Actions only.
-  target args label json on-success on-error echo)
+  target args label json on-success on-error echo invalidate)
 
 (cl-defstruct (gascity-store--sub (:constructor gascity-store--make-sub)
                                   (:copier nil))
@@ -916,7 +916,8 @@ DIR defaults to `default-directory'.  Pure; views render `…' on it."
                              (gascity-reader-parse-json stdout)
                            (gascity-json-parse-error stdout))
                        stdout)))
-        (gascity-store--invalidate-for-action args dir)
+        (when (gascity-store--job-invalidate job)
+          (gascity-store--invalidate-for-action args dir))
         (if (gascity-store--job-on-success job)
             (gascity-store--safe-call (gascity-store--job-on-success job) payload)
           (when (gascity-store--job-echo job)
@@ -944,7 +945,8 @@ DIR defaults to `default-directory'.  Pure; views render `…' on it."
           (message "%s" msg)))))))
 
 (cl-defun gascity-store-action (args &key dir target label json
-                                     on-success on-error (echo t))
+                                     on-success on-error (echo t)
+                                     (invalidate t))
   "Start the mutating gc call ARGS in DIR and return at once (D9, §8.5).
 ARGS is the gc argv (no executable); it runs on the action lane of
 DIR's host (default `default-directory'), behind any earlier call on
@@ -955,8 +957,9 @@ returns TARGET is pending (`gascity-store-action-pending-p').
 On success: ON-SUCCESS is called with the result (the decoded JSON
 when JSON is non-nil, else stdout); without it LABEL (\"Suspended
 foo\") is echoed when ECHO is non-nil.  The read kinds the call touched
-are invalidated (`gascity-store-action-routes'), unless a live stream
-covers DIR.  On failure the first stderr line is echoed — or passed to
+are invalidated (`gascity-store-action-routes'), unless a live
+stream covers DIR or INVALIDATE is nil (a read-only call such as
+peek).  On failure the first stderr line is echoed — or passed to
 ON-ERROR instead — and the whole stderr appended to the city's
 `*gascity-log: CITY*' buffer.  Callbacks run outside any sentinel and
 never signal.  Returns nil."
@@ -967,7 +970,8 @@ never signal.  Returns nil."
                :lane 'action :host host :dir dir
                :buffers (list (current-buffer))
                :target (or target (cdr tkey)) :args args :label label :json json
-               :on-success on-success :on-error on-error :echo echo)))
+               :on-success on-success :on-error on-error :echo echo
+               :invalidate invalidate)))
     (setf (gascity-store--job-start job)
           (lambda (finish) (gascity-reader-run-async args finish)))
     (let ((queue (gethash tkey gascity-store--targets)))

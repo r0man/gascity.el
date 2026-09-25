@@ -1528,34 +1528,31 @@ originating view."
                    (vector '((id . "s") (title . "Drain unit")
                              (metadata . ((gc.kind . "drain"))))))))
     ;; Targetless shape: `gc sling <target> do-work --formula --var …'.
-    (let (acted refreshed)
-      (cl-letf (((symbol-function 'gascity-command-act)
-                 (lambda (command) (push command acted)))
-                ((symbol-function 'gascity--refresh-current-view)
-                 (lambda () (setq refreshed t))))
+    (let (acted)
+      (cl-letf (((symbol-function 'gascity-command-act-async)
+                 (lambda (command &rest _) (push command acted))))
         (let ((command (gascity-sling-formula--dispatch
                         plain "sess-1" nil '(("summary_path" . "p")))))
           (should (= (length acted) 1))
-          (should (eq refreshed t))
           (should (equal (gascity-command-line command)
-                         '("gc" "sling" "sess-1" "do-work" "--formula"
+                         '("gc" "sling" "sess-1" "do-work" "--json" "--formula"
                            "--var" "summary_path=p"))))))
     ;; Targeted shape: `gc sling <target> <bead> --on do-work --var …'.
     (let (acted)
-      (cl-letf (((symbol-function 'gascity-command-act)
-                 (lambda (command) (push command acted)))
+      (cl-letf (((symbol-function 'gascity-command-act-async)
+                 (lambda (command &rest _) (push command acted)))
                 ((symbol-function 'gascity--refresh-current-view)
                  (lambda () nil)))
         (let ((command (gascity-sling-formula--dispatch
                         targeted "sess-1" "gce-abc" '(("a" . "1")))))
           (should (= (length acted) 1))
           (should (equal (gascity-command-line command)
-                         '("gc" "sling" "sess-1" "gce-abc" "--on" "do-work"
+                         '("gc" "sling" "sess-1" "gce-abc" "--json" "--on" "do-work"
                            "--var" "a=1"))))))
     ;; A missing required var refuses before any gc invocation (REQ-008).
     (let (acted)
-      (cl-letf (((symbol-function 'gascity-command-act)
-                 (lambda (_command) (push t acted)))
+      (cl-letf (((symbol-function 'gascity-command-act-async)
+                 (lambda (_command &rest _) (push t acted)))
                 ((symbol-function 'gascity--refresh-current-view)
                  (lambda () nil)))
         (let ((err (should-error
@@ -1565,8 +1562,8 @@ originating view."
         (should-not acted)))
     ;; A convoy-requiring formula with nothing at point refuses too.
     (let (acted)
-      (cl-letf (((symbol-function 'gascity-command-act)
-                 (lambda (_command) (push t acted)))
+      (cl-letf (((symbol-function 'gascity-command-act-async)
+                 (lambda (_command &rest _) (push t acted)))
                 ((symbol-function 'gascity--refresh-current-view)
                  (lambda () nil)))
         (should-error (gascity-sling-formula--dispatch targeted "sess-1" nil nil)
@@ -1868,8 +1865,8 @@ parser)."
                (lambda (_prompt)
                  (push "Sling to target: " order)
                  "sess-9"))
-              ((symbol-function 'gascity-command-act)
-               (lambda (command) (push command acted)))
+              ((symbol-function 'gascity-command-act-async)
+               (lambda (command &rest _) (push command acted)))
               ((symbol-function 'gascity--refresh-current-view)
                (lambda () nil)))
       (call-interactively #'gascity-sling-dispatch-run)
@@ -1897,8 +1894,8 @@ command with `--dry-run' via the formula dispatch."
                (lambda (_p) "sess-1"))
               ((symbol-function 'gascity-sling--show-plan)
                (lambda (command) (setq shown command)))
-              ((symbol-function 'gascity-command-act)
-               (lambda (_c) (push t acted))))
+              ((symbol-function 'gascity-command-act-async)
+               (lambda (_c &rest _) (push t acted))))
       (call-interactively #'gascity-sling-dispatch-preview)
       (should shown)
       (should-not acted)
@@ -1910,8 +1907,8 @@ command with `--dry-run' via the formula dispatch."
         shown acted)
     (cl-letf (((symbol-function 'gascity-sling--show-plan)
                (lambda (command) (setq shown command)))
-              ((symbol-function 'gascity-command-act)
-               (lambda (_c) (push t acted))))
+              ((symbol-function 'gascity-command-act-async)
+               (lambda (_c &rest _) (push t acted))))
       (gascity-sling-formula--dispatch formula "sess-1" nil
                                        '(("summary_path" . "p")) t)
       (should shown)
@@ -3043,11 +3040,12 @@ JSONL output never mis-reads as a failure."
                  "Failed to parse gc JSON output: bad")))
 
 (ert-deftest gascity-test-action-routes-through-act ()
-  "`execute-interactive' on an action command delegates to `gascity-command-act'."
+  "`execute-interactive' on an action command starts it asynchronously.
+It delegates to `gascity-command-act-async' (dashboard-v3 D9)."
   (let ((seen nil)
         (cmd (gascity-command-rig-suspend :name "x")))
-    (cl-letf (((symbol-function 'gascity-command-act)
-               (lambda (c) (setq seen c) 'stub-result)))
+    (cl-letf (((symbol-function 'gascity-command-act-async)
+               (lambda (c &rest _) (setq seen c) 'stub-result)))
       (should (eq (gascity-command-execute-interactive cmd) 'stub-result))
       (should (eq seen cmd)))))
 
@@ -4579,8 +4577,9 @@ surfaces the new id payload through `gascity-command-act'."
                (lambda (&rest _)
                  '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
               ((symbol-function 'gascity-context-rig-name) (lambda (&rest _) "gascity.el"))
-              ((symbol-function 'gascity-command-act)
-               (lambda (cmd) (setq created (gascity-command-line cmd)) '((id . "gce-new"))))
+              ((symbol-function 'gascity-command-act-async)
+               (lambda (cmd &rest keys) (setq created (gascity-command-line cmd))
+                (when-let* ((f (plist-get keys :on-success))) (funcall f '((id . "gce-new"))))))
               ((symbol-function 'gascity--refresh-current-view) #'ignore))
       (gascity-bead-create "New bead" "task" "2" "")
       (should (equal created '("gc" "bd" "create" "New bead" "--json" "-C" "/r/gce/"
@@ -4596,8 +4595,9 @@ appends via `gc bd note'.  Both are store-routed by the id prefix."
             ((symbol-function 'gascity-beads--bead-path) (lambda (_) "/r/gce/"))
             ((symbol-function 'gascity--refresh-current-view) #'ignore))
     (let (acted)
-      (cl-letf (((symbol-function 'gascity-command-act)
-                 (lambda (cmd) (setq acted (gascity-command-line cmd)))))
+      (cl-letf (((symbol-function 'gascity-command-act-async)
+                 (lambda (cmd &rest keys) (setq acted (gascity-command-line cmd))
+                  (when-let* ((f (plist-get keys :on-success))) (funcall f nil)))))
         ;; Description edit -> gc bd update --description <body>.
         (gascity-bead-describe-at-point)
         (with-current-buffer "*gc-bead gce-1 description*"
@@ -4808,8 +4808,9 @@ host-local form to gc (`file-local-name'), never the TRAMP-prefixed one."
                  '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
               ((symbol-function 'gascity-context-rig-name)
                (lambda (&optional _) "gascity.el"))
-              ((symbol-function 'gascity-command-act)
-               (lambda (cmd) (setq line (gascity-command-line cmd)) '((id . "gce-new"))))
+              ((symbol-function 'gascity-command-act-async)
+               (lambda (cmd &rest keys) (setq line (gascity-command-line cmd))
+                (when-let* ((f (plist-get keys :on-success))) (funcall f '((id . "gce-new"))))))
               ((symbol-function 'gascity--refresh-current-view) #'ignore))
       ;; Rig context: unchanged rig-store behavior.
       (gascity-bead-create "New bead" "task" "2" "")
@@ -4849,8 +4850,9 @@ alongside the new id."
                (lambda (&optional _) "/city/emacs-city/"))
               ((symbol-function 'gascity-context-rig-name)
                (lambda (&optional _) "gascity.el"))
-              ((symbol-function 'gascity-command-act)
-               (lambda (cmd) (setq line (gascity-command-line cmd)) '((id . "gce-new"))))
+              ((symbol-function 'gascity-command-act-async)
+               (lambda (cmd &rest keys) (setq line (gascity-command-line cmd))
+                (when-let* ((f (plist-get keys :on-success))) (funcall f '((id . "gce-new"))))))
               ((symbol-function 'gascity--refresh-current-view) #'ignore)
               ((symbol-function 'message)
                (lambda (fmt &rest args)
@@ -4931,8 +4933,9 @@ as the store's host sees it (ga-wle9)."
                  (lambda (&optional _) "/home/roman/bright-lights/"))
                 ((symbol-function 'gascity-context-rig-name)
                  (lambda (&optional _) nil))
-                ((symbol-function 'gascity-command-act)
-                 (lambda (cmd) (setq line (gascity-command-line cmd)) '((id . "ec-new"))))
+                ((symbol-function 'gascity-command-act-async)
+                 (lambda (cmd &rest keys) (setq line (gascity-command-line cmd))
+                  (when-let* ((f (plist-get keys :on-success))) (funcall f '((id . "ec-new"))))))
                 ((symbol-function 'gascity--refresh-current-view) #'ignore)
                 ;; Keep the executable resolution out of the assertion.
                 ((symbol-function 'gascity-remote-find-executable)
@@ -6408,13 +6411,15 @@ pinned buffer (gc itself is stubbed — no live reads)."
   (gascity-test--with-mock-remote
     (let* ((remote-prefix (file-remote-p default-directory))
            (name (format "*gc-peek: rig/agent@%s*" remote-prefix)))
-      (cl-letf (((symbol-function 'gascity-command-execute)
-                 (lambda (cmd) (gascity-command-execution
-                                :command cmd :result "peeked")))
+      (cl-letf (((symbol-function 'gascity-store-action)
+                 (lambda (_args &rest keys)
+                   (funcall (plist-get keys :on-success) "peeked")))
                 ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
         (unwind-protect
             (progn
               (gascity-session-peek--show "rig/agent" 5)
+              (should (equal (with-current-buffer name (buffer-string))
+                             "peeked"))
               (let ((buf (get-buffer name)))
                 (should buf)
                 (should (equal (file-remote-p
@@ -6428,13 +6433,16 @@ remotely pinned buffer (gc itself is stubbed — no live reads)."
   (gascity-test--with-mock-remote
     (let* ((remote-prefix (file-remote-p default-directory))
            (name (format "*gc-sling: dry-run@%s*" remote-prefix)))
-      (cl-letf (((symbol-function 'gascity-command-execute)
-                 (lambda (cmd) (gascity-command-execution
-                                :command cmd :result "plan")))
+      (cl-letf (((symbol-function 'gascity-store-action)
+                 (lambda (_args &rest keys)
+                   (funcall (plist-get keys :on-success) "plan")))
                 ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
         (unwind-protect
             (progn
-              (gascity-sling--show-plan (gascity-command-sling))
+              (gascity-sling--show-plan
+               (gascity-command-sling :target "t" :arg "a" :dry-run t))
+              (should (equal (with-current-buffer name (buffer-string))
+                             "plan"))
               (let ((buf (get-buffer name)))
                 (should buf)
                 (should (equal (file-remote-p
