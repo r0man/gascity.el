@@ -709,5 +709,72 @@ live worker nested once (a looping step and its iteration share a worker)."
                             text))
     (should (= 1 (cl-count ?└ text)))))
 
+;;; QA cockpit pass: #6, #7, #10
+
+(ert-deftest gascity-test-cockpit-needs-you-groups-pool-restarts ()
+  "Repeated cold starts of one pool are one row, labelled by the agent
+or pool (not the tmux prefix), ×N with the latest age; RET opens the
+agent when one matches, else the Agents view (QA #6)."
+  (let* ((ev (lambda (id secs)
+               `((type . "session.cold_start_timeout") (seq . ,secs)
+                 (subject . ,(concat "bd__dog-" id))
+                 (ts . ,(gascity-cockpit-test--ts secs)))))
+         (events (list (funcall ev "ec-a1" 600) (funcall ev "ec-a2" 300)
+                       (funcall ev "ec-a3" 60)
+                       `((type . "session.cold_start_timeout") (seq . 9)
+                         (subject . "gc__solo-worker-ec-b1")
+                         (ts . ,(gascity-cockpit-test--ts 30)))))
+         (status '((agents . [((qualified_name . "bd.dog-1"))
+                              ((qualified_name . "bd.dog-2"))
+                              ((qualified_name . "beads.el/gc.solo-worker"))])))
+         (items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :events events :status status))))
+    (should (= (length items) 2))
+    (let ((pool (seq-find (lambda (i) (string-match-p "bd\\.dog" (plist-get i :text)))
+                          items))
+          (solo (seq-find (lambda (i) (string-match-p "solo" (plist-get i :text)))
+                          items)))
+      (should (equal (plist-get pool :text) "bd.dog  cold start timeout ×3"))
+      (should (equal (plist-get pool :right) "ec-a3"))
+      (should (eq (plist-get (plist-get pool :props) 'gascity-dashboard-target)
+                  #'gascity-jump-agents))
+      (should (equal (plist-get solo :text)
+                     "beads.el/gc.solo-worker  cold start timeout"))
+      (let ((target (plist-get (plist-get solo :props) 'gascity-dashboard-target))
+            opened)
+        (should (commandp target))
+        (cl-letf (((symbol-function 'gascity-polecat-detail)
+                   (lambda (agent) (setq opened (gascity-agent-name agent)))))
+          (call-interactively target))
+        (should (equal opened "beads.el/gc.solo-worker"))))))
+
+(ert-deftest gascity-test-cockpit-top-line-agrees-with-agents ()
+  "The top line counts running agents as the Agents section does (idle is
+not running) and shows ▲ when gc reports degraded (QA #7)."
+  (let* ((status '((city_name . "c")
+                   (health . ((degraded . t) (signals . ["no_agents_running"])))
+                   (agents . [((qualified_name . "a")) ((qualified_name . "b"))])))
+         (sessions (list `((id . "c-1") (agent_name . "a") (state . "active")
+                           (last_active . ,(gascity-cockpit-test--ts 99999)))))
+         (ctx (gascity-cockpit-test--ctx :status status :sessions sessions))
+         (line (substring-no-properties (gascity-dashboard--summary-line ctx))))
+    (should (string-match-p "agents 0/2 ▲" line))
+    (should (string-match-p "1 idle" (gascity-cockpit-test--text
+                                      (let ((gascity-dashboard--view nil))
+                                        (gascity-dashboard--agents-lines ctx)))))))
+
+(ert-deftest gascity-test-cockpit-dispatch-costs-and-live ()
+  "The `?' dispatch lists `j $' and shows the live state in its header (QA #10)."
+  (should (eq (plist-get (cdr (transient-get-suffix 'gascity-dispatch "j $")) :command)
+              'gascity-jump-costs))
+  (cl-letf (((symbol-function 'gascity-context-city-root-cached)
+             (lambda (&rest _) "/home/u/city/"))
+            ((symbol-function 'gascity-context-city-root)
+             (lambda (&rest _) (error "Sync walk from the dispatch header")))
+            ((symbol-function 'gascity-live-header-string)
+             (lambda (&rest _) "● live")))
+    (let ((title (substring-no-properties (gascity-dispatch--title))))
+      (should (string-match-p "Gas City  city  .*● live" title)))))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here

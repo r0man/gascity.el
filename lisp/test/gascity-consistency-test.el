@@ -192,7 +192,7 @@ views; the dispatch's keys are unique."
                        gascity-consistency--section-keys))
         (keys nil))
     (dolist (key '("j j" "j a" "j r" "j b" "j m" "j e" "j h" "j c" "j o" "j v"
-                   "j d" "j g" "M" "s" "w" "K" "D" "R" "U" "t" "S" "c" "m" "L"
+                   "j d" "j g" "j $" "M" "s" "w" "K" "D" "R" "U" "t" "S" "c" "m" "L"
                    "C" "O" "W" "g" "/"))
       (let* ((suffix (transient-get-suffix 'gascity-dispatch key))
              (cmd (plist-get (cdr suffix) :command))

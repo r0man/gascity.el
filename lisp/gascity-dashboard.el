@@ -78,6 +78,7 @@
 (declare-function gascity-order-list "gascity-tabulated")
 (declare-function gascity-dolt-list "gascity-tabulated")
 (declare-function gascity-polecat-detail-at-point "gascity-session")
+(declare-function gascity-polecat-detail "gascity-session")
 (declare-function gascity-rig-dashboard "gascity-rig")
 (declare-function gascity-run-show "gascity-run")
 (declare-function gascity-session-nudge-at-point "gascity-action")
@@ -519,6 +520,26 @@ trailing handle of its `subject' (a tmux session name)."
   (or (alist-get 'session_id event)
       (cdr (gascity-dashboard--parse-assignee (alist-get 'subject event)))))
 
+(defun gascity-dashboard--session-agent (subject agents)
+  "Return (LABEL . AGENT) for the tmux session name SUBJECT.
+gc names a session `<pack>__<template>-<id>' (`bd__dog-ec-usd0'); the
+label is the agent that ran it — the one agent of AGENTS named after
+the template, else the pool (`bd.dog') — never the tmux prefix.  AGENT
+is that agent's plist when exactly one matches, else nil."
+  (let* ((role (car (gascity-dashboard--parse-assignee subject)))
+         (template (replace-regexp-in-string "__" "." (or role "")))
+         (short (lambda (a) (let ((n (plist-get a :name)))
+                              (if (string-search "/" n)
+                                  (substring n (1+ (string-search "/" n)))
+                                n))))
+         (exact (seq-filter (lambda (a) (equal (funcall short a) template)) agents))
+         (members (seq-filter (lambda (a) (string-prefix-p (concat template "-")
+                                                           (funcall short a)))
+                              agents)))
+    (cond ((= (length exact) 1) (cons (plist-get (car exact) :name) (car exact)))
+          ((= (length members) 1) (cons (plist-get (car members) :name) (car members)))
+          (t (cons (if (string-empty-p template) (or subject "?") template) nil)))))
+
 (defun gascity-dashboard--needs-you (ctx)
   "Return the Needs you items for cockpit context CTX, ■ before ▲.
 Each item is a plist (:level fail|watch :kind KIND :id ID :text TEXT
@@ -539,9 +560,11 @@ reopened beads, escalated/held beads, unread mail, store health."
                :right (or (plist-get a :rig) "city")
                :drawer (lambda () (gascity-dashboard--agent-drawer a))
                :props (list 'gascity-agent (plist-get a :object)))))
-      ;; ■ sessions that crashed or timed out and were not woken since.
+      ;; ■ sessions that crashed or timed out and were not woken since,
+      ;; one row per agent (or pool) and signal type, ×N (QA #6).
       (let ((woke (make-hash-table :test 'equal))
-            (seen (make-hash-table :test 'equal)))
+            (seen (make-hash-table :test 'equal))
+            (groups nil))
         (dolist (e events)
           (when (equal (alist-get 'type e) "session.woke")
             (let ((id (gascity-dashboard--session-id-of e)))
@@ -558,17 +581,33 @@ reopened beads, escalated/held beads, unread mail, store health."
                           (and id (> (gethash id woke 0)
                                      (gascity-event-time e))))
                 (puthash key t seen)
-                (add :level 'fail :kind "session" :id (concat "session:" key)
-                     :text (format "%s  %s"
-                                   (car (gascity-dashboard--parse-assignee
-                                         (alist-get 'subject e)))
-                                   (if (equal (alist-get 'type e) "session.crashed")
-                                       "crashed" "cold start timeout"))
-                     :right (or id "")
-                     :time (alist-get 'ts e)
-                     ;; RET: the Agents view (the session is gone).
-                     :props (list 'gascity-dashboard-event e
-                                  'gascity-dashboard-target #'gascity-jump-agents)))))))
+                (let* ((who (gascity-dashboard--session-agent
+                             (alist-get 'subject e) (plist-get ctx :all-agents)))
+                       (gkey (cons (car who) (alist-get 'type e)))
+                       (group (assoc gkey groups)))
+                  ;; Newest first: the first event seen is the latest.
+                  (if group
+                      (setcdr group (append (cdr group) (list e)))
+                    (setq groups (append groups (list (list gkey who e))))))))))
+        (pcase-dolist (`((,label . ,type) ,who . ,evs) groups)
+          (let* ((latest (car evs))
+                 (agent (cdr who)))
+            (add :level 'fail :kind "session"
+                 :id (format "session:%s:%s" label type)
+                 :text (format "%s  %s%s" label
+                               (if (equal type "session.crashed")
+                                   "crashed" "cold start timeout")
+                               (if (cdr evs) (format " ×%d" (length evs)) ""))
+                 :right (or (gascity-dashboard--session-id-of latest) "")
+                 :time (alist-get 'ts latest)
+                 ;; RET: that agent's detail, else the Agents view.
+                 :props (list 'gascity-dashboard-event latest
+                              'gascity-dashboard-target
+                              (if agent
+                                  (let ((obj (plist-get agent :object)))
+                                    (lambda () (interactive)
+                                      (gascity-polecat-detail obj)))
+                                #'gascity-jump-agents))))))
       ;; ■ idle runs: no in-progress step touched within the threshold.
       (dolist (root (gascity-dashboard--active-runs beads))
         (let* ((id (alist-get 'id root))
@@ -950,8 +989,8 @@ properties.  The row is a thing whose SPC toggles the drawer."
   "Return the cockpit's summary line for CTX (§7.1 top line)."
   (let* ((status (plist-get ctx :status))
          (agents (plist-get ctx :all-agents))
-         (running (seq-count (lambda (a) (memq (plist-get a :state)
-                                               '(running idle stalled)))
+         ;; The Agents section's own count (QA #7): idle is not running.
+         (running (seq-count (lambda (a) (eq (plist-get a :state) 'running))
                              agents))
          (sessions (seq-count #'gascity-dashboard--live-session-p
                               (plist-get ctx :sessions)))
@@ -967,7 +1006,11 @@ properties.  The row is a thing whose SPC toggles the drawer."
           (delq nil
                 (list
                  (format "agents %d/%d %s" running (length agents)
-                         (gascity-ui-glyph (if (> running 0) 'ok 'idle)))
+                         (gascity-ui-glyph
+                          (cond ((alist-get 'degraded (alist-get 'health status))
+                                 'watch)
+                                ((> running 0) 'ok)
+                                (t 'idle))))
                  (and (plist-get ctx :sessions) (format "sessions %d" sessions))
                  (and beads
                       (concat (format "runs %d" runs)
@@ -2047,10 +2090,13 @@ teaches the view keys."
 
 (defun gascity-dispatch--title ()
   "Return the `?' dispatch heading: the city, its path, live state."
-  (let ((root (gascity-context-city-root)))
+  (let ((root (gascity-context-city-root-cached)))
     (concat "Gas City  "
-            (propertize (or (gascity-context-city-name) "") 'face 'gascity-city)
-            (if root (concat "  " (gascity-dashboard--path (file-local-name root))) ""))))
+            (propertize (if root (file-name-nondirectory (directory-file-name root)) "")
+                        'face 'gascity-city)
+            (if root (concat "  " (gascity-dashboard--path (file-local-name root))) "")
+            (let ((live (and root (gascity-live-header-string root))))
+              (if live (concat "   " live) "")))))
 
 (defun gascity-dispatch-refresh ()
   "Refresh the view the dispatch was opened from (`g')."
