@@ -53,6 +53,8 @@ Calls CALLBACK synchronously; ERRBACK for an unknown read."
       (`("cities") (funcall callback (gascity-health-test--json "cities.json")))
       (`("mail" "count")
        (funcall callback (gascity-health-test--json "emacs-city.mail-count.json")))
+      (`("session" "list")
+       (funcall callback (gascity-health-test--json "emacs-city.session-list.json")))
       (_ (when errback (funcall errback (format "unexpected read %S" args))))))
   nil)
 
@@ -464,11 +466,19 @@ whose cockpit is killed."
         (should (= (length rows) 2))
         (should (equal (mapcar #'car rows) '("● bright-lights" "● emacs-city")))
         (should (equal (nth 1 (car rows)) "~/bright-lights/"))
-        (should (equal (nth 2 (cadr rows)) "1/5"))
-        (should (string-match-p "▲" (nth 4 (cadr rows))))
-        (should (equal (nth 5 (cadr rows)) "●"))
-        ;; No cockpit open: Runs is blank, not an apology.
-        (should (equal (nth 3 (cadr rows)) ""))))))
+        ;; The cockpit's own count (QA A2): the two fixture sessions are
+        ;; idle, the mayor joins the roster → 0 of 6, not gc's 1/5.
+        (should (equal (nth 2 (cadr rows)) (let ((c (gascity-dashboard-city-agent-counts
+                                                      (gascity-health-test--json
+                                                       "emacs-city.status.json")
+                                                      (gascity-health-test--json
+                                                       "emacs-city.session-list.json"))))
+                                              (format "%d/%d" (car c) (cdr c)))))
+        (should (equal (nth 2 (cadr rows)) "0/6"))
+        ;; No run count known anywhere: the Runs column is hidden.
+        (should-not (seq-find (lambda (c) (equal (car c) "Runs")) tabulated-list-format))
+        (should (string-match-p "▲" (nth 3 (cadr rows))))
+        (should (equal (nth 4 (cadr rows)) "●"))))))
 
 (ert-deftest gascity-test-cities-remote-hosts ()
   "Configured and visited hosts add host-qualified rows; RET targets the
@@ -516,7 +526,7 @@ host-qualified city directory."
         (let ((rows (gascity-health-test--rows)))
           (should (= (length rows) 3))
           (should (seq-find (lambda (r) (and (string-prefix-p "■" (car r))
-                                             (string-match-p "unknown command" (nth 5 r))))
+                                             (string-match-p "unknown command" (car (last r)))))
                             rows))))
       ;; An unreachable host is `○ offline', not an error storm.
       (gascity-store-clear)
@@ -528,7 +538,7 @@ host-qualified city directory."
         (let ((rows (gascity-health-test--rows)))
           (should (= (length rows) 3))
           (should (seq-find (lambda (r) (and (string-prefix-p "○" (car r))
-                                             (equal (nth 5 r) "offline")))
+                                             (equal (car (last r)) "offline")))
                             rows)))))))
 
 (ert-deftest gascity-test-cities-runs-from-cockpit ()
@@ -547,18 +557,41 @@ host-qualified city directory."
   "A refetch of a city's status by another view updates its row (subscribed)."
   (let ((gascity-remote-hosts nil))
     (gascity-health-test--with-cities
-      (should (equal (nth 2 (cadr (gascity-health-test--rows))) "1/5"))
-      (let ((status (gascity-health-test--json "emacs-city.status.json")))
-        (setf (alist-get 'running_agents (alist-get 'summary status)) 4)
+      (should (equal (nth 2 (cadr (gascity-health-test--rows))) "0/6"))
+      ;; Another view refetches the session list: the mayor is active now.
+      (let ((sessions (gascity-health-test--json "emacs-city.session-list.json")))
+        (dolist (sess (append (alist-get 'sessions sessions) nil))
+          (setf (alist-get 'last_active sess) (format-time-string "%FT%TZ" nil t)))
         (cl-letf (((symbol-function 'gascity-reader-read-async)
-                   (lambda (_args callback &rest _) (funcall callback status) nil)))
+                   (lambda (_args callback &rest _) (funcall callback sessions) nil)))
           (let ((default-directory "/home/roman/emacs-city/"))
-            (gascity-store-fetch '("status") #'ignore nil :force t))))
-      (should (equal (nth 2 (cadr (gascity-health-test--rows))) "4/5"))
+            (gascity-store-fetch '("session" "list") #'ignore nil :force t))))
+      (should (equal (nth 2 (cadr (gascity-health-test--rows))) "2/6"))
       ;; Refresh drops the old subscriptions (no duplicates).
       (let ((n (length gascity-cities--subs)))
         (gascity-cities-refresh)
         (should (= (length gascity-cities--subs) n))))))
+
+(ert-deftest gascity-test-cities-runs-from-store-work-entry ()
+  "With no cockpit open, Runs comes from the city's work entry in the
+store (another view read it); the column appears then (QA A2)."
+  (let ((gascity-remote-hosts nil))
+    (gascity-health-test--with-cities
+      (should-not (seq-find (lambda (c) (equal (car c) "Runs")) tabulated-list-format))
+      (cl-letf (((symbol-function 'gascity-store-get)
+                 (let ((orig (symbol-function 'gascity-store-get)))
+                   (lambda (args &optional dir)
+                     (if (and (equal args '("bd" "list" :work-stores))
+                              (equal dir "/home/roman/emacs-city/"))
+                         (list :status 'ready
+                               :data (list :beads
+                                           (list '((id . "be-r") (status . "in_progress")
+                                                   (metadata . ((gc.kind . "workflow")))))))
+                       (funcall orig args dir))))))
+        (gascity-cities--redisplay)
+        (should (seq-find (lambda (c) (equal (car c) "Runs")) tabulated-list-format))
+        (should (equal (nth 3 (cadr (gascity-health-test--rows))) "1 ⬣"))
+        (should (equal (nth 3 (car (gascity-health-test--rows))) ""))))))
 
 ;;; Costs (`j $')
 

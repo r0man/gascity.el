@@ -103,6 +103,11 @@ exists without asking the host where home is (§8.3 R2)."
 
 ;;; Rows
 
+(defconst gascity-cities--format
+  [("City" 18 t) ("Where" 36 t) ("Agents" 7 t) ("Runs" 5 t)
+   ("Mail" 5 t) ("Health" 6 nil)]
+  "The Cities columns; Runs is dropped while no city's run count is known.")
+
 (defun gascity-cities--where (host path)
   "Return the Where cell: PATH with `~/', prefixed by HOST's TRAMP name.
 Pure: the remote home is the TRAMP user's `/home/USER/'."
@@ -135,8 +140,8 @@ Pure: the remote home is the TRAMP user's `/home/USER/'."
          (summary (alist-get 'summary status))
          (mail (plist-get row :mail))
          (unread (alist-get 'unread mail))
-         (pulse (gascity-pulse-city (gascity-cities--city-dir host path)))
-         (runs (plist-get pulse :runs))
+         (runs (gascity-cities--runs host path))
+         (sessions (plist-get row :sessions))
          (pending (propertize "…" 'face 'gascity-dim))
          (glyph (cond (status (if (alist-get 'running (alist-get 'controller status))
                                   (gascity-ui-glyph 'ok)
@@ -149,8 +154,16 @@ Pure: the remote home is the TRAMP user's `/home/USER/'."
            (concat glyph " " (propertize (or (plist-get row :name) "?")
                                          'face 'gascity-city))
            (gascity-cities--where host path)
-           (cond (status (format "%s/%s" (or (alist-get 'running_agents summary) 0)
-                                 (or (alist-get 'total_agents summary) 0)))
+           (cond ((and status sessions)
+                  (let ((counts (gascity-dashboard-city-agent-counts status sessions)))
+                    (format "%d/%d" (car counts) (cdr counts))))
+                 ((and status (plist-get row :sessions-error))
+                  ;; No session list: gc's own count, marked as such.
+                  (propertize (format "%s/%s" (or (alist-get 'running_agents summary) 0)
+                                      (or (alist-get 'total_agents summary) 0))
+                              'help-echo (concat "gc status count; session list failed: "
+                                                 (plist-get row :sessions-error))))
+                 (status pending)
                  (serr (propertize (or (gascity-ui-first-line serr) "failed")
                                    'face 'gascity-dim 'help-echo serr))
                  (t pending))
@@ -167,6 +180,17 @@ Pure: the remote home is the TRAMP user's `/home/USER/'."
            (cond (status (gascity-cities--health status))
                  (serr "")
                  (t pending))))))
+
+(defun gascity-cities--runs (host path)
+  "Return the active-run count of the city at PATH on HOST, or nil.
+The count an open cockpit published, else the store's cockpit work
+entry for that city if another view read it; no read of our own."
+  (let ((dir (gascity-cities--city-dir host path)))
+    (or (plist-get (gascity-pulse-city dir) :runs)
+        (let ((work (gascity-store-get '("bd" "list" :work-stores) dir)))
+          (and (eq (plist-get work :status) 'ready)
+               (length (gascity-dashboard--active-runs
+                        (plist-get (plist-get work :data) :beads))))))))
 
 (defun gascity-cities--host-entry (host err &optional offline)
   "Return the entry reporting HOST's `gc cities' read failing with ERR.
@@ -213,14 +237,31 @@ With OFFLINE the host is unreachable (the store retries it): `○'."
     (setq gascity-tabulated--base-name
           (format "Cities %d%s" (length keys)
                   (if (> remote 0) (format " · %d remote" remote) "")))
-    (setq gascity-tabulated--all-entries
-          (append (mapcar (lambda (k) (gascity-cities--entry
-                                       k (gethash k gascity-cities--rows)))
-                          keys)
-                  (mapcar (lambda (e) (gascity-cities--host-entry (car e) (cdr e)))
-                          gascity-cities--host-errors)
-                  (mapcar (lambda (e) (gascity-cities--host-entry (car e) (cdr e) t))
-                          (gascity-cities--offline-hosts))))
+    (let* ((entries
+            (append (mapcar (lambda (k) (gascity-cities--entry
+                                         k (gethash k gascity-cities--rows)))
+                            keys)
+                    (mapcar (lambda (e) (gascity-cities--host-entry (car e) (cdr e)))
+                            gascity-cities--host-errors)
+                    (mapcar (lambda (e) (gascity-cities--host-entry (car e) (cdr e) t))
+                            (gascity-cities--offline-hosts))))
+           ;; Runs only when some city's count is known (an open cockpit
+           ;; published it, or its work entry is in the store): never an
+           ;; always-blank column (QA A2).
+           (runs (seq-some (lambda (k) (gascity-cities--runs (car k) (cdr k))) keys))
+           (columns (if runs gascity-cities--format
+                     (vconcat (seq-remove (lambda (c) (equal (car c) "Runs"))
+                                          gascity-cities--format)))))
+      (unless (equal columns tabulated-list-format)
+        (setq tabulated-list-format columns)
+        (tabulated-list-init-header))
+      (setq gascity-tabulated--all-entries
+            (if runs
+                entries
+              (mapcar (lambda (e)
+                        (list (car e)
+                              (vconcat (seq-take (cadr e) 3) (seq-drop (cadr e) 4))))
+                      entries))))
     (unless gascity-tabulated--page-size
       (setq gascity-tabulated--page-size
             (if (get-buffer-window (current-buffer))
@@ -279,17 +320,28 @@ and request them.  FORCE re-reads even a fresh store entry."
            (gascity-cities--set key :status-error (cadr s))
          (gascity-pulse-record-store-size dir s)
          (gascity-cities--set key :status s :status-error nil))))
+    ;; The session list the cockpit reads: the agent count is the
+    ;; cockpit's own (QA A2), not gc's `running_agents'.
+    (gascity-cities--subscribe
+     key '("session" "list")
+     (lambda (v)
+       (if (eq (car-safe v) :error)
+           (gascity-cities--set key :sessions-error (cadr v))
+         (gascity-cities--set key :sessions v :sessions-error nil))))
     (gascity-cities--subscribe
      key '("mail" "count")
      (lambda (m)
        (if (eq (car-safe m) :error)
            (gascity-cities--set key :mail-error (cadr m))
          (gascity-cities--set key :mail m :mail-error nil))))
-    (dolist (args '(("status") ("mail" "count")))
+    (dolist (args '(("status") ("session" "list") ("mail" "count")))
       (gascity-store-request args :dir dir :force force))
     ;; Paint what the store already holds (no I/O).
     (let ((status (gascity-store-get '("status") dir))
+          (sessions (gascity-store-get '("session" "list") dir))
           (mail (gascity-store-get '("mail" "count") dir)))
+      (when (eq (plist-get sessions :status) 'ready)
+        (gascity-cities--set key :sessions (plist-get sessions :data)))
       (when (eq (plist-get status :status) 'ready)
         (gascity-cities--set key :status (plist-get status :data)))
       (when (eq (plist-get mail :status) 'ready)
@@ -369,9 +421,7 @@ without a new read."
 `RET' opens a city's cockpit; `g' re-reads every host.
 \\{gascity-cities-mode-map}"
   :group 'gascity
-  (setq tabulated-list-format
-        [("City" 18 t) ("Where" 36 t) ("Agents" 7 t) ("Runs" 5 t)
-         ("Mail" 5 t) ("Health" 6 nil)])
+  (setq tabulated-list-format gascity-cities--format)
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (setq gascity-tabulated--base-name "Cities")

@@ -278,8 +278,9 @@ members are rendered at 4, nested under their template's header."
          (indent (or indent 2))
          (obj (gascity-status--agent agent rig-name session-map socket)))
     (vui-text (concat (make-string indent ?\s)
+                      ;; §6.1: ● active, ○ idle or stopped, ■ stalled.
                       (gascity-ui-glyph (pcase state
-                                          ((or "active" "idle") 'ok)
+                                          ("active" 'ok)
                                           ("stalled" 'fail)
                                           (_ 'idle)))
                       " " (gascity-ui-fit name (- 30 indent))

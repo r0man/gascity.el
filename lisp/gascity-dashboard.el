@@ -349,6 +349,23 @@ Each plist carries :name :rig :state (`stalled' `running' `idle'
             (push (row name nil s) rows)))))
     (nreverse rows)))
 
+(defun gascity-dashboard-agent-counts (agents)
+  "Return (RUNNING . TOTAL) for the agent plists AGENTS.
+The one agent count every view shows (the cockpit top line, the Agents
+section, the Cities rows): running is the agents actively working —
+idle, stalled and stopped ones are not."
+  (cons (seq-count (lambda (a) (eq (plist-get a :state) 'running)) agents)
+        (length agents)))
+
+(defun gascity-dashboard-city-agent-counts (status sessions-payload)
+  "Return (RUNNING . TOTAL) for a city's STATUS and SESSIONS-PAYLOAD.
+The cockpit's roster (`gascity-dashboard--agents') over the two payloads,
+counted by `gascity-dashboard-agent-counts'."
+  (gascity-dashboard-agent-counts
+   (gascity-dashboard--agents status
+                              (append (alist-get 'sessions sessions-payload) nil)
+                              nil nil (float-time))))
+
 (defun gascity-dashboard--agent-order (a b)
   "Return non-nil when agent plist A sorts before B in the Agents section.
 Stalled first, then running by most recent activity, then idle."
@@ -1003,8 +1020,7 @@ properties.  The row is a thing whose SPC toggles the drawer."
   (let* ((status (plist-get ctx :status))
          (agents (plist-get ctx :all-agents))
          ;; The Agents section's own count (QA #7): idle is not running.
-         (running (seq-count (lambda (a) (eq (plist-get a :state) 'running))
-                             agents))
+         (running (car (gascity-dashboard-agent-counts agents)))
          (sessions (seq-count #'gascity-dashboard--live-session-p
                               (plist-get ctx :sessions)))
          (beads (plist-get ctx :beads))

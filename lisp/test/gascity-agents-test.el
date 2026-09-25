@@ -152,7 +152,8 @@ stopped agents take their template's provider from `gc agent list'."
             (vui-mount (vui-component 'gascity-agents-tree-app) (buffer-name buf))
             (with-current-buffer buf
               (should (string-match-p "▾ bd.dog  scaled 0–2" (buffer-string)))
-              (should (string-match-p "^  ● mayor" (buffer-string)))
+              ;; Idle is ○ in the tree as in the table (§6.1, QA A3).
+              (should (string-match-p "^  ○ mayor +idle" (buffer-string)))
               (goto-char (point-min))
               (re-search-forward "▾ beads.el")
               (beginning-of-line)
