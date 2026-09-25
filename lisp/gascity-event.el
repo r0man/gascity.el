@@ -70,11 +70,27 @@ under Work's convoys, never a work row)."
 
 ;;; Events
 
+(defvar gascity-event--levels nil
+  "Memo of `gascity-event-level': (TABLE . HASH), HASH mapping an event
+type to its level (or `none'), valid while TABLE is still the value of
+`gascity-event-levels'.")
+
 (defun gascity-event-level (event)
-  "Return EVENT's signal level: `attention', `watch' or nil."
+  "Return EVENT's signal level: `attention', `watch' or nil.
+Matched once per event type (a handful of types, thousands of events):
+the answer is memoized until `gascity-event-levels' changes."
   (let ((type (or (alist-get 'type event) "")))
-    (cdr (seq-find (lambda (entry) (string-match-p (car entry) type))
-                   gascity-event-levels))))
+    (unless (eq (car gascity-event--levels) gascity-event-levels)
+      (setq gascity-event--levels
+            (cons gascity-event-levels (make-hash-table :test 'equal))))
+    (let* ((memo (cdr gascity-event--levels))
+           (level (gethash type memo)))
+      (unless level
+        (setq level (or (cdr (seq-find (lambda (entry) (string-match-p (car entry) type))
+                                       gascity-event-levels))
+                        'none))
+        (puthash type level memo))
+      (and (not (eq level 'none)) level))))
 
 (defun gascity-event-level-glyph (level)
   "Return the glyph of signal LEVEL: ■, ▲, or a space."
@@ -88,9 +104,17 @@ under Work's convoys, never a work row)."
   (let ((payload (alist-get 'payload event)))
     (and (listp payload) (alist-get 'bead payload))))
 
+(defvar gascity-event--times (make-hash-table :test 'eq :weakness 'key)
+  "EVENT → its time as a float, parsed once per decoded event.
+Weak on the event: a payload's times go when the payload does.")
+
 (defun gascity-event-time (event)
-  "Return EVENT's time as a float, or 0."
-  (or (gascity-ui-parse-time (alist-get 'ts event)) 0))
+  "Return EVENT's time as a float, or 0.
+Parsed once per event object — the payload in the store, a live event —
+and remembered (`gascity-event--times'); a render never re-parses."
+  (or (gethash event gascity-event--times)
+      (puthash event (or (gascity-ui-parse-time (alist-get 'ts event)) 0)
+               gascity-event--times)))
 
 (defun gascity-event-since-arg (window)
   "Return WINDOW as a `gc events --since' duration.
@@ -144,13 +168,21 @@ quarter hour) unless FILTERS unfold it (`:unfold')."
               (setq row (list 'churn key group time (list event)))
               (puthash key row buckets)
               (push row rows))))))
-    (cons (sort rows
-                (lambda (a b)
-                  (> (if (eq (car a) 'churn) (nth 3 a)
-                       (gascity-event-time (nth 1 a)))
-                     (if (eq (car b) 'churn) (nth 3 b)
-                       (gascity-event-time (nth 1 b))))))
+    ;; Sort on a key computed once per row, not in the comparator.
+    (cons (mapcar #'cdr
+                  (sort (mapcar (lambda (row)
+                                  (cons (if (eq (car row) 'churn) (nth 3 row)
+                                          (gascity-event-time (nth 1 row)))
+                                        row))
+                                rows)
+                        (lambda (a b) (> (car a) (car b)))))
           folded)))
+
+(defun gascity-event-fold-key (filters)
+  "Return the part of FILTERS the churn fold depends on."
+  (list (plist-get filters :orders) (plist-get filters :wisps)
+        (plist-get filters :nudges) (plist-get filters :messages)
+        (plist-get filters :unfold)))
 
 (defun gascity-event-churn-detail (group events)
   "Return the detail text of a churn GROUP row over EVENTS."
@@ -179,22 +211,45 @@ quarter hour) unless FILTERS unfold it (`:unfold')."
         (format "%s %s" (alist-get 'id bead) (or (alist-get 'title bead) ""))
       subject)))
 
+(defun gascity-event--value (value)
+  "Return VALUE as one short display line (no elisp printed forms)."
+  (let ((text (cond ((stringp value) value)
+                    ((numberp value) (number-to-string value))
+                    ((eq value t) "true")
+                    ((symbolp value) (symbol-name value))
+                    ((vectorp value)
+                     (mapconcat #'gascity-event--value (append value nil) ", "))
+                    ((and (consp value) (consp (car value)))
+                     (format "{%d fields}" (length value)))
+                    (t (format "%s" value)))))
+    (truncate-string-to-width (replace-regexp-in-string "\n" " " text)
+                              60 nil nil "…")))
+
 (defun gascity-event-fields (event)
   "Return EVENT's fields beyond time, type, seq and ok as `key value' lines.
-The inline drawer of an event row (§5.4); values are flattened to one
-line and cut at 60 columns."
+The inline drawer of an event row (§5.4).  The payload's fields are
+listed with the event's own (`routed_to  …'); a payload bead is one
+line (id, title, status), not the whole bead; values are cut at 60
+columns and the drawer at 12 lines."
   (let (lines)
     (dolist (field event)
-      (unless (or (memq (car field) '(ts type seq ok))
-                  (null (cdr field)))
-        (let ((v (cdr field)))
-          (push (format "%-10s %s" (car field)
-                        (truncate-string-to-width
-                         (replace-regexp-in-string
-                          "\n" " " (if (stringp v) v (format "%S" v)))
-                         60 nil nil "…"))
-                lines))))
-    (nreverse lines)))
+      (let ((key (car field)) (v (cdr field)))
+        (unless (or (memq key '(ts type seq ok)) (null v))
+          (if (and (eq key 'payload) (consp v) (consp (car v)))
+              (dolist (pf v)
+                (when (cdr pf)
+                  (push (if (and (eq (car pf) 'bead) (consp (cdr pf)))
+                            (let ((b (cdr pf)))
+                              (format "%-13s %s" "bead"
+                                      (gascity-event--value
+                                       (format "%s %s (%s)" (alist-get 'id b)
+                                               (or (alist-get 'title b) "")
+                                               (or (alist-get 'status b) "?")))))
+                          (format "%-13s %s" (car pf)
+                                  (gascity-event--value (cdr pf))))
+                        lines)))
+            (push (format "%-13s %s" key (gascity-event--value v)) lines)))))
+    (seq-take (nreverse lines) 12)))
 
 (provide 'gascity-event)
 ;;; gascity-event.el ends here

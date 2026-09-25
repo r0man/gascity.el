@@ -185,6 +185,82 @@ and nothing is lost (rows + folded account for every event)."
     (should-not (seq-some (lambda (e) (gascity-events--match-p e '(:search "no-such-text")))
                           events))))
 
+;;; Render cost (QA cockpit pass bug 1)
+
+(ert-deftest gascity-test-comms-event-time-parsed-once ()
+  "An event's time is parsed once, then answered from the cache."
+  (let* ((event (gascity-comms-test--type "x.y" 1))
+         (calls 0)
+         (orig (symbol-function 'gascity-ui-parse-time)))
+    (cl-letf (((symbol-function 'gascity-ui-parse-time)
+               (lambda (ts) (cl-incf calls) (funcall orig ts))))
+      (dotimes (_ 5) (gascity-event-time event))
+      (should (= calls 1)))))
+
+(ert-deftest gascity-test-comms-cockpit-fold-memoized-on-payload ()
+  "The cockpit folds its events once per payload: a re-render with the
+same payload and fold filters reuses the fold; a new payload refolds."
+  (let* ((events (gascity-comms-test--events "emacs-city.events-2h.jsonl"))
+         (folds 0)
+         (orig (symbol-function 'gascity-event-fold)))
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'gascity-event-fold)
+                 (lambda (&rest args) (cl-incf folds) (apply orig args))))
+        (let ((ctx (list :events events :filters nil)))
+          (gascity-dashboard--activity-model ctx)
+          (gascity-dashboard--activity-model (list :events events :filters '(:wisps nil)))
+          (should (= folds 1))
+          (gascity-dashboard--activity-model (list :events events :filters '(:unfold t)))
+          (should (= folds 2))
+          (gascity-dashboard--activity-model (list :events (copy-sequence events)
+                                                   :filters '(:unfold t)))
+          (should (= folds 3)))))))
+
+(ert-deftest gascity-test-comms-event-drawer-key-value ()
+  "The event drawer shows `key value' lines: payload fields flattened, a
+payload bead as one line — never a printed elisp alist (QA bug 8)."
+  (let* ((events (gascity-comms-test--events "emacs-city.events-24h-signal-sample.jsonl"))
+         (updated (seq-find (lambda (e) (equal (alist-get 'type e) "bead.updated")) events))
+         (reopened (seq-find (lambda (e) (equal (alist-get 'type e)
+                                                "bead.dead_assignee_reopened"))
+                             events)))
+    (dolist (e (list updated reopened))
+      (dolist (line (gascity-event-fields e))
+        (should-not (string-match-p "((\\|(\\w+ \\. " line))
+        (should (<= (string-width line) 80))))
+    (should (seq-some (lambda (l) (string-match-p "\\`bead +be-j2b build-basic" l))
+                      (gascity-event-fields updated)))
+    (should (seq-some (lambda (l) (string-match-p "\\`routed_to +gascity.el/" l))
+                      (gascity-event-fields reopened)))))
+
+(ert-deftest gascity-test-comms-cockpit-churn-unfold-capped ()
+  "SPC on a cockpit ×N row unfolds at most 20 events and a `… N more'
+line; RET on the row (or that line) opens Events narrowed to the group
+\(QA bug 9)."
+  (let* ((events (gascity-comms-test--events "emacs-city.events-2h.jsonl"))
+         (row (seq-find (lambda (r) (and (eq (car r) 'churn) (> (length (nth 4 r)) 25)))
+                        (car (gascity-event-fold events nil))))
+         (id (concat "churn:" (nth 1 row)))
+         (gascity-dashboard--view (list :expanded (list id)))
+         (lines (gascity-dashboard--activity-row row (list :filters '(:window "2h"))))
+         opened)
+    (should (= (length lines) (+ 1 20 1)))
+    (should (string-match-p (format "… %d more" (- (length (nth 4 row)) 20))
+                            (substring-no-properties (car (last lines)))))
+    (cl-letf (((symbol-function 'gascity-events)
+               (lambda (&optional filter) (setq opened filter))))
+      (with-temp-buffer
+        (insert (car lines))
+        (goto-char (point-min))
+        (gascity-dashboard-activate)
+        (should (equal opened (list :group (nth 2 row) :window "2h")))
+        (erase-buffer)
+        (setq opened nil)
+        (insert (car (last lines)))
+        (goto-char (point-min))
+        (gascity-dashboard-activate)
+        (should (equal (plist-get opened :group) (nth 2 row)))))))
+
 ;;; Events view
 
 (ert-deftest gascity-test-comms-events-view-renders ()

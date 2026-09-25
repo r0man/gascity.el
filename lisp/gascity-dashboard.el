@@ -104,7 +104,7 @@
 ;; call them when they exist and say so when they do not yet.
 (declare-function gascity-agents "gascity-agents")
 (declare-function gascity-runs "gascity-runs")
-(declare-function gascity-events "gascity-events")
+(declare-function gascity-events "gascity-events" (&optional filter))
 (declare-function gascity-health "gascity-health")
 (declare-function gascity-cities "gascity-cities")
 (declare-function gascity-mail "gascity-mail")
@@ -128,6 +128,13 @@ beads was updated within this many seconds shows in Needs you as idle."
 (defcustom gascity-dashboard-agent-idle-threshold 3600
   "Seconds of inactivity after which a live agent with no work is idle.
 Only the Agents section's running/idle split reads it."
+  :type 'natnum
+  :group 'gascity)
+
+(defcustom gascity-dashboard-churn-unfold-rows 20
+  "Most events SPC unfolds under a cockpit `×N' churn row.
+The rest is a `… N more' line whose RET opens the Events view narrowed
+to that churn group."
   :type 'natnum
   :group 'gascity)
 
@@ -539,6 +546,12 @@ is that agent's plist when exactly one matches, else nil."
     (cond ((= (length exact) 1) (cons (plist-get (car exact) :name) (car exact)))
           ((= (length members) 1) (cons (plist-get (car members) :name) (car members)))
           (t (cons (if (string-empty-p template) (or subject "?") template) nil)))))
+
+(defun gascity-dashboard--needs-you-items (ctx)
+  "Return CTX's Needs you items, computed once per render.
+The render stores them in CTX (`:needs-you'); the section and the pulse
+both read them."
+  (or (plist-get ctx :needs-you) (gascity-dashboard--needs-you ctx)))
 
 (defun gascity-dashboard--needs-you (ctx)
   "Return the Needs you items for cockpit context CTX, ■ before ▲.
@@ -1056,7 +1069,7 @@ properties.  The row is a thing whose SPC toggles the drawer."
 
 (defun gascity-dashboard--needs-you-lines (ctx)
   "Return the Needs you section lines for CTX."
-  (let* ((items (gascity-dashboard--needs-you ctx))
+  (let* ((items (gascity-dashboard--needs-you-items ctx))
          (groups (mapcar
                 (lambda (item)
                   (apply
@@ -1385,13 +1398,37 @@ worker drawn under its run (not a top-level row of the section)."
      ctx :loads '(:work :convoys) :label "bd list"
      :hidden (gascity-dashboard--hidden-label (plist-get work :hidden)))))
 
+(defvar-local gascity-dashboard--activity-memo nil
+  "The last Activity fold: (KEY . MODEL), KEY led by the events payload.")
+
+(defun gascity-dashboard--activity-model (ctx)
+  "Return the Activity fold of CTX's events, (ROWS . FOLDED).
+Computed once per events payload (compared by identity) and fold
+filters, then reused by every render until either changes: a render
+triggered by another section's read, a drawer toggled or a pending row
+does not refold 1.5k events."
+  (let* ((filters (plist-get ctx :filters))
+         (events (plist-get ctx :events))
+         (key (list (plist-get filters :rig) (gascity-event-fold-key filters)
+                    (plist-get ctx :rig-prefixes))))
+    (if (and gascity-dashboard--activity-memo
+             (eq (car (car gascity-dashboard--activity-memo)) events)
+             (equal (cdr (car gascity-dashboard--activity-memo)) key))
+        (cdr gascity-dashboard--activity-memo)
+      (let ((model (gascity-event-fold
+                    (if (plist-get filters :rig)
+                        (seq-filter (lambda (e) (gascity-dashboard--event-in-rig-p e ctx))
+                                    events)
+                      events)
+                    filters)))
+        (setq gascity-dashboard--activity-memo (cons (cons events key) model))
+        model))))
+
 (defun gascity-dashboard--activity-lines (ctx)
   "Return the Activity section lines for CTX."
   (let* ((filters (plist-get ctx :filters))
          (window (or (plist-get filters :window) gascity-dashboard-window))
-         (events (seq-filter (lambda (e) (gascity-dashboard--event-in-rig-p e ctx))
-                             (plist-get ctx :events)))
-         (model (gascity-event-fold events filters))
+         (model (gascity-dashboard--activity-model ctx))
          (rows (mapcar (lambda (row) (gascity-dashboard--activity-row row ctx))
                        (car model))))
     (gascity-dashboard--section-lines
@@ -1433,7 +1470,11 @@ worker drawn under its run (not a top-level row of the section)."
     (`(churn ,key ,group ,time ,events)
      (let* ((id (concat "churn:" key))
             (open (or (member id (plist-get gascity-dashboard--view :expanded))
-                      (plist-get (plist-get ctx :filters) :unfold))))
+                      (plist-get (plist-get ctx :filters) :unfold)))
+            ;; RET: the Events view narrowed to this churn group (§7.8).
+            (target (gascity-dashboard--events-target group ctx))
+            (shown (seq-take events gascity-dashboard-churn-unfold-rows))
+            (more (- (length events) (length shown))))
        (cons (gascity-dashboard--row
               (concat "  " (format-time-string "%H:%M" time) "   "
                       (gascity-dashboard--dim (format "×%-3d" (length events)))
@@ -1441,11 +1482,29 @@ worker drawn under its run (not a top-level row of the section)."
                       " " (gascity-dashboard--dim
                            (gascity-event-churn-detail group events)))
               nil
+              'gascity-dashboard-target target
               'beads-thing (gascity-dashboard--thing
                             'fold id (lambda () (gascity-dashboard--flip :expanded id))))
              (and open
-                  (mapcan (lambda (e) (gascity-dashboard--activity-row (list 'event e) ctx))
-                          (reverse events))))))))
+                  (append
+                   (mapcan (lambda (e) (gascity-dashboard--activity-row (list 'event e) ctx))
+                           shown)
+                   (and (> more 0)
+                        (list (gascity-dashboard--row
+                               (gascity-dashboard--dim (format "      … %d more" more))
+                               (gascity-dashboard--dim "RET j e events")
+                               'gascity-dashboard-target target
+                               'beads-thing (gascity-dashboard--thing
+                                             'more (concat id ":more"))))))))))))
+
+(defun gascity-dashboard--events-target (group ctx)
+  "Return the command opening the Events view narrowed to churn GROUP.
+The Events window follows the cockpit's (CTX's filters)."
+  (let ((window (plist-get (plist-get ctx :filters) :window)))
+    (lambda ()
+      (interactive)
+      (gascity-events (append (list :group group)
+                              (and window (list :window window)))))))
 
 (defun gascity-dashboard--rigs-lines (ctx)
   "Return the Rigs section lines for CTX."
@@ -1708,6 +1767,8 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
                       :graphs (gascity-dashboard--effective-load graphs-res
                                                                  last-graphs)))
          (ctx (gascity-dashboard--context loads filters (float-time))))
+    ;; Once per render: the section and the pulse both read them.
+    (setq ctx (plist-put ctx :needs-you (gascity-dashboard--needs-you ctx)))
     (when-let* ((at (plist-get status-res :fetched-at)))
       (setq gascity-dashboard--refreshed-at at))
     (when-let* ((status (plist-get ctx :status)))
@@ -1728,7 +1789,7 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
   "Publish this cockpit's Needs you totals, runs and store size (CTX).
 The mode-line lighter and the Cities view read them from
 `gascity-pulse'; publishing is in-memory only."
-  (let ((items (gascity-dashboard--needs-you ctx))
+  (let ((items (gascity-dashboard--needs-you-items ctx))
         (status (plist-get ctx :status)))
     (gascity-pulse-record-store-size default-directory status)
     (gascity-pulse-publish

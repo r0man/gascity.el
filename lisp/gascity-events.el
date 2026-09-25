@@ -680,10 +680,13 @@ fields."
   (add-hook 'kill-buffer-hook #'gascity-events--teardown nil t))
 
 ;;;###autoload
-(defun gascity-events ()
+(defun gascity-events (&optional filter)
   "Show the city's recent `gc events', churn folded (dashboard-v3 §7.8).
 The buffer is keyed to the city (host-qualified name, pinned
-`default-directory'); a second call shows it again and re-reads."
+`default-directory'); a second call shows it again and re-reads.
+FILTER, from Lisp, replaces the view's filter plist (see
+`gascity-events--filter'): the cockpit opens it narrowed to a churn
+group with (:group GROUP :window WINDOW)."
   (interactive)
   (let* ((dir (beads-prefix-invocation-directory))
          (city (or (gascity-context-city-name dir) "city"))
@@ -694,6 +697,7 @@ The buffer is keyed to the city (host-qualified name, pinned
         (gascity-events-mode)
         (setq gascity-events--city city)
         (gascity-events--live-setup))
+      (when filter (setq gascity-events--filter filter))
       (gascity-events-refresh))
     (pop-to-buffer buf)))
 
