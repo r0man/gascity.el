@@ -514,19 +514,27 @@ RIG is nil for a run of the city store."
     (and rig id (cons id (and (not (string-empty-p rig)) rig)))))
 
 (defun gascity-runs-store (rig)
-  "Return the bead store directory of RIG (nil: the city store).
-Answered from the rig memo; a cold memo falls back to one `gc rig
-list' read (user-initiated, never at render)."
+  "Return the bead store directory of RIG (nil: the city store), or nil.
+Answered from the rig memo only; nil when RIG is not memoized yet —
+see `gascity-runs-call-with-store', which never blocks for it."
   (if (and rig (not (string-empty-p rig)))
-      (or (gascity-beads--rig-store-cached rig)
-          (gascity-beads--rig-path rig))
+      (gascity-beads--rig-store-cached rig)
     (gascity-beads--city-store)))
+
+(defun gascity-runs-call-with-store (rig fn)
+  "Call FN with the bead store directory of RIG (nil: the city store).
+Never blocks: a cold rig memo is filled through the store first
+\(`gascity-beads-call-with-rig-store')."
+  (if (or (null rig) (string-empty-p rig))
+      (funcall fn (gascity-beads--city-store))
+    (gascity-beads-call-with-rig-store rig fn)))
 
 (defun gascity-runs-root-bead ()
   "Show the root bead of the run at point in beads.el (`b')."
   (interactive)
   (let ((run (or (gascity-runs--run-at-point) (user-error "No run at point"))))
-    (gascity-beads--show-in-store (car run) (gascity-runs-store (cdr run)))))
+    (gascity-runs-call-with-store
+     (cdr run) (lambda (store) (gascity-beads--show-in-store (car run) store)))))
 
 (defun gascity-runs-activate ()
   "Open the run at point in the run detail (RET never folds, §5.4)."

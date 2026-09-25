@@ -486,10 +486,6 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
   (unless (gascity-section-refresh-instance (current-buffer))
     (user-error "No run detail to refresh here")))
 
-(defun gascity-run--store ()
-  "Return the bead store of this buffer's run."
-  (gascity-runs-store gascity-run--current-rig))
-
 (defun gascity-run-visit-file (path)
   "Visit host-local PATH on the city's host (a plan file, the formula)."
   (find-file (gascity-remote-localize-path path)))
@@ -501,14 +497,19 @@ RET never folds (§5.4)."
   (let ((file (get-text-property (point) 'gascity-run-file))
         (bead (get-text-property (point) 'gascity-bead)))
     (cond (file (gascity-run-visit-file file))
-          (bead (gascity-beads--show-in-store bead (gascity-run--store)))
+          (bead (gascity-runs-call-with-store
+                 gascity-run--current-rig
+                 (lambda (store) (gascity-beads--show-in-store bead store))))
           ((get-text-property (point) 'gascity-section) nil)
           (t (user-error "Nothing to act on here")))))
 
 (defun gascity-run-root-bead ()
   "Show the run's root bead in beads.el (`b')."
   (interactive)
-  (gascity-beads--show-in-store gascity-run--current-run (gascity-run--store)))
+  (let ((run gascity-run--current-run))
+    (gascity-runs-call-with-store
+     gascity-run--current-rig
+     (lambda (store) (gascity-beads--show-in-store run store)))))
 
 (defun gascity-run-toggle-control ()
   "Show or hide the control nodes (spec, scope check, finalize) (`C')."

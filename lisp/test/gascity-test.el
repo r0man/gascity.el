@@ -3255,9 +3255,14 @@ it to `bd' as -C — this is what lets a city-level convoy open (gce-bhr)."
 (ert-deftest gascity-test-rig-beads-scopes-default-directory ()
   "`gascity-rig-beads' opens the board with `default-directory' at the store."
   (let (seen-dir)
-    (cl-letf (((symbol-function 'gascity-command-rig-list!)
-               (lambda (&rest _)
-                 '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
+    ;; A cold rig memo: the rig list is read through the store (async,
+    ;; never a synchronous `gc rig list'), then the board opens.
+    (gascity-context-clear-cache)
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (_args callback &rest _)
+                 (funcall callback
+                          '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))])))
+                 nil))
               ((symbol-function 'beads-dashboard)
                (lambda (&rest args)
                  (setq seen-dir (or (plist-get args :directory) default-directory)))))
@@ -3270,10 +3275,21 @@ it to `bd' as -C — this is what lets a city-level convoy open (gce-bhr)."
       (should (equal seen-dir "/r/x/")))))
 
 (ert-deftest gascity-test-rig-beads-unresolved-errors ()
-  "`gascity-rig-beads' errors when the rig's store cannot be resolved."
-  (cl-letf (((symbol-function 'gascity-command-rig-list!)
-             (lambda (&rest _) '((rigs . [])))))
-    (should-error (gascity-rig-beads "ghost") :type 'user-error)))
+  "`gascity-rig-beads' says so, and opens nothing, when the rig's store
+cannot be resolved (the rig list is read asynchronously)."
+  (gascity-context-clear-cache)
+  (let (opened said)
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (_args callback &rest _)
+                 (funcall callback
+                          '((rigs . [])))
+                 nil))
+              ((symbol-function 'beads-dashboard) (lambda (&rest _) (setq opened t)))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (gascity-rig-beads "ghost"))
+    (should-not opened)
+    (should (string-match-p "Could not resolve the bead store for rig ghost" said))))
 
 ;;; gce-3ip — `b' opens the beads board (rig store, or agent worktree)
 
@@ -3333,10 +3349,13 @@ header the rig's store; neither at point is a clean `user-error' (gce-3ip)."
         (gascity-beads-at-point)
         (should (equal seen-dir "/wd/")))))
   ;; Rig header -> the rig's store.
+  (gascity-context-clear-cache)
   (let (seen-dir)
-    (cl-letf (((symbol-function 'gascity-command-rig-list!)
-               (lambda (&rest _)
-                 '((rigs . [((name . "rig") (path . "/rig/store") (prefix . "r"))]))))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (_args callback &rest _)
+                 (funcall callback
+                          '((rigs . [((name . "rig") (path . "/rig/store") (prefix . "r"))])))
+                 nil))
               ((symbol-function 'beads-dashboard)
                (lambda (&rest args)
                  (setq seen-dir (or (plist-get args :directory) default-directory)))))

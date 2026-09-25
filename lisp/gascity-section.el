@@ -763,6 +763,33 @@ the `gascity-rigs-cached' list — no spawn."
                              (gascity-rigs-cached))))
     (gascity-beads--rig-path rig)))
 
+(defun gascity-beads-call-with-rig-store (rig fn)
+  "Call FN with the bead store directory of RIG, never blocking for it.
+RIG is a rig name or a `gascity-rig'.  From the object's own path or
+the rig memo at once; with a cold memo the rig list is read through the
+store (async, D9: no synchronous `gc rig list' on the command loop) and
+FN runs when it arrives, in this buffer's city.  An unknown rig echoes
+and FN is not called."
+  (let ((store (if (gascity-rig-p rig)
+                   (gascity-beads--rig-path rig)
+                 (gascity-beads--rig-store-cached rig))))
+    (if store
+        (funcall fn store)
+      (let ((dir default-directory))
+        (message "Resolving rig %s…" rig)
+        (gascity-store-fetch
+         '("rig" "list")
+         (lambda (payload)
+           (let ((default-directory dir))
+             (gascity-rigs-remember
+              (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload)))
+             (if-let* ((store (gascity-beads--rig-store-cached rig)))
+                 (funcall fn store)
+               (message "Could not resolve the bead store for rig %s" rig))))
+         (lambda (err)
+           (message "gc rig list: %s"
+                    (car (split-string (format "%s" err) "\n" t)))))))))
+
 (defun gascity-beads--bead-path-cached (id)
   "Return the store directory owning bead ID from the rig memo, or nil.
 Like `gascity-beads--bead-path' — ID's prefix picks the owning rig —
@@ -871,16 +898,14 @@ to the contextual one."
           "Beads for rig: "
           (gascity-rig-names-for-prompt)
           nil nil nil nil (gascity-context-rig-name-cached))))
-  (let ((name (if (stringp rig) rig (gascity-rig-name rig)))
-        (dir (gascity-beads--rig-path rig)))
-    (unless dir
-      (user-error "Could not resolve the bead store for rig %s" (or name "?")))
+  (let ((name (if (stringp rig) rig (gascity-rig-name rig))))
     (unless (fboundp 'beads-dashboard)
       (require 'beads-dashboard nil t))
-    (if (fboundp 'beads-dashboard)
-        (beads-dashboard :directory dir)
+    (unless (fboundp 'beads-dashboard)
       (user-error "Beads.el is not available to show beads for %s"
-                  (or name "?")))))
+                  (or name "?")))
+    (gascity-beads-call-with-rig-store
+     rig (lambda (dir) (beads-dashboard :directory dir)))))
 
 (defun gascity-agent-beads (agent)
   "Open beads.el's board scoped to AGENT's worktree.
