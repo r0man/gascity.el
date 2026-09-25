@@ -2026,6 +2026,15 @@ the window list --- as a buffer-local mode-line segment, so the terminal
 shows one status line instead of two.  Reverted when the buffer is killed.
 @end defvr
 
+@defvr {User Option} gascity-terminal-preload-idle
+Seconds of idle after the first gascity view before the terminal
+backend's library (vterm, eat, term) is loaded ahead of the first
+attach (default 10).  That load is one indivisible step of a few
+hundred milliseconds; it runs only on genuine idle and waits again when
+input is pending, so it never lands while you type.  @code{nil}
+disables it: the first attach then pays the cost.
+@end defvr
+
 @defvr {User Option} gascity-terminal-status-interval
 Seconds between refreshes of that mode-line tmux-status segment (default
 @code{5}; values at or below zero fall back to 5).

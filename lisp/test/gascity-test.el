@@ -3053,6 +3053,38 @@ backend; later views and a loaded backend schedule nothing; batch never."
       (gascity-terminal--schedule-preload)
       (should (= scheduled 0)))))
 
+(ert-deftest gascity-test-terminal-preload-waits-for-idle ()
+  "The preload arms after `gascity-terminal-preload-idle' idle seconds,
+re-arms instead of loading while input is pending, and is off with nil."
+  (let ((gascity-terminal--preload-state nil) (noninteractive nil)
+        (gascity-terminal-backend 'vterm)
+        (gascity-terminal-preload-idle 10)
+        (armed nil) (loaded 0) (pending t))
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (secs _repeat fn &rest _) (push (cons secs fn) armed)))
+              ((symbol-function 'input-pending-p) (lambda (&rest _) pending))
+              ((symbol-function 'gascity-terminal--client-term)
+               (lambda () (cl-incf loaded) "xterm-256color"))
+              ((symbol-function 'featurep) (lambda (&rest _) (> loaded 0))))
+      (gascity-terminal--schedule-preload)
+      (should (equal (mapcar #'car armed) '(10)))
+      ;; Typing: not loaded, re-armed.
+      (funcall (cdr (pop armed)))
+      (should (= loaded 0))
+      (should (= (length armed) 1))
+      ;; Genuine idle: loaded once.
+      (setq pending nil)
+      (funcall (cdr (pop armed)))
+      (should (= loaded 1))
+      (should (null armed))))
+  (let ((gascity-terminal--preload-state nil) (noninteractive nil)
+        (gascity-terminal-preload-idle nil) (armed 0))
+    (cl-letf (((symbol-function 'run-with-idle-timer)
+               (lambda (&rest _) (cl-incf armed)))
+              ((symbol-function 'featurep) (lambda (&rest _) nil)))
+      (gascity-terminal--schedule-preload)
+      (should (= armed 0)))))
+
 (ert-deftest gascity-test-agent-dired-prefers-recorded-work-dir ()
   "A recorded `:work-dir' is used directly, without a tmux pane query."
   (let (opened)

@@ -191,6 +191,17 @@ segment."
   :type 'boolean
   :group 'gascity)
 
+(defcustom gascity-terminal-preload-idle 10
+  "Seconds of idle after the first gascity view before the terminal preload.
+The first attach of a session would otherwise load the terminal
+backend's library (vterm, eat, term …) — 240–380 ms of blocked command
+loop, once.  gascity loads it ahead of time instead, after this many
+seconds without input (and not while input is pending), so the one-off
+cost falls on genuine idle time, never on typing.  Nil disables the
+preload: the first attach then pays it."
+  :type '(choice (number :tag "Seconds") (const :tag "Never" nil))
+  :group 'gascity)
+
 (defcustom gascity-terminal-status-interval 5
   "Seconds between refreshes of the tmux status mode-line segment.
 gascity polls the attached session with `tmux list-windows' /

@@ -936,8 +936,18 @@ from a timer: reports problems in the echo area, never signals."
 ;; The first attach of a session loads the terminal backend's library
 ;; (vterm, eat, term …) while deciding the TERM — ~240 ms of blocked
 ;; command loop on a cold Emacs (docs/qa/2026-09-25-dashboard-v3-terminal-async.md).
-;; The first gascity view to open schedules that load for the next idle
-;; moment instead, once per session.
+;; The first gascity view to open schedules that load ahead of time,
+;; once per session.
+;;
+;; Decision (2026-09-25): a `require' is one indivisible load (vterm is
+;; one file plus its native module), so it cannot be chunked below the
+;; 100 ms budget.  It is accepted as a one-off cost, but only on genuine
+;; idle: after `gascity-terminal-preload-idle' seconds (10) without
+;; input, and re-armed instead of run when input is pending — a user
+;; who is typing never meets it.  Tying it to views that show agents
+;; would couple every view to the terminal for no gain: nearly every
+;; view does.  (A 2 s idle, the first version, landed inside the
+;; comms agent's first-cockpit profile: 240 ms locally, 380 ms remote.)
 
 (defvar gascity-terminal--preload-state nil
   "nil (not scheduled), `scheduled', or `done'.")
@@ -962,14 +972,27 @@ never disturb the user; the attach reports any real problem later."
           (inhibit-message t))
       (ignore-errors (gascity-terminal--client-term)))))
 
+(defun gascity-terminal--preload-when-idle ()
+  "Idle-timer body: preload now, or wait for the next idle if input is pending."
+  (if (input-pending-p)
+      (gascity-terminal--arm-preload)
+    (gascity-terminal-preload-backend)))
+
+(defun gascity-terminal--arm-preload ()
+  "Arm the idle timer of the backend preload."
+  (run-with-idle-timer gascity-terminal-preload-idle nil
+                       #'gascity-terminal--preload-when-idle))
+
 (defun gascity-terminal--schedule-preload (&rest _)
-  "Schedule the one-shot backend preload for the next idle moment.
+  "Schedule the one-shot backend preload for genuine idle time.
 On `gascity-view-created-functions': the first gascity view opened in
-an interactive session schedules it; later views do nothing."
+an interactive session arms it (after `gascity-terminal-preload-idle'
+idle seconds); later views do nothing.  Nil option: never."
   (unless (or gascity-terminal--preload-state noninteractive
+              (not (numberp gascity-terminal-preload-idle))
               (gascity-terminal--backend-loaded-p))
     (setq gascity-terminal--preload-state 'scheduled)
-    (run-with-idle-timer 2 nil #'gascity-terminal-preload-backend)))
+    (gascity-terminal--arm-preload)))
 
 (add-hook 'gascity-view-created-functions #'gascity-terminal--schedule-preload)
 
