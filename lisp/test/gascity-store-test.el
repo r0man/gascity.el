@@ -441,6 +441,88 @@ method: the read's payload lands, the action logs its stderr."
         (should log)
         (kill-buffer log)))))
 
+;;; ssh pipe transport
+
+(ert-deftest gascity-test-store-ssh-command-round-trips-argv ()
+  "The ssh transport's remote command survives one shell evaluation with
+the argv intact (spaces, quotes), runs in the host-local directory with
+the city env and PATH fragment, and the local argv carries BatchMode,
+the ControlMaster options and the TRAMP user/port/host."
+  (let* ((local (make-temp-file "gascity test dir " t))
+         (default-directory (concat "/ssh:alice@example.org#2222:" local "/"))
+         (gascity-remote-ssh-options '("-o" "ControlMaster=auto")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'gascity-remote-path-assignment)
+                   (lambda (&rest _) "PATH=/opt/gc/bin:$PATH")))
+          (let* ((argv (gascity-reader--ssh-command
+                        "printf" '("%s\n" "status" "a b'c" "$HOME")
+                        '(("GC_CITY" . "/home/alice/my city/"))))
+                 (cmd (car (last argv))))
+            (should (equal (car argv) "ssh"))
+            (should (member "BatchMode=yes" argv))
+            (should (member "ControlMaster=auto" argv))
+            (should (cl-some (lambda (o) (string-prefix-p "ControlPath=" o)) argv))
+            (should (equal (cl-subseq argv (- (length argv) 7) (1- (length argv)))
+                           '("-l" "alice" "-p" "2222" "example.org" "--")))
+            (should (string-match-p "GC_CITY=" cmd))
+            (should (string-match-p "PATH=/opt/gc/bin:\\$PATH exec printf" cmd))
+            ;; Evaluate the remote command locally, as the login shell would.
+            (with-temp-buffer
+              (should (eql 0 (call-process "/bin/sh" nil t nil "-c"
+                                           (concat cmd))))
+              (should (equal (split-string (buffer-string) "\n" t)
+                             '("status" "a b'c" "$HOME"))))
+            ;; It runs in the host-local directory.
+            (with-temp-buffer
+              (call-process "/bin/sh" nil t nil "-c"
+                            (car (last (gascity-reader--ssh-command "pwd" nil nil))))
+              (should (equal (string-trim (buffer-string)) local)))))
+      (delete-directory local t))))
+
+(ert-deftest gascity-test-store-ssh-transport-selection ()
+  "ssh-family single-hop cities use the ssh pipe; other methods, multi-hop
+names and `gascity-remote-transport' = tramp keep TRAMP's make-process."
+  (let ((gascity-remote-transport 'ssh))
+    (should (gascity-reader--ssh-pipe-p "/ssh:localhost:/home/roman/bright-lights/"))
+    (should (gascity-reader--ssh-pipe-p "/scp:u@h:/c/"))
+    (should-not (gascity-reader--ssh-pipe-p "/tmp/city/"))
+    (gascity-test-ensure-mock-method)
+    (should-not (gascity-reader--ssh-pipe-p "/mock::/tmp/"))
+    (should-not (gascity-reader--ssh-pipe-p "/ssh:a|ssh:b:/c/")))
+  (let ((gascity-remote-transport 'tramp))
+    (should-not (gascity-reader--ssh-pipe-p "/ssh:localhost:/c/"))))
+
+(ert-deftest gascity-test-store-ssh-read-async-is-a-local-process ()
+  "Over the ssh transport an async read spawns a LOCAL process (no file
+handler, no TRAMP), with no directory probe, and decodes stdout while
+stderr stays separate; a failure reports the remote stderr."
+  (let ((default-directory "/ssh:u@h:/c/")
+        (gascity-reader-city-args-function nil)
+        spawned data err)
+    (cl-letf (((symbol-function 'gascity-reader--bounded-executable)
+               (lambda () "/h/bin/gc"))
+              ((symbol-function 'gascity-remote-path-assignment) #'ignore)
+              ((symbol-function 'gascity-reader--async-dir-probe)
+               (lambda () (error "probe must not run")))
+              ((symbol-function 'gascity-reader--ssh-command)
+               (lambda (_exe args _env)
+                 (setq spawned args)
+                 (list "/bin/sh" "-c"
+                       (if (member "fail" args)
+                           "echo 'gc: boom' >&2; exit 2"
+                         "echo 'warn' >&2; echo '{\"ok\":true}'")))))
+      (let ((p (gascity-reader-read-async '("status") (lambda (d) (setq data d))
+                                          (lambda (m) (setq err m)))))
+        (should (processp p))
+        (should-not (process-get p 'remote-tty))
+        (should (equal (process-get p 'tramp-vector) nil)))
+      (should (gascity-test-store--wait (lambda () data) 5))
+      (should (equal data '((ok . t))))
+      (should (equal spawned '("status" "--json")))
+      (gascity-reader-read-async '("fail") #'ignore (lambda (m) (setq err m)))
+      (should (gascity-test-store--wait (lambda () err) 5))
+      (should (string-match-p "gc: boom" err)))))
+
 ;;; Render guard (R2)
 
 (ert-deftest gascity-test-store-render-guard-fixture ()

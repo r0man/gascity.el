@@ -7607,6 +7607,8 @@ restarts/cancels the buffer's timer to match."
 
 (defconst gascity-test--bright-lights "/ssh:localhost:/home/roman/bright-lights/")
 
+(defvar ga-eyw9--buffer)
+
 (ert-deftest gascity-test-remote-ga-eyw9-acceptance-live ()
   "The ga-eyw9 acceptance flow against the live bright-lights city:
 a dropped TRAMP link costs at most one visible error per episode, and
@@ -7616,7 +7618,12 @@ the view self-heals when the link works again."
          "../../scripts/ga-eyw9-acceptance.el"
          (file-name-directory (locate-library "gascity-test")))
         nil t)
-  (should (zerop (ga-eyw9-run))))
+  (unwind-protect
+      (should (zerop (ga-eyw9-run)))
+    ;; The list's auto-refresh timer must not outlive the test: it would
+    ;; fire remote refreshes inside later tests' event loops.
+    (when (buffer-live-p ga-eyw9--buffer)
+      (kill-buffer ga-eyw9--buffer))))
 
 ;;; env-city targeting for the dolt pack commands (ga-hvob)
 

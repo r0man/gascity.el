@@ -57,6 +57,8 @@
 
 ;; Internal, but the exact predicate TRAMP's own `make-process' dispatch
 ;; consults; `fboundp'-guarded at the call site for older TRAMPs.
+(declare-function tramp-dissect-file-name "tramp" (name &optional nodefault))
+(declare-function tramp-file-name-hop "tramp" (vec))
 (declare-function tramp-direct-async-process-p "tramp" (&rest args))
 
 ;;; City targeting
@@ -606,6 +608,124 @@ environment instead — see `gascity-reader--city-env-pair'."
          (gascity-remote-drain-connection)
          (gascity-reader--read-1 args full-args city-env))))))
 
+;;; ssh pipe transport (dashboard-v3 §8.3 R3/R4, §8.5)
+
+(defcustom gascity-remote-transport 'ssh
+  "How asynchronous gc processes reach a remote city.
+`ssh' (the default): for a single-hop ssh-family TRAMP city
+\(`beads-remote-ssh-methods'), each async read and action runs as a LOCAL
+`ssh -T' pipe process (`beads-remote-ssh-pipe-argv') — starting it never
+blocks Emacs, stdout is byte-exact and stderr separate.  A tramp-sh
+`make-process' instead sets up a remote shell synchronously, ~0.5s of
+frozen main loop per spawn (seconds under contention).  ssh runs with
+BatchMode (it never prompts: key or agent authentication, or a
+ControlMaster, is required) plus `gascity-remote-ssh-options'.
+`tramp': always use TRAMP's `make-process' (other methods always do)."
+  :type '(choice (const :tag "Local ssh pipe" ssh)
+                 (const :tag "TRAMP make-process" tramp))
+  :group 'gascity)
+
+(defcustom gascity-remote-ssh-options
+  '("-o" "ControlMaster=auto" "-o" "ControlPersist=60")
+  "Extra ssh options for the `ssh' transport of `gascity-remote-transport'.
+A `ControlPath' under `temporary-file-directory' is added unless one is
+given here, so concurrent reads share one connection per host instead of
+logging in once each."
+  :type '(repeat string)
+  :group 'gascity)
+
+(defun gascity-reader--ssh-pipe-p (&optional dir)
+  "Return non-nil when async gc for DIR runs over the ssh pipe transport."
+  (let ((dir (or dir default-directory)))
+    (and (eq gascity-remote-transport 'ssh)
+         (file-remote-p dir)
+         (member (file-remote-p dir 'method) beads-remote-ssh-methods)
+         (not (tramp-file-name-hop (tramp-dissect-file-name dir))))))
+
+(defun gascity-reader--ssh-command (executable args city-env)
+  "Return the local ssh argv running EXECUTABLE ARGS in `default-directory'.
+The remote command is one shell string: cd to the host-local
+directory, the CITY-ENV assignments, the PATH fragment of
+`gascity-remote-path-assignment', then exec EXECUTABLE ARGS — each token
+quoted once for the remote login shell (`beads-remote-ssh-pipe-argv').
+`gascity-remote-ssh-options' are spliced in after \"ssh\"."
+  (let* ((prefix (mapconcat
+                  #'identity
+                  (delq nil
+                        (list (concat "cd " (shell-quote-argument
+                                             (file-local-name default-directory))
+                                      " &&")
+                              (and city-env
+                                   (mapconcat
+                                    (lambda (pair)
+                                      (concat (car pair) "="
+                                              (shell-quote-argument (cdr pair))))
+                                    city-env " "))
+                              (gascity-remote-path-assignment)))
+                  " "))
+         (argv (beads-remote-ssh-pipe-argv default-directory
+                                           (cons executable args) prefix))
+         (options (append gascity-remote-ssh-options
+                          (unless (cl-some (lambda (o) (string-prefix-p "ControlPath" o))
+                                           gascity-remote-ssh-options)
+                            (list "-o" (concat "ControlPath="
+                                               (expand-file-name
+                                                "gascity-ssh-%C"
+                                                temporary-file-directory)))))))
+    (append (list (car argv)) options (cdr argv))))
+
+(defun gascity-reader--spawn-ssh (args city-env callback)
+  "Start gc ARGS over the ssh pipe transport; CALLBACK gets the result plist.
+ARGS already carry any city-targeting tokens; CITY-ENV the env-city
+overrides.  CALLBACK receives (:exit-code CODE :stdout OUT :stderr ERR
+:executable EXE) exactly once (CODE nil when ssh could not be
+launched).  The executable and PATH fragment come from the per-host
+cache (first contact: bounded synchronous TRAMP resolution, §8.5).
+The process is local — its sentinel does no TRAMP operation.  Returns
+the process, or nil when none was started."
+  (let* ((executable
+          (condition-case err
+              (gascity-reader--bounded-executable)
+            (gascity-remote-sync-timeout
+             (funcall callback (list :exit-code nil :stdout ""
+                                     :stderr (error-message-string err)
+                                     :executable gascity-executable))
+             nil))))
+    (when executable
+      (let* ((command (gascity-reader--ssh-command executable args city-env))
+             (default-directory temporary-file-directory)
+             (out "") (err "")
+             (stderr-proc (make-pipe-process
+                           :name "gascity-gc-stderr" :noquery t
+                           :filter (lambda (_p chunk) (setq err (concat err chunk))))))
+        (when (fboundp 'gascity--log)
+          (gascity--log 'info "Running over ssh: %s" (mapconcat #'identity command " ")))
+        (condition-case e
+            (make-process
+             :name "gascity-gc" :command command :noquery t
+             :connection-type 'pipe :file-handler nil
+             :stderr stderr-proc
+             :filter (lambda (_p chunk) (setq out (concat out chunk)))
+             :sentinel
+             (lambda (proc _event)
+               (when (memq (process-status proc) '(exit signal))
+                 ;; Drain the stderr pipe (local; bounded).
+                 (let ((n 20))
+                   (while (and (> n 0) (process-live-p stderr-proc)
+                               (accept-process-output stderr-proc 0.01 nil t))
+                     (setq n (1- n))))
+                 (when (process-live-p stderr-proc) (delete-process stderr-proc))
+                 (funcall callback (list :exit-code (process-exit-status proc)
+                                         :stdout out :stderr err
+                                         :executable executable)))))
+          (error
+           (delete-process stderr-proc)
+           (funcall callback (list :exit-code nil :stdout ""
+                                   :stderr (format "Cannot run ssh: %s"
+                                                   (error-message-string e))
+                                   :executable executable))
+           nil))))))
+
 ;;; Asynchronous reader
 
 (defvar gascity-reader-skip-dir-probe nil
@@ -791,6 +911,8 @@ turns it on, at the cost of a fresh ssh per read."
   ;; through to the spawn, whose own failure carries the real reason.  A
   ;; clean negative answer is retried once past a TRAMP cache flush
   ;; before it is believed (`gascity-reader--async-dir-probe').
+  (if (gascity-reader--ssh-pipe-p)
+      (gascity-reader--read-async-ssh args callback errback lines)
   (let ((probe (and (not gascity-reader-skip-dir-probe)
                     (gascity-reader--async-dir-probe))))
     (cond
@@ -915,7 +1037,43 @@ turns it on, at the cost of a fresh ssh per read."
                               executable
                               (error-message-string err)
                               remote 'gascity-executable)))
-          nil))))))))
+          nil)))))))))
+
+(defun gascity-reader--read-async-ssh (args callback errback lines)
+  "The ssh-transport branch of `gascity-reader-read-async'.
+ARGS, CALLBACK, ERRBACK and LINES as there.  No directory probe: a
+missing directory fails the remote `cd' with an error exit instead of
+wedging a TRAMP channel (gce-q84 cannot happen here)."
+  (let* ((targeted (gascity-reader--targeted-args args))
+         (city-env (car targeted))
+         (args (cdr targeted))
+         (full-args (if (or lines (member "--json" args))
+                        args
+                      (append args (list "--json"))))
+         (remote (file-remote-p default-directory)))
+    (gascity-reader--spawn-ssh
+     full-args city-env
+     (lambda (result)
+       (let ((code (plist-get result :exit-code))
+             (stdout (plist-get result :stdout))
+             (stderr (plist-get result :stderr)))
+         (cond
+          ((null code)
+           (when errback (funcall errback stderr)))
+          ((not (eql code 0))
+           (when errback
+             (funcall errback
+                      (gascity-reader--failure-message
+                       (plist-get result :executable) args code stdout
+                       stderr remote))))
+          (t
+           (condition-case perr
+               (funcall callback
+                        (if lines
+                            (gascity-reader--parse-json-lines stdout)
+                          (gascity-reader-parse-json stdout)))
+             (gascity-json-parse-error
+              (when errback (funcall errback (error-message-string perr))))))))))))
 
 ;;; Asynchronous runner (actions)
 
@@ -961,6 +1119,9 @@ direct-async the local login program's own chatter goes to a scratch
 buffer that is discarded.  The sentinel only concatenates and splits
 strings; it does no file operation.  Returns the process, or nil when
 none was started (CALLBACK has then already been called)."
+  (if (gascity-reader--ssh-pipe-p)
+      (let ((targeted (gascity-reader--targeted-args args)))
+        (gascity-reader--spawn-ssh (cdr targeted) (car targeted) callback))
   (with-connection-local-variables
    (let* ((targeted (gascity-reader--targeted-args args))
           (city-env (car targeted))
@@ -1024,7 +1185,7 @@ none was started (CALLBACK has then already been called)."
                                   executable (error-message-string err)
                                   remote 'gascity-executable)
                          :executable executable))
-          nil))))))
+          nil)))))))
 
 (defun gascity-reader--capture-command (executable args delimiter)
   "Return the LOCAL capture-mode argv running EXECUTABLE with ARGS.
