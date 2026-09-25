@@ -358,6 +358,9 @@ ring is capped at `gascity-pulse-store-samples'."
 `●' at zero, never runs gc or touches a remote name, and drops a city
 whose cockpit is killed."
   (let ((gascity-pulse--cities (make-hash-table :test 'equal))
+        ;; The lighter also lists every city with a live stream: start
+        ;; from none, whatever earlier tests left attached.
+        (gascity-live--streams (make-hash-table :test 'equal))
         (global-mode-string nil)
         (ec (generate-new-buffer "*ec-cockpit*"))
         (bl (generate-new-buffer "*bl-cockpit*"))

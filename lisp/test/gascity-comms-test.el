@@ -39,6 +39,16 @@
   "Return fixture NAME decoded as gc JSON."
   (gascity-reader-parse-json (gascity-comms-test--read name)))
 
+(defmacro gascity-comms-test--with-view-buffer (&rest body)
+  "Run BODY in a fresh buffer that is killed afterwards WITH its hooks.
+`with-temp-buffer' inhibits buffer hooks, so a view's
+`gascity-live-detach' (on `kill-buffer-hook') would never run and its
+city would stay in the live stream table for later tests."
+  (declare (indent 0))
+  `(let ((buf (generate-new-buffer " *gascity-comms-test*")))
+     (unwind-protect (with-current-buffer buf ,@body)
+       (when (buffer-live-p buf) (kill-buffer buf)))))
+
 (defmacro gascity-comms-test--with-events (spec &rest body)
   "Run BODY in a fresh Events buffer whose reads are recorded, not run.
 SPEC is (READS): a variable collecting (ARGS CALLBACK ERRBACK FORCE),
@@ -370,7 +380,7 @@ SPEC is (READS ACTIONS), recorded by `gascity-test-with-store-stubs'."
      (gascity-test-with-store-stubs ,(car spec) ,(cadr spec)
       (cl-letf (((symbol-function 'beads-pager-window-page-size)
                  (lambda (&rest _) 10000)))
-       (with-temp-buffer
+       (gascity-comms-test--with-view-buffer
          (gascity-mail-inbox-mode)
          (setq gascity-mail--city "bright-lights")
          (gascity-mail-inbox-refresh)
@@ -401,7 +411,7 @@ SPEC is (READS ACTIONS), recorded by `gascity-test-with-store-stubs'."
     (gascity-test-with-store-stubs _reads _actions
       (cl-letf (((symbol-function 'beads-pager-window-page-size)
                  (lambda (&rest _) 10000)))
-        (with-temp-buffer
+        (gascity-comms-test--with-view-buffer
           (gascity-mail-inbox-mode)
           (let ((payload (gascity-comms-test--json "bright-lights.mail-inbox.json")))
             (gascity-test-with-render-guard
