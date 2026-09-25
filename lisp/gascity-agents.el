@@ -262,6 +262,42 @@ activity — from the rows in hand, no gc call."
              (if errors (gascity-ui-partial-mark (string-join errors "\n")) ""))
      (mapcar (lambda (a) (gascity-agents--entry a now)) shown))))
 
+(defconst gascity-agents--store-reads
+  '((:status ("status"))
+    (:sessions ("session" "list"))
+    (:agents ("agent" "list"))
+    (:work ("bd" "list" :work-stores) gascity-dashboard--read-work))
+  "The store entries behind `gascity-agents--loaders': (KEY ARGS [LOADER]).")
+
+(defvar-local gascity-agents--subs nil
+  "This table's store subscriptions (see `gascity-agents--subscribe').")
+
+(defun gascity-agents--subscribe ()
+  "Repaint this table whenever one of its store entries gets new data.
+Whoever caused the read — the live stream's invalidation, a completed
+action, another view — the rows follow (dashboard-v3 §8.2).  Idempotent."
+  (unless gascity-agents--subs
+    (let ((buf (current-buffer)))
+      (setq gascity-agents--subs
+            (mapcar
+             (lambda (spec)
+               (let ((key (nth 0 spec)))
+                 (gascity-store-subscribe
+                  (nth 1 spec)
+                  (lambda (snapshot)
+                    (when (and (buffer-live-p buf)
+                               (eq (plist-get snapshot :status) 'ready)
+                               (not (plist-get snapshot :pending)))
+                      (with-current-buffer buf
+                        (unless (eq (plist-get gascity-agents--data key)
+                                    (plist-get snapshot :data))
+                          (setq gascity-agents--data
+                                (plist-put gascity-agents--data key
+                                           (plist-get snapshot :data)))
+                          (gascity-agents--render)))))
+                  :loader (nth 2 spec) :buffer buf)))
+             gascity-agents--store-reads)))))
+
 (defun gascity-agents-refresh (&optional cached)
   "Re-read the Agents table's payloads; the old rows stay until they land.
 With CACHED (opening the view), fresh store entries answer at once."
@@ -362,8 +398,10 @@ the §5.3 agent keys act on the row at point.
   ;; `x' resets to every state, not to nothing shown.
   (setq-local gascity-filter-reset-function
               (lambda () (setq gascity-agents--filter nil) (gascity-agents--render)))
-  ;; The city's live event stream re-reads what this table shows (§8.2).
-  (gascity-tabulated-attach-live))
+  ;; The city's live event stream re-reads what this table shows (§8.2);
+  ;; the store subscriptions repaint it.
+  (gascity-tabulated-attach-live)
+  (gascity-agents--subscribe))
 
 (defun gascity-agents--city (dir)
   "Return the city name for the buffer names of a view opened in DIR."

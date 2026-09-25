@@ -1103,6 +1103,16 @@ of entries matched."
   (let ((kinds (gascity-store-event-kinds (if (listp type) type (list type)))))
     (if kinds (gascity-store-invalidate :dir dir :kind kinds) 0)))
 
+(defcustom gascity-store-action-followups '(5 15 45 90 180)
+  "Seconds after a completed action at which its kinds are invalidated again.
+gc does not report the transitions an action sets off (a suspended
+session going to sleep, a woken one becoming active: no session.*
+event on gc 1.4.2), so the views re-read what the action touched a few
+times; only visible views actually re-read (`gascity-store-invalidate'),
+and dedup joins overlapping reads.  Nil disables the follow-ups."
+  :type '(repeat number)
+  :group 'gascity)
+
 (defun gascity-store--invalidate-for-action (args dir)
   "Invalidate what a completed action with gc ARGS in DIR touched.
 Always, live stream or not (§8.5 \"Refresh\"): not every verb emits
@@ -1191,7 +1201,12 @@ DIR defaults to `default-directory'.  Pure; views render `…' on it."
                            (gascity-json-parse-error stdout))
                        stdout)))
         (when (gascity-store--job-invalidate job)
-          (gascity-store--invalidate-for-action args dir))
+          (gascity-store--invalidate-for-action args dir)
+          ;; The reconciler finishes what the action started later
+          ;; (a woken session becomes active seconds to a minute on),
+          ;; and gc emits no event for those transitions: look again.
+          (dolist (delay gascity-store-action-followups)
+            (run-at-time delay nil #'gascity-store--invalidate-for-action args dir)))
         (if (gascity-store--job-on-success job)
             (gascity-store--safe-call (gascity-store--job-on-success job) payload)
           (when (gascity-store--job-echo job)

@@ -122,5 +122,25 @@ TRAMP I/O (render guard, reader stubbed to fail)."
           (should (string-prefix-p " GC[" s)))
         (should (null gascity-test-render-guard-violations))))))
 
+(ert-deftest gascity-test-integrate-agents-table-follows-the-store ()
+  "The Agents table repaints when its `gc session list' entry is re-read
+by anyone else (a live invalidation, an action, another view)."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((default-directory "/tmp/city/")
+          (rendered 0))
+      (cl-letf (((symbol-function 'gascity-tabulated-attach-live) #'ignore))
+        (with-temp-buffer
+          (setq default-directory "/tmp/city/")
+          (gascity-agents-mode)
+          (cl-letf (((symbol-function 'gascity-agents--render)
+                     (lambda () (cl-incf rendered))))
+            (gascity-store-fetch '("session" "list") #'ignore nil :force t)
+            (funcall (nth 1 (assoc '("session" "list") reads))
+                     '((sessions . [((agent_name . "mayor") (state . "suspended"))])))
+            (should (= rendered 1))
+            (should (equal (plist-get gascity-agents--data :sessions)
+                           '((sessions . [((agent_name . "mayor")
+                                           (state . "suspended"))]))))))))))
+
 (provide 'gascity-integrate-test)
 ;;; gascity-integrate-test.el ends here
