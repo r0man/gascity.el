@@ -1106,12 +1106,13 @@ of entries matched."
 (defun gascity-store--invalidate-for-action (args dir)
   "Invalidate what a completed action with gc ARGS in DIR touched.
 Always, live stream or not (§8.5 \"Refresh\"): not every verb emits
-an event (`gc session nudge' does not), so waiting for the stream
-left views stale (QA A1).  Only the event log itself is left to a
-running stream, which keeps it current."
+an event (`gc session nudge', `suspend' and `wake' do not), so waiting
+for the stream left views stale (QA A1).  One batch invalidation for
+all the prefixes the action's route names.  Only the event log itself
+is left to a running stream, which keeps it current."
   (let ((prefixes (alist-get (gascity-store-kind args) gascity-store-action-routes)))
-    (dolist (p prefixes)
-      (gascity-store-invalidate-event p dir))
+    (when prefixes
+      (gascity-store-invalidate-event prefixes dir))
     (unless (and gascity-store-live-p-function
                  (funcall gascity-store-live-p-function dir))
       (gascity-store-invalidate :dir dir :kind 'events))))
