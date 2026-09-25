@@ -415,5 +415,15 @@ rig.  Answers are cached per directory; clear with
                      (gascity-error nil))
                    gascity-context--rig-cache)))))
 
+(defun gascity-context-rig-name-cached (&optional dir)
+  "Return the contextual rig name for DIR from memory only, or nil.
+Honours `gascity-context-rig', else the memo of an earlier
+`gascity-context-rig-name' answer; never spawns gc — the default for
+completion prompts (dashboard-v3 §8.5)."
+  (or gascity-context-rig
+      (let ((cached (gethash (expand-file-name (or dir default-directory))
+                             gascity-context--rig-cache 'miss)))
+        (and (not (eq cached 'miss)) cached))))
+
 (provide 'gascity-context)
 ;;; gascity-context.el ends here

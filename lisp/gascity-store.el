@@ -316,6 +316,16 @@ it to skip a tick while the previous refresh is still loading."
              gascity-store--entries)
     pending))
 
+(defun gascity-store-peek (args &optional dir)
+  "Return the last good payload of ARGS in DIR, refreshing it in the background.
+For completion candidates and other input-gathering paths (§8.5): the
+answer is whatever the store holds — possibly stale, nil when cold —
+and a read is scheduled when the entry is not fresh, so the next prompt
+sees current data.  Never blocks.  DIR defaults to `default-directory'."
+  (let ((entry (gascity-store--entry (gascity-store--dir dir) args)))
+    (gascity-store--request entry :buffer (current-buffer))
+    (gascity-store-entry-data entry)))
+
 (defun gascity-store-get (args &optional dir)
   "Return the snapshot of ARGS read in DIR, or nil when never requested.
 Never spawns anything; DIR defaults to `default-directory'."

@@ -573,6 +573,28 @@ subscriber re-renders are pure."
                 (should (null gascity-test-render-guard-violations)))
             (when (get-buffer "*store-guard*") (kill-buffer "*store-guard*"))))))))
 
+(ert-deftest gascity-test-store-prompts-never-block ()
+  "Completion candidates come from memory and refresh in the background:
+a cold prompt offers nothing (free entry), the next one the fresh list;
+nothing runs gc synchronously (§8.5, QA F4)."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((default-directory "/tmp/city/"))
+      (cl-letf (((symbol-function 'gascity-reader-run)
+                 (lambda (&rest _) (error "sync gc")))
+                ((symbol-function 'gascity-context-rig-name)
+                 (lambda (&rest _) (error "sync rig status"))))
+        (should (null (gascity-action--session-names)))
+        (should (member '("session" "list") (mapcar #'car reads)))
+        (funcall (nth 1 (assoc '("session" "list") reads))
+                 '((sessions . [((agent_name . "mayor"))])))
+        (should (equal (gascity-action--session-names) '("mayor")))
+        (clrhash gascity-context--rigs-cache)
+        (should (null (gascity-action--rig-names)))
+        (funcall (nth 1 (assoc '("rig" "list") reads))
+                 '((rigs . [((name . "alpha") (path . "/r/a") (prefix . "al"))])))
+        (should (equal (gascity-action--rig-names) '("alpha")))
+        (should (null (gascity-context-rig-name-cached "/nowhere/")))))))
+
 ;;; D9 non-blocking guard
 
 (defconst gascity-test-store--sync-exempt

@@ -393,12 +393,10 @@ rig path is host-qualified first, so a remote rig logs on its host."
 Prompts for the rig when called interactively, defaulting to the
 contextual rig."
   (interactive
-   (list (completing-read "Rig: "
-                          (condition-case nil
-                              (delq nil (mapcar (lambda (r) (alist-get 'name r))
-                                                (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))
-                            (gascity-error nil))
-                          nil nil nil nil (gascity-context-rig-name))))
+   ;; Candidates and default from memory only (§8.5: a prompt never
+   ;; runs gc synchronously); the rig list refreshes in the background.
+   (list (completing-read "Rig: " (gascity-rig-names-for-prompt)
+                          nil nil nil nil (gascity-context-rig-name-cached))))
   (let ((buf (gascity-view-get-buffer-create
               (gascity-rig-dashboard--buffer-name rig-name))))
     (with-current-buffer buf

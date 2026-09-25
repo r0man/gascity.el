@@ -35,6 +35,7 @@
 (require 'gascity-domain)        ; typed rig/agent objects + at-point generic
 (require 'gascity-remote)        ; host-local path localization (remote cities)
 (require 'gascity-types)         ; gascity-command-rig-list! (rig-store lookup)
+(require 'gascity-store)         ; background rig-list refresh for prompts
 (require 'gascity-terminal)
 
 ;; Bead UI is delegated to beads.el (DESIGN.md §4.3).  Its entry points
@@ -678,6 +679,23 @@ answer from it afterwards."
    (gascity-domain-decode-list 'gascity-rig
                                (alist-get 'rigs (gascity-command-rig-list!)))))
 
+(defun gascity-rig-names-for-prompt ()
+  "Return the city's rig names for a completion prompt, never blocking.
+Answers from the rig memo (`gascity-rigs-cached'); the store's
+`gc rig list' entry is refreshed in the background (fresh entries answer
+at once and update the memo first), so a cold memo offers no candidates
+this time — free entry still works — and fills in for the next prompt
+\(dashboard-v3 §8.5)."
+  (let ((dir default-directory))
+    (gascity-store-fetch
+     '("rig" "list")
+     (lambda (payload)
+       (gascity-rigs-remember
+        (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload))
+        dir))
+     #'ignore)
+    (delq nil (mapcar #'gascity-rig-name (gascity-rigs-cached dir)))))
+
 (defun gascity-beads--rig-path (rig)
   "Return the absolute store directory for RIG, or nil.
 RIG is a rig name (string) or a `gascity-rig'.  The store directory is the
@@ -686,9 +704,11 @@ for a remote city so beads.el resolves the store on the city's host.  A
 name is resolved against `gascity-rigs'; any failure degrades to nil."
   (let ((rig (cond ((gascity-rig-p rig) rig)
                    ((stringp rig)
-                    (ignore-errors
-                      (seq-find (lambda (r) (equal (gascity-rig-name r) rig))
-                                (gascity-rigs)))))))
+                    (or (seq-find (lambda (r) (equal (gascity-rig-name r) rig))
+                                  (gascity-rigs-cached))
+                        (ignore-errors
+                          (seq-find (lambda (r) (equal (gascity-rig-name r) rig))
+                                    (gascity-rigs))))))))
     (when-let* ((path (and rig (gascity-rig-path rig)))
                 ((stringp path))
                 ((not (string-empty-p path))))
@@ -834,10 +854,8 @@ to the contextual one."
   (interactive
    (list (completing-read
           "Beads for rig: "
-          (condition-case nil
-              (delq nil (mapcar #'gascity-rig-name (gascity-rigs)))
-            (gascity-error nil))
-          nil nil nil nil (gascity-context-rig-name))))
+          (gascity-rig-names-for-prompt)
+          nil nil nil nil (gascity-context-rig-name-cached))))
   (let ((name (if (stringp rig) rig (gascity-rig-name rig)))
         (dir (gascity-beads--rig-path rig)))
     (unless dir

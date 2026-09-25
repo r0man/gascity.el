@@ -241,28 +241,27 @@ cold memo falls back to the `gc rig list' read of
   (yes-or-no-p (apply #'format format-string args)))
 
 (defun gascity-action--rig-names ()
-  "Return the city's rig names, or nil when `gc' is unreachable."
-  (condition-case nil
-      (delq nil (mapcar (lambda (r) (alist-get 'name r))
-                        (append (alist-get 'rigs (gascity-command-rig-list!)) nil)))
-    (gascity-error nil)))
+  "Return the city's rig names for completion, never blocking (§8.5)."
+  (gascity-rig-names-for-prompt))
 
 (defun gascity-action--session-names ()
-  "Return the city's session aliases (qualified agent names) or nil.
-Prefers `agent_name' (always qualified) over the volatile `name'."
-  (condition-case nil
-      (delq nil (mapcar (lambda (s) (or (alist-get 'agent_name s)
-                                        (alist-get 'name s)))
-                        (append (alist-get 'sessions (gascity-command-session-list!)) nil)))
-    (gascity-error nil)))
+  "Return the city's session aliases (qualified agent names) for completion.
+Prefers `agent_name' (always qualified) over the volatile `name'.  From
+the store's last `gc session list' payload, refreshed in the
+background (`gascity-store-peek'); nil when cold — free entry works."
+  (delq nil (mapcar (lambda (s) (or (alist-get 'agent_name s)
+                                    (alist-get 'name s)))
+                    (append (alist-get 'sessions
+                                       (gascity-store-peek '("session" "list")))
+                            nil))))
 
 (defun gascity-action--order-names ()
-  "Return the city's order names, or nil when `gc' is unreachable."
-  (condition-case nil
-      (delq nil (mapcar (lambda (o) (or (alist-get 'name o)
-                                        (alist-get 'scoped_name o)))
-                        (append (alist-get 'orders (gascity-command-order-list!)) nil)))
-    (gascity-error nil)))
+  "Return the city's order names for completion, from the store (§8.5)."
+  (delq nil (mapcar (lambda (o) (or (alist-get 'name o)
+                                    (alist-get 'scoped_name o)))
+                    (append (alist-get 'orders
+                                       (gascity-store-peek '("order" "list")))
+                            nil))))
 
 (defun gascity-action--agent-at-point-name ()
   "Return the qualified name of the session/agent at point, or nil."
@@ -272,7 +271,7 @@ Prefers `agent_name' (always qualified) over the volatile `name'."
 (defun gascity-action--read-rig (prompt)
   "Read a rig name with PROMPT, defaulting to the contextual rig."
   (completing-read prompt (gascity-action--rig-names) nil nil nil nil
-                   (gascity-context-rig-name)))
+                   (gascity-context-rig-name-cached)))
 
 (defun gascity-action--read-session (prompt)
   "Read a session alias with PROMPT, defaulting to the session at point."
