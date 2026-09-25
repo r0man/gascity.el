@@ -437,5 +437,36 @@ workdir, hooked bead, created — not the row's columns again (QA #9)."
       (should (seq-find (lambda (l) (string-match-p "^provider pi" l)) lines))
       (should-not (seq-find (lambda (l) (string-match-p "●" l)) lines)))))
 
+(ert-deftest gascity-test-rig-ready-capped-and-noise-hidden ()
+  "The rig dashboard's bead sections follow the cockpit rules: noise
+hidden with a named tally, at most five rows, a `… N more' line whose
+RET opens the rig's beads (QA re-check)."
+  (let* ((beads (vconcat
+                 (cl-loop for i below 8 collect
+                          `((id . ,(format "be-%02d" i)) (status . "open")
+                            (issue_type . "task") (priority . 2)
+                            (title . ,(format "task %d" i))))
+                 (list '((id . "be-c1") (issue_type . "convoy") (status . "open"))
+                       '((id . "be-c2") (issue_type . "convoy") (status . "open"))
+                       '((id . "be-s1") (issue_type . "session") (status . "open")))))
+         (text (gascity-test--vnode-text
+                (gascity-rig--beads-section "Ready" (list :state 'ready :data beads)))))
+    (should (string-match-p "^Ready  8  (2 convoy · 1 session hidden)" text))
+    (should (= 5 (let ((n 0) (start 0))
+                   (while (string-match "task [0-9]" text start)
+                     (setq n (1+ n) start (match-end 0)))
+                   n)))
+    (should (string-match-p "… 3 more +b beads" text))
+    (should-not (string-match-p "be-c1\\|be-s1" text)))
+  ;; RET on the more line opens the rig's beads.
+  (with-temp-buffer
+    (insert (propertize "  … 3 more" 'gascity-rig-more t))
+    (goto-char (point-min))
+    (let (opened)
+      (cl-letf (((symbol-function 'gascity-rig-dashboard-beads)
+                 (lambda () (setq opened t))))
+        (gascity-rig-dashboard-activate))
+      (should opened))))
+
 (provide 'gascity-agents-test)
 ;;; gascity-agents-test.el ends here

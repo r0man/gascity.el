@@ -299,6 +299,17 @@ gets the two spaces."
     (seq-find (lambda (line) (not (string-empty-p line)))
               (mapcar #'string-trim (split-string text "\n")))))
 
+(defun gascity-ui-hidden-label (counts)
+  "Return the dim `(N hidden)' tally for COUNTS, an alist (CATEGORY . N).
+Names each category, e.g. `(71 nudge · 2 session hidden)'; nil when
+nothing is hidden (D4: never hide silently)."
+  (let ((parts (delq nil (mapcar (lambda (c) (and (> (cdr c) 0)
+                                                  (format "%d %s" (cdr c) (car c))))
+                                 counts))))
+    (when parts
+      (propertize (format "(%s hidden)" (string-join parts " · "))
+                  'face 'gascity-dim))))
+
 ;;; Section states (§6.1)
 
 (defun gascity-ui-section-header (title summary &rest props)

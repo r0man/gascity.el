@@ -190,16 +190,8 @@ A plist (:collapsed :drawers :expanded) of the root component.")
   (let ((meta (alist-get 'metadata bead)))
     (and (listp meta) meta)))
 
-(defun gascity-dashboard--hidden-label (counts)
-  "Return the dim `(N hidden)' tally for COUNTS, an alist (CATEGORY . N).
-Names each category, e.g. `(71 nudge · 2 session hidden)'; nil when
-nothing is hidden."
-  (let ((parts (cl-loop for (cat . n) in counts
-                        when (> n 0)
-                        collect (format "%d %s" n cat))))
-    (when parts
-      (propertize (format "(%s hidden)" (string-join parts " · "))
-                  'face 'gascity-dim))))
+(defalias 'gascity-dashboard--hidden-label #'gascity-ui-hidden-label
+  "The `(N hidden)' tally (shared with the rig dashboard).")
 
 ;;; Sessions and agents
 

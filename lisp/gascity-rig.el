@@ -46,6 +46,7 @@
 (require 'gascity-types)             ; gascity-command-rig-list! (rig-name completion)
 (require 'gascity-section)
 (require 'gascity-ui)
+(require 'gascity-event)                ; noise classes
 (require 'gascity-tabulated)         ; shared cell formatters (--str, --vector->list)
 (require 'gascity-status)            ; session-map + agent join helpers
 
@@ -177,13 +178,47 @@ SESSION-MAP and SOCKET join each row to its live session."
                       " " (gascity-ui-time (alist-get 'updated_at bead)))
               'gascity-bead id)))
 
+(defun gascity-rig--beads-model (data)
+  "Return (SHOWN . HIDDEN) for a `gc bd …' payload DATA.
+SHOWN is the work beads; HIDDEN counts the noise left out per category
+\(`gascity-event-noise': sessions, convoys, wisps, nudges, order churn,
+messages), as the cockpit's Work does (D4)."
+  (let (shown hidden)
+    (dolist (b (gascity-section-beads data))
+      (let ((noise (gascity-event-noise b)))
+        (if noise
+            (setf (alist-get noise hidden) (1+ (alist-get noise hidden 0)))
+          (push b shown))))
+    (cons (nreverse shown) (nreverse hidden))))
+
+(defun gascity-rig--more-row (n title)
+  "Return the `… N more' row of section TITLE; RET opens the rig's beads."
+  (vui-text (gascity-ui-right-align
+             (propertize (format "  … %d more" n) 'face 'gascity-dim)
+             (propertize "b beads" 'face 'gascity-dim) 78)
+            'gascity-rig-more t
+            'beads-thing (list :kind 'more :id (concat "more:" title))))
+
 (defun gascity-rig--beads-section (title load)
   "Return the beads section TITLE for LOAD, a `gascity-ui-effective-load'.
-The load's data is the raw `gc bd …' payload."
-  (gascity-ui-section (downcase title) title load nil
-                      (lambda (data) (mapcar #'gascity-rig--bead-row
-                                             (gascity-section-beads data)))
-                      (lambda (data) (length (gascity-section-beads data)))))
+The load's data is the raw `gc bd …' payload.  Noise is hidden with a
+`(N hidden)' tally, and at most `gascity-dashboard-section-rows' rows
+show; a `… N more' line opens the rig's beads in beads.el (§4.2)."
+  (let ((max (or (bound-and-true-p gascity-dashboard-section-rows) 5)))
+    (gascity-ui-section
+     (downcase title) title load nil
+     (lambda (data)
+       (let ((shown (car (gascity-rig--beads-model data))))
+         (append (mapcar #'gascity-rig--bead-row (seq-take shown max))
+                 (and (> (length shown) max)
+                      (list (gascity-rig--more-row (- (length shown) max) title))))))
+     (lambda (data)
+       (let* ((model (gascity-rig--beads-model data))
+              (n (length (car model)))
+              (hidden (gascity-ui-hidden-label (cdr model))))
+         (cond ((and (zerop n) (null hidden)) 0)
+               (hidden (format "%s  %s" (if (zerop n) "none" n) hidden))
+               (t n)))))))
 
 (defun gascity-rig--orders-vnode (rig-name load)
   "Return the Orders section for RIG-NAME from the `gc order list' LOAD."
@@ -282,6 +317,7 @@ is nothing to open."
   (interactive)
   (let ((obj (gascity-object-at-point)))
     (cond
+     ((get-text-property (point) 'gascity-rig-more) (gascity-rig-dashboard-beads))
      (obj (gascity-at-point-visit obj))
      ((widget-at (point)) (widget-button-press (point)))
      (t (user-error "Nothing to open here")))))
