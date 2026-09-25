@@ -52,6 +52,7 @@ wisps), mayor inbox 0.
 - Sent 2 test messages to mayor (`bl-wisp-tasrqg`, `bl-wisp-9yhi48`) →
   archived both (`gc mail archive`); mayor inbox 0 again.
 - Replied once (`bl-wisp-29sxgr`, to human) → archived from the UI.
+- Live check: sent `bl-wisp-2s1sm4` to human from a shell → archived.
 - Mark read/unread round trips on the 4 human messages → all unread.
 - **gc sweep race:** 21 s after `bl-wisp-a7gsqc` had been marked unread
   again, gc's mail sweeper closed it (`close_reason: mail gc-swept: read
@@ -60,11 +61,16 @@ wisps), mayor inbox 0.
   reopen`; metadata `mail.read: false`; still open minutes later.
   Final state: 4 unread / 4, mayor 0 — as before the pass.
 
+## Live stream (after rebasing onto main with `gascity-live`)
+
+Local bright-lights, header `● live` in both views: the Events view
+went from 1572 to 1576 events with no `g` as order churn arrived, and
+a `gc mail send human …` from a shell showed up within ~8 s as a
+`mail.sent` row in Events and as a new unread row (`5 unread / 5`) in
+the inbox.  The message was archived afterwards (4/4 again).
+
 ## Not covered live
 
-- Live append (`gascity-events--append`): `gascity-live` is not on main
-  yet; covered by ERT (debounce, seq dedup, type filter, merge after an
-  in-flight read).
 - `Send mail to:` prompt takes ~3 s to appear remotely: its completion
   table (`gascity-action--session-names`) is a synchronous `gc session
   list`, input-gathering code that predates this branch.
