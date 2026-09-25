@@ -554,9 +554,9 @@ active step's live worker; loops fold."
       (should (string-match-p "^Steps  1/10 +C show control nodes$" text))
       (should (string-match-p "^  ◆ prepare +be-5aht +pass +run-operator" text))
       (should (string-match-p
-               "^  ⬣ requirements +be-bcb5 +iter 1 +● requirements-planner-1 +3m$" text))
+               "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1 +3m$" text))
       ;; Quiet loops start folded.
-      (should (string-match-p "^  ▸ review +be-mqhp +loop" text))
+      (should (string-match-p "^  ▸ review +be-mqhp +· loop" text))
       (should-not (string-match-p "setup-build-basic-review" text)))
     ;; SPC on a fold row expands it in place; state survives a refresh.
     (goto-char (point-min))
@@ -571,6 +571,8 @@ active step's live worker; loops fold."
     (re-search-forward "^  ⬣ requirements")
     (gascity-thing-toggle)
     (should (string-match-p "│ ref      requirements.iteration.1" (buffer-string)))
+    (should (string-match-p "│ iteration be-bcb5 (attempt 1) of step be-fy7m"
+                            (buffer-string)))
     ;; C shows the control nodes.
     (gascity-run-toggle-control)
     (should (string-match-p "C hide control nodes" (buffer-string)))
@@ -620,8 +622,43 @@ the city's host; `b' opens the root; `i' reaches the live assignee."
     (let ((text (buffer-string)))
       (should (string-match-p "^✕ be-bn2  build-basic  fail" text))
       (should (string-match-p "^Steps  9/10" text))
-      (should (string-match-p "^  ▾ review +be-fkq +loop" text))
-      (should (string-match-p "^    ▾ build-basic-review-loop +be-1bn +loop" text)))))
+      (should (string-match-p "^  ▾ review +be-fkq +✕ loop" text))
+      (should (string-match-p "^    ▾ build-basic-review-loop +be-1bn +✕ loop" text)))))
+
+(ert-deftest gascity-test-run-detail-agrees-with-ladder ()
+  "The detail's top-level steps carry the ladder's state and ids: be-bn2's
+review is ✕ in both (its nested loop failed), and every row id is the
+step id the ladder drawer shows.  Acceptance item 7."
+  (let* ((index (gascity-runs-test--index (gascity-runs-test--fixture-beads)))
+         (root (seq-find (lambda (r) (equal (alist-get 'id r) "be-bn2"))
+                         (plist-get index :roots)))
+         (graph (gascity-runs-graph index "be-bn2"))
+         (ladder (gascity-runs-ladder index root))
+         (tree (gascity-run-annotate (gascity-run-tree root graph) root graph ladder)))
+    (should (equal (mapcar (lambda (n) (alist-get 'id (plist-get n :bead))) tree)
+                   (mapcar (lambda (s) (plist-get s :id)) ladder)))
+    (should (equal (mapcar (lambda (n) (plist-get n :state)) tree)
+                   (mapcar (lambda (s) (plist-get s :state)) ladder)))
+    ;; The nested loop that failed, and the step above it, are ✕.
+    (let* ((review (seq-find (lambda (n) (equal (plist-get n :name) "review")) tree))
+           (loop (seq-find (lambda (n) (equal (plist-get n :name)
+                                              "build-basic-review-loop"))
+                           (plist-get review :children))))
+      (should (eq (plist-get review :state) 'failed))
+      (should (eq (plist-get loop :state) 'failed))))
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (let ((text (buffer-string)))
+      ;; Rows name the step ids of the ladder drawer (be-yam, not be-59r).
+      (should (string-match-p "^  ◆ requirements +be-yam +iter 1" text))
+      (should (string-match-p "^  ▾ review +be-fkq +✕ loop" text))
+      (should (string-match-p "^    ▾ build-basic-review-loop +be-1bn +✕ loop" text))
+      (should-not (string-match-p "be-59r" text)))
+    ;; The iteration id is in the drawer.
+    (goto-char (point-min))
+    (re-search-forward "^  ◆ requirements")
+    (gascity-thing-toggle)
+    (should (string-match-p "│ iteration be-59r (attempt 1) of step be-yam"
+                            (buffer-string)))))
 
 (ert-deftest gascity-test-run-detail-not-found ()
   "A run id in no store renders a not-found line, never a blank pane."

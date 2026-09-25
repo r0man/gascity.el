@@ -459,6 +459,23 @@ on one path tree (`review', `review.iteration.1').  Nil without a ref."
              (substring ref (1+ (length formula)))
            ref))))
 
+(defun gascity-dashboard--failed-paths (root graph)
+  "Return the step paths of GRAPH's failed beads when run ROOT failed.
+Nil for a run that did not fail (a retried loop in a passing run keeps
+its step done).  The ladder and the run detail both read it."
+  (let ((formula (alist-get 'gc.formula_name (gascity-dashboard--meta root))))
+    (and (equal (alist-get 'gc.outcome (gascity-dashboard--meta root)) "fail")
+         (delq nil (mapcar (lambda (b)
+                             (and (equal (alist-get 'gc.outcome
+                                                    (gascity-dashboard--meta b))
+                                         "fail")
+                                  (gascity-dashboard--step-path b formula)))
+                           graph)))))
+
+(defun gascity-dashboard--failed-beneath-p (path failed-paths)
+  "Return non-nil when a path in FAILED-PATHS lies beneath step PATH."
+  (seq-some (lambda (p) (string-prefix-p (concat path ".") p)) failed-paths))
+
 (defun gascity-dashboard--ladder (root graph)
   "Return the step ladder of run ROOT from its GRAPH beads.
 GRAPH is every bead anchored to ROOT (`gc.root_bead_id'), any status.
@@ -469,15 +486,7 @@ latest iteration bead's (`gc.logical_bead_id' → step, max
 fail) a closed step with a failed bead beneath it (a nested loop that
 failed) is the failed step."
   (let* ((formula (alist-get 'gc.formula_name (gascity-dashboard--meta root)))
-         (failed-paths
-          (and (equal (alist-get 'gc.outcome (gascity-dashboard--meta root)) "fail")
-               (delq nil (mapcar (lambda (b)
-                                   (and (equal (alist-get
-                                                'gc.outcome
-                                                (gascity-dashboard--meta b))
-                                               "fail")
-                                        (gascity-dashboard--step-path b formula)))
-                                 graph))))
+         (failed-paths (gascity-dashboard--failed-paths root graph))
          (steps (seq-filter (lambda (b)
                               (gascity-dashboard--top-level-step-p b formula))
                             graph))
@@ -503,8 +512,7 @@ failed) is the failed step."
                                                  (gascity-dashboard--meta step))
                                       (1+ (length formula)))))
                 (when (and (eq state 'done)
-                           (seq-some (lambda (p) (string-prefix-p (concat name ".") p))
-                                     failed-paths))
+                           (gascity-dashboard--failed-beneath-p name failed-paths))
                   (setq state 'failed))
                 (list :name name :id id :state state)))
             (sort steps (lambda (a b)

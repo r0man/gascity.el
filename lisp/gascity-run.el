@@ -171,13 +171,41 @@ NODE's children must all be leaf iterations; otherwise nil."
                           (lambda (a b) (< (gascity-run--attempt (plist-get a :bead))
                                            (gascity-run--attempt (plist-get b :bead))))))))))
 
-(defun gascity-run--node-state (node)
-  "Return NODE's state: its latest iteration's while it runs, else its own."
+(defun gascity-run--derived-state (node)
+  "Return NODE's own state: its latest iteration's while it runs, else its own."
   (let* ((own (gascity-dashboard--bead-state (plist-get node :bead)))
          (iter (gascity-run--latest-iteration node)))
     (if (and iter (not (eq own 'done)))
         (gascity-dashboard--bead-state (plist-get iter :bead))
       own)))
+
+(defun gascity-run--node-state (node)
+  "Return NODE's state: the one `gascity-run-annotate' stamped, else derived."
+  (or (plist-get node :state) (gascity-run--derived-state node)))
+
+(defun gascity-run-annotate (tree root graph ladder)
+  "Stamp every node of TREE with its :state, agreeing with the LADDER.
+A top-level step takes its LADDER state (`gascity-dashboard--ladder',
+the cockpit's and the Runs view's), so the three views never disagree.
+A nested step follows the same rules: its latest iteration while it
+runs, and in a failed run (ROOT `gc.outcome' fail) a closed step with a
+failed bead beneath it in GRAPH is failed.  Returns TREE."
+  (let ((failed-paths (gascity-dashboard--failed-paths root graph))
+        (by-id (make-hash-table :test 'equal)))
+    (dolist (s ladder) (puthash (plist-get s :id) (plist-get s :state) by-id))
+    (cl-labels ((walk (nodes top)
+                  (dolist (n nodes)
+                    (walk (plist-get n :children) nil)
+                    (let* ((id (alist-get 'id (plist-get n :bead)))
+                           (state (gascity-run--derived-state n)))
+                      (when (and (eq state 'done) (plist-get n :path)
+                                 (gascity-dashboard--failed-beneath-p
+                                  (plist-get n :path) failed-paths))
+                        (setq state 'failed))
+                      (plist-put n :state
+                                 (or (and top (gethash id by-id)) state))))))
+      (walk tree t))
+    tree))
 
 (defun gascity-run--busy-p (node)
   "Return non-nil when NODE or anything beneath it is active or failed."
@@ -304,7 +332,7 @@ formulas record `plans/…/review-report.md') is relative to the run's
          (iter (gascity-run--latest-iteration node)))
     (cond (iter (format "iter %d" (gascity-run--attempt (plist-get iter :bead))))
           ((gascity-run--fold-p node)
-           (pcase kind ("ralph" "loop") ("scope" "iteration") ("drain" "drain")
+           (pcase kind ("ralph" "loop") ("scope" "iter") ("drain" "drain")
                   (_ (or kind ""))))
           ((gascity-run--control-p bead) kind)
           ((equal (alist-get 'status bead) "closed")
@@ -312,9 +340,12 @@ formulas record `plans/…/review-report.md') is relative to the run's
           ((equal kind "drain") "drain")
           (t (let ((s (alist-get 'status bead))) (if (equal s "open") "" (or s "")))))))
 
-(defun gascity-run--step-drawer (bead)
-  "Return the drawer lines of step BEAD (all from the payload in hand)."
-  (let ((meta (alist-get 'metadata bead)))
+(defun gascity-run--step-drawer (step &optional iteration)
+  "Return the drawer lines of STEP and its latest ITERATION bead.
+All from the payload in hand; the iteration's status, assignee and
+failure are what the worker is on, so they come from it when present."
+  (let* ((bead (or iteration step))
+         (meta (alist-get 'metadata bead)))
     (delq nil
           (list (string-join
                  (delq nil (list (alist-get 'status bead)
@@ -325,6 +356,11 @@ formulas record `plans/…/review-report.md') is relative to the run's
                                  (and (alist-get 'gc.kind meta)
                                       (concat "kind " (alist-get 'gc.kind meta)))))
                  " · ")
+                (and iteration
+                     (format "iteration %s (attempt %s) of step %s"
+                             (alist-get 'id iteration)
+                             (or (alist-get 'gc.attempt meta) "?")
+                             (alist-get 'id step)))
                 (and (alist-get 'gc.step_ref meta)
                      (concat "ref      " (alist-get 'gc.step_ref meta)))
                 (and (alist-get 'assignee bead)
@@ -338,8 +374,11 @@ formulas record `plans/…/review-report.md') is relative to the run's
   "Return the lines of step NODE at DEPTH (and its children) in CTX."
   (let* ((view (plist-get ctx :view))
          (iter (gascity-run--latest-iteration node))
+         ;; The row names the step (the id the ladder and drawers use);
+         ;; its worker and time are the latest iteration's, whose id is
+         ;; in the row's drawer.
          (shown (if iter (plist-get iter :bead) (plist-get node :bead)))
-         (id (alist-get 'id shown))
+         (id (alist-get 'id (plist-get node :bead)))
          (fold (gascity-run--fold-p node))
          (open (and fold (gascity-run--open-p node view)))
          (state (gascity-run--node-state node))
@@ -366,7 +405,16 @@ formulas record `plans/…/review-report.md') is relative to the run's
                                              ('failed 'failed) (_ 'pending))))
                        " " (gascity-ui-fit (or (plist-get node :name) "") name-width)
                        " " (gascity-ui-fit id 9)
-                       " " (gascity-ui-fit (gascity-run--detail node) 9)))
+                       ;; A fold row's first column is its fold marker,
+                       ;; so its state glyph leads the detail column.
+                       " " (gascity-ui-fit
+                            (if fold
+                                (concat (gascity-ui-glyph
+                                         (pcase state ('done 'done) ('active 'active)
+                                                ('failed 'failed) (_ 'pending)))
+                                        " " (gascity-run--detail node))
+                              (gascity-run--detail node))
+                            9)))
          ;; The worker gets what the row has left before the time.
          (left (if who
                    (let ((mark (if session (concat (gascity-ui-glyph 'ok) " ") "")))
@@ -390,7 +438,9 @@ formulas record `plans/…/review-report.md') is relative to the run's
           (append
            (and (not fold) (gascity-dashboard--drawer-open-p thing-id)
                 (mapcar (lambda (l) (concat (make-string (* 2 depth) ?\s) l))
-                        (gascity-dashboard--drawer (gascity-run--step-drawer shown))))
+                        (gascity-dashboard--drawer
+                         (gascity-run--step-drawer (plist-get node :bead)
+                                                   (and iter (plist-get iter :bead))))))
            (and open
                 (mapcan (lambda (k) (gascity-run--step-lines k (1+ depth) ctx))
                         (plist-get node :children)))))))
@@ -409,7 +459,10 @@ CTX keys: :run-id :now :loads (:beads) :index :sessions :socket :convoy
      (root
       (let* ((run (gascity-runs-summary index root))
              (control (plist-get (plist-get ctx :view) :control))
-             (tree (gascity-run-tree root (gascity-runs-graph index id) control)))
+             (graph (gascity-runs-graph index id))
+             (tree (gascity-run-annotate
+                    (gascity-run-tree root graph control) root graph
+                    (plist-get run :ladder))))
         (append
          (gascity-run--header-lines run root ctx)
          (list "")
