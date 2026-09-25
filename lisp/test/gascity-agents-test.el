@@ -276,20 +276,42 @@ stopped agents take their template's provider from `gc agent list'."
         (kill-buffer buf)))))
 
 (ert-deftest gascity-test-agent-detail-log-argv ()
-  "`f' follows locally with gc, remotely through the reader's ssh pipe (R4)."
+  "`f' follows locally with gc; remotely through a no-pty ssh whose command
+runs gc under the host watcher and keeps stdin open, so killing the
+local follower stops gc on the host (no leaked `session logs -f')."
   (cl-letf (((symbol-function 'gascity-reader--city-args)
              (lambda () '("--city" "/home/u/city")))
             ((symbol-function 'gascity-reader--city-env-overrides) #'ignore))
     (should (equal (gascity-session--log-argv "ec-fl8o" "/tmp/")
                    (list gascity-executable "--city" "/home/u/city"
                          "session" "logs" "ec-fl8o" "-f")))
-    (cl-letf (((symbol-function 'gascity-reader--ssh-pipe-p) (lambda (&rest _) t))
-              ((symbol-function 'gascity-reader--ssh-command)
-               (lambda (exe args env) (list 'ssh default-directory exe args env))))
-      (should (equal (gascity-session--log-argv "ec-fl8o" "/ssh:h:/home/u/city/")
-                     (list 'ssh "/ssh:h:/home/u/city/" gascity-executable
-                           '("--city" "/home/u/city" "session" "logs" "ec-fl8o" "-f")
-                           nil))))))
+    (cl-letf (((symbol-function 'gascity-reader--ssh-pipe-p) (lambda (&rest _) t)))
+      (let* ((argv (gascity-session--log-argv "ec-fl8o" "/ssh:h:/home/u/city/"))
+             (command (car (last argv))))
+        (should (equal (car argv) "ssh"))
+        (should-not (member "-n" argv))
+        (should (string-search (shell-quote-argument gascity-remote-exit-reporter)
+                               command))
+        (should (string-search "session logs ec-fl8o -f" command))
+        (should (string-search "/bin/sh -c" command))))))
+
+(ert-deftest gascity-test-remote-exit-reporter-shared ()
+  "The live stream and the log follower share one host watcher."
+  (should (eq gascity-live--exit-reporter gascity-remote-exit-reporter))
+  ;; The watcher really kills its child at stdin EOF (run locally).
+  (let* ((script gascity-remote-exit-reporter)
+         (proc (make-process :name "watch-test" :connection-type 'pipe
+                             :command (list "/bin/sh" "-c" script "sleep" "30")
+                             :noquery t)))
+    (unwind-protect
+        (progn
+          (process-send-eof proc)
+          (let ((i 0))
+            (while (and (process-live-p proc) (< i 50))
+              (accept-process-output proc 0.1)
+              (setq i (1+ i))))
+          (should-not (process-live-p proc)))
+      (when (process-live-p proc) (delete-process proc)))))
 
 (ert-deftest gascity-test-agent-detail-follow-log-buffer ()
   "`f' opens `*gascity-log: TARGET*' fed by a local pipe process; `q' kills it."

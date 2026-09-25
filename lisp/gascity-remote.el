@@ -380,6 +380,32 @@ TRAMP connection at all.  Nil when the search path is empty."
                      (t (shell-quote-argument entry))))
              beads-remote-search-path ":"))))
 
+(defconst gascity-remote-exit-reporter
+  (concat "exec 3<&0; "
+          "\"$0\" \"$@\" </dev/null & p=$!; "
+          "{ cat >/dev/null; kill $p; } <&3 >/dev/null 2>&1 & w=$!; "
+          "wait $p; s=$?; kill $w 2>/dev/null; "
+          "echo \"gascity-live-exit $s\" >&2")
+  "Host-side sh script running a long-lived gc ($0 and $@) over ssh.
+A watcher kills gc as soon as the session's stdin reaches EOF — the
+local ssh went away: with no pty there is no SIGHUP, and gc would
+otherwise linger on the host until its next write fails.  The script
+also reports gc's exit status as a last \"gascity-live-exit N\" stderr
+line, so a gc that died is told apart from a dropped connection (ssh
+exits 255 without it).  Used by every remote stream: the live event
+stream (`gascity-live') and the agent log follower.")
+
+(cl-defun gascity-remote-ssh-stream-argv (dir executable args &key cd env)
+  "Return the local ssh argv running long-lived EXECUTABLE ARGS on DIR's host.
+The command runs under `gascity-remote-exit-reporter' with the session's
+stdin kept open (no \"-n\"), so killing the local process stops gc on
+the host too; built with `gascity-remote-ssh-pipe-argv' without host
+resolution (no TRAMP round trip).  CD and ENV are passed through."
+  (gascity-remote-ssh-pipe-argv
+   dir
+   (append (list "/bin/sh" "-c" gascity-remote-exit-reporter executable) args)
+   :cd cd :env env :resolve nil :stdin t))
+
 (cl-defun gascity-remote-ssh-pipe-argv (dir argv &key cd env (resolve t) stdin)
   "Return a local no-pty ssh argv running ARGV on the host of DIR.
 The one builder of every process gascity runs on a remote host without

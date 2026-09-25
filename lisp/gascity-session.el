@@ -543,16 +543,19 @@ AGENT is the action object carried by an agent row in any view."
 
 (defun gascity-session--log-argv (target dir)
   "Return the local argv following TARGET's log from a view in DIR.
-Locally gc itself; for a remote DIR the reader's ssh pipe transport
-\(`gascity-reader--ssh-command', §8.3 R4): no TRAMP channel, no round
-trip, `--city' and the env-city overrides as for any read."
+Locally gc itself; for a remote DIR a no-pty ssh pipe under the host
+watcher (`gascity-remote-ssh-stream-argv', §8.3 R4): no TRAMP channel,
+no round trip, and killing the local process stops gc on the host.
+`--city' and the env-city overrides as for any read."
   (let* ((default-directory dir)
          (sub (list "session" "logs" target "-f"))
          (city-env (gascity-reader--city-env-overrides sub))
          (args (if city-env sub (append (gascity-reader--city-args) sub)))
          (executable (with-connection-local-variables gascity-executable)))
     (cond ((gascity-reader--ssh-pipe-p dir)
-           (gascity-reader--ssh-command executable args city-env))
+           ;; The host watcher stops gc when `q' kills the local ssh.
+           (gascity-remote-ssh-stream-argv dir executable args
+                                           :cd t :env city-env))
           ((file-remote-p dir)
            (user-error "Log follow needs an ssh-based remote city"))
           (t (cons executable args)))))

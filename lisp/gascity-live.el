@@ -323,18 +323,8 @@ repaint from the store's own refetch; REFRESH is for the others."
             (list "--after" (number-to-string seq)))
           (list "--city" (file-local-name (gascity-live--stream-root stream)))))
 
-(defconst gascity-live--exit-reporter
-  (concat "exec 3<&0; "
-          "\"$0\" \"$@\" </dev/null & p=$!; "
-          "{ cat >/dev/null; kill $p; } <&3 >/dev/null 2>&1 & w=$!; "
-          "wait $p; s=$?; kill $w 2>/dev/null; "
-          "echo \"gascity-live-exit $s\" >&2")
-  "Host-side sh script running gc ($0 and $@) for a remote stream.
-It reports gc's exit status as a last \"gascity-live-exit N\" stderr
-line, so a gc that died is told apart from a dropped connection (ssh
-exits 255 without it).  A watcher kills gc as soon as the session's
-stdin reaches EOF: with no pty there is no SIGHUP, and a stopped
-stream's gc would otherwise linger until its next write fails.")
+(defconst gascity-live--exit-reporter gascity-remote-exit-reporter
+  "The host-side wrapper of a remote stream (`gascity-remote-exit-reporter').")
 
 (defun gascity-live-command (stream)
   "Return the local argv that runs STREAM's `gc events --follow'.
@@ -347,16 +337,12 @@ from a timer."
     (if (file-remote-p root)
         (let* ((default-directory root)
                (executable (with-connection-local-variables gascity-executable)))
-          (gascity-remote-ssh-pipe-argv
-           root
-           ;; gc runs under a host shell that reports its exit on stderr,
-           ;; so a gc that died (killed, supervisor gone) is told apart
-           ;; from a dropped connection, where ssh exits 255 without it.
-           (append (list "/bin/sh" "-c" gascity-live--exit-reporter executable)
-                   (gascity-live--args stream))
-           :resolve nil
-           ;; No -n: the host watcher kills gc at stdin EOF.
-           :stdin t))
+          ;; gc runs under a host shell that reports its exit on stderr,
+          ;; so a gc that died (killed, supervisor gone) is told apart
+          ;; from a dropped connection, where ssh exits 255 without it;
+          ;; its watcher kills gc when the stream stops (stdin EOF).
+          (gascity-remote-ssh-stream-argv root executable
+                                          (gascity-live--args stream)))
       (cons gascity-executable (gascity-live--args stream)))))
 
 (defun gascity-live--stderr-buffer (stream)
