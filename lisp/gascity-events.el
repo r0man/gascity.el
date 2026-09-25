@@ -504,42 +504,55 @@ fields in the `*gascity-detail*' side window."
      (row (gascity-tabulated-detail-toggle))
      (t (message "Nothing to toggle here")))))
 
-(defun gascity-events--open-agent (name)
-  "Open the detail view of the agent NAME (a qualified agent name)."
-  (gascity-polecat-detail (gascity-agent :name name)))
+(defun gascity-events--open-agent (agent)
+  "Open the agent detail (§7.4) of AGENT, a `gascity-agent'."
+  (gascity-polecat-detail agent))
 
-(defun gascity-events--session-name (event sessions)
-  "Return the qualified agent name of EVENT's session among SESSIONS.
+(defun gascity-events--session-row (event sessions)
+  "Return the `session list' row of EVENT's session among SESSIONS, or nil.
 Joins the event's `session_id' or `subject' (a session id, tmux
-session name, alias or agent name) with a `session list' row."
+session name, alias or agent name) with the row's id, tmux name,
+alias or qualified agent name."
   (let ((keys (delq nil (list (alist-get 'session_id event)
                               (alist-get 'subject event)))))
-    (alist-get 'agent_name
-               (seq-find (lambda (s)
-                           (seq-some (lambda (k)
-                                       (member k (list (alist-get 'id s)
-                                                       (alist-get 'session_name s)
-                                                       (alist-get 'alias s)
-                                                       (alist-get 'agent_name s))))
-                                     keys))
-                         (append (alist-get 'sessions sessions) nil)))))
+    (seq-find (lambda (s)
+                (seq-some (lambda (k)
+                            (member k (list (alist-get 'id s)
+                                            (alist-get 'session_name s)
+                                            (alist-get 'alias s)
+                                            (alist-get 'agent_name s))))
+                          keys))
+              (append (alist-get 'sessions sessions) nil))))
+
+(defun gascity-events--session-agent (event sessions)
+  "Return the `gascity-agent' EVENT's session names, or nil.
+A live row of SESSIONS gives the full agent (worktree, tmux name and
+socket, for the detail's header and keys); a subject that is already
+a qualified name gives a bare one."
+  (let ((row (gascity-events--session-row event sessions))
+        (subject (alist-get 'subject event)))
+    (cond
+     (row (gascity-agent-from-session
+           (gascity-domain-decode 'gascity-session row)
+           (gascity-resolve-tmux-socket gascity-events--city 'no-probe)))
+     ((and subject (string-search "/" subject))
+      (gascity-agent :name subject)))))
 
 (defun gascity-events--visit-session (event)
   "Open the agent detail of session EVENT's session.
 The session list (through the store) names the agent; a subject that
 is already a qualified name opens without it."
-  (let ((buffer (current-buffer))
-        (subject (alist-get 'subject event)))
+  (let ((buffer (current-buffer)))
     (gascity-store-fetch
      '("session" "list")
      (lambda (sessions)
-       (let ((name (or (gascity-events--session-name event sessions)
-                       (and subject (string-search "/" subject) subject))))
-         (if name
-             (with-current-buffer (if (buffer-live-p buffer) buffer (current-buffer))
-               (gascity-events--open-agent name))
-           (message "Session %s is gone"
-                    (or (alist-get 'session_id event) subject)))))
+       (with-current-buffer (if (buffer-live-p buffer) buffer (current-buffer))
+         (let ((agent (gascity-events--session-agent event sessions)))
+           (if agent
+               (gascity-events--open-agent agent)
+             (message "Session %s is gone"
+                      (or (alist-get 'session_id event)
+                          (alist-get 'subject event)))))))
      (lambda (msg) (message "%s" msg)))))
 
 (defun gascity-events-visit ()
