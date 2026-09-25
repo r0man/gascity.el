@@ -405,6 +405,14 @@ one message run in order; the message is pending meanwhile."
                      label (- n failed) n failed
                      (gascity-store-log-buffer-name default-directory))))))
 
+(defun gascity-mail--rerender-threads (inbox)
+  "Re-render the thread buffers opened from INBOX (their ● unread marks)."
+  (when inbox
+    (dolist (buf (buffer-list))
+      (when (and (eq (buffer-local-value 'major-mode buf) 'gascity-mail-thread-mode)
+                 (eq (buffer-local-value 'gascity-mail-thread--inbox buf) inbox))
+        (with-current-buffer buf (gascity-mail-thread--render))))))
+
 (defun gascity-mail--bulk (verb messages &optional quiet)
   "Start VERB (`read', `unread', `archive') on every one of MESSAGES.
 One async call per message; each row shows `…' until its call returns.
@@ -424,7 +432,8 @@ only) and the inbox re-renders and re-reads."
                   (gascity-mail-inbox--render t)
                   (gascity-mail-inbox-refresh))))
             (when (buffer-live-p inbox)
-              (with-current-buffer inbox (gascity-mail-inbox--render t))))))
+              (with-current-buffer inbox (gascity-mail-inbox--render t)))
+            (gascity-mail--rerender-threads inbox))))
     (cl-loop for message in messages
              for id in ids
              do (let ((message message) (id id))
