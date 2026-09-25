@@ -60,6 +60,7 @@
 (require 'gascity-formula)
 (require 'gascity-command-status)
 (require 'gascity-terminal)
+(require 'gascity-live)
 (require 'gascity-section)
 (require 'gascity-tabulated)
 (require 'gascity-status)

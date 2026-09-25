@@ -64,6 +64,7 @@
 (require 'gascity-reader)
 (require 'gascity-store)              ; section reads (shared, scheduled)
 (require 'gascity-pulse)              ; Needs you totals for lighter/Cities
+(require 'gascity-live)               ; live refresh from the event stream
 (require 'gascity-command)
 (require 'gascity-command-status)
 (require 'gascity-section)
@@ -131,17 +132,6 @@ Only the Agents section's running/idle split reads it."
 (defcustom gascity-dashboard-window "2h"
   "Default `gc events --since' window of the cockpit's Activity section."
   :type 'string
-  :group 'gascity)
-
-(defcustom gascity-dashboard-live t
-  "When non-nil, a visible cockpit refreshes itself on a timer (`W')."
-  :type 'boolean
-  :group 'gascity)
-
-(defcustom gascity-dashboard-live-interval 15
-  "Seconds between live refreshes of a visible cockpit.
-A tick is skipped while a previous read is still in flight."
-  :type 'number
   :group 'gascity)
 
 (defcustom gascity-dashboard-event-levels
@@ -1884,8 +1874,10 @@ The mode-line lighter and the Cities view read them from
 ;;; Commands
 
 (defun gascity-dashboard-refresh ()
-  "Re-read every cockpit section, keeping point, folds and drawers."
+  "Re-read every cockpit section, keeping point, folds and drawers.
+Also reconnects the city's live stream when it is down."
   (interactive)
+  (gascity-live-reconnect)
   (unless (gascity-section-refresh-instance (current-buffer))
     (user-error "No cockpit to refresh here")))
 
@@ -1954,61 +1946,17 @@ Uses `magit-log-all' when magit is installed, else `vc-print-root-log'."
         (vc-print-root-log)))))
 
 ;;; Live refresh (`W')
-
-(defvar-local gascity-dashboard--timer nil
-  "This cockpit's live-refresh timer, or nil.")
-
-(defun gascity-dashboard--loads-pending-p (buffer)
-  "Return non-nil when BUFFER's cockpit still has a read in flight."
-  (with-current-buffer buffer
-    (when-let* ((root (gascity-dashboard--root))
-                (asyncs (vui-instance-asyncs root)))
-      (catch 'pending
-        (maphash (lambda (_ entry)
-                   (when (eq (plist-get entry :status) 'pending)
-                     (throw 'pending t)))
-                 asyncs)
-        nil))))
-
-(defun gascity-dashboard--tick (buffer)
-  "Refresh BUFFER's cockpit when visible, idle, and its channel is free."
-  (when (and (buffer-live-p buffer)
-             (get-buffer-window buffer 'visible)
-             (not (gascity-remote-connection-locked-p
-                   (buffer-local-value 'default-directory buffer)))
-             (not (gascity-dashboard--loads-pending-p buffer)))
-    (let ((non-essential t))
-      (gascity-section-refresh-instance buffer)))
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer (force-mode-line-update))))
-
-(defun gascity-dashboard--live-setup ()
-  "Start or stop this buffer's live timer per `gascity-dashboard-live'."
-  (when (timerp gascity-dashboard--timer)
-    (cancel-timer gascity-dashboard--timer))
-  (setq gascity-dashboard--timer nil)
-  (when (and gascity-dashboard-live
-             (numberp gascity-dashboard-live-interval)
-             (> gascity-dashboard-live-interval 0))
-    (setq gascity-dashboard--timer
-          (run-with-timer gascity-dashboard-live-interval
-                          gascity-dashboard-live-interval
-                          #'gascity-dashboard--tick (current-buffer)))
-    (add-hook 'kill-buffer-hook #'gascity-dashboard--live-teardown nil t)))
-
-(defun gascity-dashboard--live-teardown ()
-  "Cancel this buffer's live timer."
-  (when (timerp gascity-dashboard--timer)
-    (cancel-timer gascity-dashboard--timer))
-  (setq gascity-dashboard--timer nil))
+;;
+;; The cockpit joins its city's event stream (`gascity-live-attach',
+;; dashboard-v3 §8.2).  Events invalidate the store entries they touch
+;; and the sections reading them repaint (`gascity-store-use'); there
+;; is no timer.
 
 (defun gascity-dashboard-toggle-live ()
-  "Toggle live refresh of this city's cockpit (`W', dashboard-v3 §5.1)."
+  "Toggle this city's live event stream (`W', dashboard-v3 §5.1)."
   (interactive)
-  (setq gascity-dashboard-live (not gascity-dashboard-live))
-  (gascity-dashboard--live-setup)
-  (force-mode-line-update)
-  (message "Live refresh %s" (if gascity-dashboard-live "on" "off")))
+  (gascity-live-toggle)
+  (force-mode-line-update))
 
 ;;; Header line
 
@@ -2028,10 +1976,9 @@ Pure: reads buffer-local state and the TRAMP name only (§8.3 R2)."
                              'help-echo
                              (or (plist-get (gascity-store-host-status) :reason)
                                  "host unreachable; retrying")))
-                ((timerp gascity-dashboard--timer)
-                 (concat (gascity-ui-glyph 'ok) " live"))
-                (t (concat (gascity-ui-glyph 'idle)
-                           (propertize " live off" 'face 'gascity-dim)))))
+                ;; The city's event stream (§8.2, R4).
+                ((gascity-live-header-string))
+                (t (propertize "○ live off" 'face 'gascity-dim))))
          (age (and gascity-dashboard--refreshed-at
                    (gascity-dashboard--dim
                     (format "↻ %s ago"
@@ -2314,7 +2261,7 @@ acts on it, `?' shows every verb, `j' jumps to a view.
   (setq truncate-lines t)
   (setq-local header-line-format '(:eval (gascity-dashboard--header-line)))
   (gascity-dashboard--install-filter)
-  (gascity-dashboard--live-setup))
+  (gascity-live-attach (current-buffer)))
 
 ;;;###autoload
 (defun gascity-dashboard ()

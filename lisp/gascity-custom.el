@@ -201,30 +201,6 @@ fall back to 5."
   :type 'number
   :group 'gascity)
 
-(defcustom gascity-session-list-auto-refresh t
-  "When non-nil, the GC-Sessions list refreshes itself on a timer.
-The `*gascity-sessions*' list re-reads `gc session list' every
-`gascity-session-list-auto-refresh-interval' seconds, but only while its
-buffer is displayed in a visible window — a buried list does nothing: no
-timer work and no `gc' fetch.  A tick is also skipped while a previous
-async read is still in flight, so a slow link is never perpetually
-restarted.  Set to nil to refresh only manually with `g'; the command
-`gascity-session-list-toggle-auto-refresh' (W on the list) flips it live."
-  :type 'boolean
-  :group 'gascity)
-
-(defcustom gascity-session-list-auto-refresh-interval 5
-  "Seconds between automatic refreshes of the GC-Sessions list.
-Only consulted when `gascity-session-list-auto-refresh' is non-nil; a
-value at or below zero disables the timer (refresh manually with `g').
-
-For a remote city each refresh is an ssh round trip.  TRAMP reuses the
-connection, so the default is usually fine, and a tick is skipped while
-a previous read is still in flight — but on a slow link consider raising
-this (say 15–30)."
-  :type 'number
-  :group 'gascity)
-
 ;;; Faces
 
 (defgroup gascity-faces nil

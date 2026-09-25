@@ -45,7 +45,7 @@ so keep the buffer object, not the unqualified name."
                            gascity-session-list-buffer-name))
     (with-current-buffer ga-eyw9--buffer
       ;; Like `gascity-tabulated--show': ensure the mode (which seeds
-      ;; `tabulated-list-format' and the auto-refresh timer) is set up.
+      ;; `tabulated-list-format' and the live attachment) is set up.
       (unless (derived-mode-p 'gascity-session-list-mode)
         (gascity-session-list-mode))
       (gascity-session-list-refresh))
@@ -56,8 +56,8 @@ so keep the buffer object, not the unqualified name."
         (accept-process-output nil 0.2)))))
 
 (defun ga-eyw9--tick (buffer)
-  "One auto-refresh tick against BUFFER, with a settle wait."
-  (gascity-session-list--auto-refresh-tick buffer)
+  "One live refresh of BUFFER (what an event batch runs), with a settle wait."
+  (with-current-buffer buffer (gascity-session-list--live-refresh))
   (let ((deadline (+ (float-time) 30)))
     (while (and (< (float-time) deadline)
                 (gascity-tabulated-refresh-pending-p buffer))

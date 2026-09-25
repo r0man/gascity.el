@@ -87,7 +87,7 @@
     (with-temp-buffer
       (cl-letf (((symbol-function 'gascity-session-list-refresh)
                  (lambda (&rest _) (cl-incf refreshes)))
-                ((symbol-function 'gascity-session-list--auto-refresh-setup)
+                ((symbol-function 'gascity-live-attach)
                  #'ignore))
         (gascity-session-list-mode)
         (gascity-filter-set :state "active")
@@ -460,7 +460,6 @@ the id is its trailing `ec-…' handle."
   "Mount the cockpit on canned payloads and run BODY in its buffer."
   (declare (indent 0))
   `(let ((vui-render-delay nil)
-         (gascity-dashboard-live nil)
          (gascity-dashboard-filters nil)
          (buf (get-buffer-create "*gascity-cockpit-test*")))
      (cl-letf (((symbol-function 'gascity-reader-read-async)

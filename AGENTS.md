@@ -85,6 +85,20 @@ ssh-family cities the async runners start a LOCAL `ssh -T` pipe process
 of TRAMP's `make-process`, whose synchronous remote-shell setup froze the
 main loop ~0.5 s per spawn; other methods keep TRAMP.
 
+**Live refresh (dashboard-v3 §8.2, §8.3 R4).** No view polls on a timer.
+`gascity-live.el` runs one `gc events --follow --city ROOT` per city while
+a view of it is attached (`gascity-live-attach`, called from the view's
+mode; `kill-buffer` detaches, the last view out stops the stream). Remote
+ssh-family cities stream over a local `ssh -T` pipe
+(`gascity-remote-ssh-pipe-argv … :resolve nil`, no TRAMP round trip);
+other methods poll `gc events --after SEQ`. Events are batched for 2.5 s
+and routed by type prefix to `gascity-store-invalidate-event` (store-backed
+views repaint themselves), `gascity-live-invalidate-functions`, and the
+attached views' own refresh functions. Resume is gap-free (`--after
+SEQ`) with a 2/5/15/60 s backoff; `g` reconnects, `W` toggles. Header
+lines read `gascity-live-header-string` (pure). No streams start in
+batch Emacs unless `gascity-live-in-batch` is set.
+
 **Command layer (beads-meta, execution + parse only).**
 `gascity-defcommand` (`gascity-command.el`) defines an EIEIO class per gc
 subcommand; the subcommand is derived from the class name
