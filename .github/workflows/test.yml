@@ -57,6 +57,17 @@ jobs:
       - name: Install Eldev
         run: curl --fail --silent --show-error --location https://raw.github.com/doublep/eldev/master/webinstall/github-eldev | sh
 
+      # beads.el is not published on ELPA/MELPA (see Eldev), so Eldev cannot
+      # resolve the `beads' dependency from archives: the first CI iteration
+      # failed on every matrix leg with "Dependency 'beads' is not available"
+      # (OQ-1 escalation documented in plans/ci-cd).  Clone the canonical
+      # beads.el into the sibling path the Eldev file hardcodes so its
+      # local-dependency hook fires.  Pin a ref there if the API ever drifts.
+      - name: Clone beads.el (Eldev local dependency)
+        run: |
+          git clone --depth 1 https://github.com/r0man/beads.el.git "$HOME/workspace/beads.el"
+          git -C "$HOME/workspace/beads.el" rev-parse --short HEAD
+
       # gc v1.4.2 from gastownhall/gascity. Bump by changing the version in
       # the URL.
       - name: Install Gascity v1.4.2

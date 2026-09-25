@@ -31,6 +31,15 @@ jobs:
       - name: Install Eldev
         run: curl --fail --silent --show-error --location https://raw.github.com/doublep/eldev/master/webinstall/github-eldev | sh
 
+      # Same dependency-resolution need as the test workflow: the `beads'
+      # dependency is not on ELPA/MELPA, so clone the canonical beads.el
+      # into the sibling path the Eldev file hardcodes (OQ-1 escalation,
+      # documented in plans/ci-cd).
+      - name: Clone beads.el (Eldev local dependency)
+        run: |
+          git clone --depth 1 https://github.com/r0man/beads.el.git "$HOME/workspace/beads.el"
+          git -C "$HOME/workspace/beads.el" rev-parse --short HEAD
+
       # gc v1.4.2 from gastownhall/gascity.  Not strictly needed for lint,
       # but kept so lint-adjacent Elisp gating on (executable-find "gc")
       # sees the same environment as the test workflow.  Bump by changing
