@@ -58,6 +58,9 @@ HOST is the TRAMP prefix (\"\" locally), PATH the host-local city path.")
 (defvar-local gascity-cities--hosts nil
   "The hosts this list read at its last refresh (see `gascity-cities-hosts').")
 
+(defvar-local gascity-cities--subs nil
+  "This list's store subscriptions (dropped on refresh and kill).")
+
 (defvar-local gascity-cities--generation 0
   "Counter stamping each refresh; late answers of older ones are dropped.")
 
@@ -233,28 +236,53 @@ With OFFLINE the host is unreachable (the store retries it): `○'."
       (setq row (plist-put row (pop props) (pop props))))
     (puthash key row gascity-cities--rows)))
 
-(defun gascity-cities--read-city (key force)
-  "Start the `gc status' and `gc mail count' reads of row KEY.
-FORCE re-reads even a fresh store entry."
+(defun gascity-cities--subscribe (key args apply)
+  "Keep row KEY following the store entry of ARGS in the row's city.
+APPLY is called in this buffer with each ready snapshot's payload, or
+with (:error MESSAGE) for a failure with no payload; the row is then
+redrawn.  So a refetch by any view of that city (its cockpit's `g',
+the event router) updates the row without a read of our own."
   (let* ((buffer (current-buffer))
-         (gen gascity-cities--generation)
          (dir (gascity-cities--city-dir (car key) (cdr key))))
-    (gascity-store-fetch
-     '("status")
-     (gascity-cities--updater buffer gen
-                              (lambda (s)
-                                (gascity-pulse-record-store-size dir s)
-                                (gascity-cities--set key :status s :status-error nil)))
-     (gascity-cities--updater buffer gen
-                              (lambda (e) (gascity-cities--set key :status-error e)))
-     :dir dir :force force)
-    (gascity-store-fetch
-     '("mail" "count")
-     (gascity-cities--updater buffer gen
-                              (lambda (m) (gascity-cities--set key :mail m :mail-error nil)))
-     (gascity-cities--updater buffer gen
-                              (lambda (e) (gascity-cities--set key :mail-error e)))
-     :dir dir :force force)))
+    (push (gascity-store-subscribe
+           args
+           (lambda (snap)
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (cond ((eq (plist-get snap :status) 'ready)
+                        (funcall apply (plist-get snap :data)))
+                       ((plist-get snap :error)
+                        (funcall apply (list :error (plist-get snap :error)))))
+                 (gascity-cities--redisplay))))
+           :dir dir :buffer buffer)
+          gascity-cities--subs)))
+
+(defun gascity-cities--read-city (key force)
+  "Subscribe row KEY to its city's `gc status' and `gc mail count' entries
+and request them.  FORCE re-reads even a fresh store entry."
+  (let ((dir (gascity-cities--city-dir (car key) (cdr key))))
+    (gascity-cities--subscribe
+     key '("status")
+     (lambda (s)
+       (if (eq (car-safe s) :error)
+           (gascity-cities--set key :status-error (cadr s))
+         (gascity-pulse-record-store-size dir s)
+         (gascity-cities--set key :status s :status-error nil))))
+    (gascity-cities--subscribe
+     key '("mail" "count")
+     (lambda (m)
+       (if (eq (car-safe m) :error)
+           (gascity-cities--set key :mail-error (cadr m))
+         (gascity-cities--set key :mail m :mail-error nil))))
+    (dolist (args '(("status") ("mail" "count")))
+      (gascity-store-request args :dir dir :force force))
+    ;; Paint what the store already holds (no I/O).
+    (let ((status (gascity-store-get '("status") dir))
+          (mail (gascity-store-get '("mail" "count") dir)))
+      (when (eq (plist-get status :status) 'ready)
+        (gascity-cities--set key :status (plist-get status :data)))
+      (when (eq (plist-get mail :status) 'ready)
+        (gascity-cities--set key :mail (plist-get mail :data))))))
 
 (defun gascity-cities--read-host (host force)
   "Start the `gc cities' read of HOST, then each city's own reads.
@@ -284,6 +312,8 @@ With CACHED (non-interactive first open), fresh store entries answer
 without a new read."
   (interactive)
   (cl-incf gascity-cities--generation)
+  (mapc #'gascity-store-unsubscribe gascity-cities--subs)
+  (setq gascity-cities--subs nil)
   (let ((force (not cached)))
     (unless gascity-cities--rows
       (setq gascity-cities--rows (make-hash-table :test 'equal)))

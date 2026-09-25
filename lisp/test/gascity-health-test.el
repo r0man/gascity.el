@@ -540,6 +540,23 @@ host-qualified city directory."
           (should (equal (nth 3 (cadr (gascity-health-test--rows))) "2 ⬣")))
       (kill-buffer cockpit))))
 
+(ert-deftest gascity-test-cities-follow-store-refetch ()
+  "A refetch of a city's status by another view updates its row (subscribed)."
+  (let ((gascity-remote-hosts nil))
+    (gascity-health-test--with-cities
+      (should (equal (nth 2 (cadr (gascity-health-test--rows))) "1/5"))
+      (let ((status (gascity-health-test--json "emacs-city.status.json")))
+        (setf (alist-get 'running_agents (alist-get 'summary status)) 4)
+        (cl-letf (((symbol-function 'gascity-reader-read-async)
+                   (lambda (_args callback &rest _) (funcall callback status) nil)))
+          (let ((default-directory "/home/roman/emacs-city/"))
+            (gascity-store-fetch '("status") #'ignore nil :force t))))
+      (should (equal (nth 2 (cadr (gascity-health-test--rows))) "4/5"))
+      ;; Refresh drops the old subscriptions (no duplicates).
+      (let ((n (length gascity-cities--subs)))
+        (gascity-cities-refresh)
+        (should (= (length gascity-cities--subs) n))))))
+
 ;;; Costs (`j $')
 
 (ert-deftest gascity-test-costs-shows-text ()
