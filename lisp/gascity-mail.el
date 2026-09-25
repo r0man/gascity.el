@@ -93,13 +93,18 @@
   "Where the inbox read stands: `loading', `ready', or (error . MESSAGE).")
 
 (defvar-local gascity-mail--overrides nil
-  "Hash table: message id → `read' or `unread', as changed here.
-gc's answer wins once it agrees; until then the row shows the change.")
+  "Hash table: message id → (STATE . TIME), a change made here.
+STATE is `read' or `unread', TIME when gc confirmed it.  It bridges
+the gap until gc's inbox reflects the change: the first payload read
+after TIME is the truth again, whatever it says (another client, gc's
+mail sweeper) — see `gascity-mail--adopt'.")
 
 (defvar-local gascity-mail--kept nil
-  "Hash table: message id → message read here, kept visible until `g'.
+  "Hash table: message id → (MESSAGE . TIME), read here at TIME.
 `gc mail inbox' lists unread mail only; a message read here would
-vanish on the next refresh, and with it the chance to `u' it.")
+vanish on the next refresh, and with it the chance to `u' it.  MESSAGE
+is a copy marked read, shown until `g' — or until a newer payload
+lists it unread again (it was marked unread elsewhere).")
 
 (defvar-local gascity-mail--archived nil
   "Hash table: message id → t, archived here (hidden at once).")
@@ -125,8 +130,8 @@ vanish on the next refresh, and with it the chance to `u' it.")
 
 (defun gascity-mail--unread-p (message)
   "Return non-nil when MESSAGE is unread, counting changes made here."
-  (pcase (and gascity-mail--overrides
-              (gethash (gascity-mail-id message) gascity-mail--overrides))
+  (pcase (car (and gascity-mail--overrides
+                   (gethash (gascity-mail-id message) gascity-mail--overrides)))
     ('read nil)
     ('unread t)
     (_ (not (gascity-mail-read message)))))
@@ -140,9 +145,9 @@ The payload's messages plus those read here, minus those archived here."
          (ids (mapcar #'gascity-mail-id payload))
          (kept nil))
     (when gascity-mail--kept
-      (maphash (lambda (id m)
+      (maphash (lambda (id entry)
                  (unless (or (member id ids) (gethash id archived))
-                   (push m kept)))
+                   (push (car entry) kept)))
                gascity-mail--kept))
     (sort (append payload kept)
           (lambda (a b)
@@ -190,19 +195,37 @@ The first column is `●' for unread mail; unread rows are bold."
                                      m gascity-mail-inbox--filter now))
                         (gascity-mail--visible)))))
 
-(defun gascity-mail--adopt (payload)
-  "Adopt the `gc mail inbox' PAYLOAD as the inbox's messages.
-A change made here that gc now reports too is forgotten (gc's answer
-wins from then on)."
+(defun gascity-mail--adopt (payload &optional fetched-at)
+  "Adopt the `gc mail inbox' PAYLOAD, read at FETCHED-AT, as the messages.
+A payload read after a change made here is gc's truth again: the
+change's override goes, whatever gc now says (a message marked unread
+from a shell, or closed by gc's mail sweeper, QA acceptance bug 1).  A
+message kept since it was read here leaves the kept set once such a
+payload lists it (unread again), or once gc no longer lists a message
+marked unread here.  Without FETCHED-AT (a payload of unknown age)
+overrides stay unless the payload agrees with them."
   (setq gascity-mail--messages
         (gascity-domain-decode-list 'gascity-mail-message
                                     (alist-get 'messages payload))
         gascity-mail--status 'ready)
-  (when gascity-mail--overrides
-    (dolist (m gascity-mail--messages)
-      ;; Listed means unread for gc.
-      (when (eq (gethash (gascity-mail-id m) gascity-mail--overrides) 'unread)
-        (remhash (gascity-mail-id m) gascity-mail--overrides)))))
+  (let ((ids (mapcar #'gascity-mail-id gascity-mail--messages))
+        (newer (lambda (time) (and fetched-at time (> fetched-at time)))))
+    (when gascity-mail--overrides
+      (maphash (lambda (id override)
+                 (let ((listed (member id ids)))
+                   (when (or (funcall newer (cdr override))
+                             ;; gc agrees: listed means unread.
+                             (and listed (eq (car override) 'unread)))
+                     (remhash id gascity-mail--overrides)
+                     (when (and gascity-mail--kept (eq (car override) 'unread)
+                                (or listed (funcall newer (cdr override))))
+                       (remhash id gascity-mail--kept)))))
+               gascity-mail--overrides))
+    (when gascity-mail--kept
+      (maphash (lambda (id entry)
+                 (when (and (member id ids) (funcall newer (cdr entry)))
+                   (remhash id gascity-mail--kept)))
+               gascity-mail--kept))))
 
 ;;; Rendering
 
@@ -210,14 +233,40 @@ wins from then on)."
   "Re-render the inbox rows from the messages in hand.
 KEEP-PAGE stays on the current page; point stays on its row."
   (when (derived-mode-p 'gascity-mail-inbox-mode)
-    (let ((page gascity-tabulated--current-page))
+    (let* ((page gascity-tabulated--current-page)
+           (at (tabulated-list-get-id))
+           (id (and (gascity-mail-message-p at) (gascity-mail-id at)))
+           (line (line-number-at-pos))
+           (windows (get-buffer-window-list (current-buffer) nil t)))
       (setq gascity-tabulated--all-entries (gascity-mail--entries)
             gascity-tabulated--base-name "Mail"
             gascity-tabulated--page-size (beads-pager-window-page-size))
       (setq gascity-tabulated--current-page
             (if keep-page (max 1 (min page (gascity-tabulated--total-pages))) 1))
       (gascity-tabulated--refresh-display)
+      ;; Rows are new objects after a re-read, so tabulated-list cannot
+      ;; find the row point was on: go back to the same message (QA
+      ;; acceptance bug 8), else the same line — never the header.
+      (gascity-mail--goto-message id line)
+      (dolist (w windows) (set-window-point w (point)))
       (force-mode-line-update))))
+
+(defun gascity-mail--goto-message (id line)
+  "Move to the row of message ID, else to LINE, never above the first row."
+  (goto-char (point-min))
+  (let ((found nil))
+    (when id
+      (while (and (not found) (not (eobp)))
+        (let ((m (tabulated-list-get-id)))
+          (if (and (gascity-mail-message-p m) (equal (gascity-mail-id m) id))
+              (setq found t)
+            (forward-line 1)))))
+    (unless found
+      (goto-char (point-min))
+      (forward-line (1- line))
+      (when (eobp) (forward-line -1))
+      (while (and (not (tabulated-list-get-id)) (not (eobp)))
+        (forward-line 1)))))
 
 (defun gascity-mail--filter-text ()
   "Return the active inbox filters as words, or nil."
@@ -285,7 +334,9 @@ of a failed re-read too, with the old payload."
     (with-current-buffer buffer
       (unless (and gascity-mail--payload (eq payload gascity-mail--payload))
         (setq gascity-mail--payload payload)
-        (gascity-mail--adopt payload)
+        (gascity-mail--adopt payload
+                             (plist-get (gascity-store-get (gascity-mail--inbox-args))
+                                        :fetched-at))
         (gascity-mail-inbox--render t)))))
 
 (defun gascity-mail-inbox-refresh (&optional force)
@@ -388,11 +439,16 @@ one message run in order; the message is pending meanwhile."
       (pcase verb
         ('archive (puthash id t (gascity-mail--table 'gascity-mail--archived)))
         ('read
-         (puthash id 'read (gascity-mail--table 'gascity-mail--overrides))
+         (puthash id (cons 'read (float-time))
+                  (gascity-mail--table 'gascity-mail--overrides))
          (when message
-           (puthash id message (gascity-mail--table 'gascity-mail--kept))))
+           (let ((copy (clone message)))
+             (setf (gascity-mail-read copy) t)
+             (puthash id (cons copy (float-time))
+                      (gascity-mail--table 'gascity-mail--kept)))))
         ('unread
-         (puthash id 'unread (gascity-mail--table 'gascity-mail--overrides)))))))
+         (puthash id (cons 'unread (float-time))
+                  (gascity-mail--table 'gascity-mail--overrides)))))))
 
 (defun gascity-mail--summary (verb ids failures)
   "Return the one-line summary of VERB over IDS with FAILURES (messages)."

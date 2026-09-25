@@ -619,6 +619,83 @@ until each returns, one summary naming the failures and the log."
         (gascity-comms-test--finish (car actions))
         (should (gascity-mail--unread-p (gascity-mail-message :id id :read t)))))))
 
+(ert-deftest gascity-test-comms-inbox-external-unread-wins ()
+  "A message read here and then marked unread elsewhere shows unread once
+a newer inbox payload lists it (QA acceptance bug 1): the local change
+does not mask gc's answer."
+  (gascity-comms-test--with-inbox (_reads actions)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (goto-char (point-min))
+      (forward-line 1)
+      (let ((id (gascity-mail-id (tabulated-list-get-id)))
+            (payload (gascity-comms-test--json "bright-lights.mail-inbox.json")))
+        (gascity-mail-mark-read-at-point)
+        (gascity-comms-test--finish (car actions))
+        (should (string-search "3 unread / 4" (gascity-mail-inbox--header-line)))
+        ;; A read that finished before the change: the change stands.
+        (gascity-mail--adopt payload (- (float-time) 60))
+        (gascity-mail-inbox--render t)
+        (should (string-search "3 unread / 4" (gascity-mail-inbox--header-line)))
+        ;; A newer read still listing it: marked unread elsewhere.
+        (gascity-mail--adopt payload (+ (float-time) 1))
+        (gascity-mail-inbox--render t)
+        (should (string-search "4 unread / 4" (gascity-mail-inbox--header-line)))
+        (should (gascity-mail--unread-p (gascity-mail-message :id id)))))))
+
+(ert-deftest gascity-test-comms-inbox-unread-then-gone ()
+  "A message marked unread here that a newer payload no longer lists (gc
+swept or closed it) leaves the inbox instead of lingering."
+  (gascity-comms-test--with-inbox (_reads actions)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (goto-char (point-min))
+      (forward-line 1)
+      (let* ((id (gascity-mail-id (tabulated-list-get-id)))
+             (payload (gascity-comms-test--json "bright-lights.mail-inbox.json"))
+             (without (list (cons 'messages
+                                  (vconcat (seq-remove
+                                            (lambda (m) (equal (alist-get 'id m) id))
+                                            (alist-get 'messages payload)))))))
+        (gascity-mail-mark-read-at-point)
+        (gascity-comms-test--finish (car actions))
+        (gascity-mail--adopt without (+ (float-time) 1))
+        (gascity-mail-inbox--render t)
+        ;; Read here, not listed: kept as read.
+        (should (string-search "3 unread / 4" (gascity-mail-inbox--header-line)))
+        (goto-char (point-min))
+        (while (not (and (tabulated-list-get-id)
+                         (equal (gascity-mail-id (tabulated-list-get-id)) id)))
+          (forward-line 1))
+        (gascity-mail-mark-unread-at-point)
+        (gascity-comms-test--finish (car actions))
+        (should (string-search "4 unread / 4" (gascity-mail-inbox--header-line)))
+        ;; gc's sweeper closed it meanwhile: a newer payload lacks it.
+        (gascity-mail--adopt without (+ (float-time) 2))
+        (gascity-mail-inbox--render t)
+        (should (string-search "3 unread / 3" (gascity-mail-inbox--header-line)))))))
+
+(ert-deftest gascity-test-comms-inbox-point-stays-on-message ()
+  "A re-render from a new payload keeps point on the same message, never
+on the column header (QA acceptance bug 8)."
+  (gascity-comms-test--with-inbox (_reads _actions)
+    (goto-char (point-min))
+    (forward-line 2)
+    (let ((id (gascity-mail-id (tabulated-list-get-id))))
+      (gascity-mail--paint (current-buffer)
+                           (gascity-comms-test--json "bright-lights.mail-inbox.json"))
+      (should (gascity-mail-message-p (tabulated-list-get-id)))
+      (should (equal (gascity-mail-id (tabulated-list-get-id)) id)))))
+
+(ert-deftest gascity-test-comms-live-message-bead-routes-to-mail ()
+  "A `bead.*' event about a mail message (gc's sweeper closing it) also
+invalidates the mail reads: the inbox and `mail count'."
+  (let ((swept '((type . "bead.closed") (seq . 1)
+                 (payload (bead (id . "bl-wisp-x") (issue_type . "message")))))
+        (work '((type . "bead.closed") (seq . 2)
+                (payload (bead (id . "bl-1") (issue_type . "task"))))))
+    (should (gascity-live--message-bead-event-p swept))
+    (should-not (gascity-live--message-bead-event-p work))
+    (should (memq 'mail (gascity-live-route "mail.bead")))))
+
 (ert-deftest gascity-test-comms-inbox-filters ()
   "`-u' unread only, `-a' from, `-q' search; applied to the rows in hand."
   (gascity-comms-test--with-inbox (reads _actions)

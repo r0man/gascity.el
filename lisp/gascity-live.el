@@ -261,7 +261,19 @@ The one routing table is the store's, `gascity-store-event-routes'."
             (error (message "gascity-live: subscriber error: %s"
                             (error-message-string err)))))))
     (when-let* ((type (gascity-live--event-type event)))
-      (gascity-live--queue stream type))))
+      (gascity-live--queue stream type)
+      ;; A mail message is a bead: its closing (archive elsewhere, gc's
+      ;; mail sweeper) or update comes as `bead.*', which alone routes
+      ;; to the bead reads — the inbox and `mail count' re-read too.
+      (when (gascity-live--message-bead-event-p event)
+        (gascity-live--queue stream "mail.bead")))))
+
+(defun gascity-live--message-bead-event-p (event)
+  "Return non-nil when EVENT is a `bead.*' event about a mail message."
+  (and (string-prefix-p "bead." (or (gascity-live--event-type event) ""))
+       (let* ((payload (alist-get 'payload event))
+              (bead (and (listp payload) (alist-get 'bead payload))))
+         (and (listp bead) (equal (alist-get 'issue_type bead) "message")))))
 
 (defun gascity-live--queue (stream type)
   "Add event TYPE to STREAM's debounce batch, arming the timer."
