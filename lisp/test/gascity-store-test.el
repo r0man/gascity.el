@@ -937,6 +937,13 @@ City start/stop keep their streaming `async-shell-command' buffer.")
       (gascity-sling . ,(lambda () (gascity-sling "r/a" "task text")))
       (gascity-costs-refresh
        . ,(lambda () (with-temp-buffer (gascity-costs-mode) (gascity-costs-refresh))))
+      (gascity-runs-agent-peek
+       . ,(lambda ()
+            (with-temp-buffer
+              (insert (propertize "worker" 'gascity-agent
+                                  (make-instance 'gascity-agent :name "r/a")))
+              (goto-char (point-min))
+              (gascity-runs-agent-peek))))
       (gascity-sling-formula--dispatch
        . ,(lambda ()
             (gascity-sling-formula--dispatch
