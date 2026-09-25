@@ -6503,7 +6503,10 @@ environment (login shell PATH, plus TRAMP's own env-injected remote
 path) also lacks the profile directories — and it forwards
 `process-environment' entries shell-quoted, so only the wrapper's
 shell-evaluated assignment can prepend while keeping the inherited
-tail.  The handler is spied to prove the dispatch took that path."
+tail.  The handler is spied to prove the dispatch took that path.
+On Emacs 29 the dispatch consults only the legacy connection
+property named direct-async-process — the connection-local variable
+is 30+ — so both are set; the property is flushed in the teardown."
   (gascity-test--with-fake-remote-gc
     (unwind-protect
         (progn
@@ -6513,6 +6516,8 @@ tail.  The handler is spied to prove the dispatch took that path."
           (connection-local-set-profiles
            '(:application tramp :protocol "mock")
            'gascity-test-direct-async-path)
+          (let ((vec (tramp-dissect-file-name default-directory)))
+            (tramp-set-connection-property vec "direct-async-process" t))
           (let* ((result (list nil))
                  (direct-calls 0)
                  (real-direct (symbol-function 'tramp-handle-make-process)))
@@ -6540,7 +6545,10 @@ tail.  The handler is spied to prove the dispatch took that path."
                    connection-local-criteria-alist)))
       (setq connection-local-profile-alist
             (assq-delete-all 'gascity-test-direct-async-path
-                             connection-local-profile-alist)))))
+                             connection-local-profile-alist))
+      (tramp-flush-connection-property
+       (tramp-dissect-file-name default-directory)
+       "direct-async-process"))))
 
 (ert-deftest gascity-test-remote-interactive-command-exports-search-path ()
   "The interactive `async-shell-command' backend prefixes the remote
@@ -6609,7 +6617,10 @@ despite garbage on the command's stderr AND the login program's own
 chatter (which direct-async merges into stdout unless a LOCAL scratch
 buffer captures it — the mock method's `sh -i' reliably emits \"no job
 control\" noise), and no `make-process' call may see a string
-`:stderr'."
+`:stderr'.
+On Emacs 29 the dispatch consults only the legacy connection
+property named direct-async-process — the connection-local variable
+is 30+ — so both are set; the property is flushed in the teardown."
   (gascity-test--with-mock-remote
     (unwind-protect
         (progn
@@ -6617,6 +6628,8 @@ control\" noise), and no `make-process' call may see a string
            'gascity-test-direct-async '((tramp-direct-async-process . t)))
           (connection-local-set-profiles
            '(:application tramp :protocol "mock") 'gascity-test-direct-async)
+          (let ((vec (tramp-dissect-file-name default-directory)))
+            (tramp-set-connection-property vec "direct-async-process" t))
           (let* ((gascity-executable "/bin/sh")
                  (result (list nil))
                  (direct-calls 0)
@@ -6653,7 +6666,10 @@ control\" noise), and no `make-process' call may see a string
                           connection-local-criteria-alist)))
       (setq connection-local-profile-alist
             (assq-delete-all 'gascity-test-direct-async
-                             connection-local-profile-alist)))))
+                             connection-local-profile-alist))
+      (tramp-flush-connection-property
+       (tramp-dissect-file-name default-directory)
+       "direct-async-process"))))
 
 (ert-deftest gascity-test-remote-reader-read-async-error ()
   "A non-zero remote exit reaches the errback, not the callback."
@@ -6859,6 +6875,13 @@ is host-qualified."
               ((symbol-function 'gascity-remote-find-executable)
                (lambda (name &optional _dir)
                  (concat "/opt/bin/" name)))
+              ;; The remote TERM decision must stay out of this test:
+              ;; it is argv-shape coverage (TERM splicing has its own
+              ;; test), and an undecided probe would dial the
+              ;; fictitious host whenever the local backend's TERM
+              ;; differs from the fallback (runner legs without vterm).
+              ((symbol-function 'gascity-terminal--remote-term)
+               (lambda (&rest _) nil))
               ((symbol-function 'gascity-terminal--status-install)
                (lambda (&rest _) nil))
               ;; The re-keyed rig memo resolves its city root first;
