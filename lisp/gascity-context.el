@@ -136,10 +136,16 @@ around a directory already looked up)."
            (cached (gethash start gascity-context--root-cache 'miss)))
       (if (not (eq cached 'miss))
           cached
+        ;; First contact with a remote host: the walk is synchronous
+        ;; channel traffic, one of the §8.5 sync exceptions — bounded
+        ;; by `gascity-remote-with-timeout' (a timeout signals and
+        ;; caches nothing, so the next call retries).
         (puthash start
-                 (when-let* ((found (locate-dominating-file
-                                     start gascity-context-city-file)))
-                   (file-name-as-directory (expand-file-name found)))
+                 (let ((default-directory start))
+                   (gascity-remote-with-timeout gascity-remote-sync-timeout
+                     (when-let* ((found (locate-dominating-file
+                                         start gascity-context-city-file)))
+                       (file-name-as-directory (expand-file-name found)))))
                  gascity-context--root-cache)))))
 
 (defun gascity-context-pin-directory (&optional dir)

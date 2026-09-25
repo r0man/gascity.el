@@ -1450,12 +1450,12 @@ gc invocation reads where `default-directory' points."
                (lambda (_prefix) nil))
               ((symbol-function 'transient-setup)
                (lambda (&rest _))))
-      ;; Refresh invalidates the entered-from city, not the buffer's.
-      (let ((invalidate-dir nil))
-        (cl-letf (((symbol-function 'gascity-formula-invalidate)
-                   (lambda () (setq invalidate-dir default-directory) nil)))
+      ;; Refresh re-reads the entered-from city, not the buffer's.
+      (let ((refresh-dir nil))
+        (cl-letf (((symbol-function 'gascity-formula-refresh-async)
+                   (lambda (_formula _done) (setq refresh-dir default-directory) nil)))
           (gascity-sling-dispatch-refresh)
-          (should (equal invalidate-dir "/city/entered-from/"))))
+          (should (equal refresh-dir "/city/entered-from/"))))
       ;; The target read completes over the entered-from city's sessions.
       (let ((read-dir nil))
         (cl-letf (((symbol-function 'gascity-action--read-session)
@@ -1694,20 +1694,31 @@ the re-setup."
       (should (equal (plist-get (cdr setup) :value) '("--var a=1"))))))
 
 (ert-deftest gascity-test-sling-refresh-re-setups-in-place ()
-  "Refresh: invoking `g' invalidates the current city's caches and
-re-runs setup on the SAME prefix, carrying scope and set values."
-  (let (invalidated setup)
-    (cl-letf (((symbol-function 'gascity-formula-invalidate)
-               (lambda () (setq invalidated t)))
+  "Refresh: `g' re-reads the formulas asynchronously (D9) and, once they
+answered, re-runs setup on the SAME prefix — still open — carrying
+scope and set values."
+  (let (refreshed setup done)
+    (cl-letf (((symbol-function 'gascity-formula-refresh-async)
+               (lambda (formula cb) (setq refreshed formula done cb) nil))
               ((symbol-function 'transient-setup)
                (lambda (prefix _name _specs &rest args)
                  (setq setup (cons prefix args))))
+              ((symbol-function 'transient-active-prefix)
+               (lambda (&rest _)
+                 (transient-prefix :command 'gascity-sling-dispatch
+                                   :scope (list :formula "do-work"))))
               ((symbol-function 'transient-scope)
                (lambda () (list :formula "do-work")))
               ((symbol-function 'transient-args)
                (lambda (_prefix) '("--var a=1"))))
       (call-interactively #'gascity-sling-dispatch-refresh)
-      (should (eq invalidated t))
+      (should (equal refreshed "do-work"))
+      ;; Nothing is rebuilt until the reads answer.
+      (should-not setup)
+      (funcall done)
+      (let ((deadline (+ (float-time) 2)))
+        (while (and (not setup) (< (float-time) deadline))
+          (accept-process-output nil 0.01)))
       (should (eq (car setup) 'gascity-sling-dispatch))
       (should (equal (plist-get (cdr setup) :scope)
                      (list :formula "do-work")))

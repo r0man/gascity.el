@@ -66,6 +66,7 @@
 (declare-function gascity-sling-formula--var-children "gascity-formula")
 (declare-function gascity-formula-recipe-cached "gascity-formula")
 (declare-function gascity-formula-invalidate "gascity-formula")
+(declare-function gascity-formula-refresh-async "gascity-formula")
 
 ;;; ============================================================
 ;;; Synchronous action runner
@@ -1298,21 +1299,34 @@ wrong scope key (ga-4ia4, bright-lights dogfood §5)."
                        :value (transient-args 'gascity-sling-dispatch)))))
 
 (transient-define-suffix gascity-sling-dispatch-refresh ()
-  "Invalidate this city's formula caches and rebuild the menu in place.
-`gascity-formula-invalidate' clears the catalog and recipe memos for
-the current city (per `gascity-context-scope-key'), so the next pick
-and the Variables section read gc fresh — a formula edited mid-session
-is no longer served stale.  The invalidation is pinned to the city the
-transient was entered from (`gascity-sling--city-dir'), so it clears
-that city's entries wherever the transient runs from.  Set infix
-values carry into the re-setup, like a re-pick.  The menu stays open."
+  "Re-read this city's formulas in the background, then rebuild the menu.
+`gascity-formula-refresh-async' re-reads the catalog and the picked
+formula's recipe without blocking (dashboard-v3 D9, §8.5) — a formula
+edited mid-session is no longer served stale — and swaps each cache
+entry as it arrives.  The reads are pinned to the city the transient
+was entered from (`gascity-sling--city-dir').  When they have answered
+and the menu is still open, it is set up again with its scope and the
+infix values carried over, like a re-pick.  The menu stays open
+meanwhile."
   :transient t
   (interactive)
   (let ((default-directory (gascity-sling--city-dir)))
-    (gascity-formula-invalidate))
-  (transient-setup 'gascity-sling-dispatch nil nil
-                   :scope (transient-scope)
-                   :value (transient-args 'gascity-sling-dispatch)))
+    (message "Refreshing formulas…")
+    (gascity-formula-refresh-async
+     (plist-get (transient-scope) :formula)
+     (lambda ()
+       ;; A process callback: rebuild from a timer, and only while the
+       ;; menu is still the active transient.
+       (run-at-time
+        0 nil
+        (lambda ()
+          (when-let* ((prefix (transient-active-prefix 'gascity-sling-dispatch)))
+            (condition-case nil
+                (transient-setup 'gascity-sling-dispatch nil nil
+                                 :scope (oref prefix scope)
+                                 :value (transient-args 'gascity-sling-dispatch))
+              (error nil)))
+          (message "Formulas refreshed")))))))
 
 (transient-define-suffix gascity-sling-dispatch-arg ()
   "Read the bead id / task text; show it in the header.

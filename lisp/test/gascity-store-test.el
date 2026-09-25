@@ -370,6 +370,37 @@ the last returns; another target runs concurrently."
         (gascity-store-action '("session" "suspend" "a") :target "a" :echo nil)
         (should (= (length actions) 1))))))
 
+(ert-deftest gascity-test-store-formula-refresh-async-swaps-caches ()
+  "The sling menu's `g' re-reads catalog and recipe through the store and
+swaps each cache entry only when its read answers."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((default-directory "/tmp/city/")
+          (gascity-formula-catalog-cache nil)
+          (gascity-formula-recipe-cache nil)
+          done)
+      (cl-letf (((symbol-function 'gascity-context-scope-key)
+                 (lambda (&optional _) "/tmp/city/")))
+        (push (cons "/tmp/city/" '(old)) gascity-formula-catalog-cache)
+        (gascity-formula-refresh-async "do-work" (lambda () (setq done t)))
+        (should (equal (sort (mapcar #'car reads)
+                             (lambda (a b) (string< (format "%s" a) (format "%s" b))))
+                       '(("formula" "catalog") ("formula" "show" "do-work"))))
+        ;; Nothing swapped yet: the menu keeps what it had.
+        (should (equal (cdr (assoc "/tmp/city/" gascity-formula-catalog-cache))
+                       '(old)))
+        (dolist (r reads)
+          (funcall (nth 1 r)
+                   (if (equal (car r) '("formula" "catalog"))
+                       '((formulas . [((name . "do-work"))]))
+                     '((name . "do-work")))))
+        (should done)
+        (should (equal (mapcar #'gascity-formula-catalog-entry-name
+                               (cdr (assoc "/tmp/city/" gascity-formula-catalog-cache)))
+                       '("do-work")))
+        (should (gascity-formula-p
+                 (cdr (assoc '("/tmp/city/" . "do-work")
+                             gascity-formula-recipe-cache))))))))
+
 ;;; Remote code paths over the TRAMP mock method
 
 (ert-deftest gascity-test-store-run-async-over-mock-tramp ()

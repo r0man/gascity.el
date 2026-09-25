@@ -74,6 +74,7 @@
 (require 'gascity-domain)   ; typed payload classes + decode
 (require 'gascity-types)    ; formula-catalog/formula-show bang executors
 (require 'gascity-context)  ; the shared city-scoped cache key
+(require 'gascity-store)    ; async catalog refresh (shared reads)
 
 ;; Action verbs are wired across files: this module is loaded before
 ;; `gascity-action' (which carries the sling entry and runners) and
@@ -179,6 +180,50 @@ a catalog edited mid-session is re-read from gc on the next pick."
           (seq-filter (lambda (entry) (not (equal (caar entry) key)))
                       gascity-formula-recipe-cache)))
   nil)
+
+(defun gascity-formula-refresh-async (formula done)
+  "Re-read this city's formula catalog, and FORMULA's recipe, without blocking.
+The async `g' of the sling transient (dashboard-v3 §8.5): both reads go
+through the store (forced, deadline-bounded), and each answer replaces
+its cache entry only when it arrives — until then the menu keeps the
+entries it has.  FORMULA nil refreshes the catalog alone.  DONE is
+called once with no arguments after every read has answered; a failed
+read is echoed and leaves its old entry in place.  Returns nil."
+  (let* ((key (gascity-context-scope-key))
+         (outstanding (if formula 2 1))
+         (finish (lambda ()
+                   (when (zerop (setq outstanding (1- outstanding)))
+                     (funcall done)))))
+    (gascity-store-fetch
+     '("formula" "catalog")
+     (lambda (payload)
+       (let ((entries (gascity-domain-decode-list
+                       'gascity-formula-catalog-entry
+                       (alist-get 'formulas payload))))
+         (setq gascity-formula-catalog-cache
+               (cons (cons key entries)
+                     (seq-remove (lambda (e) (equal (car e) key))
+                                 gascity-formula-catalog-cache))))
+       (funcall finish))
+     (lambda (msg)
+       (message "Cannot refresh the formula catalog: %s" msg)
+       (funcall finish))
+     :force t)
+    (when formula
+      (gascity-store-fetch
+       (list "formula" "show" formula)
+       (lambda (payload)
+         (let ((rkey (cons key formula)))
+           (setq gascity-formula-recipe-cache
+                 (cons (cons rkey (gascity-domain-decode 'gascity-formula payload))
+                       (seq-remove (lambda (e) (equal (car e) rkey))
+                                   gascity-formula-recipe-cache))))
+         (funcall finish))
+       (lambda (msg)
+         (message "Cannot refresh formula %s: %s" formula msg)
+         (funcall finish))
+       :force t))
+    nil))
 
 ;;; ============================================================
 ;;; Enum mapping (plan D1, REQ-005)
