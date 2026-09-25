@@ -86,6 +86,24 @@ newest first."
     (should (equal (car parsed) '(((a) (b) (c . [1])))))
     (should (= (cdr parsed) 2))))
 
+(ert-deftest gascity-test-comms-jsonl-feeder-matches-whole-parse ()
+  "Decoding JSON Lines chunk by chunk (any split, chatter first) gives
+what decoding the whole output gives."
+  (let* ((text (concat "Warning: no xauth data\n"
+                       (gascity-comms-test--read
+                        "emacs-city.events-24h-signal-sample.jsonl")
+                       "garbage line\n{\"seq\":9,\"type\":\"x\"}"))
+         (whole (gascity-reader--parse-json-lines text)))
+    (dolist (size '(1 7 100 4096 100000))
+      (let ((feed (gascity-reader--jsonl-feeder))
+            (i 0))
+        (while (< i (length text))
+          (funcall feed (substring text i (min (length text) (+ i size))))
+          (setq i (+ i size)))
+        (should (equal (funcall feed nil) whole))))
+    (should (= (cdr whole) 1))
+    (should (= (length (car whole)) 86))))
+
 ;;; Event model
 
 (ert-deftest gascity-test-comms-signal-levels ()

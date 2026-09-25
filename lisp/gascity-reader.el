@@ -484,6 +484,43 @@ Empty output decodes to (nil . 0)."
             (json-error (cl-incf bad))))))
     (cons (nreverse good) bad)))
 
+;;; Incremental JSON Lines
+
+(defun gascity-reader--jsonl-feeder ()
+  "Return a closure decoding JSON Lines incrementally, chunk by chunk.
+Call it with each output CHUNK as it arrives: complete lines are
+decoded at once (spreading a day of `gc events' — 13 MB — over the
+process's output instead of one long stall in its sentinel).  Call it
+with nil to finish: it returns (GOOD . BAD) exactly as
+`gascity-reader--parse-json-lines' would for the whole output,
+transport chatter before the first object line included."
+  (let ((partial "") (good nil) (bad 0) (started nil))
+    (cl-flet ((line (text)
+                (let ((text (string-trim text)))
+                  (when (and (not started) (string-prefix-p "{" text))
+                    (setq started t))
+                  (when (and started (not (string-empty-p text)))
+                    (condition-case nil
+                        (let ((decoded (json-parse-string text
+                                                          :object-type 'alist
+                                                          :array-type 'array
+                                                          :null-object nil
+                                                          :false-object nil)))
+                          (if (consp decoded) (push decoded good) (cl-incf bad)))
+                      (json-error (cl-incf bad)))))))
+      (lambda (chunk)
+        (if chunk
+            (let ((start 0) end
+                  (text (concat partial chunk)))
+              (while (setq end (string-search "\n" text start))
+                (line (substring text start end))
+                (setq start (1+ end)))
+              (setq partial (substring text start))
+              nil)
+          (line partial)
+          (setq partial "")
+          (cons (reverse good) bad))))))
+
 ;;; High-level reader
 
 (defconst gascity-reader--generic-envelope-message
@@ -676,8 +713,9 @@ in the ssh process, never inside a command."
   (gascity-remote-ssh-pipe-argv default-directory (cons executable args)
                                 :cd t :env city-env :resolve nil))
 
-(defun gascity-reader--spawn-ssh (args city-env callback)
+(defun gascity-reader--spawn-ssh (args city-env callback &optional feed)
   "Start gc ARGS over the ssh pipe transport; CALLBACK gets the result plist.
+FEED, when non-nil, also receives every stdout chunk as it arrives.
 ARGS already carry any city-targeting tokens; CITY-ENV the env-city
 overrides.  CALLBACK receives (:exit-code CODE :stdout OUT :stderr ERR
 :executable EXE) exactly once (CODE nil when ssh could not be
@@ -703,7 +741,9 @@ the process, or nil when none was started."
              :name "gascity-gc" :command command :noquery t
              :connection-type 'pipe :file-handler nil
              :stderr stderr-proc
-             :filter (lambda (_p chunk) (push chunk out))
+             :filter (lambda (_p chunk)
+                       (push chunk out)
+                       (when feed (funcall feed chunk)))
              :sentinel
              (lambda (proc _event)
                (when (memq (process-status proc) '(exit signal))
@@ -955,6 +995,8 @@ turns it on, at the cost of a fresh ssh per read."
                            args
                          (append args (list "--json"))))
             (output nil)
+            ;; JSON Lines decode as they arrive, not in the sentinel.
+            (feed (and lines (gascity-reader--jsonl-feeder)))
             ;; Both captured now: the sentinel fires with whatever buffer
             ;; (and so `default-directory' and any connection-locally
             ;; applied `gascity-executable') happens to be current then.
@@ -996,7 +1038,9 @@ turns it on, at the cost of a fresh ssh per read."
               :stderr stderr-buffer
               ;; Chunks are consed and joined once: repeated `concat'
               ;; is quadratic on a large payload (QA F3).
-              :filter (lambda (_proc chunk) (push chunk output))
+              :filter (lambda (_proc chunk)
+                        (push chunk output)
+                        (when feed (funcall feed chunk)))
               :sentinel
               (lambda (proc _event)
                 (when (memq (process-status proc) '(exit signal))
@@ -1019,8 +1063,7 @@ turns it on, at the cost of a fresh ssh per read."
                          (t
                           (condition-case perr
                               (let ((data (if lines
-                                              (gascity-reader--parse-json-lines
-                                               output)
+                                              (funcall feed nil)
                                             (gascity-reader-parse-json
                                              output))))
                                 (funcall callback data))
@@ -1052,7 +1095,8 @@ wedging a TRAMP channel (gce-q84 cannot happen here)."
          (full-args (if (or lines (member "--json" args))
                         args
                       (append args (list "--json"))))
-         (remote (file-remote-p default-directory)))
+         (remote (file-remote-p default-directory))
+         (feed (and lines (gascity-reader--jsonl-feeder))))
     (gascity-reader--spawn-ssh
      full-args city-env
      (lambda (result)
@@ -1072,10 +1116,11 @@ wedging a TRAMP channel (gce-q84 cannot happen here)."
            (condition-case perr
                (funcall callback
                         (if lines
-                            (gascity-reader--parse-json-lines stdout)
+                            (funcall feed nil)
                           (gascity-reader-parse-json stdout)))
              (gascity-json-parse-error
-              (when errback (funcall errback (error-message-string perr))))))))))))
+              (when errback (funcall errback (error-message-string perr)))))))))
+     feed)))
 
 ;;; Asynchronous runner (actions)
 
