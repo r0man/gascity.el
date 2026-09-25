@@ -156,6 +156,13 @@ renders as the empty string."
         rel
       (propertize rel 'help-echo ts))))
 
+(defun gascity-ui-ago (ts &optional now)
+  "Return TS as `3m ago' / `2h ago', or `yesterday' / `Sep 22' as is."
+  (let ((rel (gascity-ui-time ts now)))
+    (cond ((string-empty-p rel) rel)
+          ((string-match-p "\\`[0-9]+[smhd]\\'" rel) (concat rel " ago"))
+          (t rel))))
+
 (defun gascity-ui-clock (ts)
   "Return the local wall-clock `HH:MM' of timestamp TS, or \"\".
 The ISO TS rides along as `help-echo'."
@@ -304,10 +311,11 @@ over a good snapshot rides along in `:error'."
   "Return a section vnode in the §6.1 style, for the vui detail views.
 NAME is the section's identity, LABEL its title, LOAD an
 `gascity-ui-effective-load' plist, COLLAPSED whether it is
-folded, ROWS-FN the body builder over the load's data and COUNT-FN the
-summary count (default: `length').  First load: `…' in the summary;
-error with no data: a `■ gc …' line; error over data: `◐ stale' or
-`◐ timed out' on the header (`gascity-ui-stale-mark'); empty: `none'."
+folded, ROWS-FN the body builder over the load's data and COUNT-FN
+the summary count (default: `length'), or a summary string.  First
+load: `…' in the summary; error with no data: a `■ gc …' line; error
+over data: `◐ stale' or `◐ timed out' on the header
+\(`gascity-ui-stale-mark'); empty: `none'."
   (let* ((state (plist-get load :state))
          (data (plist-get load :data))
          (usable (memq state '(ready stale)))
@@ -315,6 +323,7 @@ error with no data: a `■ gc …' line; error over data: `◐ stale' or
          (summary (cond ((eq state 'pending) (propertize "…" 'face 'gascity-dim))
                         ((not usable) nil)
                         ((or (null count) (eql count 0)) "none")
+                        ((stringp count) count)
                         (t (number-to-string count))))
          (header (gascity-ui-section-header
                   (concat (if collapsed (concat (gascity-ui-glyph 'folded) " ") "")

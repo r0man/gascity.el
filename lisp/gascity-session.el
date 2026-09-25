@@ -297,9 +297,8 @@ that, the most common first segment of the two-segment step refs."
                                                 (gascity-agent-work-dir agent)))
                            (and session (alist-get 'created_at session)
                                 (propertize (concat "created "
-                                                    (gascity-ui-relative-time
-                                                     (alist-get 'created_at session))
-                                                    " ago")
+                                                    (gascity-ui-ago
+                                                     (alist-get 'created_at session)))
                                             'face 'gascity-dim))))))))
 
 ;; Kept for the section-header tests: the old state block is the header.
@@ -369,10 +368,9 @@ of the old signature (an empty section reads `none', §6.1)."
 
 (defun gascity-session--transcript-vnode (load)
   "Return the Transcript section from the `gc session logs' LOAD."
-  (let ((header (gascity-ui-right-align
-                 "Transcript" (propertize "f follow  v peek" 'face 'gascity-dim) 72)))
+  (progn
     (gascity-ui-section
-     "transcript" header load nil
+     "transcript" "Transcript" load nil
      (lambda (data)
        (mapcar (lambda (entry)
                  (let ((s (gascity-session--entry-summary entry)))
@@ -380,7 +378,9 @@ of the old signature (an empty section reads `none', §6.1)."
                                      "  " (gascity-ui-fit (car s) 10) " "
                                      (gascity-ui-truncate (cdr s) 56)))))
                (reverse (append (alist-get 'entries data) nil))))
-     (lambda (data) (length (alist-get 'entries data))))))
+     (lambda (data) (and (alist-get 'entries data)
+                         (format "last %d · f follow  v peek"
+                                 (length (alist-get 'entries data))))))))
 
 (defun gascity-session--mail-vnode (load agent)
   "Return the Mail section: the operator's mail from or to AGENT, from LOAD."

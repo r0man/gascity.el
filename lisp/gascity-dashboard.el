@@ -1350,8 +1350,7 @@ worker drawn under its run (not a top-level row of the section)."
                      (format "bead    %s %s" (plist-get agent :bead)
                              (or (plist-get agent :title) "")))
                 (and (plist-get agent :created)
-                     (format "created %s ago"
-                             (gascity-ui-relative-time (plist-get agent :created))))
+                     (concat "created " (gascity-ui-ago (plist-get agent :created))))
                 (and (not session)
                      (pcase (plist-get agent :state)
                        ('stalled "gc says running; no live session backs it")
