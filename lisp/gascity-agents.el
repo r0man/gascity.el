@@ -191,6 +191,25 @@ substring of the name) narrow further."
 
 ;;; Table
 
+(defun gascity-agents--stalled-entry-p (entry)
+  "Return non-nil when tabulated ENTRY is a stalled agent's row."
+  (equal (gascity-tabulated--cell-string entry 3) "stalled"))
+
+(defun gascity-agents--pinned-sorter (n &optional base)
+  "Return a sort predicate for column N that keeps stalled rows first.
+BASE compares two entries within a group (default: the column's text).
+`tabulated-list' flips a descending sort by swapping the arguments, so
+the pin reads the sort direction to stay on top either way (§7.3)."
+  (let ((base (or base (lambda (a b) (string< (gascity-tabulated--cell-string a n)
+                                              (gascity-tabulated--cell-string b n))))))
+    (lambda (a b)
+      (let ((sa (gascity-agents--stalled-entry-p a))
+            (sb (gascity-agents--stalled-entry-p b)))
+        (if (eq (not sa) (not sb))
+            (funcall base a b)
+          ;; Descending calls (pred b a): answer for the swapped pair.
+          (if (cdr tabulated-list-sort-key) sb sa))))))
+
 (defvar-local gascity-agents--filter '(:state "running")
   "The Agents table's filter plist (§7.3); state defaults to running.")
 
@@ -299,8 +318,14 @@ the §5.3 agent keys act on the row at point.
 \\{gascity-agents-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
-        [("" 1 nil) ("Agent" 34 t) ("Rig" 12 t) ("State" 9 t)
-         ("Active" 9 nil) ("Bead" 10 t) ("Prov" 6 t)])
+        `[("" 1 nil)
+          ("Agent" 34 ,(gascity-agents--pinned-sorter 1))
+          ("Rig" 12 ,(gascity-agents--pinned-sorter 2))
+          ("State" 9 ,(gascity-agents--pinned-sorter 3))
+          ("Active" 9 ,(gascity-agents--pinned-sorter
+                        4 (gascity-tabulated--time-sorter 4)))
+          ("Bead" 10 ,(gascity-agents--pinned-sorter 5))
+          ("Prov" 6 ,(gascity-agents--pinned-sorter 6))])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
   (tabulated-list-init-header)

@@ -679,7 +679,9 @@ reopened beads, escalated/held beads, unread mail, store health."
                                        "crashed" "cold start timeout"))
                      :right (or id "")
                      :time (alist-get 'ts e)
-                     :props (list 'gascity-dashboard-event e)))))))
+                     ;; RET: the Agents view (the session is gone).
+                     :props (list 'gascity-dashboard-event e
+                                  'gascity-dashboard-target #'gascity-jump-agents)))))))
       ;; ■ idle runs: no in-progress step touched within the threshold.
       (dolist (root (gascity-dashboard--active-runs beads))
         (let* ((id (alist-get 'id root))
@@ -721,7 +723,9 @@ reopened beads, escalated/held beads, unread mail, store health."
                                  (or (alist-get 'gc.formula_name meta) ""))
                    :right (or (gascity-dashboard--store-of-id id ctx) "")
                    :time (alist-get 'ts e)
-                   :props (list 'gascity-bead id))))))
+                   :props (list 'gascity-bead id
+                                'gascity-run-rig
+                                (or (gascity-dashboard--store-of-id id ctx) "")))))))
       ;; ▲ beads reopened after their assignee died.
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
@@ -1958,6 +1962,7 @@ Uses `magit-log-all' when magit is installed, else `vc-print-root-log'."
   (gascity-live-toggle)
   (force-mode-line-update))
 
+
 ;;; Header line
 
 (defun gascity-dashboard--header-line ()
@@ -2192,7 +2197,7 @@ teaches the view keys."
     ("L" "reload" gascity-reload)
     ("C" "lifecycle…" gascity-lifecycle-dispatch)
     ("O" "run order…" gascity-order-run)
-    ("W" "toggle live" gascity-dashboard-toggle-live)
+    ("W" "toggle live" gascity-live-toggle)
     ("g" "refresh" gascity-dispatch-refresh)
     ("/" "filter…" gascity-dispatch-filter)]])
 
@@ -2225,7 +2230,6 @@ teaches the view keys."
   :doc "Keymap for `gascity-dashboard-mode', the city cockpit."
   :parent gascity-section-mode-map
   "g"   #'gascity-dashboard-refresh
-  "W"   #'gascity-dashboard-toggle-live
   "/"   #'gascity-dashboard-filter
   "RET" #'gascity-dashboard-activate
   "i"   #'gascity-polecat-detail-at-point

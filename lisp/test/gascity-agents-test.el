@@ -336,5 +336,43 @@ stopped agents take their template's provider from `gc agent list'."
       (should (keymap-lookup map key)))
     (should (eq (keymap-lookup map "S") #'gascity-sling-dispatch))))
 
+(ert-deftest gascity-test-agents-sort-keeps-stalled-pinned ()
+  "A header-click sort, either direction, keeps stalled rows first."
+  (with-temp-buffer
+    (cl-letf (((symbol-function 'gascity-agents-refresh) #'ignore))
+      (gascity-agents-mode))
+    (let* ((mk (lambda (name state)
+                 (list name (vector "" name "—" state "—" "" ""))))
+           (entries (list (funcall mk "b" "active") (funcall mk "z" "stalled")
+                          (funcall mk "a" "stopped") (funcall mk "c" "stalled"))))
+      (dolist (dir '(nil t))
+        (setq tabulated-list-sort-key (cons "Agent" dir))
+        (let* ((sorted (sort (copy-sequence entries) (tabulated-list--get-sorter)))
+               (names (mapcar #'car sorted)))
+          (should (equal (seq-take names 2) (if dir '("z" "c") '("c" "z"))))
+          (should (equal (seq-drop names 2) (if dir '("b" "a") '("a" "b")))))))))
+
+(ert-deftest gascity-test-agents-tree-row-state-and-age ()
+  "Tree rows show the state and the relative last activity (§7.3)."
+  (let* ((session (gascity-domain-decode
+                   'gascity-session
+                   `((agent_name . "mayor") (name . "mayor") (state . "active")
+                     (last_active . ,(gascity-cockpit-test--ts 480)))))
+         (map (gascity-status--session-map-rows (list session)))
+         (live (gascity-test--vnode-text-plain
+                (gascity-status--agent-row '((qualified_name . "mayor") (name . "mayor")
+                                             (running . t))
+                                           nil map nil)))
+         (stopped (gascity-test--vnode-text-plain
+                   (gascity-status--agent-row '((qualified_name . "bd.dog-1")
+                                                (name . "bd.dog-1"))
+                                              nil map nil 4))))
+    (should (string-match-p "^  ● mayor +active +8m$" live))
+    (should (string-match-p "^    ○ bd.dog-1 +stopped *$" stopped))))
+
+(defun gascity-test--vnode-text-plain (vnode)
+  "Return the plain content of text VNODE."
+  (substring-no-properties (vui-vnode-text-content vnode)))
+
 (provide 'gascity-agents-test)
 ;;; gascity-agents-test.el ends here

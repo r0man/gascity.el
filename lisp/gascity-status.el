@@ -247,23 +247,48 @@ same shortening `gc status' applies to the member rows beneath it."
 
 ;;; Rendering (vnodes)
 
+(defun gascity-status--agent-state (agent session)
+  "Return AGENT's state word given its live SESSION (a `gascity-session').
+`active' or `idle' (live, idle past `gascity-dashboard-agent-idle-threshold'),
+the session's own state when it is not active, `stalled' when gc says
+running with no session, else `suspended' or `stopped'."
+  (let ((state (and session (gascity-session-state session)))
+        (age (and session (gascity-ui-parse-time (gascity-session-last-active session)))))
+    (cond ((and session (equal state "active"))
+           (if (and age (> (- (float-time) age)
+                           (or (bound-and-true-p gascity-dashboard-agent-idle-threshold)
+                               3600)))
+               "idle" "active"))
+          (session (or state "?"))
+          ((alist-get 'suspended agent) "suspended")
+          ((alist-get 'running agent) "stalled")
+          (t "stopped"))))
+
 (defun gascity-status--agent-row (agent rig-name session-map socket &optional indent)
   "Return a vnode for AGENT (a raw `gc status' agent entry) under RIG-NAME.
-SESSION-MAP and SOCKET join the row to its live session.  Stamps the row
-with the action `gascity-agent' as a text property so the d/t/RET action
-keys act on it.  INDENT is the row's leading width
-in columns, defaulting to 2; a pool's members are rendered at 4, nested under
-their template's header."
+SESSION-MAP and SOCKET join the row to its live session: the row shows
+the state and the relative last activity (§7.3 tree), and carries the
+action `gascity-agent' as a text property so the agent keys act on it.
+INDENT is the row's leading width in columns, defaulting to 2; a pool's
+members are rendered at 4, nested under their template's header."
   (let* ((qname (alist-get 'qualified_name agent))
          (name (or (alist-get 'name agent) qname "?"))
-         (running (alist-get 'running agent))
-         (suspended (alist-get 'suspended agent))
+         (session (and qname (gethash qname session-map)))
+         (state (gascity-status--agent-state agent session))
+         (indent (or indent 2))
          (obj (gascity-status--agent agent rig-name session-map socket)))
-    (vui-text (format "%s%s %s"
-                      (make-string (or indent 2) ?\s)
-                      (if running "●" "○")
-                      name)
-              :face (gascity-section-state-face running suspended)
+    (vui-text (concat (make-string indent ?\s)
+                      (gascity-ui-glyph (pcase state
+                                          ((or "active" "idle") 'ok)
+                                          ("stalled" 'fail)
+                                          (_ 'idle)))
+                      " " (gascity-ui-fit name (- 30 indent))
+                      " " (let ((age (gascity-ui-time
+                                      (and session
+                                           (gascity-session-last-active session))))
+                                (state (propertize state 'face 'gascity-dim)))
+                            (if (string-empty-p age) state
+                              (concat (gascity-ui-fit state 9) age))))
               'gascity-agent obj)))
 
 (defun gascity-status--agent-group-vnodes (groups rig-name session-map socket

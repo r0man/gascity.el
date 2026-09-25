@@ -476,9 +476,10 @@ stops it and leaves no process, timer or stream behind."
         (should (equal calls '(auto)))))))
 
 (ert-deftest gascity-test-live-keys-bound ()
-  "`W' toggles the stream in the cockpit and the session list."
+  "`W' toggles the stream in the cockpit and the session list: the one
+`gascity-live-toggle' of every view (§5.1, gascity-consistency-test)."
   (should (eq (keymap-lookup gascity-dashboard-mode-map "W")
-              #'gascity-dashboard-toggle-live))
+              'gascity-live-toggle))
   (should (eq (keymap-lookup gascity-session-list-mode-map "W")
               #'gascity-live-toggle)))
 

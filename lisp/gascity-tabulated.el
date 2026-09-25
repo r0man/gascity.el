@@ -564,6 +564,7 @@ BASE-NAME labels the mode line; ALL-ENTRIES is the full entry list."
         gascity-tabulated--current-page 1
         gascity-tabulated--page-size (beads-pager-window-page-size)
         gascity-tabulated--base-name base-name)
+  (gascity-tabulated--setup-things)
   (gascity-tabulated--refresh-display))
 
 (defun gascity-tabulated-next-page ()

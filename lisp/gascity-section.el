@@ -215,7 +215,7 @@ a `beads-thing' (the cockpit's own stamps) are left alone."
   (beads-thing-toggle))
 
 (defun gascity-thing-define-keys (map)
-  "Install the §5.4 movement keys, `?' and `j' in MAP; return MAP.
+  "Install the §5.4 movement keys and the §5.1 globals in MAP; return MAP.
 TAB/S-TAB/SPC go through the gascity wrappers of beads.el's thing
 commands (see `beads-thing-define-keys'), `?' opens the dispatch and
 `j' the jump prefix — the same in every gascity view."
@@ -233,7 +233,16 @@ commands (see `beads-thing-define-keys'), `?' opens the dispatch and
   ;; key time.
   (keymap-set map "?" 'gascity-dispatch)
   (keymap-set map "j" 'gascity-jump-prefix)
+  ;; `W' live refresh and `/' filter mean the same in every view (§5.1);
+  ;; a view without a filter says so instead of inserting `/'.
+  (keymap-set map "W" 'gascity-live-toggle)
+  (keymap-set map "/" #'gascity-no-filter)
   map)
+
+(defun gascity-no-filter ()
+  "Report that this view has no filter (`/' in a view without one)."
+  (interactive)
+  (user-error "This view has no filter"))
 
 (defvar-keymap gascity-section-mode-map
   :doc "Keymap for `gascity-section-mode'."
