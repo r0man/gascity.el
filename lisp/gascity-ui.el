@@ -141,15 +141,46 @@ are left alone; nothing here reads gc or touches a file."
 
 ;;; Times
 
+(defconst gascity-ui--timestamp-rx
+  (rx bos (group (= 4 digit)) "-" (group (= 2 digit)) "-" (group (= 2 digit))
+      "T" (group (= 2 digit)) ":" (group (= 2 digit)) ":" (group (= 2 digit))
+      (? "." (+ digit))
+      (or (group "Z")
+          (seq (group (any "+-")) (group (= 2 digit)) ":" (group (= 2 digit))))
+      eos)
+  "The timestamp shape gc prints: RFC 3339, `Z' or a `±HH:MM' offset.")
+
+(defun gascity-ui--days-from-civil (year month day)
+  "Return the days from 1970-01-01 to the proleptic Gregorian YEAR-MONTH-DAY."
+  (let* ((y (if (<= month 2) (1- year) year))
+         (era (floor y 400))
+         (yoe (- y (* era 400)))
+         (doy (+ (/ (+ (* 153 (+ month (if (> month 2) -3 9))) 2) 5) (1- day)))
+         (doe (+ (* yoe 365) (/ yoe 4) (- (/ yoe 100)) doy)))
+    (+ (* era 146097) doe -719468)))
+
 (defun gascity-ui-parse-time (ts)
   "Return ISO-8601 timestamp TS as a float of seconds, or nil.
 gc mixes zones (`last_active' carries a local offset, `created_at' is
-UTC) and `gc events' adds nanoseconds; `iso8601-parse' reads all of
-them.  A nil, empty or malformed TS yields nil, never an error."
+UTC) and `gc events' adds nanoseconds.  gc's own RFC 3339 shape is
+computed directly — a day of events is 15k timestamps, which
+`iso8601-parse' took half a second over — and anything else falls
+back to `iso8601-parse'.  A nil, empty or malformed TS yields nil,
+never an error."
   (when (and (stringp ts) (not (string-empty-p ts)))
-    (condition-case nil
-        (float-time (encode-time (iso8601-parse ts)))
-      (error nil))))
+    (if (string-match gascity-ui--timestamp-rx ts)
+        (let ((n (lambda (i) (string-to-number (match-string i ts)))))
+          (+ (* 86400 (gascity-ui--days-from-civil
+                       (funcall n 1) (funcall n 2) (funcall n 3)))
+             ;; Whole seconds, as `iso8601-parse' + `encode-time' gave.
+             (* 3600 (funcall n 4)) (* 60 (funcall n 5)) (funcall n 6) 0.0
+             (if (match-beginning 7)
+                 0
+               (* (if (equal (match-string 8 ts) "-") 1 -1)
+                  (+ (* 3600 (funcall n 9)) (* 60 (funcall n 10)))))))
+      (condition-case nil
+          (float-time (encode-time (iso8601-parse ts)))
+        (error nil)))))
 
 (defun gascity-ui-duration (seconds)
   "Return SECONDS as a compact duration: `12s', `3m', `2h', `4d'."

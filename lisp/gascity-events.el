@@ -257,11 +257,20 @@ of a `bead.', `convoy.' or `mail.' event (a message is a bead)."
 
 ;;; Rendering
 
-(defun gascity-events--render (&optional keep-page)
+(defvar-local gascity-events--model nil
+  "The last folded model, (ROWS SHOWN . FOLDED), reused by SPC.")
+
+(defun gascity-events--render (&optional keep-page reuse)
   "Re-render the rows from the events in hand.
 KEEP-PAGE stays on the current page (live appends, SPC); point stays
-on the row it was on (tabulated-list's remembered position)."
-  (let* ((model (gascity-events--rows gascity-events--events gascity-events--filter))
+on the row it was on (tabulated-list's remembered position).  REUSE
+keeps the last fold (SPC only changes what is unfolded; a day of
+events takes a noticeable moment to fold)."
+  (let* ((model (if (and reuse gascity-events--model)
+                    gascity-events--model
+                  (setq gascity-events--model
+                        (gascity-events--rows gascity-events--events
+                                              gascity-events--filter))))
          (page gascity-tabulated--current-page))
     (setq gascity-events--shown (cadr model)
           gascity-events--folded (cddr model))
@@ -483,7 +492,7 @@ fields in the `*gascity-detail*' side window."
               (if (member key gascity-events--expanded)
                   (delete key gascity-events--expanded)
                 (cons key gascity-events--expanded)))
-        (gascity-events--render t)))
+        (gascity-events--render t t)))
      (row (gascity-tabulated-detail-toggle))
      (t (message "Nothing to toggle here")))))
 

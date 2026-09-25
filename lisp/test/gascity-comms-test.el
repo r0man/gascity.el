@@ -110,6 +110,17 @@ newest first."
   (should (= (gascity-ui-duration-seconds "7d") 604800))
   (should (= (gascity-ui-duration-seconds "junk") 86400)))
 
+(ert-deftest gascity-test-comms-parse-time-fast-path ()
+  "gc's RFC 3339 timestamps parse without `iso8601-parse', to the same
+second, in either zone form; other shapes still go through it."
+  (dolist (ts '("2026-09-25T20:12:13.123456789+02:00" "2026-09-24T17:52:14Z"
+                "2024-02-29T23:59:59-05:30" "1999-12-31T23:59:59.5Z"))
+    (should (= (gascity-ui-parse-time ts)
+               (float-time (encode-time (iso8601-parse ts))))))
+  (should (= (gascity-ui-parse-time "2026-09-25T20:12:13+0200")
+             (float-time (encode-time (iso8601-parse "2026-09-25T20:12:13+0200")))))
+  (should-not (gascity-ui-parse-time "yesterday")))
+
 (ert-deftest gascity-test-comms-fold-quiet-window ()
   "A quiet 2h window is almost all churn: order firings fold per bucket,
 and nothing is lost (rows + folded account for every event)."
