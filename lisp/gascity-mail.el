@@ -52,6 +52,7 @@
 (require 'gascity-ui)
 (require 'gascity-context)
 (require 'gascity-store)
+(require 'gascity-live)                 ; mail.* events re-read the inbox
 (require 'gascity-domain)
 (require 'gascity-types)
 (require 'gascity-section)
@@ -59,7 +60,6 @@
 (require 'gascity-compose)
 (require 'gascity-action)
 
-(declare-function gascity-live-header-string "gascity-live")
 
 ;;; State
 
@@ -244,8 +244,7 @@ Pure over buffer-local state (§8.3 R2)."
                              (seq-count #'gascity-mail--unread-p visible)
                              (length visible)))))
          (filters (gascity-mail--filter-text))
-         (live (and (fboundp 'gascity-live-header-string)
-                    (gascity-live-header-string)))
+         (live (gascity-live-header-string))
          (right (concat (propertize "/ filter  c compose" 'face 'gascity-dim)
                         (if live (concat "  " live) ""))))
     (concat " " (propertize (or gascity-mail--city "?") 'face 'gascity-city)
@@ -298,7 +297,9 @@ here since the last `g' leave the list: gc's inbox is the truth."
     (user-error "Not in the mail inbox"))
   (when force
     (setq gascity-mail--kept nil
-          gascity-mail--overrides nil))
+          gascity-mail--overrides nil)
+    ;; A manual `g' also retries a live stream that is down.
+    (gascity-live-reconnect))
   (let ((buffer (current-buffer))
         (args (gascity-mail--inbox-args)))
     ;; Passive repaint: the inbox re-read for anyone (an invalidation
@@ -786,7 +787,8 @@ The subject defaults to the original prefixed with \"RE: \"."
   "R"   #'gascity-mail-reply-at-point
   "a"   #'gascity-mail-archive-at-point
   "u"   #'gascity-mail-mark-unread-at-point
-  "c"   #'gascity-mail-dispatch)
+  "c"   #'gascity-mail-dispatch
+  "W"   #'gascity-live-toggle)
 
 (define-derived-mode gascity-mail-inbox-mode tabulated-list-mode "GC-Mail"
   "Major mode of the mail inbox (dashboard-v3 §7.9).
@@ -810,7 +812,11 @@ act on every row of an active region.
   (setq-local gascity-filter-set-function #'gascity-mail--set-filter)
   (setq-local gascity-filter-reset-function
               (lambda () (setq gascity-mail-inbox--filter nil)
-                (gascity-mail-inbox--render))))
+                (gascity-mail-inbox--render)))
+  ;; `mail.*' events invalidate the store's inbox read, which the
+  ;; inbox subscribes to (`gascity-mail-inbox-refresh'): joining the
+  ;; stream is all a live inbox needs.
+  (gascity-live-attach (current-buffer) :kinds '(mail)))
 
 ;;;###autoload
 (defun gascity-mail ()

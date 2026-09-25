@@ -319,6 +319,25 @@ the queue when it lands."
       (should (equal (mapcar (lambda (e) (alist-get 'seq e)) gascity-events--events)
                      '(5 10 11 13))))))
 
+(ert-deftest gascity-test-comms-events-live-subscription ()
+  "The view subscribes to its city's raw live events and appends them."
+  (let (subscribed attached)
+    (cl-letf (((symbol-function 'gascity-live-attach)
+               (lambda (&rest _) (setq attached t)))
+              ((symbol-function 'gascity-live-subscribe)
+               (lambda (fn &optional buffer) (setq subscribed (cons fn buffer)) 'handle))
+              ((symbol-function 'gascity-live-unsubscribe) #'ignore))
+      (gascity-comms-test--with-events (reads)
+        (let ((gascity-events-append-delay 0))
+          (gascity-events--live-setup)
+          (should attached)
+          (should (eq (cdr subscribed) (current-buffer)))
+          (gascity-events-refresh)
+          (funcall (nth 1 (car reads)) (cons nil 0))
+          (funcall (car subscribed) (gascity-comms-test--type "session.crashed" 7))
+          (gascity-events--flush (current-buffer))
+          (should (equal (nth 2 (car (gascity-comms-test--rows))) "session.crashed")))))))
+
 (ert-deftest gascity-test-comms-events-render-guard ()
   "Rendering a remote city's Events buffer does no file I/O (§8.3 R2)."
   (gascity-comms-test--with-events (reads)

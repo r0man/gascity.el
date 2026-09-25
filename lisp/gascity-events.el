@@ -32,7 +32,8 @@
 ;; Reads go through the store (`gascity-store-fetch', `:lines': gc
 ;; events has no --json flag, it always prints JSON Lines).  The type
 ;; filter is server-side (`--type'), everything else filters the rows
-;; in hand.  Live events arrive through `gascity-events--append'.
+;; in hand.  The city's live stream (`gascity-live') feeds raw events
+;; to `gascity-events--append': the view appends, it never re-reads.
 
 ;;; Code:
 
@@ -48,18 +49,12 @@
 (require 'gascity-event)
 (require 'gascity-context)
 (require 'gascity-store)
+(require 'gascity-live)                 ; raw events appended live (§8.2)
 (require 'gascity-domain)
 (require 'gascity-section)
 (require 'gascity-tabulated)
 
 (declare-function gascity-polecat-detail "gascity-session")
-;; The per-city live stream (dashboard-v3 §8.2) lands with
-;; gascity-live; until it is loaded `W' says so and nothing appends.
-(declare-function gascity-live-subscribe "gascity-live")
-(declare-function gascity-live-unsubscribe "gascity-live")
-(declare-function gascity-live-toggle "gascity-live")
-(declare-function gascity-live-header-string "gascity-live")
-(declare-function gascity-live-reconnect "gascity-live")
 
 ;;; State
 
@@ -319,8 +314,7 @@ Pure over buffer-local state (§8.3 R2)."
                                        'face 'gascity-dim)))
                   (_ (number-to-string gascity-events--shown))))
          (filters (gascity-events--filter-text))
-         (live (and (fboundp 'gascity-live-header-string)
-                    (gascity-live-header-string)))
+         (live (gascity-live-header-string))
          (right (concat (if (> gascity-events--folded 0)
                             (propertize (format "(%d churn folded)" gascity-events--folded)
                                         'face 'gascity-dim)
@@ -355,8 +349,7 @@ waiting live stream is retried; FORCE likewise."
   (interactive (list t))
   (unless (derived-mode-p 'gascity-events-mode)
     (user-error "Not in an Events buffer"))
-  (when (and force (fboundp 'gascity-live-reconnect))
-    (gascity-live-reconnect))
+  (when force (gascity-live-reconnect))
   (let ((buffer (current-buffer))
         (generation (cl-incf gascity-events--generation)))
     (unless (eq gascity-events--status 'ready)
@@ -441,9 +434,13 @@ type filter are dropped."
                                #'gascity-events--flush buffer))))))))
 
 (defun gascity-events--live-setup ()
-  "Subscribe this view to its city's live stream, when one is available."
-  (when (and (fboundp 'gascity-live-subscribe) (null gascity-events--live))
+  "Join the city's live stream and append its raw events to this view.
+The view never re-reads for an event batch (§8.2 \"any → Events:
+append, no re-read\"); a resumed stream replays the missed events,
+which the `seq' dedup absorbs."
+  (unless gascity-events--live
     (let ((buffer (current-buffer)))
+      (gascity-live-attach buffer)
       (setq gascity-events--live
             (gascity-live-subscribe
              (lambda (event) (gascity-events--append (list event) buffer))
@@ -453,16 +450,15 @@ type filter are dropped."
   "Drop the live subscription and the pending flush of this view."
   (when (timerp gascity-events--flush-timer)
     (cancel-timer gascity-events--flush-timer))
-  (when (and gascity-events--live (fboundp 'gascity-live-unsubscribe))
+  (when gascity-events--live
     (gascity-live-unsubscribe gascity-events--live))
   (setq gascity-events--live nil))
 
 (defun gascity-events-toggle-live ()
   "Toggle the city's live event stream (`W', §5.1)."
   (interactive)
-  (if (fboundp 'gascity-live-toggle)
-      (progn (gascity-live-toggle) (gascity-events--live-setup))
-    (message "Live events are not available yet; g re-reads")))
+  (gascity-live-toggle)
+  (gascity-events--live-setup))
 
 ;;; Things at point
 
@@ -672,6 +668,7 @@ fields."
         ;; line carries the view summary and filter state.
         tabulated-list-use-header-line nil)
   (tabulated-list-init-header)
+  (gascity-tabulated--setup-things)
   (setq header-line-format '(:eval (gascity-events--header-line)))
   (setq-local gascity-tabulated-detail-function #'gascity-events--detail-lines)
   (gascity-events--install-filter)
