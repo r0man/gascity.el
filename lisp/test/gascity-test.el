@@ -3332,7 +3332,7 @@ fall-through a future vui change could reintroduce."
                   gascity-dashboard-mode
                   gascity-rig-dashboard-mode
                   gascity-session-detail-mode))
-    (with-temp-buffer
+    (gascity-test-with-temp-view
       (funcall mode)
       (let ((binding (key-binding (kbd "q"))))
         (should (eq binding #'quit-window))
@@ -4380,12 +4380,12 @@ from either list now refreshes it in place like every other view."
                (lambda () (setq refreshed 'mail)))
               ((symbol-function 'gascity-convoy-list-refresh)
                (lambda () (setq refreshed 'convoy))))
-      (with-temp-buffer
+      (gascity-test-with-temp-view
         (gascity-mail-inbox-mode)
         (gascity--refresh-current-view)
         (should (eq refreshed 'mail)))
       (setq refreshed nil)
-      (with-temp-buffer
+      (gascity-test-with-temp-view
         (gascity-convoy-list-mode)
         (gascity--refresh-current-view)
         (should (eq refreshed 'convoy))))))

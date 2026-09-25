@@ -16,6 +16,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'gascity)
+(require 'gascity-test-helpers)
 
 ;;; Relative times (§6.1)
 
@@ -591,7 +592,7 @@ wrapping at the end; decoration is skipped."
 (ert-deftest gascity-test-vui-views-stamp-things-and-fold ()
   "A vui view without its own stamps gets things from its row identities;
 SPC on a header folds that section, and the fold is re-applied."
-  (with-temp-buffer
+  (gascity-test-with-temp-view
     (gascity-section-mode)
     (let ((inhibit-read-only t))
       (insert (propertize "Agents  1 running" 'gascity-section t) "\n"

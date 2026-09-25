@@ -15,6 +15,7 @@
 (require 'cl-lib)
 (require 'gascity)
 (require 'gascity-live)
+(require 'gascity-test-helpers)
 
 ;;; Helpers
 
@@ -561,6 +562,27 @@ window that no longer overlaps the last seq asks for a full refresh."
       (gascity-live--poll-result s '(((seq . 20)) ((seq . 21))))
       (should (equal queued '(:all)))
       (should (equal delivered '(20 21))))))
+
+(ert-deftest gascity-test-live-leak-fixture-catches-a-leak ()
+  "The per-test leak check fails a passing test that leaves a live stream
+or a repeating timer behind, and clears them (gascity-test-helpers)."
+  (let* ((test (make-ert-test :name 'gascity-test--fake-leaker :body #'ignore))
+         (gascity-test-leak-check 'fail)
+         timer
+         (result (gascity-test--check-leaks
+                  (lambda (_test)
+                    (puthash "/tmp/leaked-city/"
+                             (gascity-live--stream-create :root "/tmp/leaked-city/")
+                             gascity-live--streams)
+                    (setq timer (run-with-timer 3600 3600 #'ignore))
+                    (make-ert-test-passed))
+                  test)))
+    (should (ert-test-failed-p result))
+    (let ((leaks (cadr (ert-test-result-with-condition-condition result))))
+      (should (assq 'live-streams leaks))
+      (should (assq 'repeating-timers leaks)))
+    (should (zerop (hash-table-count gascity-live--streams)))
+    (should-not (memq timer timer-list))))
 
 (provide 'gascity-live-test)
 ;;; gascity-live-test.el ends here

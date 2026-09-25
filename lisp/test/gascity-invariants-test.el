@@ -298,6 +298,9 @@ directory, whatever buffer is current when the callback fires (QA F5)."
         (offered nil))
     (cl-letf (((symbol-function 'gascity-reader-read) boom)
               ((symbol-function 'gascity-reader-run) boom)
+              ;; A cold-memo prompt refreshes the rig list in the
+              ;; background: park it instead of spawning a real gc.
+              ((symbol-function 'gascity-reader-read-async) #'ignore)
               ((symbol-function 'gascity-rigs-cached)
                (lambda (&rest _)
                  (list (gascity-domain-decode 'gascity-rig '((name . "beads.el")))

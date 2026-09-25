@@ -14,6 +14,12 @@
 ;;   read without calling its stub.  Loading this file installs an
 ;;   advice that clears the store before every ERT test.
 ;;
+;; - Nothing leaks: a test that leaves a live stream in
+;;   `gascity-live--streams', a live gascity process or a new repeating
+;;   timer behind fails (`gascity-test-leak-check'), and the leftovers
+;;   are cleared.  `with-temp-buffer' inhibits `kill-buffer-hook', so a
+;;   view mode entered in one never detaches by itself.
+;;
 ;; - `gascity-test-with-mock-remote': a remote `default-directory'
 ;;   through TRAMP's "mock" method — a local sh behind the full tramp-sh
 ;;   machinery.  The method is not built into TRAMP; it is defined here
@@ -34,6 +40,7 @@
 (require 'ert)
 (require 'tramp)
 (require 'gascity-store)
+(require 'gascity-live)
 
 ;;; Fresh store per test
 
@@ -42,6 +49,75 @@
   (gascity-store-clear))
 
 (advice-add 'ert-run-test :before #'gascity-test--reset-store)
+
+;;; Nothing leaks out of a test
+
+(defvar gascity-test-leak-check 'fail
+  "What the per-test leak check does: `fail' the leaking test, `report'
+the leak with `message', or nil to skip the check.")
+
+(defvar gascity-test--leak-report nil
+  "Leaks recorded in `report' mode, newest first: (TEST . LEAKS).")
+
+(defun gascity-test--repeating-timers ()
+  "Return the active repeating timers."
+  (seq-filter #'timer--repeat-delay (append timer-list timer-idle-list)))
+
+(defun gascity-test--leaks (timers-before)
+  "Return a description of the state the test just run left behind.
+TIMERS-BEFORE are the repeating timers active before it.  Checks the
+live stream table (`gascity-live--streams'), live processes the stream
+and store start, and new repeating timers; then clears them all so the
+next test starts clean."
+  (let (leaks)
+    (when (and (boundp 'gascity-live--streams)
+               (> (hash-table-count gascity-live--streams) 0))
+      (let (roots)
+        (maphash (lambda (root _) (push root roots)) gascity-live--streams)
+        (push (cons 'live-streams roots) leaks))
+      (gascity-live-stop-all))
+    (let ((procs (seq-filter
+                  (lambda (p) (and (process-live-p p)
+                                   (string-match-p "\\`gascity-\\(live\\|gc\\)"
+                                                   (process-name p))))
+                  (process-list))))
+      (when procs
+        (push (cons 'processes (mapcar #'process-name procs)) leaks)
+        (mapc #'delete-process procs)))
+    (let ((timers (seq-remove (lambda (tm) (memq tm timers-before))
+                              (gascity-test--repeating-timers))))
+      (when timers
+        (push (cons 'repeating-timers
+                    (mapcar (lambda (tm) (timer--function tm)) timers))
+              leaks)
+        (mapc #'cancel-timer timers)))
+    leaks))
+
+(defun gascity-test--check-leaks (run test)
+  "Around advice for `ert-run-test': RUN TEST, then check for leaks.
+A passing test that leaves a live stream, a stream or store process, or
+a new repeating timer behind fails (`gascity-test-leak-check')."
+  (when (and (boundp 'gascity-live--streams)
+             (> (hash-table-count gascity-live--streams) 0))
+    (gascity-live-stop-all))
+  (let* ((before (gascity-test--repeating-timers))
+         (result (funcall run test))
+         (leaks (and gascity-test-leak-check
+                     (gascity-test--leaks before))))
+    (when leaks
+      (pcase gascity-test-leak-check
+        ('report
+         (push (cons (ert-test-name test) leaks) gascity-test--leak-report)
+         (message "LEAK %s: %S" (ert-test-name test) leaks))
+        ('fail
+         (when (ert-test-passed-p result)
+           (setq result (make-ert-test-failed
+                         :condition (list 'gascity-test-leak leaks)
+                         :backtrace nil :infos nil))
+           (setf (ert-test-most-recent-result test) result)))))
+    result))
+
+(advice-add 'ert-run-test :around #'gascity-test--check-leaks)
 
 ;; Tests park the async reader's callbacks and fire them synchronously,
 ;; so reads requested during a vui mount must spawn inline there; the
@@ -185,6 +261,20 @@ and both return nil (no process was started)."
                   (push (list args callback) ,actions)
                   nil)))
        ,@body)))
+
+(defmacro gascity-test-with-temp-view (&rest body)
+  "Like `with-temp-buffer', but the buffer dies with its `kill-buffer-hook'.
+`with-temp-buffer' inhibits buffer hooks, so a view mode entered in it
+never detaches from its city's live stream (`gascity-live-attach') and
+leaks it; use this for any test that enters a gascity view mode."
+  (declare (indent 0) (debug t))
+  (let ((buf (make-symbol "buf")))
+    `(let ((,buf (generate-new-buffer " *gascity-test-view*")))
+       (unwind-protect
+           (with-current-buffer ,buf ,@body)
+         (when (buffer-live-p ,buf)
+           (let ((kill-buffer-query-functions nil))
+             (kill-buffer ,buf)))))))
 
 (provide 'gascity-test-helpers)
 ;;; gascity-test-helpers.el ends here

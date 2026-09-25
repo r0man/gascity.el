@@ -15,6 +15,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'gascity)
+(require 'gascity-test-helpers)
 (require 'gascity-cockpit-test)
 
 (defun gascity-agents-test--read (args callback &optional _errback &rest _)
@@ -360,7 +361,7 @@ local follower stops gc on the host (no leaked `session logs -f')."
 
 (ert-deftest gascity-test-agents-sort-keeps-stalled-pinned ()
   "A header-click sort, either direction, keeps stalled rows first."
-  (with-temp-buffer
+  (gascity-test-with-temp-view
     (cl-letf (((symbol-function 'gascity-agents-refresh) #'ignore))
       (gascity-agents-mode))
     (let* ((mk (lambda (name state)
