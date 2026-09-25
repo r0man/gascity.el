@@ -233,6 +233,19 @@ payload bead as one line — never a printed elisp alist (QA bug 8)."
     (should (seq-some (lambda (l) (string-match-p "\\`routed_to +gascity.el/" l))
                       (gascity-event-fields reopened)))))
 
+(ert-deftest gascity-test-comms-event-drawer-keys-once-aligned ()
+  "Each key appears once (payload `message' does not repeat the event's)
+and every value starts in one column."
+  (let* ((event '((type . "mail.sent") (seq . 1) (ts . "2026-09-25T20:00:00Z")
+                  (actor . "controller") (subject . "bl-wisp-x") (message . "mayor")
+                  (payload (rig . "hq")
+                           (message (id . "bl-wisp-x") (subject . "hi")))))
+         (lines (gascity-event-fields event))
+         (col (lambda (l) (string-match "  [^ ]" l))))
+    (should (= 1 (seq-count (lambda (l) (string-prefix-p "message" l)) lines)))
+    (should (seq-some (lambda (l) (string-match-p "\\`message +mayor\\'" l)) lines))
+    (should (= 1 (length (delete-dups (mapcar col lines)))))))
+
 (ert-deftest gascity-test-comms-cockpit-churn-unfold-capped ()
   "SPC on a cockpit ×N row unfolds at most 20 events and a `… N more'
 line; RET on the row (or that line) opens Events narrowed to the group

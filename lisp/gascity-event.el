@@ -228,10 +228,11 @@ quarter hour) unless FILTERS unfold it (`:unfold')."
 (defun gascity-event-fields (event)
   "Return EVENT's fields beyond time, type, seq and ok as `key value' lines.
 The inline drawer of an event row (§5.4).  The payload's fields are
-listed with the event's own (`routed_to  …'); a payload bead is one
-line (id, title, status), not the whole bead; values are cut at 60
-columns and the drawer at 12 lines."
-  (let (lines)
+listed with the event's own (`routed_to  …'), each key once (a payload
+`message' repeating the event's is dropped); a payload bead is one
+line (id, title, status), not the whole bead.  Keys share one column;
+values are cut at 60 columns and the drawer at 12 lines."
+  (let (pairs)
     (dolist (field event)
       (let ((key (car field)) (v (cdr field)))
         (unless (or (memq key '(ts type seq ok)) (null v))
@@ -240,16 +241,25 @@ columns and the drawer at 12 lines."
                 (when (cdr pf)
                   (push (if (and (eq (car pf) 'bead) (consp (cdr pf)))
                             (let ((b (cdr pf)))
-                              (format "%-13s %s" "bead"
-                                      (gascity-event--value
-                                       (format "%s %s (%s)" (alist-get 'id b)
-                                               (or (alist-get 'title b) "")
-                                               (or (alist-get 'status b) "?")))))
-                          (format "%-13s %s" (car pf)
-                                  (gascity-event--value (cdr pf))))
-                        lines)))
-            (push (format "%-13s %s" key (gascity-event--value v)) lines)))))
-    (seq-take (nreverse lines) 12)))
+                              (cons 'bead (format "%s %s (%s)" (alist-get 'id b)
+                                                  (or (alist-get 'title b) "")
+                                                  (or (alist-get 'status b) "?"))))
+                          pf)
+                        pairs)))
+            (push (cons key v) pairs)))))
+    (setq pairs (nreverse pairs))
+    ;; Each key once: the event's own field wins over a payload one.
+    (let ((seen nil) (unique nil))
+      (dolist (pair pairs)
+        (unless (memq (car pair) seen)
+          (push (car pair) seen)
+          (push pair unique)))
+      (setq pairs (seq-take (nreverse unique) 12)))
+    (let ((width (apply #'max 0 (mapcar (lambda (p) (length (symbol-name (car p)))) pairs))))
+      (mapcar (lambda (p)
+                (format "%s  %s" (string-pad (symbol-name (car p)) width)
+                        (gascity-event--value (cdr p))))
+              pairs))))
 
 (provide 'gascity-event)
 ;;; gascity-event.el ends here
