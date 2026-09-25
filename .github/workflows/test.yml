@@ -63,7 +63,7 @@ jobs:
         run: |
           curl -fsSL https://github.com/gastownhall/gascity/releases/download/v1.4.2/gascity_1.4.2_linux_amd64.tar.gz \
             | tar -xz -C /usr/local/bin gc
-          gc --version
+          gc version
 
       - name: Run gate
         # scripts/gate.sh runs `eldev compile --warnings-as-errors` and
