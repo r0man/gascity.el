@@ -43,25 +43,43 @@ names a command defined in another), so a missing forward `declare-function`
 compiles clean under plain `eldev compile` and is invisible to `eldev test`.
 Always compile the whole package, never an "affected" subset.
 
-All tests are named `gascity-test-*` and live in one file. Pure tests stub the
-gc boundary with `cl-letf` on `gascity-reader-read` /
-`gascity-reader-read-async` (or on the action verb under test); the few tests
-that need a live `gc` and city guard themselves with `skip-unless`.
+All tests are named `gascity-test-*` and live in `lisp/test/` (the big
+`gascity-test.el` plus per-area `gascity-<area>-test.el` files). Pure tests
+stub the gc boundary with `cl-letf` on `gascity-reader-read` /
+`gascity-reader-read-async` / `gascity-reader-run-async` (or on the action
+verb under test; `gascity-test-with-store-stubs` records both async ones);
+the store is cleared before every test. The few tests that need a live
+`gc` and city guard themselves with `skip-unless`.
 
 ## Architecture
 
 Load order in `lisp/gascity.el` is the dependency order:
-custom → error → remote → reader → command → context → types → domain →
-command-status → terminal → section → tabulated → status → action → rig →
-session.
+custom → error → remote → reader → store → command → context → types →
+domain → command-status → terminal → section → tabulated → status →
+action → rig → session.
 
 **Data plane (one gc call site).** `gascity-reader.el` is the only module that
 runs `gc`: `gascity-reader-run` (sync `process-file`), `-parse-json`,
-`-read` (sync `gc … --json` → payload) and `-read-async` (`make-process`,
-backing `vui-use-async`). There are deliberately no per-subcommand accessors
+`-read` (sync `gc … --json` → payload), `-read-async` (`make-process` →
+parsed payload) and `-run-async` (`make-process` → exit/stdout/stderr, the
+action runner). There are deliberately no per-subcommand accessors
 here; a named sync read is the `gascity-command-<sub>!` bang function. JSON
 decodes `false` **and** `null` to nil (unlike beads.el's `:json-false`), which
 is why domain boolean slots are typed `(or null boolean)`.
+
+**Store and scheduler (dashboard-v3 §8.3 R3/R5, §8.5).** Views never call
+the async reader directly: they read through `gascity-store.el`, a per-city
+payload store keyed by (directory . argv) with in-flight dedup, per-kind
+TTLs, a per-host scheduler (reads and actions in separate lanes, at most
+`gascity-remote-max-inflight` concurrent remote processes each, visible
+buffers first), a deadline per process (`gascity-remote-async-timeout`)
+and an `offline` host state with backoff probes. vui components use
+`gascity-store-use` (a drop-in for `vui-use-async` whose `:status` stays
+`ready` with the last good payload while a refresh is pending — SWR by
+construction); callback code uses `gascity-store-fetch` /
+`gascity-store-subscribe`; the event router invalidates with
+`gascity-store-invalidate` / `-invalidate-event`. Remote completions are
+delivered from `run-at-time` 0, never inside a sentinel.
 
 **Command layer (beads-meta, execution + parse only).**
 `gascity-defcommand` (`gascity-command.el`) defines an EIEIO class per gc
@@ -75,8 +93,9 @@ filters decoded rows client-side (session `--state` is the lone server-side
 exception). Mutating classes derive from `gascity-command-action`
 (`gascity-action.el`). `gascity-command-execute-interactive` is the generic
 that turns a command object into UI: view modules specialize it to open their
-buffer, actions specialize it to run synchronously and refresh the originating
-view; city start/stop keep the streaming base method.
+buffer, actions specialize it to START the gc call asynchronously
+(`gascity-command-act-async` → `gascity-store-action`) and return; city
+start/stop keep the streaming base method.
 
 **Domain objects.** `gascity-domain.el` decodes payloads once into typed EIEIO
 objects (rig, session, agent, convoy, mail, order) with `:json-key` slot
@@ -170,6 +189,15 @@ unbounded blocking call.
 - Confirmation: destructive actions (rig restart/remove, force-kill, city
   start/stop) go through `gascity-action--confirm`; quick mutations (nudge,
   suspend, wake, drain) run without a prompt and report in the echo area.
+- Non-blocking (dashboard-v3 D9): anything that needs no further input
+  never blocks the command loop. Gather input synchronously, then start
+  the gc call (`gascity-command-act-async`) and return; success echoes
+  "<Verb> <target>", failure echoes the first stderr line and logs the
+  rest to `*gascity-log: CITY*`. No sync gc on render, redisplay, timers
+  or eldoc; every process has a deadline. The ERT non-blocking guard in
+  `lisp/test/gascity-store-test.el` lists every input-free verb — add
+  new ones there. Shared test fixtures (fresh store per test, TRAMP mock
+  method, render guard) live in `lisp/test/gascity-test-helpers.el`.
 - Commit subjects follow `type(scope): summary`, optionally ending with the
   bead id in parentheses; the commit body cites the design section it
   implements.

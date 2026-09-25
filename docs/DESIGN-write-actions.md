@@ -365,20 +365,46 @@ fields without contacting gc); `r` is the gc-contacting read.
 
 ## 9. Async / refresh / error flow
 
-Unchanged from P1, extended at the edges:
+Superseded by dashboard-v3 **D9** (`plans/dashboard-v3/design.md` §8.5):
+every operation that needs no further input is **non-blocking**.  Input
+(minibuffer, transient, `gascity-action--confirm`, compose buffer) is
+collected synchronously; the gc call is then *started* and the command
+returns.
 
 ```
-key/​transient → build gascity-command-* → gascity-command-execute-interactive
-  → (action) gascity-command-act           ; sync, validated, echo summary
-      → success: gascity--refresh-current-view   ; in-place re-render
-      → failure: user-error (gc stderr)
-  → (compose) C-c C-c → same act path with the buffer body
+key/​transient → (input, sync) → build gascity-command-* → gascity-command-execute-interactive
+  → (action) gascity-command-act-async          ; validate (user-error), then start
+      → gascity-store-action                    ; action lane of the per-host scheduler
+          · serialized per target id (session, rig, message, bead)
+          · target pending (`gascity-store-action-pending-p`) → rows may show `…`
+          · deadline gascity-remote-async-timeout (30s): kill, echo "timed out"
+      → success: echo "<Verb> <target>" (e.g. "Suspended mayor")
+                 invalidate the read kinds it touched (§8.2 routing table)
+                 unless a live event stream covers the city;
+                 refresh the originating view if still live
+      → failure: echo the first stderr line; full stderr appended to
+                 *gascity-log: CITY* — never a modal error from a sentinel
+  → (compose) C-c C-c → same async path with the buffer body; the draft
+                 closes at once
+  → (peek / mail read / sling dry run) the view opens at once with `…`
+                 and fills in when gc answers
 ```
 
-Quick mutations stay **synchronous** (they return in well under a second;
-P1 made this call deliberately). The only long-running writes remain city
-start/stop, which keep the streaming `async-shell-command` base method.
-Refresh reuses the mode-dispatch table (§3.3 fills its two gaps).
+Rules for the async callbacks: they run outside the process sentinel
+(remote completions are deferred with `run-at-time` 0), do no TRAMP file
+operations, check `buffer-live-p`, and never signal — killing the view
+does not cancel a mutation in flight (it still finishes and echoes).
+The action lane is separate from the read lane, so a busy dashboard
+never queues a mutation behind its reads; both share the per-host cap
+(`gascity-remote-max-inflight`, 3 on a remote host).
+
+City start/stop keep the streaming `async-shell-command` base method
+(also non-blocking).  The remaining synchronous gc work is the explicit
+§8.5 exception list: first contact with a remote host (`city.toml`
+discovery, gc resolution — both bounded by
+`gascity-remote-with-timeout` and cached per connection), completion
+candidates read while prompting, and what Emacs itself does
+synchronously (Dired, magit-log, plan-file `RET` over TRAMP).
 
 ---
 

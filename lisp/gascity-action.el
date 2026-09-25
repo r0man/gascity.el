@@ -23,11 +23,14 @@
 ;; Both paths build a command object and run it through
 ;; `gascity-command-execute-interactive'.  For the quick mutations
 ;; (everything but city start/stop) that method — specialized here on
-;; `gascity-command-action' — runs synchronously via `gascity-command-act'
-;; and reports the outcome in the echo area, refreshing the originating
-;; view.  City start/stop are long-running, so they keep the base
-;; streaming backend (`async-shell-command'); the dispatcher confirms
-;; them first.
+;; `gascity-command-action' — STARTS the gc call and returns
+;; (`gascity-command-act-async' on the store's action lane, dashboard-v3
+;; D9, §8.5): input is gathered first, the result is echoed when gc
+;; answers, and the originating view refreshes then.  City start/stop
+;; are long-running, so they keep the base streaming backend
+;; (`async-shell-command'); the dispatcher confirms them first.
+;; `gascity-command-act' remains the synchronous runner for callers
+;; that need the result inline.
 
 ;;; Code:
 
@@ -69,7 +72,7 @@
 (declare-function gascity-formula-refresh-async "gascity-formula")
 
 ;;; ============================================================
-;;; Synchronous action runner
+;;; Synchronous action runner (inline-result callers only)
 ;;; ============================================================
 
 (defun gascity-action--summarize (result)

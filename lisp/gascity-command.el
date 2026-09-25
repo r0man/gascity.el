@@ -142,10 +142,10 @@ an exit-0 command with empty or JSONL output never reads as a failure."
   :abstract t
   :documentation "Base for mutating `gc' commands (suspend, nudge, sling, …).
 Concrete actions inherit from this; `gascity-action' specializes
-`gascity-command-execute-interactive' on it to run the command
-synchronously and report the outcome in the echo area, rather than the
-streaming `async-shell-command' backend used for read/long-running
-commands.  `--json' is off by default (see the `json' slot); positional
+`gascity-command-execute-interactive' on it to start the command
+asynchronously (`gascity-command-act-async', dashboard-v3 D9) and report
+the outcome in the echo area, rather than the streaming
+`async-shell-command' backend used for long-running commands.  `--json' is off by default (see the `json' slot); positional
 and option slots are declared per concrete command.")
 
 (defclass gascity-command-bd-action (gascity-command-action)
