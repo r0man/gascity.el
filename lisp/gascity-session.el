@@ -615,6 +615,15 @@ no round trip, and killing the local process stops gc on the host.
 The last stderr line, if any, rides along in the note, and the hidden
 stderr buffer goes with the process (it used to outlive every view)."
   (when (memq (process-status proc) '(exit signal))
+    ;; The stderr pipe can deliver its last output after this sentinel
+    ;; runs: drain it first (local pipe; bounded).
+    (when-let* ((err-buf (process-get proc 'gascity-stderr))
+                ((buffer-live-p err-buf))
+                (pipe (get-buffer-process err-buf)))
+      (let ((n 20))
+        (while (and (> n 0) (process-live-p pipe)
+                    (accept-process-output pipe 0.01 nil t))
+          (setq n (1- n)))))
     (let* ((buf (process-buffer proc))
            (err-buf (process-get proc 'gascity-stderr))
            (err (and (buffer-live-p err-buf)

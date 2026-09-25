@@ -28,6 +28,15 @@
 ;; TRAMP operation, and an entry point only runs calls that are clearly
 ;; lost (overdue), never ones whose timer is about to fire.
 
+;;
+;; The watchdog stays armed for the whole session, deliberately.  Most
+;; `gascity-timer-at' calls come from sentinels and filters, i.e. from
+;; exactly the windows in which a timer is lost: a watchdog stopped
+;; while idle and restarted from `gascity-timer-at' would then be lost
+;; together with the call's own timer, and the call would wait for the
+;; next store entry point — the B1 hang again.  An idle tick costs one
+;; nil check every `gascity-timer-watchdog-interval' seconds.
+
 ;;; Code:
 
 (require 'cl-lib)

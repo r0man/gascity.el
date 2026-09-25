@@ -349,12 +349,18 @@ its last line lands in the end note (QA #11)."
       (setq-local gascity-section--agent
                   (make-instance 'gascity-agent :name "mayor" :session-name "mayor"))
       (gascity-session-follow-log))
-    (let ((deadline (+ (float-time) 5)))
-      (while (and (get-buffer " *gascity-log-stderr: mayor*")
-                  (< (float-time) deadline))
+    ;; Wait on the conditions themselves: the follower ended and its
+    ;; note (with the stderr line) is written, the stderr buffer gone.
+    (let ((done (lambda ()
+                  (and (not (get-buffer " *gascity-log-stderr: mayor*"))
+                       (with-current-buffer "*gascity-log: mayor*"
+                         (string-search "[follow ended" (buffer-string))))))
+          (deadline (+ (float-time) 10)))
+      (while (and (not (funcall done)) (< (float-time) deadline))
         (accept-process-output nil 0.05)))
     (should-not (get-buffer " *gascity-log-stderr: mayor*"))
     (with-current-buffer "*gascity-log: mayor*"
+      (should (string-search "[follow ended" (buffer-string)))
       (should (string-search "no such session" (buffer-string))))
     (kill-buffer "*gascity-log: mayor*")))
 
