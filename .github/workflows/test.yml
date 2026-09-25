@@ -8,11 +8,10 @@ on:
   workflow_dispatch:
 
 # Dependency resolution decision (OQ-1): the suite's Package-Requires pins
-# `beads 0.1.0`, which is published on MELPA, so Eldev resolves it from
-# MELPA directly.  No sibling-clone fallback step is needed; if MELPA ever
-# lags behind beads.el `main` in a way the gate notices, add a pre-step
-# cloning github:r0man/beads.el and exporting the local-dependency path
-# (see plans/ci-cd/implementation-plan.md, W4).
+# `beads 0.1.0`, but beads.el is not published on ELPA/MELPA, so the
+# workflow clones the sibling github:r0man/beads.el repo as a pre-step for
+# Eldev's local dependency (see the "Clone beads.el" step below; see also
+# plans/ci-cd/implementation-plan.md, W4).
 
 # Gc-gated tests decision (OQ-2): a bare `gc` on PATH is sufficient.  The
 # integration tests `skip-unless (executable-find "gc")` and fake the city
