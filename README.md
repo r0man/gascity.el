@@ -171,17 +171,18 @@ Notes:
   dashboard reads produced exactly one ssh process — established at
   connection time — and zero new ssh logins on the host.  Keep
   direct-async off unless you have another reason to want it.
-- Performance: each refresh is an ssh round trip.  Emacs reuses the TRAMP
-  connection — pooling holds by default (see above), so a refreshing
-  dashboard costs one channel round trip per read, not one ssh login per
-  read — and the dashboard skips an auto-refresh tick while a load is
-  still in flight; raise `gascity-dashboard-live-interval` on slow
-  links, or turn live refresh off with `W`.
+- Performance: views refresh only when the city's live event stream
+  (`gc events --follow`, one per city, over a local `ssh -T` pipe for a
+  remote city) reports a change, batched for 2.5 s — no polling timer.
+  Reads share gascity's ssh ControlMaster.  `W` turns the stream off,
+  `g` refreshes (and reconnects a stream that is down); the header shows
+  `● live`, `○ live off`, `○ live: reconnecting (Ns)`, `○ live:
+  supervisor down` or `○ offline @host`.
 - Connection-count verification (live city): to confirm pooling on your
   host, note the number of ssh connections first — `last | head`, the
   sshd log, or simply `ps -eo args | grep -c '[s]sh'` — then open a
-  dashboard over `/ssh:HOST:…` and let it auto-refresh for at least 10
-  ticks, then count again. Expect **at most 2 new ssh connections**
+  dashboard over `/ssh:HOST:…` and let it refresh (press `g`) at least
+  10 times, then count again. Expect **at most 2 new ssh connections**
   total (normally zero: the burst rides the one connection Emacs opened
   at setup). A fresh ssh login per refresh tick means TRAMP's
   direct-async handler (which spawns a fresh ssh per read instead of

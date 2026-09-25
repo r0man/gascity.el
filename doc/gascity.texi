@@ -488,7 +488,9 @@ remembered per city for the session.
 @item W
 @kindex W @r{(cockpit)}
 @findex gascity-dashboard-toggle-live
-Toggle live refresh (@code{gascity-dashboard-live-interval}).
+Toggle the city's live event stream (@code{gascity-live-toggle}).  While
+it runs, the cockpit refreshes when @code{gc events --follow} reports a
+change; the header shows its state.
 @item @key{RET}
 @kindex RET @r{(cockpit)}
 @findex gascity-dashboard-activate
@@ -740,14 +742,11 @@ Filter by state (active, suspended, closed, all --- server-side) and rig
 (client-side substring).
 @item W
 @kindex W @r{(session list)}
-@findex gascity-session-list-toggle-auto-refresh
-Toggle automatic refresh.  When
-@code{gascity-session-list-auto-refresh} is on (the default), the list
-re-reads @code{gc session list} every
-@code{gascity-session-list-auto-refresh-interval} seconds (5 by default)
---- but only while its buffer is displayed in a visible window: a buried
-list does nothing, and a tick is skipped while a previous read is still
-in flight, so a slow remote link is never perpetually restarted.
+@findex gascity-live-toggle
+Toggle the city's live event stream.  While it runs, the list re-reads
+@code{gc session list} when session or agent events arrive (batched for
+2.5 seconds), but only while its buffer is visible and no read is in
+flight; the mode line shows the stream state.
 @end table
 
 @node Convoys

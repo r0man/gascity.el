@@ -384,10 +384,9 @@ Tracked as beads off the MVP. None block the shipped porcelain.
    `gc session list`/`gc status --json` still carry no socket field, so the
    read-side fix is blocked on an upstream `gc` change to expose it (or a stable
    accessor); the inference stays a deliberate fallback until then.
-7. **Dashboard refresh ergonomics.** Auto-refresh landed for the status
-   dashboard (`gascity-status-auto-refresh`, `G` toggle; gce-pt6) and the
-   session list (`gascity-session-list-auto-refresh`, `W` toggle; both
-   tick only while visible and no load is in flight).  Remaining: the
+7. **Dashboard refresh ergonomics.** The refresh timers (gce-pt6, ga-fxa3)
+   are gone: views refresh from the city's live event stream
+   (`gascity-live.el`, dashboard-v3 §8.2; `W` toggles it).  Remaining: the
    other tabulated lists (rigs, convoys, mail, orders, dolt — same shape,
    so hoisting the timer into `gascity-tabulated.el` is the natural next
    step) and semantic cursor preservation across re-renders (gastown has
@@ -528,16 +527,12 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   terminal buffer, so the remote context is carried buffer-locally
   (`gascity-terminal--status-directory`) and bound around every probe and
   the teardown.
-- **Refresh under latency.** The status auto-refresh tick is skipped while
-  a load is in flight (`gascity-status--loads-pending-p`): bumping the
-  refresh tick changes every `vui-use-async` key, which kills and restarts
-  the in-flight gc processes — on a link slower than the interval an
-  unguarded timer would never complete a load. Both timer paths (the
-  dashboard tick and the tmux status mirror) also bind `non-essential`, so
-  TRAMP never establishes a NEW connection from a timer — a dropped link
-  degrades the view instead of freezing Emacs on a reconnect timeout; a
-  manual `g` (or reattach) reconnects. Tune
-  `gascity-status-auto-refresh-interval` for slow links.
+- **Refresh under latency.** Views refresh from the live event stream
+  (dashboard-v3 §8.2), not a timer; the session list's live refresh is
+  skipped while one of its reads is in flight or the TRAMP channel is
+  busy, and binds `non-essential`, so TRAMP never establishes a NEW
+  connection from a stream callback — a manual `g` reconnects.  The tmux
+  status mirror keeps its own timer under the same guards.
 - **Tests.** The remote paths are covered offline through the TRAMP "mock"
   method (the tramp-tests.el pattern — a real local `sh` behind the full
   file-name machinery) — no network, no real hosts. That includes the
