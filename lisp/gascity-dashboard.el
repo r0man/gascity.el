@@ -1785,8 +1785,14 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
          (ctx (gascity-dashboard--context loads filters (float-time))))
     ;; Once per render: the section and the pulse both read them.
     (setq ctx (plist-put ctx :needs-you (gascity-dashboard--needs-you ctx)))
-    (when-let* ((at (plist-get status-res :fetched-at)))
-      (setq gascity-dashboard--refreshed-at at))
+    ;; `↻' is the last change of anything the cockpit shows: a read, or
+    ;; events the live stream appended (store `:updated-at').
+    (let ((at (apply #'max 0 (delq nil (mapcar (lambda (r) (plist-get r :updated-at))
+                                               (list status-res sessions-res mail-res
+                                                     events-res work-res convoys-res
+                                                     escalations-res))))))
+      (when (> at 0)
+        (setq gascity-dashboard--refreshed-at at)))
     (when-let* ((status (plist-get ctx :status)))
       ;; Seed the rig memo from the payload in hand: the rig prompts
       ;; and the next work read then never spawn `gc rig list'.

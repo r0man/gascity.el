@@ -177,7 +177,7 @@ entry is invalidated is re-run once after it lands."
             (gascity-store-refetch-hidden t))
         (with-current-buffer (get-buffer-create " *gascity-batch-view*")
           (setq default-directory gascity-test-store--remote)
-          (dolist (args '(("events" "--since" "2h") ("bd" "list") ("mail" "count")))
+          (dolist (args '(("order" "list") ("bd" "list") ("mail" "count")))
             (gascity-store-subscribe args #'ignore)
             (gascity-store-fetch args #'ignore)))
         ;; Drain the initial reads (one slot).
@@ -257,6 +257,51 @@ invalidation."
     (should (= before (length (seq-filter (lambda (b) (string-prefix-p "gascity-gc-stderr"
                                                                           (buffer-name b)))
                                           (buffer-list)))))))
+
+(ert-deftest gascity-test-store-stream-appends-event-feeds ()
+  "Live events append to the store's `events' feeds (dedup by seq) and
+notify their views; no prefix re-reads a feed."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((default-directory "/tmp/city/") seen)
+      (with-temp-buffer
+        (gascity-store-subscribe '("events" "--since" "2h")
+                                 (lambda (snap) (push (plist-get snap :data) seen))
+                                 :lines t)
+        (gascity-store-fetch '("events" "--since" "2h") #'ignore nil :lines t)
+        (funcall (nth 1 (car reads)) '((((seq . 1) (type . "order.fired"))) . 0))
+        (setq seen nil reads nil)
+        (should (= 1 (gascity-store-append-events
+                      "/tmp/city/" '(((seq . 1) (type . "order.fired"))
+                                     ((seq . 2) (type . "mail.sent"))))))
+        (should (equal (mapcar (lambda (e) (alist-get 'seq e))
+                               (car (plist-get (gascity-store-get '("events" "--since" "2h"))
+                                               :data)))
+                       '(1 2)))
+        (should (= 1 (length seen)))
+        (should (plist-get (gascity-store-get '("events" "--since" "2h")) :updated-at))
+        ;; Nothing new: nobody notified; no route re-reads the feed.
+        (should (= 0 (gascity-store-append-events "/tmp/city/" '(((seq . 2))))))
+        (should (= 0 (gascity-store-invalidate-event '("order.fired") "/tmp/city/")))
+        (should (null reads))))))
+
+(ert-deftest gascity-test-store-router-bead-classes ()
+  "Bead events route by what the bead is: session bookkeeping to the
+session reads, messages to mail, order-tracking wisps nowhere, work to
+the bead lists."
+  (let ((ev (lambda (type issue-type &optional labels)
+              `((type . ,type)
+                (payload . ((bead . ((issue_type . ,issue-type)
+                                     (labels . ,(vconcat labels))))))))))
+    (should (equal (gascity-live--bead-routes (funcall ev "bead.updated" "session"))
+                   '("session.bead")))
+    (should (equal (gascity-live--bead-routes (funcall ev "bead.created" "message"))
+                   '("mail.bead")))
+    (should (null (gascity-live--bead-routes
+                   (funcall ev "bead.closed" "task" '("exec" "order-tracking")))))
+    (should (equal (gascity-live--bead-routes (funcall ev "bead.closed" "task"))
+                   '("bead.closed")))
+    (should (memq 'session (gascity-store-event-kinds '("session.bead"))))
+    (should-not (memq 'bd (gascity-store-event-kinds '("session.bead"))))))
 
 ;;; Scheduler: per-host cap, priority, deadline, offline
 

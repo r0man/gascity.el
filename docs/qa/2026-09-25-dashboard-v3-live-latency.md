@@ -75,3 +75,21 @@ Restored: bd.dog-1 active after each run (`gc session list`); it then
 finished its patrol and gc stopped it (`session.stopped`, 22:03:55) —
 the pool member's normal idle state (pool min 0), as before the runs
 began its patrol.
+
+## 3. Idle cockpit (QA #3) — `scripts/qa/dashboard-v3-live-idle.el`
+
+Cockpit open, live stream on, 60 s of a quiet bright-lights (order
+sweeps only): QA baseline 23 gc processes in 46 s (`events --since 2h`
+×3, bd lists ×6, …). After: **0** gc spawns in 60 s, local and remote,
+with 8 events delivered by the stream.  Control: one mail sent mid-window
+→ 2 `mail count` reads, nothing else (the check mail archived after).
+
+- The stream appends its events to the store's `events --since W`
+  feeds (`gascity-store-append-events`); no event prefix re-reads a
+  feed; a reconcile re-read every `gascity-live-events-reconcile`
+  (600 s).
+- Bead events route by what the bead is: session bookkeeping →
+  session reads, messages → mail, order-tracking wisps → nothing, work
+  → bead lists.
+- The cockpit's `↻` is the latest `:updated-at` of its reads (a read or
+  an append).

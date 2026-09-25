@@ -172,7 +172,7 @@ never runs inside a TRAMP operation.")
   "One cached read."
   key dir args lines loader kind
   data has-data error timed-out fetched-at stale
-  job waiters subscribers rerun)
+  job waiters subscribers rerun appended-at)
 
 (cl-defstruct (gascity-store--host (:constructor gascity-store--make-host)
                                    (:copier nil))
@@ -324,7 +324,11 @@ the last good payload, :error the last failure text.  Flags: :pending
           :timed-out (gascity-store-entry-timed-out entry)
           :offline (and (gascity-store-offline-p (gascity-store-entry-dir entry)) t)
           :stale (gascity-store-entry-stale entry)
-          :fetched-at (gascity-store-entry-fetched-at entry))))
+          :fetched-at (gascity-store-entry-fetched-at entry)
+          ;; Last change of the data: a read, or events appended from
+          ;; the live stream.
+          :updated-at (max (or (gascity-store-entry-fetched-at entry) 0)
+                           (or (gascity-store-entry-appended-at entry) 0)))))
 
 (defun gascity-store-buffer-pending-p (&optional buffer)
   "Return non-nil when a read BUFFER subscribes to is in flight.
@@ -990,9 +994,11 @@ for a nil ARGS.  :lines, :loader and :dir as for `gascity-store-fetch'."
     ("agent." session status agent rig)
     ("bead." bd convoy)
     ("mail." mail)
-    ("order." order events)
+    ("order." order)
     ("convoy." convoy bd))
-  "Read kinds each gc event type prefix invalidates (dashboard-v3 §8.2).")
+  "Read kinds each gc event type prefix invalidates (dashboard-v3 §8.2).
+No prefix invalidates `events': the event feeds are appended to from
+the stream (`gascity-store-append-events').")
 
 (defconst gascity-store-action-routes
   '((session "session.") (runtime "session.") (rig "session." "bead.")
@@ -1087,6 +1093,41 @@ run from a timer, outside redisplay; finding them is pure."
                 gascity-store--entries)))))
 
 (add-hook 'window-buffer-change-functions #'gascity-store--refresh-shown)
+
+(defun gascity-store-append-events (dir events)
+  "Append EVENTS (decoded `gc events' alists) to DIR's event-feed entries.
+Every JSON-Lines `events' entry read under DIR (a city root) gets the
+events it does not hold yet (by `seq') appended — the cockpit Activity
+and any other feed then follow the live stream without re-reading
+\(§8.2 \"any → Events: append, no re-read\").  Subscribers are
+notified once per call.  Returns the number of entries touched."
+  (let ((dir (gascity-store--dir dir))
+        (n 0))
+    (when events
+      (maphash
+       (lambda (_key entry)
+         (when (and (eq (gascity-store-entry-kind entry) 'events)
+                    (gascity-store-entry-lines entry)
+                    (gascity-store-entry-has-data entry)
+                    (string-prefix-p dir (gascity-store-entry-dir entry)))
+           (let* ((data (gascity-store-entry-data entry))
+                  (good (car data))
+                  (seen (make-hash-table :test 'eql))
+                  (fresh nil))
+             (dolist (e good)
+               (when-let* ((seq (alist-get 'seq e))) (puthash seq t seen)))
+             (dolist (e events)
+               (let ((seq (alist-get 'seq e)))
+                 (unless (and seq (gethash seq seen))
+                   (push e fresh))))
+             (when fresh
+               (cl-incf n)
+               (setf (gascity-store-entry-data entry)
+                     (cons (append good (nreverse fresh)) (cdr data))
+                     (gascity-store-entry-appended-at entry) (float-time))
+               (gascity-store--notify entry)))))
+       gascity-store--entries))
+    n))
 
 (defun gascity-store-event-kinds (types)
   "Return the read kinds the gc event TYPES (a list of strings) route to."

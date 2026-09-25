@@ -151,6 +151,17 @@ Called with (ROOT STATE REASON).  Views redraw their header here.")
 (defvar-local gascity-live--root nil
   "City root this view is attached to.")
 
+(defcustom gascity-live-events-reconcile 600
+  "Seconds between re-reads of a city's event feeds (`gc events --since').
+The stream appends each event to the store's feed entries as it
+arrives (`gascity-store-append-events'); this periodic re-read only
+reconciles them with gc (events missed across a reconnect gap)."
+  :type 'number
+  :group 'gascity)
+
+(defvar gascity-live--reconciled (make-hash-table :test 'equal)
+  "City root → time its event feeds were last reconciled.")
+
 (defvar gascity-live--streams (make-hash-table :test 'equal)
   "City root → `gascity-live--stream'.")
 
@@ -246,8 +257,30 @@ The one routing table is the store's, `gascity-store-event-routes'."
 
 ;;; Event delivery
 
+(defun gascity-live--bead-routes (event)
+  "Return the event types a `bead.*' EVENT is queued under, or nil.
+gc reports much of its bookkeeping as bead events, and the cockpit
+hides that noise (D4), so the router re-reads for what the bead IS:
+- a session bookkeeping bead (`issue_type' session) is a session
+  change: \"session.bead\" (the session reads, not the bead lists);
+- a mail message: \"mail.bead\" (the inbox and mail count);
+- an order-tracking wisp (label `order-tracking'): nothing — order
+  churn, which the Activity feed shows from the stream itself;
+- anything else (tasks, workflow roots and steps): its own type."
+  (let* ((type (gascity-live--event-type event))
+         (payload (alist-get 'payload event))
+         (bead (and (listp payload) (alist-get 'bead payload)))
+         (issue-type (and (listp bead) (alist-get 'issue_type bead)))
+         (labels (and (listp bead) (append (alist-get 'labels bead) nil))))
+    (cond ((equal issue-type "session") (list "session.bead"))
+          ((equal issue-type "message") (list "mail.bead"))
+          ((member "order-tracking" labels) nil)
+          (t (list type)))))
+
 (defun gascity-live--deliver (stream events)
-  "Hand EVENTS to STREAM's subscribers and queue their invalidation."
+  "Hand EVENTS to STREAM's subscribers, append them to the store's event
+feeds, and queue their invalidation."
+  (gascity-store-append-events (gascity-live--stream-root stream) events)
   (dolist (event events)
     (let ((seq (alist-get 'seq event)))
       (when (and (integerp seq)
@@ -263,12 +296,10 @@ The one routing table is the store's, `gascity-store-event-routes'."
             (error (message "gascity-live: subscriber error: %s"
                             (error-message-string err)))))))
     (when-let* ((type (gascity-live--event-type event)))
-      (gascity-live--queue stream type)
-      ;; A mail message is a bead: its closing (archive elsewhere, gc's
-      ;; mail sweeper) or update comes as `bead.*', which alone routes
-      ;; to the bead reads — the inbox and `mail count' re-read too.
-      (when (gascity-live--message-bead-event-p event)
-        (gascity-live--queue stream "mail.bead")))))
+      (dolist (ty (if (string-prefix-p "bead." type)
+                      (gascity-live--bead-routes event)
+                    (list type)))
+        (gascity-live--queue stream ty)))))
 
 (defun gascity-live--message-bead-event-p (event)
   "Return non-nil when EVENT is a `bead.*' event about a mail message."
@@ -296,6 +327,17 @@ The one routing table is the store's, `gascity-store-event-routes'."
                                           types)))))
     (setf (gascity-live--stream-pending stream) nil
           (gascity-live--stream-debounce-timer stream) nil)
+    ;; The event feeds are appended to from the stream, never re-read
+    ;; per batch; reconcile them with gc now and then.
+    ;; The clock starts at the city's first batch: its feeds were just
+    ;; read when its views opened.
+    (let* ((root (gascity-live--stream-root stream))
+           (last (gethash root gascity-live--reconciled)))
+      (cond ((null last) (puthash root (float-time) gascity-live--reconciled))
+            ((and (not all)
+                  (> (- (float-time) last) gascity-live-events-reconcile))
+             (puthash root (float-time) gascity-live--reconciled)
+             (push 'events kinds))))
     (when (or all types)
       (gascity-live--invalidate (gascity-live--stream-root stream)
                                 kinds types))))
