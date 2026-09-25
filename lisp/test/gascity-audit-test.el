@@ -635,6 +635,9 @@ look up the remote home.")
     ((gascity-reader--remote-dir-absent-p . file-remote-p) . "default-directory, full dir")
     ((gascity-remote-flush-file-cache . file-remote-p) . "full dir")
     ((gascity-remote-spawn-error-hint . file-remote-p) . "full dir")
+    ;; The store/stream key canonicaliser: `expand-file-name' only on a
+    ;; LOCAL directory; a remote name is dissected, never expanded.
+    ((gascity-remote-canonical-dir . expand-file-name) . "local dirs only")
     ;; The city-root walk: memoized per start directory; a timer only
     ;; ever hits the memo of a pinned root.  After
     ;; `gascity-context-clear-cache' the next tick walks synchronously

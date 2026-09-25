@@ -118,6 +118,19 @@ timer at 100% CPU (P1 bug on f80fab1)."
     (when-let* ((vec (ignore-errors (tramp-dissect-file-name name))))
       (tramp-make-tramp-file-name vec 'noloc))))
 
+(defun gascity-remote-canonical-dir (dir)
+  "Return the canonical spelling of directory DIR, for cache and table keys.
+A remote DIR becomes its dissected TRAMP prefix plus localname, so
+\"/mock::/c/\" and \"/mock:HOST:/c/\" (TRAMP's default host filled in,
+also /sudo::) are one directory; a local DIR is expanded.  Pure:
+dissection only (`gascity-remote-prefix'), no I/O.  The one
+canonicaliser of the store's entry keys and the live stream table."
+  (let ((dir (file-name-as-directory dir)))
+    (if-let* ((prefix (gascity-remote-prefix dir))
+              (vec (ignore-errors (tramp-dissect-file-name dir))))
+        (concat prefix (file-name-as-directory (tramp-file-name-localname vec)))
+      (expand-file-name dir))))
+
 ;;; Buffer identity
 
 (defun gascity-remote-buffer-name (base &optional dir qualifier)

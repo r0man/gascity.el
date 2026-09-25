@@ -224,9 +224,11 @@ never runs inside a TRAMP operation.")
                gascity-store--hosts)))
 
 (defun gascity-store--dir (dir)
-  "Normalize DIR (default `default-directory') to a directory name.
-Pure string operation: no expansion, which could touch a remote host."
-  (file-name-as-directory (or dir default-directory)))
+  "Normalize DIR (default `default-directory') to its canonical spelling.
+`gascity-remote-canonical-dir': \"/mock::/c/\" and \"/mock:HOST:/c/\"
+name one entry, so dedup and invalidation hold across spellings.
+Pure: TRAMP names are only dissected, never expanded."
+  (gascity-remote-canonical-dir (or dir default-directory)))
 
 (defun gascity-store-key (args &optional dir)
   "Return the store key of gc ARGS read in DIR (default `default-directory').

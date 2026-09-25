@@ -204,6 +204,60 @@ entry is invalidated is re-run once after it lands."
                        "mail"))
         (kill-buffer " *gascity-batch-view*")))))
 
+(ert-deftest gascity-test-store-keys-are-canonical ()
+  "Every spelling of a directory is one store entry: \"/mock::/c/\" (TRAMP's
+default host left out) and \"/mock:HOST:/c/\" share dedup, snapshots and
+invalidation."
+  (gascity-test-ensure-mock-method)
+  (gascity-test-with-store-stubs reads _actions
+    (let* ((short "/mock::/tmp/store-canon/")
+           (long (gascity-remote-canonical-dir short))
+           (gascity-store-refetch-hidden t)
+           (buf (get-buffer-create " *gascity-canon*")))
+      (should-not (equal short long))
+      (should (equal (gascity-remote-canonical-dir long) long))
+      (unwind-protect
+          (progn
+            (with-current-buffer buf
+              (setq default-directory short)
+              (gascity-store-subscribe '("status") #'ignore))
+            (let ((gascity-store-synchronous-delivery t)
+                  (default-directory short))
+              (setf (gascity-store--host-primed
+                     (gascity-store--host (gascity-remote-prefix long)))
+                    t)
+              (gascity-store-fetch '("status") #'ignore)
+              (let ((default-directory long))
+                (gascity-store-fetch '("status") #'ignore))
+              ;; One read for both spellings.
+              (should (= 1 (length reads)))
+              (funcall (nth 1 (car reads)) 'v)
+              (should (eq (plist-get (gascity-store-get '("status") long) :data) 'v))
+              ;; Invalidating under one spelling reaches the other's view.
+              (setq reads nil)
+              (should (= 1 (gascity-store-invalidate :dir long :kind 'status)))
+              (should (= 1 (length reads)))))
+        (kill-buffer buf)))))
+
+(ert-deftest gascity-test-store-ssh-pipe-leaves-no-stderr-buffer ()
+  "A finished ssh-transport process leaves no `gascity-gc-stderr' buffer."
+  (let ((default-directory "/ssh:u@example.invalid:/c/")
+        (gascity-reader-city-args-function nil)
+        (real (symbol-function 'make-process))
+        (before (length (seq-filter (lambda (b) (string-prefix-p "gascity-gc-stderr"
+                                                                   (buffer-name b)))
+                                    (buffer-list))))
+        done)
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (apply real (plist-put (copy-sequence args) :command
+                                        (list "sh" "-c" "echo '{}'; echo x >&2"))))))
+      (gascity-reader--spawn-ssh '("status") nil (lambda (r) (setq done r)))
+      (should (gascity-test-store--wait (lambda () done) 5)))
+    (should (= before (length (seq-filter (lambda (b) (string-prefix-p "gascity-gc-stderr"
+                                                                          (buffer-name b)))
+                                          (buffer-list)))))))
+
 ;;; Scheduler: per-host cap, priority, deadline, offline
 
 (ert-deftest gascity-test-store-remote-cap-and-fifo ()

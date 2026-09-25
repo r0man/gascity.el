@@ -156,15 +156,9 @@ Called with (ROOT STATE REASON).  Views redraw their header here.")
 
 (defun gascity-live-key (dir)
   "Return the canonical stream-table key of directory DIR.
-A remote DIR becomes its dissected TRAMP prefix plus localname, so
-\"/mock::/c/\" and \"/mock:HOST:/c/\" (TRAMP's default host filled in,
-as `gascity-context-city-root' returns it) are one city; a local DIR is
-expanded.  Pure: dissection only (`gascity-remote-prefix'), no I/O."
-  (let ((dir (file-name-as-directory dir)))
-    (if-let* ((prefix (gascity-remote-prefix dir))
-              (vec (ignore-errors (tramp-dissect-file-name dir))))
-        (concat prefix (file-name-as-directory (tramp-file-name-localname vec)))
-      (expand-file-name dir))))
+`gascity-remote-canonical-dir': \"/mock::/c/\" and \"/mock:HOST:/c/\"
+are one city.  Pure."
+  (gascity-remote-canonical-dir dir))
 
 (defun gascity-live--root (&optional dir)
   "Return the city root for DIR (default `default-directory'), as a key.
