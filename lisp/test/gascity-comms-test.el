@@ -375,6 +375,34 @@ SPEC is (READS ACTIONS), recorded by `gascity-test-with-store-stubs'."
     (should (string-search "4 unread / 4" (gascity-mail-inbox--header-line)))
     (should (string-search "bright-lights" (gascity-mail-inbox--header-line)))))
 
+(ert-deftest gascity-test-comms-inbox-render-guard ()
+  "Rendering a remote city's inbox and its header does no file I/O (R2)."
+  (let ((default-directory "/mock::/tmp/gascity-comms-city/"))
+    (gascity-test-ensure-mock-method)
+    (gascity-test-with-store-stubs _reads _actions
+      (cl-letf (((symbol-function 'beads-pager-window-page-size)
+                 (lambda (&rest _) 10000)))
+        (with-temp-buffer
+          (gascity-mail-inbox-mode)
+          (let ((payload (gascity-comms-test--json "bright-lights.mail-inbox.json")))
+            (gascity-test-with-render-guard
+              ;; What the store delivers a remote read to (from a timer).
+              (gascity-mail--paint (current-buffer) payload)
+              (gascity-mail-inbox--header-line)
+              (should (= (length gascity-tabulated--all-entries) 4))
+              (should (null gascity-test-render-guard-violations)))))))))
+
+(ert-deftest gascity-test-comms-events-time-column-fits ()
+  "The Time column is `HH:MM' wide while all rows are today, wider else."
+  (gascity-comms-test--with-events (reads)
+    (gascity-events-refresh)
+    (funcall (nth 1 (car reads)) (cons (list (gascity-comms-test--type "x.y" 1)) 0))
+    (should (= (nth 1 (aref tabulated-list-format 0)) 5))
+    (gascity-events-refresh t)
+    (funcall (nth 1 (car reads))
+             (cons (list '((seq . 2) (type . "x.y") (ts . "2020-01-01T00:00:00Z"))) 0))
+    (should (= (nth 1 (aref tabulated-list-format 0)) 12))))
+
 (ert-deftest gascity-test-comms-inbox-ret-no-gc ()
   "RET shows the message from the payload: no gc call, stays unread."
   (gascity-comms-test--with-inbox (reads actions)

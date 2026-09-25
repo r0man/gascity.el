@@ -257,6 +257,16 @@ of a `bead.', `convoy.' or `mail.' event (a message is a bead)."
 
 ;;; Rendering
 
+(defun gascity-events--fit-time-column ()
+  "Narrow the Time column to `HH:MM' while every row is from today."
+  (let ((width (if (seq-every-p (lambda (e) (<= (string-width (aref (cadr e) 0)) 5))
+                                gascity-tabulated--all-entries)
+                   5 12)))
+    (unless (eql width (nth 1 (aref tabulated-list-format 0)))
+      (setq tabulated-list-format (copy-sequence tabulated-list-format))
+      (aset tabulated-list-format 0 (list "Time" width nil))
+      (tabulated-list-init-header))))
+
 (defvar-local gascity-events--model nil
   "The last folded model, (ROWS SHOWN . FOLDED), reused by SPC.")
 
@@ -276,7 +286,9 @@ events takes a noticeable moment to fold)."
           gascity-events--folded (cddr model))
     (setq gascity-tabulated--all-entries
           (gascity-events--entries (car model) (float-time))
-          gascity-tabulated--base-name "Events"
+          gascity-tabulated--base-name "Events")
+    (gascity-events--fit-time-column)
+    (setq gascity-tabulated--base-name "Events"
           gascity-tabulated--page-size (beads-pager-window-page-size))
     (setq gascity-tabulated--current-page
           (if keep-page (max 1 (min page (gascity-tabulated--total-pages))) 1))
