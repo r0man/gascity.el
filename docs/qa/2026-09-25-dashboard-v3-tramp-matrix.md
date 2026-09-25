@@ -224,3 +224,35 @@ opens were clean.
     the cap of 3.
   - Stalls within 200 ms except first contact.
 - **tramp over ssh:** fails the stall budget (F8, above).
+
+## tramp over ssh with connection sharing suppressed (23:25, two runs)
+
+gascity now binds `tramp-use-connection-share` to `suppress` around its own
+TRAMP spawns (`make-process`, `process-file`) for ssh-family hosts that are
+not in direct-async mode (`gascity-remote-call-unshared`). The `tramp` mode
+was re-run twice with the same driver:
+
+| | tramp before | tramp + suppress, run 1 | run 2 |
+|---|---|---|---|
+| cockpit ready | 17.1 s | 8.7 s | 8.9 s |
+| health / rig / cities ready | 9.5 / 7.8 / 6.6 s | 3.8 / 4.1 / 6.5 s | 3.9 / 4.1 / 6.0 s |
+| contention settled | 62.0 s | 24.0 s | 22.7 s |
+| worst main-loop stall | 45.6 s | 9.7 s | 9.7 s |
+| stalls > 1 s | 17 | 13 | 13 |
+| "Process has died" / `■ gc` errors | 1 (agent detail transcript) | 0 | 0 |
+| list open (blocking) | 0.70–2.3 s | 0.71–2.3 s | 0.73–2.3 s |
+| max concurrent remote gc | 3 | 3 | 3 |
+
+Suppressing sharing removes the ControlMaster deadlock: no channel died,
+every view rendered completely, and the worst stall is 5× shorter.
+
+The rest of the cost is intrinsic to the tramp-sh `make-process`: each
+spawn blocks about 0.75 s while TRAMP starts and initialises a remote
+shell. Unshared, that includes a fresh ssh handshake. It is about the same
+per open as before (0.70 s), so suppress costs no extra time per spawn.
+Refreshing a dozen views at once serializes those setups: 3–10 s stalls
+remain.
+
+`tramp` over ssh therefore works but stays far over the R9 stall budget.
+The default `ssh` transport (and direct-async) remain the answer for
+ssh-family hosts.

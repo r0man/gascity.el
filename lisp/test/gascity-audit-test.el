@@ -633,6 +633,7 @@ look up the remote home.")
     ((gascity-reader-read-async . file-remote-p) . "default-directory, full dir")
     ((gascity-reader--read-async-ssh . file-remote-p) . "default-directory, full dir")
     ((gascity-reader--remote-dir-absent-p . file-remote-p) . "default-directory, full dir")
+    ((gascity-remote-connection-share . file-remote-p) . "default-directory, full dir")
     ((gascity-remote-flush-file-cache . file-remote-p) . "full dir")
     ((gascity-remote-spawn-error-hint . file-remote-p) . "full dir")
     ;; The store/stream key canonicaliser: `expand-file-name' only on a

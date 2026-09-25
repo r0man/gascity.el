@@ -257,7 +257,7 @@ runs no timers)."
   (and session (stringp session) (not (string-empty-p session))
        (condition-case nil
            (gascity-remote-with-timeout gascity-remote-sync-timeout
-             (eq 0 (apply #'process-file (gascity-remote-find-executable "tmux")
+             (eq 0 (apply #'gascity-remote-call-unshared #'process-file (gascity-remote-find-executable "tmux")
                           nil nil nil
                           (append (gascity-terminal--socket-args socket)
                                   (list "has-session" "-t" session)))))
@@ -283,7 +283,7 @@ the other failure modes, instead of hanging on a dead channel."
       (when (eq 0 (condition-case nil
                       (gascity-remote-with-timeout
                           gascity-remote-sync-timeout
-                        (apply #'process-file
+                        (apply #'gascity-remote-call-unshared #'process-file
                                (gascity-remote-find-executable "tmux")
                                nil t nil
                                (append (gascity-terminal--socket-args socket)
@@ -429,7 +429,7 @@ connection-lock and `non-essential' guards on top)."
     (when (eq 0 (condition-case nil
                     (gascity-remote-with-timeout
                         gascity-remote-sync-timeout
-                      (apply #'process-file
+                      (apply #'gascity-remote-call-unshared #'process-file
                              (gascity-remote-find-executable "tmux")
                              nil t nil
                              (append (gascity-terminal--socket-args socket) args)))

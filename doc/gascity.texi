@@ -1799,6 +1799,20 @@ first pays for the handshake.
 methods (docker, sudo, multi-hop) always use TRAMP.
 @end defvr
 
+@cindex connection sharing
+@vindex tramp-use-connection-share
+With @code{tramp} on an ssh-family host, gascity binds
+@code{tramp-use-connection-share} to @code{suppress} around its own
+TRAMP processes and @code{process-file} calls, so each gets its own ssh
+connection instead of a session multiplexed over TRAMP's ControlMaster.
+A multiplexed session writes into a pty, and the master blocks on a full
+one while TRAMP waits on another channel: under load that shows as
+seconds-long freezes and ``Process has died'' errors.  With
+direct-async processes (connection-local
+@code{tramp-direct-async-process}), which have no pty, the setting is
+left alone.  The default @code{ssh} transport avoids TRAMP processes
+altogether and stays the recommended choice.
+
 @noindent
 The live event stream (@pxref{Live Refresh}) runs the same way, as one
 long-lived local ssh pipe per city.

@@ -362,7 +362,7 @@ TRAMP I/O, a deadline that always holds."
                     process-environment)))
              (let* ((exit-code
                      (condition-case err
-                         (apply #'process-file (car command) nil
+                         (apply #'gascity-remote-call-unshared #'process-file (car command) nil
                                 (list (current-buffer) stderr-file) nil
                                 (cdr command))
                        (file-error
@@ -1051,7 +1051,7 @@ turns it on, at the cost of a fresh ssh per read."
                       (append (gascity-reader--env-entries city-env)
                               process-environment)
                     process-environment)))
-             (make-process
+             (gascity-remote-call-unshared #'make-process
               :name "gascity-gc"
               :command command
               :noquery t
@@ -1226,7 +1226,7 @@ none was started (CALLBACK has then already been called)."
                       (append (gascity-reader--env-entries city-env)
                               process-environment)
                     process-environment)))
-             (make-process
+             (gascity-remote-call-unshared #'make-process
               :name "gascity-gc-action"
               :command command
               :noquery t

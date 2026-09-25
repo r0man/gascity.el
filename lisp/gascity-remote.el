@@ -498,10 +498,43 @@ blocks Emacs, stdout is byte-exact and stderr separate.  A tramp-sh
 frozen main loop per spawn (seconds under contention).  ssh runs with
 BatchMode (it never prompts: key or agent authentication, or a
 ControlMaster, is required) plus `gascity-remote-ssh-options'.
-`tramp': always use TRAMP's `make-process' (other methods always do)."
+`tramp': always use TRAMP's `make-process' (other methods always do).
+For an ssh-family host (not in direct-async mode) gascity's own TRAMP
+processes then run with `tramp-use-connection-share' bound to
+`suppress' (`gascity-remote-call-unshared'): each gets its own ssh
+connection, because a ControlMaster mux session writes into a pty and
+blocks when it fills while TRAMP waits on another channel — the
+seconds-long stalls and \"Process has died\" of a tramp-sh city
+under load.  Direct-async processes (no pty) are left alone."
   :type '(choice (const :tag "Local ssh pipe" ssh)
                  (const :tag "TRAMP make-process" tramp))
   :group 'gascity)
+
+(defvar tramp-use-connection-share)     ; tramp-sh
+(declare-function tramp-direct-async-process-p "tramp")
+
+(defun gascity-remote-connection-share (&optional dir)
+  "Return the `tramp-use-connection-share' gascity spawns with in DIR.
+`suppress' for an ssh-family TRAMP DIR (default `default-directory')
+that is not in direct-async mode: every tramp-sh process then gets its
+own ssh connection instead of a ControlMaster mux session with a pty,
+which the master can block on while TRAMP waits on another channel
+\(the F8 ControlMaster deadlock, qa/f8-root-cause.md).  Otherwise the
+user's value, unchanged — direct-async processes have no pty."
+  (let ((dir (or dir default-directory)))
+    (if (and (file-remote-p dir)
+             (member (file-remote-p dir 'method) beads-remote-ssh-methods)
+             (not (let ((default-directory dir))
+                    (ignore-errors (tramp-direct-async-process-p)))))
+        'suppress
+      tramp-use-connection-share)))
+
+(defun gascity-remote-call-unshared (fn &rest args)
+  "Call FN with ARGS, TRAMP connection sharing suppressed where needed.
+FN is `make-process' or `process-file' as gascity calls them over TRAMP;
+`tramp-use-connection-share' is bound per `gascity-remote-connection-share'."
+  (let ((tramp-use-connection-share (gascity-remote-connection-share)))
+    (apply fn args)))
 
 (defun gascity-remote-ssh-transport-p (&optional dir)
   "Return non-nil when DIR's city is reached over the ssh pipe transport.
@@ -644,7 +677,8 @@ call, so installing the entry on the host heals itself.  Clear with
             (let* ((default-directory (or dir default-directory))
                    (found
                     (condition-case nil
-                        (or (eq 0 (process-file
+                        (or (eq 0 (gascity-remote-call-unshared
+                                   #'process-file
                                    (gascity-remote-find-executable "infocmp")
                                    nil nil nil term))
                             (and (cl-some
