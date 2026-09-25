@@ -193,20 +193,6 @@ nothing is hidden."
       (propertize (format "(%s hidden)" (string-join parts " · "))
                   'face 'gascity-dim))))
 
-;; The event model moved to gascity-event (shared with the Events
-;; view); the old private names stay for code in flight on other
-;; dashboard-v3 branches.  Drop after P4.
-(defalias 'gascity-dashboard--noise #'gascity-event-noise)
-(defalias 'gascity-dashboard--shown-p #'gascity-event-noise-shown-p)
-(defalias 'gascity-dashboard--event-level #'gascity-event-level)
-(defalias 'gascity-dashboard--event-bead #'gascity-event-bead)
-(defalias 'gascity-dashboard--event-time #'gascity-event-time)
-(defalias 'gascity-dashboard--churn-group #'gascity-event-churn-group)
-(defalias 'gascity-dashboard--activity #'gascity-event-fold)
-(defalias 'gascity-dashboard--event-subject #'gascity-event-subject)
-(defalias 'gascity-dashboard--churn-detail #'gascity-event-churn-detail)
-(defalias 'gascity-dashboard--event-drawer #'gascity-event-fields)
-
 ;;; Sessions and agents
 
 ;; The trailing supervisor session handle of a bead assignee
