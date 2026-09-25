@@ -359,26 +359,17 @@ background, it is a process — and the others multiplex over it."
   :group 'gascity)
 
 (defun gascity-remote-ssh-control-path ()
-  "Return the ControlPath of gascity's ssh masters (never TRAMP's)."
-  (expand-file-name "gascity-ssh-%C" temporary-file-directory))
+  "Return the ControlPath of gascity's ssh masters (never TRAMP's).
+beads.el's `beads-remote-ssh-control-path', so gc and bd pipe processes
+to a host share one master."
+  beads-remote-ssh-control-path)
 
 (defun gascity-remote-pure-path-assignment ()
   "Return a \"PATH=DIRS:$PATH\" fragment built WITHOUT touching the host.
-Like `gascity-remote-path-assignment', but a `~/'-relative
+beads.el's `beads-remote-pure-path-assignment': a `~/'-relative
 `beads-remote-search-path' entry becomes \"$HOME\"/… for the remote
-shell to expand, instead of asking TRAMP for the remote home — pure
-string operations (§8.3 R2), so a pipe process can be built with no
-TRAMP connection at all.  Nil when the search path is empty."
-  (when beads-remote-search-path
-    (format "PATH=%s:\"$PATH\""
-            (mapconcat
-             (lambda (entry)
-               (cond ((string-match "\\`~/\\(.*\\)\\'" entry)
-                      (concat "\"$HOME\"/"
-                              (shell-quote-argument (match-string 1 entry))))
-                     ((equal entry "~") "\"$HOME\"")
-                     (t (shell-quote-argument entry))))
-             beads-remote-search-path ":"))))
+shell to expand (§8.3 R2).  Nil when the search path is empty."
+  (beads-remote-pure-path-assignment))
 
 (defconst gascity-remote-exit-reporter
   (concat "exec 3<&0; "

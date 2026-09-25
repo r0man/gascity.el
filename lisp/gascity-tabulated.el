@@ -1160,7 +1160,7 @@ agent events (the mode line shows the stream state); `W' toggles it.
                         (if live (concat " " live) ""))))
   (gascity-live-attach (current-buffer)
                        :refresh #'gascity-session-list--live-refresh
-                       :kinds '(agents)))
+                       :kinds '(session)))
 
 ;;;###autoload
 (defun gascity-session-list ()

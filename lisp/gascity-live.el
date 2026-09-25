@@ -106,23 +106,12 @@ multi-hop)."
   :type 'number
   :group 'gascity-live)
 
-(defconst gascity-live-routes
-  '(("session." agents)
-    ("agent." agents)
-    ("bead." work runs)
-    ("mail." mail)
-    ("order." activity)
-    ("convoy." work runs))
-  "View kinds each gc event type prefix invalidates (§8.2).
-Every event also reaches the raw subscribers (the Events view appends
-without a re-read).  The store keeps its own read-kind table
-\(`gascity-store-event-routes').")
-
 (defvar gascity-live-invalidate-functions nil
   "Abnormal hook run once per debounced event batch.
-Called with (ROOT KINDS TYPES): ROOT the city root, KINDS the view
-kinds from `gascity-live-routes' (the symbol `all' after a resume,
-which calls for a full refresh), TYPES the event types in the batch.")
+Called with (ROOT KINDS TYPES): ROOT the city root, KINDS the store
+read kinds the batch touched, per `gascity-store-event-routes' (the
+symbol `all' after a resume, which calls for a full refresh), TYPES the
+event types in the batch.")
 
 (defvar gascity-live-state-functions nil
   "Abnormal hook run when a city's stream changes state.
@@ -232,9 +221,10 @@ text) are skipped."
     (and (stringp type) type)))
 
 (defun gascity-live-route (type)
-  "Return the view kinds event TYPE invalidates (`gascity-live-routes')."
+  "Return the store read kinds event TYPE invalidates.
+The one routing table is the store's, `gascity-store-event-routes'."
   (and type
-       (cl-loop for (prefix . kinds) in gascity-live-routes
+       (cl-loop for (prefix . kinds) in gascity-store-event-routes
                 when (string-prefix-p prefix type) append kinds)))
 
 ;;; Event delivery
@@ -585,7 +575,8 @@ The city is the root of BUFFER's `default-directory'.  The first view
 of a city starts its stream (when `gascity-live-enabled' and not in
 batch unless `gascity-live-in-batch').  REFRESH, when non-nil, is
 called with BUFFER current after a debounced batch touching one of
-KINDS (a list of `gascity-live-routes' kinds; nil means any) or after
+KINDS (store read kinds, see `gascity-store-event-routes'; nil means
+any) or after
 a resume.  Killing BUFFER detaches it.  Returns the stream."
   (with-current-buffer (or buffer (current-buffer))
     (let* ((root (gascity-live--root))
@@ -711,7 +702,10 @@ out its backoff (or offline) retries at once.  A no-op while live."
                (gascity-live--allowed-p)
                (not (memq (gascity-live--stream-state stream) '(live polling))))
       (setf (gascity-live--stream-attempt stream) 0)
-      (gascity-live--start stream))))
+      (gascity-live--start stream)))
+  ;; An offline host's reads are paused too; `g' retries them now.
+  (when (gascity-store-offline-p dir)
+    (gascity-store-reconnect dir)))
 
 (defun gascity-live-toggle (&optional dir)
   "Turn DIR's city stream off, or back on (`W' in gascity views)."
@@ -734,6 +728,24 @@ out its backoff (or offline) retries at once.  A no-op while live."
   (maphash (lambda (_root stream) (gascity-live--stop stream))
            gascity-live--streams)
   (clrhash gascity-live--streams))
+
+(defun gascity-live--host-state-changed (host state _reason)
+  "Reconnect the streams on HOST at once when the store sees it online again.
+Runs from `gascity-store-host-state-functions': a store read that
+succeeds after an outage is news the stream's backoff should not wait
+out."
+  (when (eq state 'online)
+    (maphash (lambda (root stream)
+               (when (and (equal (or (file-remote-p root) "") host)
+                          (gascity-live--stream-enabled stream)
+                          (gascity-live--stream-views stream)
+                          (not (memq (gascity-live--stream-state stream)
+                                     '(live polling))))
+                 (setf (gascity-live--stream-attempt stream) 0)
+                 (run-at-time 0 nil #'gascity-live--start stream)))
+             gascity-live--streams)))
+
+(add-hook 'gascity-store-host-state-functions #'gascity-live--host-state-changed)
 
 (setq gascity-store-live-p-function #'gascity-live-active-p)
 

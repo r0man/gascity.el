@@ -242,15 +242,33 @@ report means gc itself exited.  gc API failures mean supervisor down."
 ;;; Routing and debounce
 
 (ert-deftest gascity-test-live-routing-table ()
-  "Event type prefixes route to the §8.2 view kinds."
-  (should (equal (gascity-live-route "session.woke") '(agents)))
-  (should (equal (gascity-live-route "agent.idle") '(agents)))
-  (should (equal (gascity-live-route "bead.created") '(work runs)))
-  (should (equal (gascity-live-route "mail.sent") '(mail)))
-  (should (equal (gascity-live-route "order.fired") '(activity)))
-  (should (equal (gascity-live-route "convoy.closed") '(work runs)))
+  "Event types route through the store's one table (§8.2)."
+  (dolist (pair '(("session.woke" . "session.") ("agent.idle" . "agent.")
+                  ("bead.created" . "bead.") ("mail.sent" . "mail.")
+                  ("order.fired" . "order.") ("convoy.closed" . "convoy.")))
+    (should (equal (gascity-live-route (car pair))
+                   (cdr (assoc (cdr pair) gascity-store-event-routes)))))
   (should-not (gascity-live-route "city.started"))
   (should-not (gascity-live-route nil)))
+
+(ert-deftest gascity-test-live-host-online-reconnects ()
+  "The store seeing a host online again restarts its waiting streams."
+  (let ((gascity-live--streams (make-hash-table :test 'equal))
+        (s (gascity-live-test--stream :root "/ssh:h:/c/" :state 'offline
+                                      :views (list 'a-view) :attempt 3))
+        started)
+    (puthash "/ssh:h:/c/" s gascity-live--streams)
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_secs _rep fn &rest args) (apply fn args)))
+              ((symbol-function 'gascity-live--start)
+               (lambda (stream) (push stream started))))
+      (gascity-live--host-state-changed "/ssh:other:" 'online nil)
+      (should-not started)
+      (gascity-live--host-state-changed "/ssh:h:" 'offline "down")
+      (should-not started)
+      (gascity-live--host-state-changed "/ssh:h:" 'online nil)
+      (should (equal started (list s)))
+      (should (= (gascity-live--stream-attempt s) 0)))))
 
 (ert-deftest gascity-test-live-debounce-batches-events ()
   "Events inside the window flush once, with the union of their kinds."
@@ -268,8 +286,11 @@ report means gc itself exited.  gc API failures mean supervisor down."
       (should (= (car (car timers)) gascity-live-debounce))
       (apply (nth 1 (car timers)) (nth 2 (car timers)))
       (should (equal flushed
-                     '(("/tmp/city/" (agents activity)
-                        ("session.woke" "order.fired")))))
+                     (list (list "/tmp/city/"
+                                 (delete-dups
+                                  (append (gascity-live-route "session.woke")
+                                          (gascity-live-route "order.fired")))
+                                 '("session.woke" "order.fired")))))
       (should-not (gascity-live--stream-pending s))
       (should-not (gascity-live--stream-debounce-timer s)))))
 

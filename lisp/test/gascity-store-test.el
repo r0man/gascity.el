@@ -492,10 +492,11 @@ the ControlMaster options and the TRAMP user/port/host."
             (should (member "-n" argv))
             (should (member "ForwardX11=no" argv))
             (should (member "-T" argv))
-            ;; gascity's own ControlPath, never TRAMP's tramp.%C.
-            (should (cl-some (lambda (o) (and (string-prefix-p "ControlPath=" o)
-                                              (string-match-p "gascity-ssh-%C" o)))
-                             argv))
+            ;; The master shared with beads.el, never TRAMP's tramp.%C.
+            (should (member (concat "ControlPath=" beads-remote-ssh-control-path)
+                            argv))
+            (should-not (cl-some (lambda (o) (string-match-p "tramp\\.%C" o))
+                                 argv))
             (should (equal (cl-subseq argv (- (length argv) 7) (1- (length argv)))
                            '("-l" "alice" "-p" "2222" "example.org" "--")))
             (should (string-match-p "GC_CITY=" cmd))
