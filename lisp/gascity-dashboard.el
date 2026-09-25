@@ -63,6 +63,7 @@
 (require 'gascity-remote)
 (require 'gascity-reader)
 (require 'gascity-store)              ; section reads (shared, scheduled)
+(require 'gascity-pulse)              ; Needs you totals for lighter/Cities
 (require 'gascity-command)
 (require 'gascity-command-status)
 (require 'gascity-section)
@@ -1797,12 +1798,30 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
       ;; Seed the rig memo from the payload in hand: the rig prompts
       ;; and the next work read then never spawn `gc rig list'.
       (gascity-rigs-remember
-       (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status))))
+       (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status)))
+      (gascity-dashboard--publish ctx))
     (setq ctx (plist-put ctx :view (list :collapsed collapsed :drawers drawers
                                          :expanded expanded)))
     ;; One text vnode: the lines are plain propertized strings (blank
     ;; separator lines included, which vui would drop as empty vnodes).
     (vui-text (string-join (gascity-dashboard--lines ctx) "\n"))))
+
+;;; Pulse (§7.11, §7.12): what other views may show without a gc call
+
+(defun gascity-dashboard--publish (ctx)
+  "Publish this cockpit's Needs you totals, runs and store size (CTX).
+The mode-line lighter and the Cities view read them from
+`gascity-pulse'; publishing is in-memory only."
+  (let ((items (gascity-dashboard--needs-you ctx))
+        (status (plist-get ctx :status)))
+    (gascity-pulse-record-store-size default-directory status)
+    (gascity-pulse-publish
+     default-directory (current-buffer)
+     (or (alist-get 'city_name status) gascity-dashboard--city)
+     :fail (seq-count (lambda (i) (eq (plist-get i :level) 'fail)) items)
+     :watch (seq-count (lambda (i) (eq (plist-get i :level) 'watch)) items)
+     :runs (and (gascity-dashboard--data (plist-get (plist-get ctx :loads) :work))
+                (length (gascity-dashboard--active-runs (plist-get ctx :beads)))))))
 
 ;;; View state (root component, survives a refresh)
 
@@ -2173,7 +2192,8 @@ teaches the view keys."
     ("j o" "orders" gascity-order-list)
     ("j v" "convoys" gascity-convoy-list)
     ("j d" "dolt" gascity-dolt-list)
-    ("j g" "rig dashboard" gascity-jump-rig)]
+    ("j g" "rig dashboard" gascity-jump-rig)
+    ("j $" "costs" gascity-jump-costs)]
    ["Agent at point"
     ("M" "nudge…" gascity-session-nudge-at-point)
     ("s" "suspend" gascity-dashboard-suspend)
