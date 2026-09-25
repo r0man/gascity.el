@@ -161,5 +161,179 @@ stopped agents take their template's provider from `gc agent list'."
               (should (string-match-p "▸ beads.el" (buffer-string)))))
         (kill-buffer buf)))))
 
+;;; Agent detail (§7.4)
+
+(ert-deftest gascity-test-agent-detail-transcript-summary ()
+  "Transcript rows summarize text, tool calls and results."
+  (let ((entries (append (alist-get 'entries (gascity-cockpit-test--json
+                                              "bright-lights.session-logs-mayor-tail10.json"))
+                         nil)))
+    (should (equal (car (gascity-session--entry-summary (nth 0 entries))) "user"))
+    (should (string-prefix-p "[bright-lights] mayor"
+                             (cdr (gascity-session--entry-summary (nth 0 entries)))))
+    (should (string-prefix-p "bash: gc mail inbox"
+                             (cdr (gascity-session--entry-summary (nth 1 entries)))))
+    (should (equal (gascity-session--entry-summary (nth 2 entries))
+                   '("tool" . "result")))
+    (should (string-prefix-p "Morning check"
+                             (cdr (gascity-session--entry-summary (nth 3 entries)))))))
+
+(ert-deftest gascity-test-agent-detail-operator-mail ()
+  "Mail with operator keeps messages from or to the agent, newest first."
+  (let* ((inbox '((messages . [((from . "mayor/") (subject . "a")
+                                (created_at . "2026-09-25T10:00:00Z"))
+                               ((from . "human") (to . "beads.el/gc.w-1")
+                                (subject . "b") (created_at . "2026-09-25T11:00:00Z"))
+                               ((from . "other") (subject . "c"))])))
+         (mayor (gascity-session--operator-mail
+                 inbox (make-instance 'gascity-agent :name "mayor")))
+         (worker (gascity-session--operator-mail
+                  inbox (make-instance 'gascity-agent :name "beads.el/gc.w-1"))))
+    (should (equal (mapcar (lambda (m) (alist-get 'subject m)) mayor) '("a")))
+    (should (equal (mapcar (lambda (m) (alist-get 'subject m)) worker) '("b")))))
+
+(ert-deftest gascity-test-agent-detail-graph-formula ()
+  "The run formula comes from the graph's step refs."
+  (let ((graph (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) "be-52m5"))
+                           (append (gascity-cockpit-test--json
+                                    "emacs-city.bd-list-all-beads.el-runs.json")
+                                   nil))))
+    (should (equal (gascity-session--graph-formula graph) "build-basic"))
+    (should (equal (gascity-session--graph-formula
+                    '(((metadata . ((gc.step_ref . "do-work.prepare"))))))
+                   "do-work"))))
+
+(ert-deftest gascity-test-agent-detail-renders ()
+  "The mounted detail shows header, Work, Run, Transcript and Mail."
+  (let* ((vui-render-delay nil)
+         (graph (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) "be-52m5"))
+                            (append (gascity-cockpit-test--json
+                                     "emacs-city.bd-list-all-beads.el-runs.json")
+                                    nil)))
+         (hook `[((id . "be-bcb5") (status . "in_progress") (title . "Generate requirements")
+                  (assignee . "gc__requirements-planner-ec-fl8o")
+                  (metadata . ((gc.root_bead_id . "be-52m5"))))])
+         (agent (make-instance 'gascity-agent :name "beads.el/gc.requirements-planner-1"
+                               :rig "beads.el"
+                               :session-name "gc__requirements-planner-ec-fl8o"
+                               :socket "emacs-city"))
+         (buf (get-buffer-create "*gascity-agent-test*")))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args cb &optional _eb &rest _)
+                 (funcall cb
+                          (pcase args
+                            (`("session" "list")
+                             `((sessions . [((id . "ec-fl8o")
+                                             (agent_name . "beads.el/gc.requirements-planner-1")
+                                             (state . "active") (provider . "pi")
+                                             (template . "beads.el/gc.requirements-planner")
+                                             (session_name . "gc__requirements-planner-ec-fl8o")
+                                             (work_dir . "/home/roman/workspace/beads.el")
+                                             (last_active . ,(gascity-cockpit-test--ts 180)))])))
+                            (`("bd" "list" "--assignee" "gc__requirements-planner-ec-fl8o" . ,_)
+                             hook)
+                            (`("bd" "list" "--all" . ,_) (vconcat graph))
+                            (`("bd" . ,_) [])
+                            (`("session" "logs" "ec-fl8o" "--tail" "10")
+                             (gascity-cockpit-test--json
+                              "bright-lights.session-logs-mayor-tail10.json"))
+                            (`("mail" "inbox")
+                             '((messages . [((from . "beads.el/gc.requirements-planner-1")
+                                             (subject . "context cycle")
+                                             (created_at . "2026-09-25T12:26:00Z"))])))
+                            (_ (error "Unexpected read %S" args))))
+                 nil)))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer buf
+              (gascity-session-detail-mode)
+              (setq-local gascity-section--agent agent))
+            (vui-mount (vui-component 'gascity-session-detail-app :agent agent)
+                       (buffer-name buf))
+            (with-current-buffer buf
+              (let ((text (buffer-string)))
+                (should (string-match-p "^● beads.el/gc.requirements-planner-1 .*active · last active 3m"
+                                        text))
+                (should (string-match-p "session  ec-fl8o  gc__requirements-planner-ec-fl8o"
+                                        text))
+                (should (string-match-p "provider pi" text))
+                (should (string-match-p "workdir  ~/workspace/beads.el\\|workdir  /home" text))
+                (should (string-match-p "^Work  1" text))
+                (should (string-match-p "⬣ be-bcb5 .*run be-52m5" text))
+                (should (string-match-p "⬣ be-52m5 +build-basic +[◆⬣·✕]\\{10\\}" text))
+                (should (string-match-p "^Transcript .*f follow  v peek" text))
+                (should (string-match-p "bash: gc mail inbox" text))
+                (should (string-match-p "^Mail with operator  1" text))
+                (should (string-match-p "context cycle" text)))
+              ;; RET on the run row opens run detail, scoped to the rig.
+              (goto-char (point-min))
+              (re-search-forward "⬣ be-52m5")
+              (let (shown)
+                (cl-letf (((symbol-function 'gascity-run-show)
+                           (lambda (id _c rig) (setq shown (list id rig)))))
+                  (gascity-session-detail-activate))
+                (should (equal shown '("be-52m5" "beads.el"))))))
+        (kill-buffer buf)))))
+
+(ert-deftest gascity-test-agent-detail-log-argv ()
+  "`f' follows locally with gc, remotely through a no-pty ssh pipe (R4)."
+  (let ((default-directory "/tmp/"))
+    (cl-letf (((symbol-function 'gascity-context-city-args)
+               (lambda () '("--city" "/home/u/city"))))
+      (should (equal (gascity-session--log-argv "ec-fl8o" "/tmp/")
+                     (list gascity-executable "--city" "/home/u/city"
+                           "session" "logs" "ec-fl8o" "-f")))
+      (cl-letf (((symbol-function 'gascity-remote-ssh-pipe-argv)
+                 (lambda (dir argv) (list 'ssh dir argv))))
+        (should (equal (gascity-session--log-argv "ec-fl8o" "/ssh:h:/home/u/city/")
+                       '(ssh "/ssh:h:/home/u/city/"
+                             ("gc" "--city" "/home/u/city" "session" "logs"
+                              "ec-fl8o" "-f"))))))))
+
+(ert-deftest gascity-test-agent-detail-follow-log-buffer ()
+  "`f' opens `*gascity-log: TARGET*' fed by a local pipe process; `q' kills it."
+  (let (spawned)
+    (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+               (lambda (name &rest _) (get-buffer-create name)))
+              ((symbol-function 'gascity-session--log-argv)
+               (lambda (&rest _) '("cat")))
+              ((symbol-function 'make-process)
+               (lambda (&rest plist) (setq spawned plist) nil))
+              ((symbol-function 'pop-to-buffer) #'ignore))
+      (with-temp-buffer
+        (setq-local gascity-section--agent
+                    (make-instance 'gascity-agent :name "mayor" :session-name "mayor"))
+        (gascity-session-follow-log))
+      (should (eq (plist-get spawned :connection-type) 'pipe))
+      (should (equal (plist-get spawned :command) '("cat")))
+      (with-current-buffer "*gascity-log: mayor*"
+        (should (derived-mode-p 'gascity-log-mode))
+        (should (eq (keymap-lookup gascity-log-mode-map "q") #'kill-current-buffer)))
+      (kill-buffer "*gascity-log: mayor*"))))
+
+(ert-deftest gascity-test-agent-peek-opens-at-once ()
+  "`v' shows `…' before gc answers, then the captured pane."
+  (let (resolve)
+    (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+               (lambda (name &rest _) (get-buffer-create name)))
+              ((symbol-function 'pop-to-buffer) #'ignore)
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (_args cb &rest _) (setq resolve cb) nil)))
+      (gascity-session-peek--show "mayor" 20)
+      (with-current-buffer (gascity-session-peek--buffer-name "mayor")
+        (should (equal (buffer-string) "…"))
+        (funcall resolve '((output . "pane text")))
+        (should (equal (buffer-string) "pane text")))
+      (kill-buffer (gascity-session-peek--buffer-name "mayor")))))
+
+(ert-deftest gascity-test-agent-detail-keys ()
+  "The detail binds `f' follow, `v' peek and the §5.3 agent keys."
+  (let ((map gascity-session-detail-mode-map))
+    (should (eq (keymap-lookup map "f") #'gascity-session-follow-log))
+    (should (eq (keymap-lookup map "v") #'gascity-session-peek-at-point))
+    (dolist (key '("M" "s" "K" "w" "D" "R" "U" "t" "d"))
+      (should (keymap-lookup map key)))
+    (should (eq (keymap-lookup map "S") #'gascity-sling-dispatch))))
+
 (provide 'gascity-agents-test)
 ;;; gascity-agents-test.el ends here

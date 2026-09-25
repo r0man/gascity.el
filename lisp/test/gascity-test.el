@@ -3420,26 +3420,23 @@ Nils and empty strings are dropped; duplicates collapse."
   (should (null (gascity-session--assignee-keys (gascity-test--agent :name nil)))))
 
 (ert-deftest gascity-test-session-mail-vnode-error-surface ()
-  "The mail-count line surfaces gc's failure detail on error.
-\"mail (unavailable)\" swallowed the why — the reader's envelope message
-naming the actual gc failure — leaving a magit user nothing to act on
-(ga-52t8, bright-lights dogfood §6).  Pending keeps its spinner and a
-ready count its message arithmetic."
-  (should (equal (gascity-test--vnode-text
-                  (gascity-session--mail-vnode '(:status pending)))
-                 "  mail …"))
-  (should (string-search "session not found"
-                         (gascity-test--vnode-text
-                          (gascity-session--mail-vnode
-                           '(:status error :error "gc mail inbox: session not found")))))
-  ;; A nil :error still renders a sane line, not a bare format hole.
-  (should (string-search "load failed"
-                         (gascity-test--vnode-text
-                          (gascity-session--mail-vnode '(:status error :error nil)))))
-  (should (equal (gascity-test--vnode-text
-                  (gascity-session--mail-vnode
-                   '(:status ready :data ((messages . [(x . t)])))))
-                 "  mail 1 message")))
+  "The agent detail's Mail section surfaces gc's failure detail on error
+\(ga-52t8): the §6.1 error line carries the first line of the reason,
+and a pending load shows `…'."
+  (let ((agent (gascity-test--agent :name "mayor")))
+    (should (string-search "…" (gascity-test--vnode-text
+                                (gascity-session--mail-vnode '(:state pending) agent))))
+    (should (string-search "session not found"
+                           (gascity-test--vnode-text
+                            (gascity-session--mail-vnode
+                             '(:state error :error "gc mail inbox: session not found")
+                             agent))))
+    (should (string-search "Mail with operator  1"
+                           (gascity-test--vnode-text
+                            (gascity-session--mail-vnode
+                             '(:state ready :data ((messages . [((from . "mayor")
+                                                                 (subject . "hi"))])))
+                             agent))))))
 
 (ert-deftest gascity-test-session-bead-args ()
   "Per-key bead args filter server-side by assignee and scope to the rig."
@@ -3983,12 +3980,13 @@ silently drops a section from N/P navigation."
                   (gascity-rig--dolt-vnode "gce" '(:state ready :data nil)))
                  '("Dolt  none")))
   ;; Session/polecat detail: state header + the two bead sections.
+  (should (string-match-p
+           "○ rig/agent"
+           (car (gascity-test--section-labels
+                 (gascity-session--state-vnode (gascity-test--agent :name "rig/agent") nil)))))
   (should (equal (gascity-test--section-labels
-                  (gascity-session--state-vnode (gascity-test--agent :name "rig/agent") nil))
-                 '("Agent:")))
-  (should (equal (gascity-test--section-labels
-                  (gascity-session--beads-section "On hook" nil 'ready ""))
-                 '("On hook (0)"))))
+                  (gascity-session--beads-section "History" nil 'ready ""))
+                 '("History  none"))))
 
 (ert-deftest gascity-test-section-nav-keys ()
   "`N'/`P' are section nav in the shared map; dashboards inherit them, nudge -> `M'.

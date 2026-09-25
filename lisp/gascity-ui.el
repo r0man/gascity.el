@@ -331,6 +331,19 @@ error with no data: a `■ gc …' line; error over data: `◐ stale' or
                    ((and usable rows-fn (not (eql count 0)))
                     (funcall rows-fn data)))))))
 
+(defun gascity-ui-store-load (snapshot)
+  "Return the normalized load plist of a `gascity-store-use' SNAPSHOT.
+The shape `gascity-ui-section' reads: ready data (`stale' with :error
+when a refresh failed over it), `error' with no data, else `pending'."
+  (let ((status (plist-get snapshot :status))
+        (err (plist-get snapshot :error)))
+    (pcase status
+      ('ready (if err
+                  (list :state 'stale :data (plist-get snapshot :data) :error err)
+                (list :state 'ready :data (plist-get snapshot :data))))
+      ('error (list :state 'error :error err))
+      (_ (list :state 'pending)))))
+
 ;;; Bounded reads (§8.3 R5)
 
 (defcustom gascity-ui-read-timeout 30

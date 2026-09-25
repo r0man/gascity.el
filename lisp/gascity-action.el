@@ -39,6 +39,7 @@
 (require 'beads-prefix)
 (require 'view)
 (require 'gascity-custom)
+(require 'gascity-ui)
 (require 'gascity-error)
 (require 'gascity-reader)
 (require 'gascity-store)
