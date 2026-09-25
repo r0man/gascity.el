@@ -262,7 +262,7 @@ resolved to an absolute host path by `gascity-remote-find-executable'
 The remote wrapper also exports the search-path directories on PATH so
 gc's own subprocesses (git, dolt) resolve too (gce-k5d).  An env-city
 override (`gascity-reader--city-env-pair') is applied as a
-`process-environment' entry: locally make-process copies the binding
+`process-environment' entry: locally `make-process' copies the binding
 at spawn; over TRAMP the dispatch emits the changed entry on the
 remote command line (\"env GC_CITY=… …\"), so gc's pack-command city
 resolution sees the view's city either way."
@@ -399,7 +399,7 @@ order, BAD the count of lines that failed to decode.  A malformed line
 is a per-line decode-error marker (the BAD count), never a whole-feed
 failure — a stream feed must survive one bad line (plan S3).
 Leading lines before the first `{'-starting line are transport chatter
-(an ssh client warning or login banner — the same hazard
+\(an ssh client warning or login banner — the same hazard
 `gascity-reader-parse-json' documents for single-payload output, which
 TRAMP can prepend to gc's stdout) and are ignored, not counted bad.
 Empty output decodes to (nil . 0)."
@@ -433,15 +433,17 @@ Empty output decodes to (nil . 0)."
 
 (defconst gascity-reader--generic-envelope-message
   "command failed; see stderr for diagnostics"
-  "gc's sentinel envelope message: the envelope's own text when the
+  "The gc sentinel envelope message.
+It is the envelope's own text when the
 actionable diagnostic went to stderr instead (plan decision D4).  A
 specific stderr therefore outranks it in the failure message.")
 
 (defconst gascity-reader-exit-9-hint
   "process killed (SIGKILL) — exit 9 is the signal status Emacs reports for a torn-down gc process, not an exit code gc defines: typically an auto-refresh superseded this read or the view unmounted while it was in flight (the successor tears the process down), occasionally an external kill (OOM, timeout); refresh to retry"
-  "The characterization shipped for a bare exit 9 (see
+  "The characterization shipped for a bare exit 9.
+See
 `gascity-reader--failure-message').  Derived from the gc source census
-(git gascity: no `os.Exit(9)' anywhere — gc's own failures exit 1, or a
+\(git gascity: no `os.Exit(9)' anywhere — gc's own failures exit 1, or a
 commandExitError code nothing sets to 9) and an Emacs reproduction:
 `delete-process'/`kill-process' on a live async read SIGKILL it and its
 sentinel then observes (signal . 9), which the failure branch renders as
@@ -571,7 +573,7 @@ When `gascity-reader-city-args-function' is installed (gascity.el wires
 `gascity-context-city-args' into it), its tokens are prepended to ARGS
 first: the read explicitly targets the calling buffer's pinned city,
 and the error text below names that real argv
-(plans/sessions-list-city-targeting, D1/D2/D3).  Subcommands whose
+\(plans/sessions-list-city-targeting, D1/D2/D3).  Subcommands whose
 leaves never accept the flag (the dolt pack commands) get the city by
 environment instead — see `gascity-reader--city-env-pair'."
   ;; The city-targeting tokens are captured HERE, in the calling
@@ -768,7 +770,7 @@ Connection reuse note (W1, REQ-002): the default handler on an ssh
 connection is tramp-sh, which multiplexes every async read over the ONE
 pooled ssh connection — measured: N = 10 consecutive async reads
 spawned one ssh process total and zero new host logins
-(see `gascity-remote.el''s commentary and the W1 summary).  gascity
+\(see `gascity-remote.el''s commentary and the W1 summary).  gascity
 never enables direct-async itself; it only keeps working when the user
 turns it on, at the cost of a fresh ssh per read."
   ;; The up-front directory probe is bounded (`non-essential' +

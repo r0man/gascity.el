@@ -121,7 +121,7 @@
 
 (defconst gascity-dashboard-buffer-name "*gascity-dashboard*"
   "Base name of the city dashboard buffer.
-The view-buffer factory (`gascity-view-get-buffer-create') qualifies it
+The `view-buffer' factory (`gascity-view-get-buffer-create') qualifies it
 with the city root for a local city and the TRAMP prefix for a remote
 one, so dashboards of different cities — or of the same city in local
 and remote access modes — coexist.")
@@ -340,7 +340,8 @@ narrowed to live rows (state \"active\", not closed)."
 
 (defun gascity-dashboard--bd-list-rigs-async (args resolve reject)
   "Read `gc bd list ARGS' from EVERY rig store of the calling city.
-One `rig list' read, then one `bd list ARGS --rig NAME' read per rig,
+RESOLVE completes the read and REJECT carries its failure.  One
+`rig list' read, then one `bd list ARGS --rig NAME' read per rig,
 all through the async reader — never synchronously, over TRAMP like
 any other read.  Resolves the union of the stores' bead rows once
 every per-rig read has settled, rows in rig order, each stamped with
@@ -492,7 +493,7 @@ decoded payload (REQ-014)."
 (defun gascity-dashboard--run-row (row)
   "Return a vnode for one workflow-run ROW (see `--workflow-runs').
 Columns: run id, formula, phase, progress closed/total, current step
-(id), updated.  The row is stamped with the root bead id under
+\(id), updated.  The row is stamped with the root bead id under
 `gascity-bead', so `RET' lands on the run (the S2 drill-in's hook).
 Missing pieces render as em dashes, the dashboard's established
 gap-marker convention."
@@ -622,8 +623,8 @@ renders its header — `N'/`P' keep working and the count stays visible."
 STATUS is the `gc status' payload; the header vnode (city, controller,
 health, counters, store health) is the status dashboard's own, fed by
 one async read (REQ-002).  MAIL-COUNT is the `gc mail count' payload
-(total/unread) — a dim header line whose unread count the mail inbox
-(`m') acts on.  The API URL and a costs surface appear in no `gc --json'
+\(total/unread) — a dim header line whose unread count the mail inbox
+\(`m') acts on.  The API URL and a costs surface appear in no `gc --json'
 payload yet (`gc costs --json' is json_unsupported), so both render as
 dim pointers rather than fake or hand-parsed data (ga-jhwz convention)."
   (vui-vstack
@@ -657,7 +658,7 @@ object straight from the raw alist (the work-in-flight join's shape)."
   "Return a vnode for one work-in-flight ROW on tmux SOCKET.
 ROW is a `gascity-dashboard--work-in-flight' entry (BEAD ROLE SESSION-ID
 SESSION).  A joined row names the session and carries both the action
-agent (`d'/`t'/`i'/`M'/`s'/`K'/`w'/`D') and the bead id (`RET' opens the
+agent key — one of d/t/i/M/s/K/w/D — and the bead id (`RET' opens the
 bead in beads.el); an unjoined row degrades to its role and no session."
   (let* ((bead (nth 0 row))
          (role (nth 1 row))
@@ -732,7 +733,7 @@ for the shared action keys."
 (defun gascity-dashboard--convoy-row (convoy)
   "Return a vnode for a raw CONVOY alist, stamped with its id for `RET'.
 A convoy is a bead: `RET' opens it in beads.el like any other id
-(DESIGN.md §4.3), scoped to the store owning its prefix."
+\(DESIGN.md §4.3), scoped to the store owning its prefix."
   (let* ((id (gascity-tabulated--str (alist-get 'id convoy)))
          (progress (alist-get 'progress convoy))
          (done (alist-get 'closed progress))
@@ -809,7 +810,7 @@ EVENTS are the decoded `gc events' JSONL alists."
               events))
 
 (defun gascity-dashboard--events-cap (events limit)
-  "Return the most recent LIMIT events, payload order preserved.
+  "Return the most recent LIMIT items of EVENTS, payload order preserved.
 Events arrive oldest-first (ascending `seq'), so the cap keeps the
 tail.  A nil LIMIT or a shorter list passes through unchanged."
   (if (and limit (> (length events) limit))
@@ -818,7 +819,8 @@ tail.  A nil LIMIT or a shorter list passes through unchanged."
 
 (defun gascity-dashboard--events-view (data excluded limit)
   "Project the JSONL events payload DATA into the rendered view.
-DATA is the reader's (EVENTS . BAD) cons — EVENTS the decoded
+EXCLUDED is the event-type filter applied before the cap.  DATA is
+the reader's (EVENTS . BAD) cons — EVENTS the decoded
 per-line alists in feed order, BAD the count of malformed lines.  A
 nil or non-cons payload (still pending, or an unexpected shape)
 degrades to an empty feed — never an error.  Returns a plist
@@ -1024,7 +1026,8 @@ section's first, dataless render): empty body, the \"(none)\" line."
   "Return the dashboard body vnode.
 STATUS is the `gc status' payload; MAIL-COUNT the `gc mail count'
 payload (unread count for the cockpit header); the five LOAD arguments
-are the normalized loads of `gc session list', `gc bd ready', the
+\(SESSIONS-LOAD READY-LOAD INPROG-LOAD BLOCKED-LOAD CONVOY-LOAD) are
+the normalized loads of `gc session list', `gc bd ready', the
 in-progress and blocked `gc bd list' reads and `gc convoy list'.
 RUNS-LOAD is the Runs census's own full-status rig fan-out — separate
 from INPROG-LOAD because a run's closed steps must count toward its
@@ -1033,7 +1036,7 @@ EVENT-TYPES-EXCLUDED the Activity feed's excluded types (root state,
 survives a refresh).  COLLAPSED is the root's list of collapsed section
 names; BEAD-RIG the active `/` rig filter (a rig name, or nil for all).
 Each section renders from its own load, so a failing one degrades alone
-(REQ-010); the needs-you rows are computed once per render and feed
+\(REQ-010); the needs-you rows are computed once per render and feed
 both the needs-you section and the roster's highlighting (REQ-004's
 single-selector rule)."
   (let* (;; Decode the session rows once: the typed list feeds the session

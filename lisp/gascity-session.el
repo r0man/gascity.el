@@ -79,7 +79,7 @@
 
 (defun gascity-session-detail--buffer-name (name)
   "Return the base detail buffer name for agent NAME.
-The view-buffer factory (`gascity-view-get-buffer-create') qualifies it
+The `view-buffer' factory (`gascity-view-get-buffer-create') qualifies it
 with the host for a remote city, so a local and a remote agent detail
 of the same name coexist."
   (format "*gascity-agent: %s*" name))
@@ -181,8 +181,9 @@ the merge defensive."
 ;;; Rendering (vnodes)
 
 (defun gascity-session--state-vnode (agent session)
-  "Return the state-block vnode for AGENT (a `gascity-agent'), enriched by
-its SESSION (a raw `gc session list' alist, or nil)."
+  "Return the state-block vnode for AGENT, enriched by its SESSION.
+AGENT is a `gascity-agent'; SESSION is a raw `gc session list' alist,
+or nil."
   (let* ((name (gascity-agent-name agent))
          (state (and session (gascity-tabulated--str (alist-get 'state session))))
          (running (if session (equal state "active") (gascity-agent-running agent)))

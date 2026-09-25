@@ -124,13 +124,13 @@ does not recognize."
   "Return the display string of column N in tabulated-list ENTRY.
 ENTRY has the form (ID [DESC...]), like the elements of
 `tabulated-list-entries'; each DESC cell is either a string or a
-\(LABEL . PROPS) cons.  Mirrors how the built-in `t' sorter reads a cell."
+\(LABEL . PROPS) cons.  Mirrors how the built-in string sorter reads a cell."
   (let ((cell (aref (cadr entry) n)))
     (if (stringp cell) cell (car cell))))
 
 (defun gascity-tabulated--numeric-sorter (n &optional key)
   "Return a `tabulated-list-format' sort predicate for numeric column N.
-The built-in `t' sorter compares cells as strings, so numeric columns
+The built-in string sorter compares cells as strings, so numeric columns
 order lexicographically (\"110\" sorts before \"8\").  This predicate
 instead maps each cell's display string through KEY (default
 `string-to-number') and compares the results with `<', giving true
@@ -390,7 +390,7 @@ failure — launch error, non-zero exit, malformed JSON — is echoed as
 one clean line and leaves the list empty, exactly like the synchronous
 path (gce-dfe).  BASE-NAME and FILTER as for `gascity-tabulated--refresh'.
 ERROR-FN, when given, replaces the default echo for that failure line
-(the session list's auto-refresh hygiene dedupes and counts through
+\(the session list's auto-refresh hygiene dedupes and counts through
 it); SUCCESS-FN, when given, runs just before the rows settle — the
 success half of that hygiene.  Returns the process, or nil when none
 could be started."
@@ -453,7 +453,7 @@ page (`gascity-tabulated--sort-all-entries'), so the visible slice is a
 window onto the globally-sorted data rather than a per-page sort.  Each
 row's cells are then truncated to their column widths via
 `gascity-tabulated--truncate-row' so long values keep the columns
-aligned; row ids are preserved verbatim, so `RET'/`d'/`t' still act on
+aligned; row ids are preserved verbatim, so RET/d/t still act on
 the full data."
   (gascity-tabulated--sort-all-entries)
   (setq tabulated-list-entries
@@ -709,7 +709,7 @@ May carry a server-side :state and a client-side :rig substring.")
 (defun gascity-session-list--entry (session socket)
   "Map SESSION (a `gascity-session') to a tabulated-list entry on tmux SOCKET.
 The entry id is the agent action object (`gascity-agent', built by
-`gascity-agent-from-session'), so `d'/`t'/`RET' act on it."
+`gascity-agent-from-session'), so the d/t/RET action keys act on it."
   (let* ((state (gascity-tabulated--str (gascity-session-state session)))
          (running (gascity-session-running-p session)))
     (list (gascity-agent-from-session session socket)
@@ -794,7 +794,7 @@ applied client-side to the decoded rows.  Asynchronous
 session list' takes never freeze the UI.
 
 FROM-AUTO-REFRESH non-nil (the timer tick) engages the failure hygiene
-(`gascity-session-list--note-refresh-error'): consecutive identical
+\(`gascity-session-list--note-refresh-error'): consecutive identical
 errors are echoed once, counted in the mode line, and back off the
 timer.  A manual `g' (nil) resets all of that state — the user driving
 outranks the backoff — and also clears the stale marker."
@@ -976,7 +976,7 @@ seconds whenever its buffer is visible."
 
 (define-derived-mode gascity-session-list-mode tabulated-list-mode "GC-Sessions"
   "Major mode listing the city's agent sessions.
-`RET' (or `t') attaches to the session's tmux session — the primary
+RET (or t) attaches to the session's tmux session — the primary
 action; `i' opens the session/polecat detail view; `d' opens its
 worktree in Dired.  `M' nudges (sends a message), `s' suspends, `K'
 force-kills the runtime of, `w' wakes, `D' drains, and `v' peeks at the
@@ -1036,7 +1036,7 @@ beads.el."
                   (format "%d/%d" closed total)))))
 
 (cl-defmethod gascity-at-point-visit ((convoy gascity-convoy))
-  "Visit a convoy: open its bead in beads.el, scoped to its store.
+  "Visit CONVOY: open its bead in beads.el, scoped to its store.
 Convoys are city-level beads (`rig: null') listed via `gc convoy list';
 `gascity-bead-show' resolves the owning rig store by id prefix and opens it
 with `bd --directory' (-C), which works even when the shared Dolt server
@@ -1154,7 +1154,7 @@ marker).  The entry id is the typed message, so `RET' can show every field."
                 (if (gascity-mail-inbox--unread-p message) "●" ""))))
 
 (cl-defmethod gascity-at-point-visit ((message gascity-mail))
-  "Visit a mail message: show its typed fields in a read-only view buffer.
+  "Visit MESSAGE: show its typed fields in a read-only view buffer.
 Renders the data already fetched, without contacting `gc'; each slot of the
 `gascity-mail' is shown as \"slot: value\".  The buffer is keyed and
 pinned to the inbox's city (`gascity-view-get-buffer-create'), so a
@@ -1267,10 +1267,10 @@ marks read); `a' archives (confirmed); `u' marks unread.
 May carry :enabled (enabled-only) and :type (exact type match).")
 
 (defun gascity-order-list--match-p (order enabled type)
-  "Return non-nil when ORDER (a `gascity-order') passes the ENABLED-only and
-TYPE filters.  ENABLED non-nil keeps only enabled orders; TYPE (when
-non-empty) keeps only orders whose `type' matches it exactly.  Nil/empty
-values match every order."
+  "Return non-nil when ORDER passes the ENABLED-only and TYPE filters.
+ORDER is a `gascity-order'.  ENABLED non-nil keeps only enabled orders;
+TYPE (when non-empty) keeps only orders whose `type' matches it exactly.
+Nil/empty values match every order."
   (and (or (not enabled) (and (gascity-order-enabled order) t))
        (or (null type) (string-empty-p type)
            (string= type (gascity-tabulated--str (gascity-order-type order))))))
@@ -1287,7 +1287,7 @@ The entry id is the typed order, so `RET' can open its source."
                 (if (gascity-order-enabled order) "●" ""))))
 
 (cl-defmethod gascity-at-point-visit ((order gascity-order))
-  "Visit an order: open its source file.
+  "Visit ORDER: open its source file.
 The `source' path is host-local (as gc reports it); for a remote city it
 is re-prefixed so the file opens on the city's host."
   (let ((source (gascity-remote-localize-path (gascity-order-source order))))
@@ -1416,7 +1416,7 @@ Asynchronous (`gascity-tabulated--refresh-async')."
 (defvar-keymap gascity-dolt-list-mode-map
   :doc "Keymap for `gascity-dolt-list-mode'.
 Dolt has no meaningful filter dimension, so no `/'; pagination
-(`]'/`['/`G') comes from the parent map."
+\(`]'/`['/`G') comes from the parent map."
   :parent gascity-tabulated-base-map
   "g"   #'gascity-dolt-list-refresh
   "RET" #'gascity-dolt-list-show)

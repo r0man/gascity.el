@@ -196,7 +196,7 @@ non-symbol entry is a no-op."
   "Display the terminal buffer named BUFFER-NAME, spawning ARGV if needed.
 If a buffer named BUFFER-NAME already hosts a live process, reuse it: pop
 to it and raise its window without launching a second process.  This is
-what keeps `t' on an agent whose terminal is already open from erroring
+what keeps the t key on an agent whose terminal is already open from erroring
 \(e.g. ghostel's \"already has a running ghostel process\").  The check is
 on the Emacs buffer and its process, so it behaves identically across the
 vterm / eat / term / ghostel backends.
@@ -293,10 +293,10 @@ the other failure modes, instead of hanging on a dead channel."
 ;;; tmux status in the mode line
 
 (defvar-local gascity-terminal--status-session nil
-  "tmux session name mirrored in this buffer's mode line, or nil.")
+  "Tmux session name mirrored in this buffer's mode line, or nil.")
 
 (defvar-local gascity-terminal--status-socket nil
-  "tmux -L socket for `gascity-terminal--status-session', or nil.")
+  "Tmux -L socket for `gascity-terminal--status-session', or nil.")
 
 (defvar-local gascity-terminal--status-directory nil
   "Directory whose host this buffer's tmux status probes run on, or nil.

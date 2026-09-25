@@ -310,8 +310,9 @@ same shortening `gc status' applies to the member rows beneath it."
 
 (defun gascity-status--agent-row (agent rig-name session-map socket &optional indent)
   "Return a vnode for AGENT (a raw `gc status' agent entry) under RIG-NAME.
-Stamps the row with the action `gascity-agent' (carrying the tmux SOCKET) as
-a text property so `d'/`t'/RET act on it.  INDENT is the row's leading width
+SESSION-MAP and SOCKET join the row to its live session.  Stamps the row
+with the action `gascity-agent' as a text property so the d/t/RET action
+keys act on it.  INDENT is the row's leading width
 in columns, defaulting to 2; a pool's members are rendered at 4, nested under
 their template's header."
   (let* ((qname (alist-get 'qualified_name agent))
@@ -329,7 +330,8 @@ their template's header."
 (defun gascity-status--agent-group-vnodes (groups rig-name session-map socket
                                                   collapsed-pools)
   "Return the row vnodes for GROUPS under RIG-NAME.
-GROUPS is a `gascity-status--group-agents' result: standalone agents render
+SESSION-MAP and SOCKET join the agent rows to their sessions.  GROUPS
+is a `gascity-status--group-agents' result: standalone agents render
 as rows, pools as `gascity-status-pool' components told whether they are in
 COLLAPSED-POOLS (the app's list of collapsed pool names — lifted there, like
 the rigs', so the keymap can toggle the pool at point and the state survives
@@ -488,7 +490,7 @@ list' read; nil (that read still in flight, or failed) simply renders every
 agent flat.  SESSION-SUMMARY is the session payload's `summary' block, which
 carries the counts the header reports.  SESSIONS-STATE/SESSIONS-ERROR
 describe the `gc session list' load so a one-line hint can warn that
-`d'/`t' are disabled when it did not succeed.  COLLAPSED-RIGS and
+d/t are disabled when it did not succeed.  COLLAPSED-RIGS and
 COLLAPSED-POOLS are the app's lists of collapsed rig and pool names; each
 section is told whether it is collapsed (lifted there so the keymap can
 toggle the section at point — see `gascity-status--toggle-rig' and
@@ -496,7 +498,7 @@ toggle the section at point — see `gascity-status--toggle-rig' and
 
 The session rows are decoded ONCE here: the typed list feeds both the
 qualified-name join map and the named-session derivation
-(`gascity-domain-named-sessions-from-sessions'), so the named-sessions
+\(`gascity-domain-named-sessions-from-sessions'), so the named-sessions
 section renders from the same read the header counts come from.  When the
 session load is pending or failed with no snapshot in hand, SESSIONS is nil
 and both the map and the derivation come up empty — the sessions note says
@@ -564,7 +566,7 @@ why and the named-sessions section simply does not render."
 STATE is the `vui-use-async' status of the `gc session list' load and
 ERROR its message.  The dashboard renders even when that load has not
 succeeded, but without it agent rows carry no `work_dir'/`session_name',
-so `d' (Dired) and `t' (tmux attach) silently no-op.  Surface why instead
+so the Dired (d) and tmux-attach (t) keys silently no-op.  Surface why instead
 of degrading invisibly; a `ready' load needs no note (returns nil)."
   (pcase state
     ('error
@@ -579,7 +581,7 @@ of degrading invisibly; a `ready' load needs no note (returns nil)."
   "Return a row vnode for NAMED, a `gascity-named-session'.
 Mirrors `gc status''s \"mayor                   awake (always)\": the
 identity, the CLI-shaped awake/asleep token
-(`gascity-named-session-label'), and the mode in parentheses when gc
+\(`gascity-named-session-label'), and the mode in parentheses when gc
 exposes it in JSON.  When gc's session rows carry no mode (absent
 outright in gc 1.4.2), the row appends a dim \"(mode —)\" placeholder —
 the same em-dash convention the other views use for absent values —
@@ -587,7 +589,7 @@ instead of a section-wide footnote (ga-jhwz).
 The row is stamped with the action `gascity-agent' — enriched from
 NAMED's own `gascity-session' row (always set by the derivation) plus
 the tmux SOCKET — so the standard text
-properties and action keys (`d'/`t'/RET/`i'/`M'/`s'/`K'/`w'/`D') act on
+properties and action keys (d/t/RET/i/M/s/K/w/D) act on
 it like on any agent row."
   (let* ((identity (gascity-named-session-identity named))
          (session (gascity-named-session-session named))
@@ -615,6 +617,7 @@ it like on any agent row."
 
 (defun gascity-status--named-sessions-vnode (named-sessions socket)
   "Return the named-sessions section vnode, or nil when there is nothing to show.
+SOCKET is the shared tmux socket the rows' action keys attach through.
 NAMED-SESSIONS is the `gascity-domain-named-sessions-from-sessions'
 derivation over the dashboard's decoded `gc session list' rows.  A nil or
 empty derivation — no canonical city-scoped row, which is also what a
@@ -845,7 +848,7 @@ collapse — the same toggle `RET' performs on a header
 \(`gascity-status-activate').  On other `gascity-section' headers (the city
 block, Named sessions) there is a section but none this command knows how
 to collapse, so it says so honestly instead of denying a section exists
-(ga-1kdu, bright-lights dogfood §1); elsewhere it signals a clean
+\(ga-1kdu, bright-lights dogfood §1); elsewhere it signals a clean
 `user-error' rather than acting on something unrelated — `TAB' toggles,
 never attaches."
   (interactive)

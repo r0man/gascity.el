@@ -79,7 +79,7 @@ session carries `work_dir' (its worktree, for Dired) and `session_name'
     :initarg :status
     :initform nil
     :documentation "Client-side status filter.  Carries no `:long-option'
-(`gc convoy list' has no status flag); `gascity-convoy-list-refresh'
+\(`gc convoy list' has no status flag); `gascity-convoy-list-refresh'
 reads it to filter the decoded rows."))
   :documentation "List the city's convoys.
 Payload: an alist with a `convoys' vector and a `summary'.")
@@ -553,97 +553,98 @@ buffer (`gascity-compose').")
 ;;; Validation — required positional arguments
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-nudge))
-  "Require a session target and a message."
+  "Validate COMMAND: require a session target and a message."
   (cond ((gascity-command--blank-p command 'target) "a session target is required")
         ((gascity-command--blank-p command 'message) "a message is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-suspend))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-kill))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-wake))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-sling))
-  "Require both a target and a bead/text argument."
+  "Validate COMMAND: require both a target and a bead/text argument."
   (cond ((gascity-command--blank-p command 'target) "a sling target is required")
         ((gascity-command--blank-p command 'arg) "a bead id or task text is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-order-run))
-  "Require an order name."
+  "Validate COMMAND: require an order name."
   (and (gascity-command--blank-p command 'name) "an order name is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-formula-show))
-  "Require a formula name."
+  "Validate COMMAND: require a formula name."
   (and (gascity-command--blank-p command 'name) "a formula name is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-peek))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-runtime-drain))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-runtime-undrain))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-reset))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-note))
-  "Require a bead id and note text."
+  "Validate COMMAND: require a bead id and note text."
   (cond ((gascity-command--blank-p command 'id) "a bead id is required")
         ((gascity-command--blank-p command 'text) "note text is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-read))
-  "Require a message id."
+  "Validate COMMAND: require a message id."
   (and (gascity-command--blank-p command 'id) "a message id is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-archive))
-  "Require a message id."
+  "Validate COMMAND: require a message id."
   (and (gascity-command--blank-p command 'id) "a message id is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-mark-read))
-  "Require a message id."
+  "Validate COMMAND: require a message id."
   (and (gascity-command--blank-p command 'id) "a message id is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-mark-unread))
-  "Require a message id."
+  "Validate COMMAND: require a message id."
   (and (gascity-command--blank-p command 'id) "a message id is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-close))
-  "Require a bead id (the reason is optional)."
+  "Validate COMMAND: require a bead id (the reason is optional)."
   (and (gascity-command--blank-p command 'id) "a bead id is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-reopen))
-  "Require a bead id."
+  "Validate COMMAND: require a bead id."
   (and (gascity-command--blank-p command 'id) "a bead id is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-assign))
-  "Require a bead id and an assignee name."
+  "Validate COMMAND: require a bead id and an assignee name."
   (cond ((gascity-command--blank-p command 'id) "a bead id is required")
         ((gascity-command--blank-p command 'name) "an assignee is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-send))
-  "Require a recipient (subject/body come from the compose buffer)."
+  "Validate COMMAND: require a recipient for TO.
+The subject and body come from the compose buffer."
   (and (gascity-command--blank-p command 'to) "a recipient is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-mail-reply))
-  "Require the id of the message being replied to."
+  "Validate COMMAND: require the id of the message being replied to."
   (and (gascity-command--blank-p command 'id) "a message id is required"))
 
 ;;; Validation — phase 3 (bead authoring, session lifecycle, rig composition)
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-update))
-  "Require a bead id and at least one field to change."
+  "Validate COMMAND: require a bead id and at least one field to change."
   (cond ((gascity-command--blank-p command 'id) "a bead id is required")
         ((and (gascity-command--blank-p command 'status)
               (gascity-command--blank-p command 'priority)
@@ -652,44 +653,44 @@ buffer (`gascity-compose').")
          "at least one field to update is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-create))
-  "Require a title."
+  "Validate COMMAND: require a title."
   (and (gascity-command--blank-p command 'title) "a title is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-dep-add))
-  "Require the dependent bead id and the bead it depends on."
+  "Validate COMMAND: require the dependent bead id and the bead it depends on."
   (cond ((gascity-command--blank-p command 'id) "a bead id is required")
         ((gascity-command--blank-p command 'dependency)
          "a dependency id is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-bd-dep-remove))
-  "Require the bead id and the dependency to remove."
+  "Validate COMMAND: require the bead id and the dependency to remove."
   (cond ((gascity-command--blank-p command 'id) "a bead id is required")
         ((gascity-command--blank-p command 'dependency)
          "a dependency id is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-rename))
-  "Require a session target and a new title."
+  "Validate COMMAND: require a session target and a new title."
   (cond ((gascity-command--blank-p command 'target) "a session target is required")
         ((gascity-command--blank-p command 'title) "a new title is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-close))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-pin))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-session-unpin))
-  "Require a session target."
+  "Validate COMMAND: require a session target."
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-rig-add))
-  "Require a project path."
+  "Validate COMMAND: require a project path."
   (and (gascity-command--blank-p command 'path) "a project path is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-rig-remove))
-  "Require a rig name."
+  "Validate COMMAND: require a rig name."
   (and (gascity-command--blank-p command 'name) "a rig name is required"))
 
 (provide 'gascity-types)

@@ -40,5 +40,8 @@
 ;; Also keep the documentation tree (Texinfo source plus the standalone
 ;; screenshot-capture scripts, which are not package code) out of the
 ;; project fileset, so eldev never compiles, lints, or info-builds it.
+;; scripts/ga-eyw9-acceptance.el is a standalone acceptance driver (run
+;; under emacs --script, no provide form, non-gascity prefixes), not
+;; package code either — package-lint otherwise errors on it.
 (setf eldev-standard-excludes
-      `(:or ,eldev-standard-excludes "worktrees/**" "doc/**"))
+      `(:or ,eldev-standard-excludes "worktrees/**" "doc/**" "scripts/**"))

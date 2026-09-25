@@ -59,7 +59,7 @@
 
 (defconst gascity-run-buffer-name "*gascity-run*"
   "Base name of the run-detail buffer.
-The view-buffer factory (`gascity-view-get-buffer-create') qualifies it
+The `view-buffer' factory (`gascity-view-get-buffer-create') qualifies it
 with the city root for a local city and the TRAMP prefix for a remote
 one, so run details of different cities coexist.")
 
@@ -93,7 +93,7 @@ belongs to.  A row with neither returns its own id."
             (append rows nil)))
 
 (defun gascity-run--steps (run-id rows)
-  "Return the step rows of the run rooted at RUN-ID, in payload order.
+  "Return the step ROWS of the run rooted at RUN-ID, in payload order.
 A step is a bead whose metadata carries `gc.root_bead_id' = RUN-ID; the
 root itself carries no such key (verified live) and is excluded.  The
 order is the payload's — gc returns dependency order for `bd list'."
@@ -106,7 +106,7 @@ order is the payload's — gc returns dependency order for `bd list'."
           (push row steps))))))
 
 (defun gascity-run--progress (steps)
-  "Return (CLOSED . TOTAL) for the STEP rows.
+  "Return (CLOSED . TOTAL) for the STEPS list.
 CLOSED counts steps in the \"closed\" status; TOTAL is all steps."
   (cons (seq-count (lambda (step)
                      (equal (alist-get 'status step) "closed"))
@@ -114,15 +114,15 @@ CLOSED counts steps in the \"closed\" status; TOTAL is all steps."
         (length steps)))
 
 (defun gascity-run--phase (root)
-  "Return the run's phase: the root ROW's bead status."
+  "Return the run's phase: the ROOT row's bead status."
   (alist-get 'status root))
 
 (defun gascity-run--formula (root)
-  "Return the run's formula (`gc.formula_name') from the root ROW."
+  "Return the run's formula (`gc.formula_name') from the ROOT row."
   (gascity-run--meta root 'gc.formula_name))
 
 (defun gascity-run--input-convoy-id (root)
-  "Return the run root ROW's `gc.input_convoy_id', or nil."
+  "Return the run ROOT row's `gc.input_convoy_id', or nil."
   (gascity-run--meta root 'gc.input_convoy_id))
 
 (defun gascity-run--convoy-pair (payload)
@@ -367,7 +367,7 @@ id opens in beads.el scoped to its store."
 RUN is the run's root bead id, or the run row at point in the city
 dashboard's Runs section (a step id climbs to its run root).  The
 buffer is created through `gascity-view-get-buffer-create'
-(host-qualified name, pinned `default-directory'), so local and TRAMP
+\(host-qualified name, pinned `default-directory'), so local and TRAMP
 access modes coexist (REQ-011); the step graph renders from the view's
 own async `gc bd list' read, filtered client-side to the run.
 

@@ -346,11 +346,11 @@ resolvers below narrow it to a single type."
       gascity-section--agent))
 
 (cl-defmethod gascity-at-point-visit ((agent gascity-agent))
-  "Visit an agent: attach its tmux terminal (the porcelain's primary action)."
+  "Visit AGENT: attach its tmux terminal (the porcelain's primary action)."
   (gascity-agent-attach-tmux agent))
 
 (cl-defmethod gascity-at-point-visit ((id string))
-  "Visit a bead id: open it in beads.el, scoped to its store."
+  "Visit the bead ID: open it in beads.el, scoped to its store."
   (gascity-bead-show id))
 
 ;;; Agent at point
@@ -608,7 +608,7 @@ beads falls back to the buffer's own directory."
 The city root directory itself (`gascity-context-city-root') — the tree
 holding the city-level `.beads' store gc routes prefix-less city beads
 through — re-prefixed for a remote city exactly like rig stores are
-(`gascity-remote-localize-path').  Nil when DIR sits outside any city."
+\(`gascity-remote-localize-path').  Nil when DIR sits outside any city."
   (when-let* ((root (gascity-context-city-root dir)))
     (file-name-as-directory
      (expand-file-name (gascity-remote-localize-path root)))))
@@ -683,7 +683,7 @@ another rig's database (gce-bhr).  Resolves DESIGN §9.1."
          (or (and directory (file-name-as-directory
                              (expand-file-name directory)))
              (gascity-beads--bead-path id)))
-      (user-error "beads.el is not available to show %s" id)))))
+      (user-error "Beads.el is not available to show %s" id)))))
 
 ;;;###autoload
 (defun gascity-bead-visit ()
@@ -717,7 +717,7 @@ to the contextual one."
       (require 'beads-dashboard nil t))
     (if (fboundp 'beads-dashboard)
         (beads-dashboard :directory dir)
-      (user-error "beads.el is not available to show beads for %s"
+      (user-error "Beads.el is not available to show beads for %s"
                   (or name "?")))))
 
 (defun gascity-agent-beads (agent)
@@ -735,7 +735,7 @@ or beads.el is unavailable."
       (require 'beads-dashboard nil t))
     (if (fboundp 'beads-dashboard)
         (beads-dashboard :directory (file-name-as-directory (expand-file-name dir)))
-      (user-error "beads.el is not available to show beads for %s" name))))
+      (user-error "Beads.el is not available to show beads for %s" name))))
 
 ;;;###autoload
 (defun gascity-rig-beads-at-point ()

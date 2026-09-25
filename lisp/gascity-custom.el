@@ -29,7 +29,7 @@ absolute path is used as-is.
 
 For a remote city (a TRAMP `default-directory'), a bare name is
 resolved on the host by `gascity-remote-find-executable': first
-against `tramp-remote-path' — NOT `exec-path' — then by probing the
+against `tramp-remote-path' — NOT the variable `exec-path' — then by probing the
 profile directories in `gascity-remote-search-path', which covers
 Guix hosts with zero setup.  When gc lives elsewhere, either extend
 TRAMP's search path:

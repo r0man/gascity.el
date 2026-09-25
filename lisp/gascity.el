@@ -1,4 +1,4 @@
-;;; gascity.el --- Magit-style Emacs porcelain for Gas City -*- lexical-binding: t; -*-
+;;; gascity.el --- Magit-style porcelain for Gas City -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026
 

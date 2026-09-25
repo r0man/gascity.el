@@ -77,7 +77,7 @@ of point.")
 
 (defun gascity-rig-dashboard--buffer-name (rig-name)
   "Return the base dashboard buffer name for RIG-NAME.
-The view-buffer factory (`gascity-view-get-buffer-create') qualifies it
+The `view-buffer' factory (`gascity-view-get-buffer-create') qualifies it
 with the host for a remote city, so a local and a remote rig dashboard
 of the same name coexist."
   (format "*gascity-rig: %s*" rig-name))
@@ -121,8 +121,9 @@ City-wide orders carry a nil `rig' and are excluded."
 
 (defun gascity-rig--agent-row (agent rig-name session-map socket)
   "Return a vnode for AGENT (a raw `gc status' agent entry) under RIG-NAME.
-Reuses the status dashboard's session join so the row carries the action
-`gascity-agent' (with the tmux SOCKET) for `d'/`t'/`RET'."
+SESSION-MAP and SOCKET join the row to its live session.  Reuses the
+status dashboard's session join so the row carries the action
+`gascity-agent' (with the tmux SOCKET) for the d/t/RET keys."
   (let* ((qname (alist-get 'qualified_name agent))
          (short (or (alist-get 'name agent) qname "?"))
          (running (alist-get 'running agent))
@@ -137,7 +138,8 @@ Reuses the status dashboard's session join so the row carries the action
               'gascity-agent obj)))
 
 (defun gascity-rig--agents-vnode (agents rig-name session-map socket)
-  "Return the agents-table vnode for AGENTS under RIG-NAME."
+  "Return the agents-table vnode for AGENTS under RIG-NAME.
+SESSION-MAP and SOCKET join each row to its live session."
   (let ((rows (mapcar (lambda (a)
                         (gascity-rig--agent-row a rig-name session-map socket))
                       (append agents nil))))
@@ -319,7 +321,7 @@ point — the whole dashboard is one rig."
                          (user-error "No rig dashboard here"))))
 
 (cl-defmethod gascity-at-point-visit ((rig gascity-rig))
-  "Visit a rig: open its dashboard.
+  "Visit RIG: open its dashboard.
 Refuses the city HQ (e.g. bright-lights): `gc rig list' lists it for its
 beads, but it is not a `city.toml' rig and has no rig dashboard (`gc rig
 status' rejects it, so mounting one only yields an un-retryable error

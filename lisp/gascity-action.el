@@ -112,17 +112,17 @@ message in the echo area rather than a backtrace."
     (condition-case err
         (let* ((execution (gascity-command-execute command))
                (result (oref execution result)))
-          (message "gc %s: %s" sub (gascity-action--summarize result))
+          (message "GC %s: %s" sub (gascity-action--summarize result))
           result)
       (gascity-validation-error
-       (user-error "gc %s: %s" sub (cadr err)))
+       (user-error "GC %s: %s" sub (cadr err)))
       (gascity-command-error
-       (user-error "gc %s failed: %s" sub (gascity-error-detail err)))
+       (user-error "GC %s failed: %s" sub (gascity-error-detail err)))
       ;; Defensive catch-all for any other gascity error (e.g. a JSON
       ;; parse error should a subclass re-enable --json).  Listed last so
       ;; the specific handlers above win.
       (gascity-error
-       (user-error "gc %s failed: %s" sub (or (cadr err) "unexpected error"))))))
+       (user-error "GC %s failed: %s" sub (or (cadr err) "unexpected error"))))))
 
 (cl-defmethod gascity-command-execute-interactive ((command gascity-command-action))
   "Run a mutating COMMAND synchronously and report via `gascity-command-act'.
@@ -620,9 +620,10 @@ nil entries are dropped by the command line so only supplied fields change."
 ;;;###autoload
 (defun gascity-bead-describe-at-point ()
   "Edit the description of the bead at point in a compose buffer.
-`C-c C-c' replaces the bead's description with the buffer body via
-`gc bd update --description'; `C-c C-k' aborts.  The longer-body counterpart
-to the focused field edits (DESIGN-write-actions.md §6)."
+\\<gascity-compose-mode-map>\\[gascity-compose-finish] replaces the bead's
+description with the buffer body via `gc bd update --description';
+\\[gascity-compose-abort] aborts.  The longer-body counterpart to the
+focused field edits \(DESIGN-write-actions.md §6)."
   (interactive)
   (let* ((id (or (gascity-bead-at-point) (user-error "No bead at point")))
          (dir (gascity-beads--bead-path id))
@@ -639,8 +640,9 @@ to the focused field edits (DESIGN-write-actions.md §6)."
 ;;;###autoload
 (defun gascity-bead-note-compose-at-point ()
   "Append a multi-line note to the bead at point via a compose buffer.
-`C-c C-c' appends the buffer body with `gc bd note'; `C-c C-k' aborts.  The
-one-line `gascity-bead-note-at-point' stays the quick minibuffer path."
+\\<gascity-compose-mode-map>\\[gascity-compose-finish] appends the buffer
+body with `gc bd note'; \\[gascity-compose-abort] aborts.  The one-line
+`gascity-bead-note-at-point' stays the quick minibuffer path."
   (interactive)
   (let* ((id (or (gascity-bead-at-point) (user-error "No bead at point")))
          (dir (gascity-beads--bead-path id))
@@ -729,7 +731,7 @@ historic behavior — while a city context with no rig creates in the
 CITY root's own store, where gc routes prefix-less city beads; neither
 resolvable means the ambient directory.  On success the new id and its
 destination are echoed for hand-off to beads.el for deeper authoring
-(DESIGN.md §4.3).  An empty ASSIGNEE leaves the bead unassigned."
+\(DESIGN.md §4.3).  An empty ASSIGNEE leaves the bead unassigned."
   (interactive
    (let ((store (gascity-bead-create--read-store)))
      (list (read-string "New bead title: ")
@@ -945,9 +947,9 @@ error surfaces as a `user-error'."
          (text (condition-case err
                    (oref (gascity-command-execute cmd) result)
                  (gascity-validation-error
-                  (user-error "gc session peek: %s" (cadr err)))
+                  (user-error "GC session peek: %s" (cadr err)))
                  (gascity-command-error
-                  (user-error "gc session peek failed: %s"
+                  (user-error "GC session peek failed: %s"
                               (gascity-error-detail err))))))
     (let ((buf (gascity-view-get-buffer-create
                 (gascity-session-peek--buffer-name target))))
@@ -1038,8 +1040,8 @@ the pin existed).
 
 Suffixes must run their gc-touching reads and completions inside
 `(let ((default-directory (gascity-sling--city-dir))) …)': transient
-can execute a suffix with a foreign current-buffer (the menu buffer,
-or the reused minibuffer a completing-read inherits), and the formula
+can execute a suffix with a foreign `current-buffer' (the menu buffer,
+or the reused minibuffer a `completing-read' inherits), and the formula
 catalog/recipe caches key off `gascity-context-scope-key' of whatever
 directory is current at call time — an unpinned read both queries
 another city and memoizes its catalog under the wrong (possibly
@@ -1054,9 +1056,9 @@ error surfaces as a clean `user-error'."
   (let* ((text (condition-case err
                    (oref (gascity-command-execute command) result)
                  (gascity-validation-error
-                  (user-error "gc sling: %s" (cadr err)))
+                  (user-error "GC sling: %s" (cadr err)))
                  (gascity-command-error
-                  (user-error "gc sling failed: %s" (gascity-error-detail err)))))
+                  (user-error "GC sling failed: %s" (gascity-error-detail err)))))
          (buf (gascity-view-get-buffer-create "*gc-sling: dry-run*")))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
@@ -1118,10 +1120,10 @@ routing plan instead of executing."
   "Every single letter statically bound in `gascity-sling-dispatch':
 the Formula group (`-f' pick, `g' refresh), the Destination `-T' and
 `A' (arg edit), the routing flags `-c -a -n -m -t' and the Actions
-(`s', `p', `r', `q').
+\(`s', `p', `r', `q').
 The generated variable infix keys avoid exactly this list; it lives
 beside the layout it keys so a re-binding cannot silently collide
-(OQ-2), and a test asserts the two stay in sync.")
+\(OQ-2), and a test asserts the two stay in sync.")
 
 (defun gascity-sling--scope-info (scope)
   "Return the raw info spec describing SCOPE — the menu's header line.
@@ -1131,7 +1133,7 @@ the tmux-Emacs TRAMP e2e pass).  A leading `(:info …)' as the FIRST
 element of its group vector also breaks setup — it parses as a group
 argument — so the group title carries the city name and this spec
 carries the scope.  With no formula picked the header hints at `-f'
-(OQ-3)."
+\(OQ-3)."
   (list :info
         (format "Arg: %s · Formula: %s · Target: %s"
                 (or (plist-get scope :arg)
@@ -1148,7 +1150,7 @@ formula's Variables section last (absent until a formula with vars is
 picked, REQ-A/REQ-B).  The generated infix keys avoid
 `gascity-sling--reserved-keys' (REQ-D).  The recipe read and the
 header's city name run pinned to the scope's `:city'
-(`gascity-sling--city-dir'): transient can run setup with the menu
+\(`gascity-sling--city-dir'): transient can run setup with the menu
 buffer current, whose directory must not key the recipe cache nor name
 the header (ga-4ia4)."
   (let* ((default-directory (gascity-sling--city-dir scope))
@@ -1276,13 +1278,13 @@ The menu stays open."
   "Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 The scope plist `(formula target arg)' is seeded at entry: arg from
 the bead or convoy at point, target nil — never prompted up front
-(set it with `-T', or edit the arg in place with `A'; REQ-B) — and
+\(set it with `-T', or edit the arg in place with `A'; REQ-B) — and
 formula nil (`-f' picks in place and
 re-renders this menu with a full-width Variables section, REQ-A).
 `s'/`p' dispatch: with a formula picked the formula path runs
-(validated vars, shape via `gascity-formula--needs-convoy', routing
+\(validated vars, shape via `gascity-formula--needs-convoy', routing
 flags ignored); without one the plain flag path runs as before
-(REQ-G).
+\(REQ-G).
 The scope also pins the `default-directory' of the view buffer the
 transient was entered from (`:city', read back by
 `gascity-sling--city-dir'): suffix commands, the minibuffers their
@@ -1290,7 +1292,7 @@ reads open, and the menu's own setup can all run with a foreign
 current-buffer directory, and the formula caches key off
 `gascity-context-scope-key' of that directory — the pin keeps every
 catalog/recipe read and dispatch on the entered-from city
-(ga-4ia4, bright-lights dogfood §5)."
+\(ga-4ia4, bright-lights dogfood §5)."
   [ :class transient-subgroups :setup-children gascity-sling--setup-children ]
   (interactive)
   (transient-setup 'gascity-sling-dispatch nil nil
@@ -1310,8 +1312,10 @@ catalog/recipe read and dispatch on the entered-from city
 ;;;###autoload
 (defun gascity-mail-send (to subject)
   "Compose and send a new message to TO with SUBJECT (both prompted).
-Opens a `gascity-compose' buffer for the body; `C-c C-c' sends and `C-c
-C-k' aborts.  TO completes over session aliases but accepts any address."
+Opens a `gascity-compose' buffer for the body; in it,
+\\<gascity-compose-mode-map>\\[gascity-compose-finish] sends and
+\\[gascity-compose-abort] aborts.  TO completes over session aliases but
+accepts any address."
   (interactive
    (let ((to (gascity-action--read-assignee "Send mail to: ")))
      (list to (read-string (format "Subject (to %s): " to)))))

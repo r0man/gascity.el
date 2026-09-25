@@ -80,9 +80,11 @@ read-only but rear-non-sticky, so the body that follows stays editable."
 (cl-defun gascity-compose (&key buffer-name header finish origin (body ""))
   "Pop a compose buffer BUFFER-NAME with a read-only HEADER over a body area.
 HEADER is an alist of (LABEL . VALUE) lines.  FINISH is a function of one
-argument, the body string, run on `C-c C-c'; it builds and acts the gc
-command.  ORIGIN is the buffer whose view is refreshed after finishing.
-BODY pre-fills the editable area.  Returns the compose buffer.
+argument, the body string, run by the compose finish key
+\\<gascity-compose-mode-map>\\[gascity-compose-finish]; it
+builds and acts the gc command.  ORIGIN is the buffer whose view is
+refreshed after finishing.  BODY pre-fills the editable area.  Returns
+the compose buffer.
 
 The buffer is keyed and pinned to the city it is composed for
 \(`gascity-view-get-buffer-create', from the invoking view's

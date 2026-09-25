@@ -159,7 +159,7 @@ be reclaimed while the view is still refreshing)."
 (defun gascity-context-city-args ()
   "Return the gc argv tokens explicitly targeting the current city, or nil.
 The reader hook behind the explicit city targeting
-(plans/sessions-list-city-targeting, D1/D2/D3): when
+\(plans/sessions-list-city-targeting, D1/D2/D3): when
 `gascity-context-city-root' resolves a root for `default-directory',
 the tokens are (\"--city\" ROOT) with ROOT in the host-local form
 \(`file-local-name' — identity on a local root, the TRAMP prefix
@@ -267,7 +267,7 @@ entry by `gascity-context-install-project'."
   "Make ROOT the I/O-free `project' of BUFFER.
 Sets `gascity-context-project-root' to ROOT (as a directory name),
 replaces `project-find-functions' buffer-locally with
-`gascity-context-project-find-function' ALONE — no trailing `t', so
+`gascity-context-project-find-function' ALONE — with no trailing t, so
 the global backends (`project-try-vc') never run here — and empties
 `vc-handled-backends' locally so VC's own root walk stays out too.
 

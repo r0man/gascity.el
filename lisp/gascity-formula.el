@@ -208,7 +208,7 @@ differently degrades to nil (REQ-016)."
 VAR is a `gascity-formula-var', FORMULA its `gascity-formula'.  An
 explicit `vars[].enum' wins when gc ever ships it; otherwise the
 built-in name → methodology-key mapping
-(`gascity-formula--enum-metadata-keys') consults FORMULA's
+\(`gascity-formula--enum-metadata-keys') consults FORMULA's
 `metadata.gc.methodology'.  A var with neither returns nil — the caller
 degrades to plain string input (REQ-016)."
   (or (gascity-formula-var-enum var)
@@ -404,7 +404,7 @@ unset var falls back to its declared default (REQ-007)."
     (oset obj value (oref obj var-default))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--enum-option))
-  "Read one of the var's declared choices only (REQ-005).
+  "Read one of the var's declared choices from OBJ only (REQ-005).
 Illegal values are unrepresentable; history is per (formula, var)."
   (completing-read (transient-prompt obj)
                    (oref obj var-choices) nil t
@@ -412,7 +412,7 @@ Illegal values are unrepresentable; history is per (formula, var)."
                    (gascity-sling-formula--history obj)))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--bool-option))
-  "Cycle the boolean var true -> false -> true (REQ-006).
+  "Cycle the boolean var of OBJ true -> false -> true (REQ-006).
 Nothing is read: illegal values are unrepresentable by construction."
   (pcase (oref obj value)
     ("true" "false")
@@ -420,7 +420,7 @@ Nothing is read: illegal values are unrepresentable by construction."
     (_ (or (oref obj var-default) "true"))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--string-option))
-  "Read the string var, validating its `pattern' on entry (REQ-009).
+  "Read the string var of OBJ, validating its `pattern' on entry (REQ-009).
 An empty entry unsets the var (transient's own empty-value rule); the
 required check stays with dispatch.  History is per (formula, var)."
   (let ((value (read-from-minibuffer
@@ -485,7 +485,7 @@ deterministic var-key assignment (REQ-D)."
   "Return an unused transient key for NAME, avoiding USED (REQ-D).
 Tries, in order: the name's own first alphanumeric character; an
 unused two-letter combination drawn from the name's characters
-(positionally: 1+2, 1+3, 2+3, …); a positional key built from the
+\(positionally: 1+2, 1+3, 2+3, …); a positional key built from the
 name's first usable character and an incrementing digit (`d1', `d2',
 …).  Transient binds suffix keys with `kbd', so a multi-character key
 is a prefix chain: a candidate's FIRST character must itself be
@@ -527,7 +527,7 @@ keys.  Pure: the same NAME and USED always yield the same key."
 (defun gascity-sling-formula--var-keys (vars reserved)
   "Return one unique transient key per var in VARS, avoiding RESERVED.
 RESERVED is the unified prefix's single-letter static bindings
-(`gascity-sling--reserved-keys'); the caller supplies it because this
+\(`gascity-sling--reserved-keys'); the caller supplies it because this
 module loads before the one that defines the prefix (F-2).  Keys are
 assigned per formula, in declared var order, by
 `gascity-sling-formula--var-key' — so the same var list against the
@@ -585,7 +585,8 @@ degrades to no Variables section (REQ-016)."
 
 (defun gascity-sling-formula--var-children (formula reserved)
   "Return the raw \"Variables\" group spec for FORMULA, or nil.
-The group is titled with the picked formula's name so a re-pick is
+RESERVED is inherited by the per-var key assignment.  The group is
+titled with the picked formula's name so a re-pick is
 visible in the section heading.  A formula without vars renders no
 Variables section (REQ-004)."
   (when-let* ((infixes (gascity-sling-formula--var-infixes formula reserved)))
@@ -600,7 +601,7 @@ Variables section (REQ-004)."
   "Return the bead or convoy id at point, or nil.
 A bead reference is the bead-id string at point; a convoy list row
 carries the typed `gascity-convoy' whose id is the bead id to route
-(REQ-013's pre-seeding)."
+\(REQ-013's pre-seeding)."
   (let ((obj (gascity-object-at-point)))
     (cond ((stringp obj) (and (not (string-empty-p obj)) obj))
           ((gascity-convoy-p obj) (gascity-convoy-id obj))
@@ -709,7 +710,7 @@ surfaces as a clean `user-error'."
                       (apply #'gascity-command-formula-show! :name name
                              (when varargs (list :var varargs)))
                     (gascity-command-error
-                     (user-error "gc formula show failed: %s"
+                     (user-error "GC formula show failed: %s"
                                  (gascity-error-detail err))))))
     (gascity-sling-formula--render-recipe
      (gascity-domain-decode 'gascity-formula payload))))
