@@ -440,11 +440,12 @@ malformed input."
 
 (defun gascity-reader--parse-json-lines (output)
   "Decode OUTPUT as JSON Lines into (GOOD . BAD).
-Each non-empty line is decoded independently with
-`gascity-reader-parse-json'; GOOD is the list of decoded values in feed
-order, BAD the count of lines that failed to decode.  A malformed line
-is a per-line decode-error marker (the BAD count), never a whole-feed
-failure — a stream feed must survive one bad line (plan S3).
+Each non-empty line is decoded independently, with the decoding of
+`gascity-reader-parse-json' but the native parser; GOOD is the list of
+decoded values in feed order, BAD the count of lines that failed to
+decode.  A malformed line is a per-line decode-error marker (the BAD
+count), never a whole-feed failure — a stream feed must survive one
+bad line (plan S3).
 Leading lines before the first `{'-starting line are transport chatter
 \(an ssh client warning or login banner — the same hazard
 `gascity-reader-parse-json' documents for single-payload output, which
@@ -466,14 +467,21 @@ Empty output decodes to (nil . 0)."
         (setq line (string-trim line))
         (unless (string-empty-p line)
           (condition-case nil
-              (let ((decoded (gascity-reader-parse-json line)))
+              ;; Native `json-parse-string', ~25x faster than json.el:
+              ;; a day of `gc events' is 15k lines (dashboard-v3 §7.8).
+              ;; Same decoding as `gascity-reader-parse-json'.
+              (let ((decoded (json-parse-string line
+                                                :object-type 'alist
+                                                :array-type 'array
+                                                :null-object nil
+                                                :false-object nil)))
                 ;; A JSONL DTO line is an object; a decoded scalar or
                 ;; array (valid JSON, wrong shape) is a malformed EVENT
                 ;; line — count it bad rather than crash the renderer.
                 (if (consp decoded)
                     (push decoded good)
                   (cl-incf bad)))
-            (gascity-json-parse-error (cl-incf bad))))))
+            (json-error (cl-incf bad))))))
     (cons (nreverse good) bad)))
 
 ;;; High-level reader
