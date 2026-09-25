@@ -404,10 +404,13 @@ the lighter never reads gc, starts a process or touches a remote name."
               (gascity-mode-line-mode 1)
               (gascity-test-with-render-guard
                 (gascity-audit--open #'gascity-dashboard)
-                (should (eq (plist-get (gascity-live-status
-                                        (expand-file-name gascity-audit--root))
-                                       :state)
-                            'live))
+                ;; Live once the stream delivers its first events.
+                (should (gascity-audit--wait
+                         (lambda ()
+                           (eq (plist-get (gascity-live-status
+                                           (expand-file-name gascity-audit--root))
+                                          :state)
+                               'live))))
                 (let ((before reads))
                   ;; Two events arrive, the debounced batch invalidates
                   ;; the cockpit's reads, which re-read and re-render.

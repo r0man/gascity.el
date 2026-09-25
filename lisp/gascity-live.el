@@ -100,6 +100,14 @@ The sequence restarts once a stream stayed up for
   :type 'number
   :group 'gascity-live)
 
+(defcustom gascity-live-confirm-after 3
+  "Seconds a (re)started stream must stay up before it counts as live.
+gc prints nothing until an event arrives, so a fresh `gc events
+--follow' cannot prove it connected; one that fails (ssh, the
+supervisor) exits within this.  Its first event confirms it at once."
+  :type 'number
+  :group 'gascity)
+
 (defcustom gascity-live-poll-interval 30
   "Seconds between event polls for a city without a stream.
 Used for remote methods a plain ssh cannot reach (docker, sudo,
@@ -132,7 +140,7 @@ Called with (ROOT STATE REASON).  Views redraw their header here.")
   debounce-timer pending
   stderr-buffer
   mode poll-timer poll-busy
-  started stopping resume)
+  started stopping resume confirm-timer)
 
 (defvar-local gascity-live--refresh nil
   "Function refreshing this view on an invalidation, or nil.")
@@ -447,10 +455,11 @@ dropped, which is `offline'."
          (default-directory (if (file-remote-p root)
                                 temporary-file-directory
                               root))
-         proc)
+         resumed proc)
     (setf (gascity-live--stream-mode stream) 'stream
           (gascity-live--stream-partial stream) ""
           (gascity-live--stream-started stream) (float-time))
+    (setq resumed (gascity-live--stream-resume stream))
     (when (gascity-live--stream-resume stream)
       ;; A resumed stream replays what it missed; ask once for a full
       ;; refresh of whatever went stale meanwhile.
@@ -485,8 +494,28 @@ dropped, which is `offline'."
        (gascity-live--schedule-retry stream)))
     (when proc
       (setf (gascity-live--stream-process stream) proc)
-      (gascity-live--set-state stream 'live nil))
+      ;; Not live yet: the header says (re)connecting until the stream
+      ;; delivers or has stayed up `gascity-live-confirm-after' seconds.
+      (gascity-live--set-state stream (if resumed 'reconnecting 'connecting) nil)
+      (gascity-live--arm-confirm stream proc))
     proc))
+
+(defun gascity-live--cancel-confirm (stream)
+  "Cancel STREAM's pending live confirmation."
+  (when (timerp (gascity-live--stream-confirm-timer stream))
+    (cancel-timer (gascity-live--stream-confirm-timer stream)))
+  (setf (gascity-live--stream-confirm-timer stream) nil))
+
+(defun gascity-live--arm-confirm (stream proc)
+  "Mark STREAM live once PROC has stayed up `gascity-live-confirm-after'."
+  (gascity-live--cancel-confirm stream)
+  (setf (gascity-live--stream-confirm-timer stream)
+        (run-at-time gascity-live-confirm-after nil
+                     (lambda ()
+                       (setf (gascity-live--stream-confirm-timer stream) nil)
+                       (when (and (eq proc (gascity-live--stream-process stream))
+                                  (process-live-p proc))
+                         (gascity-live--set-state stream 'live nil))))))
 
 (defun gascity-live--filter (stream chunk)
   "Feed CHUNK of STREAM's stdout to the parser and deliver the events."
@@ -495,6 +524,7 @@ dropped, which is `offline'."
     (setf (gascity-live--stream-partial stream) (cdr parsed))
     (when (car parsed)
       (unless (eq (gascity-live--stream-state stream) 'live)
+        (gascity-live--cancel-confirm stream)
         (gascity-live--set-state stream 'live nil))
       (gascity-live--deliver stream (car parsed)))))
 
@@ -502,6 +532,7 @@ dropped, which is `offline'."
   "Handle the exit of STREAM's process PROC; stderr began at MARK."
   (when (eq proc (gascity-live--stream-process stream))
     (setf (gascity-live--stream-process stream) nil)
+    (gascity-live--cancel-confirm stream)
     (unless (gascity-live--stream-stopping stream)
       (let* ((status (process-exit-status proc))
              (class (gascity-live--classify
@@ -550,6 +581,7 @@ dropped, which is `offline'."
   "Stop STREAM's process, poll and timers; leave it `off'."
   (setf (gascity-live--stream-stopping stream) t)
   (gascity-live--cancel-retry stream)
+  (gascity-live--cancel-confirm stream)
   (dolist (timer (list (gascity-live--stream-debounce-timer stream)
                        (gascity-live--stream-poll-timer stream)))
     (when (timerp timer) (cancel-timer timer)))
@@ -738,7 +770,7 @@ current and stops when it is killed.  Returns a handle for
 
 (defun gascity-live-status (&optional dir)
   "Return the live state of DIR's city as a plist, or nil.
-Keys: :state (`live', `polling', `off', `reconnecting',
+Keys: :state (`live', `polling', `off', `connecting', `reconnecting',
 `supervisor-down', `offline'), :reason (stderr line or nil),
 :retry-in (seconds until the next reconnect, or nil), :seq, :host.
 Pure; safe at redisplay."
@@ -754,12 +786,13 @@ Pure; safe at redisplay."
 
 (defun gascity-live-header-string (&optional dir)
   "Return the header-line fragment for DIR's city stream, or nil.
-One of `● live', `● live (polling)', `○ live off',
+One of `● live', `● live (polling)', `○ live off', `○ live: connecting',
 `○ live: reconnecting (Ns)', `○ live: supervisor down',
 `○ offline @host'.  Pure; safe at redisplay."
   (when-let* ((status (gascity-live-status dir)))
     (pcase (plist-get status :state)
       ('live (propertize "● live" 'face 'success))
+      ('connecting (propertize "○ live: connecting" 'face 'shadow))
       ('polling (propertize "● live (polling)" 'face 'success))
       ('off (propertize "○ live off" 'face 'shadow))
       ('supervisor-down
@@ -799,15 +832,24 @@ completed actions leave invalidation to the stream."
 
 ;;; Commands
 
+(defun gascity-live--running-p (stream)
+  "Return non-nil when STREAM has a process or poll going.
+A stream still confirming its connection (`connecting', or
+`reconnecting' right after a respawn) is running: restarting it
+would orphan its process."
+  (or (process-live-p (gascity-live--stream-process stream))
+      (timerp (gascity-live--stream-poll-timer stream))))
+
 (defun gascity-live-reconnect (&optional dir)
   "Restart DIR's city stream now if it is not running.
 The `g' path: a view's manual refresh calls this, so a stream waiting
-out its backoff (or offline) retries at once.  A no-op while live."
+out its backoff (or offline) retries at once.  A no-op while its
+process runs (`gascity-live--running-p')."
   (interactive)
   (when-let* ((stream (gascity-live--find dir)))
     (when (and (gascity-live--stream-enabled stream)
                (gascity-live--allowed-p)
-               (not (memq (gascity-live--stream-state stream) '(live polling))))
+               (not (gascity-live--running-p stream)))
       (setf (gascity-live--stream-attempt stream) 0)
       (gascity-live--start stream)))
   ;; An offline host's reads are paused too; `g' retries them now.
@@ -862,8 +904,7 @@ out."
                                  (or (gascity-remote-prefix host) host))
                           (gascity-live--stream-enabled stream)
                           (gascity-live--stream-views stream)
-                          (not (memq (gascity-live--stream-state stream)
-                                     '(live polling))))
+                          (not (gascity-live--running-p stream)))
                  (setf (gascity-live--stream-attempt stream) 0)
                  (run-at-time 0 nil #'gascity-live--start stream)))
              gascity-live--streams)))

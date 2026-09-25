@@ -415,6 +415,53 @@ stops it and leaves no process, timer or stream behind."
                  (lambda () (null (gascity-live-test--live-procs))) 3))
         (delete-directory root t)))))
 
+(ert-deftest gascity-test-live-dead-stream-shows-reconnecting-at-once ()
+  "A stream whose gc dies reads `reconnecting' within a second, and its
+respawn stays `reconnecting' until confirmed (first event or
+`gascity-live-confirm-after'); `g' meanwhile starts no second process.
+QA: the header said `● live' through a 10 s gap after gc was killed."
+  (gascity-live-test--with-clean-state
+    (let* ((root (file-name-as-directory (make-temp-file "gascity-live-city" t)))
+           (gascity-executable
+            (gascity-live-test--fake-gc
+             root (concat "case \"$*\" in *--after*) exec sleep 30;; esac\n"
+                          "echo '{\"type\":\"order.fired\",\"seq\":5}'\n"
+                          "exec sleep 30\n")))
+           (gascity-live-backoff '(0.3))
+           (gascity-live-confirm-after 0.8)
+           (buf (generate-new-buffer " live-view")))
+      (unwind-protect
+          (with-current-buffer buf
+            (setq default-directory root)
+            (let* ((stream (gascity-live-attach)))
+              (should (gascity-live-test--wait
+                       (lambda () (eq (gascity-live--stream-state stream) 'live))))
+              (let ((proc (gascity-live--stream-process stream))
+                    (t0 (float-time)))
+                (signal-process proc 'SIGKILL)
+                (should (gascity-live-test--wait
+                         (lambda () (eq (gascity-live--stream-state stream) 'reconnecting))
+                         1))
+                (should (< (- (float-time) t0) 1.0))
+                (should (string-prefix-p "○ live: reconnecting"
+                                         (gascity-live-header-string)))
+                ;; Respawned (resuming after seq 5): still reconnecting.
+                (should (gascity-live-test--wait
+                         (lambda () (let ((p (gascity-live--stream-process stream)))
+                                      (and p (not (eq p proc)))))))
+                (let ((respawned (gascity-live--stream-process stream)))
+                  ;; A quiet resumed stream: nothing confirms it yet.
+                  (should (eq (gascity-live--stream-state stream) 'reconnecting))
+                  (should-not (equal (gascity-live-header-string) "● live"))
+                  ;; `g' now must not orphan the respawned process.
+                  (gascity-live-reconnect)
+                  (should (eq (gascity-live--stream-process stream) respawned))
+                  (should (gascity-live-test--wait
+                           (lambda () (eq (gascity-live--stream-state stream) 'live))))
+                  (should (eq (gascity-live--stream-process stream) respawned))))))
+        (kill-buffer buf)
+        (delete-directory root t)))))
+
 (ert-deftest gascity-test-live-toggle-off-and-on ()
   "`W' stops the stream (live off) and starts it again."
   (gascity-live-test--with-clean-state
@@ -429,9 +476,13 @@ stops it and leaves no process, timer or stream behind."
               (gascity-live-toggle)
               (should-not (gascity-live--stream-process stream))
               (should (equal (gascity-live-header-string) "○ live off"))
-              (gascity-live-toggle)
-              (should (process-live-p (gascity-live--stream-process stream)))
-              (should (equal (gascity-live-header-string) "● live"))))
+              (let ((gascity-live-confirm-after 0.1))
+                (gascity-live-toggle)
+                (should (process-live-p (gascity-live--stream-process stream)))
+                ;; Started, not yet confirmed (gc prints nothing on connect).
+                (should (equal (gascity-live-header-string) "○ live: connecting"))
+                (should (gascity-live-test--wait
+                         (lambda () (equal (gascity-live-header-string) "● live")))))))
         (kill-buffer buf)
         (delete-directory root t)))))
 
