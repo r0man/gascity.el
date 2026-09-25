@@ -222,12 +222,37 @@ the pin reads the sort direction to stay on top either way (§7.3)."
 (defvar-local gascity-agents--generation 0
   "Refresh counter; a read of an older refresh is ignored.")
 
+(defvar-local gascity-agents--by-object nil
+  "Hash: a row's action object → its agent plist, for the detail window.")
+
+(defun gascity-agents--detail-lines (id _entry)
+  "Return the §5.4 detail of the agent row whose action object is ID.
+Session id and tmux name, workdir, hooked bead, created, state and last
+activity — from the rows in hand, no gc call."
+  (let ((agent (and gascity-agents--by-object (gethash id gascity-agents--by-object))))
+    (if (null agent)
+        (list "No detail for this row")
+      (append
+       (list (concat (propertize (plist-get agent :name) 'face 'gascity-header)
+                     "  " (gascity-agents--state-label agent)
+                     (if (plist-get agent :active)
+                         (concat " · last active "
+                                 (gascity-ui-ago (plist-get agent :active)))
+                       ""))
+             "")
+       (gascity-dashboard--agent-drawer agent)
+       (and (plist-get agent :provider)
+            (list (concat "provider " (plist-get agent :provider))))))))
+
 (defun gascity-agents--render ()
   "Rebuild the table from `gascity-agents--data' (no gc call)."
   (let* ((now (float-time))
          (rows (gascity-agents--rows gascity-agents--data now))
          (shown (seq-filter (lambda (a) (gascity-agents--match-p a gascity-agents--filter))
                             rows))
+         (_ (let ((table (make-hash-table :test 'eq)))
+              (dolist (a rows) (puthash (plist-get a :object) a table))
+              (setq gascity-agents--by-object table)))
          (errors (delq nil (cl-loop for (_k v) on gascity-agents--errors by #'cddr
                                     collect v))))
     (setq gascity-tabulated--filter-description
@@ -330,6 +355,7 @@ the §5.3 agent keys act on the row at point.
   (setq tabulated-list-sort-key nil)
   (tabulated-list-init-header)
   (gascity-tabulated--setup-things)
+  (setq-local gascity-tabulated-detail-function #'gascity-agents--detail-lines)
   (gascity-tabulated--install-filter
    'gascity-agents--filter
    (lambda () (gascity-agents--render)))

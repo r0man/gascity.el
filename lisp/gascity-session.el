@@ -41,7 +41,8 @@
 (require 'gascity-section)
 (require 'gascity-tabulated)         ; shared cell formatters
 (require 'gascity-remote)
-(require 'gascity-dashboard)          ; ladder, noise, header helpers
+(require 'gascity-dashboard)          ; ladder, header helpers
+(require 'gascity-event)              ; noise classes
 (require 'gascity-ui)                ; relative times
 
 ;; Openers and agent actions live in sibling modules
@@ -119,18 +120,28 @@ when non-nil, scopes the query to that rig's bead store."
           '("--status" "open,in_progress,blocked,deferred,closed"
             "--sort" "updated" "--reverse" "-n" "0")))
 
-(defun gascity-session--worked-here-p (bead work-dir)
+(defun gascity-session--worked-here-p (bead work-dir &optional shared)
   "Return non-nil when BEAD was built within WORK-DIR.
 WORK-DIR is the agent's own worktree; a bead it worked records a
 `metadata.work_dir' equal to it or nested under it (e.g. a polecat's
 `…/<agent>/worktrees/<id>').  Both are compared as directories so a sibling
 agent such as `…/<agent>-2' never matches.  A nil or empty path on either
-side never matches."
+side never matches.  SHARED non-nil means WORK-DIR is not the agent's
+own (the city root, which the mayor and every city-scope agent share,
+with the other agents' directories under `.gc/agents/'): nothing is
+attributed by path then — the agent's beads come by assignee alone."
   (let ((bwd (alist-get 'work_dir (alist-get 'metadata bead))))
-    (and (stringp work-dir) (not (string-empty-p work-dir))
+    (and (not shared)
+         (stringp work-dir) (not (string-empty-p work-dir))
          (stringp bwd) (not (string-empty-p bwd))
          (string-prefix-p (file-name-as-directory work-dir)
                           (file-name-as-directory bwd)))))
+
+(defun gascity-session--agent-bead-p (bead)
+  "Return non-nil when BEAD is work, not gc bookkeeping.
+Session, convoy, nudge, order, message and wisp beads are never an
+agent's Work or History (the cockpit's Work hides them the same way)."
+  (null (gascity-event-noise bead)))
 
 (defun gascity-session--merge-beads (lists)
   "Concatenate bead LISTS, dropping later duplicates by id.
@@ -434,16 +445,24 @@ capped per host, bounded by its deadline, stale-while-revalidate."
                                         :tick refresh-tick :default []))
          (beads-status (gascity-session--combined-status
                         (list beads0-res beads1-res beads2-res)))
-         (agent-beads (gascity-session--merge-beads
+         ;; The city root is shared (the mayor's work_dir): no path match.
+         (shared (let ((root (gascity-context-city-root-cached)))
+                   (and root (stringp work-dir)
+                        (equal (file-name-as-directory work-dir)
+                               (file-name-as-directory (file-local-name root))))))
+         (agent-beads (seq-filter
+                       #'gascity-session--agent-bead-p
+                       (gascity-session--merge-beads
                        (list (and (eq (plist-get beads0-res :status) 'ready)
                                   (gascity-section-beads (plist-get beads0-res :data)))
                              (and (eq (plist-get beads1-res :status) 'ready)
                                   (gascity-section-beads (plist-get beads1-res :data)))
                              (and (eq (plist-get beads2-res :status) 'ready)
                                   (seq-filter
-                                   (lambda (b) (gascity-session--worked-here-p b work-dir))
+                                   (lambda (b) (gascity-session--worked-here-p
+                                                b work-dir shared))
                                    (gascity-section-beads
-                                    (plist-get beads2-res :data)))))))
+                                    (plist-get beads2-res :data))))))))
          (hook (gascity-session--hook-beads agent-beads))
          (others (seq-filter (lambda (b) (member (alist-get 'status b)
                                                  '("open" "blocked" "deferred")))

@@ -398,5 +398,44 @@ local follower stops gc on the host (no leaked `session logs -f')."
   "Return the plain content of text VNODE."
   (substring-no-properties (vui-vnode-text-content vnode)))
 
+(ert-deftest gascity-test-agent-detail-no-bookkeeping-beads ()
+  "The detail lists no session/convoy/wisp beads, and a shared city-root
+work_dir attributes nothing by path (QA acceptance #2: the mayor showed
+other agents' session beads)."
+  (let ((mayor-dir "/home/roman/bright-lights")
+        (session '((id . "bl-5a5i") (issue_type . "session") (status . "open")
+                   (metadata . ((work_dir . "/home/roman/bright-lights")))))
+        (dog '((id . "bl-mwo2") (issue_type . "session") (status . "closed")
+               (metadata . ((work_dir . "/home/roman/bright-lights/.gc/agents/bd.dog-1")))))
+        (work '((id . "bl-w1") (issue_type . "task") (status . "open")
+                (metadata . ((work_dir . "/home/roman/bright-lights"))))))
+    (should-not (gascity-session--agent-bead-p session))
+    (should-not (gascity-session--agent-bead-p dog))
+    (should (gascity-session--agent-bead-p work))
+    ;; The city root is shared: no path attribution at all.
+    (should-not (gascity-session--worked-here-p work mayor-dir t))
+    (should-not (gascity-session--worked-here-p dog mayor-dir t))
+    ;; A polecat's own worktree still attributes by path.
+    (should (gascity-session--worked-here-p
+             '((metadata . ((work_dir . "/w/agent/worktrees/x")))) "/w/agent"))))
+
+(ert-deftest gascity-test-agents-detail-window-lines ()
+  "SPC on an Agents row shows the §5.4 detail: session id and tmux name,
+workdir, hooked bead, created — not the row's columns again (QA #9)."
+  (gascity-agents-test--with-table
+    (goto-char (point-min))
+    (while (and (not (eobp))
+                (not (equal (gascity-agent-name (tabulated-list-get-id)) "mayor")))
+      (forward-line 1))
+    (let ((lines (funcall gascity-tabulated-detail-function
+                          (tabulated-list-get-id) (tabulated-list-get-entry))))
+      (should (string-prefix-p "mayor" (car lines)))
+      (should (seq-find (lambda (l) (string-match-p "^session ec-grfr · mayor" l)) lines))
+      (should (seq-find (lambda (l) (string-match-p "^workdir ~/emacs-city\\|^workdir /home" l))
+                        lines))
+      (should (seq-find (lambda (l) (string-match-p "^created " l)) lines))
+      (should (seq-find (lambda (l) (string-match-p "^provider pi" l)) lines))
+      (should-not (seq-find (lambda (l) (string-match-p "●" l)) lines)))))
+
 (provide 'gascity-agents-test)
 ;;; gascity-agents-test.el ends here
