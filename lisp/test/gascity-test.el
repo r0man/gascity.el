@@ -3812,7 +3812,8 @@ paging path exactly as the synchronous refresh would put them."
                                    (vector (alist-get 'name r))))
                  (append (alist-get 'rigs payload) nil))))
       (should (= (length calls) 1))
-      (should (equal (car (car calls)) '("rig" "list" "--json")))
+      ;; The store keys reads without `--json' (the reader appends it).
+      (should (equal (car (car calls)) '("rig" "list")))
       (should (equal mode-name "Rigs [loading…]"))
       (should (null tabulated-list-entries))
       (funcall (nth 1 (car calls)) '((rigs . [((name . "a")) ((name . "b"))])))
@@ -3835,34 +3836,25 @@ paging path exactly as the synchronous refresh would put them."
       (should (equal mode-name "Rigs [1/1]")))))
 
 (ert-deftest gascity-test-tabulated-refresh-async-supersedes ()
-  "A newer refresh kills the in-flight read and ignores its late result.
-Two `g' in a row must show the second read's rows even when the first
-completes afterwards — and the killed first read's failure report is
-swallowed rather than echoed."
+  "A newer refresh joins the in-flight read instead of killing it.
+Two `g' in a row spawn ONE gc read (the store's in-flight dedup,
+dashboard-v3 §8.3 R3); its answer paints the second request's decoder,
+and the first request's decoder never runs."
   (gascity-test--with-async-list (calls)
     (let (msgs)
       (cl-letf (((symbol-function 'message)
                  (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
         (gascity-tabulated--refresh-async "Rigs" (gascity-command-rig-list)
                                           (lambda (p) (list (list (alist-get 'v p) (vector "x")))))
-        (let ((first (nth 1 (car calls)))
-              (first-err (nth 2 (car calls)))
-              (first-proc gascity-tabulated--refresh-process))
-          (gascity-tabulated--refresh-async "Rigs" (gascity-command-rig-list)
-                                            (lambda (p) (list (list (alist-get 'v p) (vector "y")))))
-          (should (= (length calls) 2))
-          (should-not (process-live-p first-proc))
-          ;; The superseded read reports its death; nobody listens.
-          (funcall first-err "gc rig list failed: killed")
-          (should (null msgs))
-          (should (equal mode-name "Rigs [loading…]"))
-          ;; Its late success is dropped too.
-          (funcall first '((v . stale)))
-          (should (equal mode-name "Rigs [loading…]"))
-          (should (null gascity-tabulated--all-entries))
-          ;; The current read lands.
-          (funcall (nth 1 (car calls)) '((v . fresh)))
-          (should (equal (mapcar #'car tabulated-list-entries) '(fresh))))))))
+        (gascity-tabulated--refresh-async "Rigs" (gascity-command-rig-list)
+                                          (lambda (p) (list (list (list 'second (alist-get 'v p))
+                                                                  (vector "y")))))
+        (should (= (length calls) 1))
+        (should (equal mode-name "Rigs [loading…]"))
+        (funcall (nth 1 (car calls)) '((v . fresh)))
+        (should (null msgs))
+        (should (equal (mapcar #'car tabulated-list-entries)
+                       '((second fresh))))))))
 
 (ert-deftest gascity-test-tabulated-refresh-async-dead-buffer ()
   "A result arriving after the list buffer was killed is ignored."
@@ -3882,12 +3874,12 @@ swallowed rather than echoed."
   "Every list's `g' goes through the async reader, never `gascity-reader-run'.
 The remote-city dogfood stall: a synchronous `gc session list' took
 seconds per `g' over TRAMP."
-  (dolist (spec '((gascity-rig-list-refresh ("rig" "list" "--json"))
-                  (gascity-session-list-refresh ("session" "list" "--json"))
-                  (gascity-convoy-list-refresh ("convoy" "list" "--json"))
-                  (gascity-mail-inbox-refresh ("mail" "inbox" "--json"))
-                  (gascity-order-list-refresh ("order" "list" "--json"))
-                  (gascity-dolt-list-refresh ("dolt" "health" "--json"))))
+  (dolist (spec '((gascity-rig-list-refresh ("rig" "list"))
+                  (gascity-session-list-refresh ("session" "list"))
+                  (gascity-convoy-list-refresh ("convoy" "list"))
+                  (gascity-mail-inbox-refresh ("mail" "inbox"))
+                  (gascity-order-list-refresh ("order" "list"))
+                  (gascity-dolt-list-refresh ("dolt" "health"))))
     (gascity-test--with-async-list (calls)
       (cl-letf (((symbol-function 'gascity-reader-run)
                  (lambda (&rest _) (error "synchronous gc read from %s" (car spec))))

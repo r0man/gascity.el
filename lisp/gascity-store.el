@@ -745,8 +745,9 @@ Lines as `gascity-reader-read-async' does.  LOADER, a function of
 other store reads — ARGS then only names the entry (its first token
 still gives its kind).  FORCE re-reads even a fresh entry; MAX-AGE
 overrides its TTL.  BUFFER (default the current buffer) is the
-requester, for priority.  Returns nil — there is no process to kill:
-the read is shared."
+requester, for priority.  Returns the process of the read joined or
+started when one is running (for liveness checks only: it is shared,
+never kill it), else nil — answered from the store, or queued."
   (let* ((entry (gascity-store--entry (gascity-store--dir dir) args lines loader)))
     (if (and (not force) (not (gascity-store-entry-job entry))
              (gascity-store--fresh-p entry max-age))
@@ -755,7 +756,9 @@ the read is shared."
             (cons (cons callback errback) (gascity-store-entry-waiters entry)))
       (gascity-store--request entry :force force :max-age max-age
                               :buffer (or buffer (current-buffer))))
-    nil))
+    (let ((job (gascity-store-entry-job entry)))
+      (and job (process-live-p (gascity-store--job-process job))
+           (gascity-store--job-process job)))))
 
 ;;; vui hook
 

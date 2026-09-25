@@ -45,7 +45,8 @@
 (require 'gascity-remote)             ; host-qualified names + path localization
 (require 'gascity-section)
 (require 'gascity-command)
-(require 'gascity-reader)             ; read-async (non-blocking list refresh)
+(require 'gascity-reader)
+(require 'gascity-store)              ; shared, scheduled list reads
 (require 'gascity-types)
 (require 'gascity-ui)                 ; filter-menu builders, relative times
 
@@ -363,7 +364,29 @@ sort key (no active sort) leaves the gc-return order untouched."
 
 (defvar-local gascity-tabulated--refresh-process nil
   "The gc process of the refresh in flight for this buffer, or nil.
-Set by `gascity-tabulated--refresh-async'; a newer refresh kills it.")
+Set by `gascity-tabulated--refresh-async' from the store's shared read
+\(`gascity-store-fetch') — for liveness checks only, never killed: other
+views may be waiting on the same read.")
+
+(defvar-local gascity-tabulated--awaiting nil
+  "Non-nil while this buffer's last refresh request is unanswered.
+Covers a read queued by the store's scheduler that has no process yet.")
+
+(defvar-local gascity-tabulated--store-sub nil
+  "This buffer's `gascity-store-subscribe' handle, or nil.
+Repaints the list when its read completes on someone else's request —
+another view, or an invalidation by the event router (§8.2).")
+
+(defvar-local gascity-tabulated--painted-at nil
+  "The store `:fetched-at' stamp of the payload the rows show.")
+
+(defun gascity-tabulated-refresh-pending-p (&optional buffer)
+  "Return non-nil while BUFFER's (default current) list refresh is in flight."
+  (let ((buffer (or buffer (current-buffer))))
+    (and (buffer-live-p buffer)
+         (or (process-live-p
+              (buffer-local-value 'gascity-tabulated--refresh-process buffer))
+             (buffer-local-value 'gascity-tabulated--awaiting buffer)))))
 
 (defvar-local gascity-tabulated--refresh-generation 0
   "Counter stamping each refresh request of this buffer.
@@ -388,25 +411,29 @@ overwrite the rows of a later `g'.")
 The non-blocking counterpart of `gascity-tabulated--refresh', and what
 every list's `g' runs: COMMAND is a `gascity-command' read (its argv
 via `gascity-command-line', its validation as in
-`gascity-command-execute'), spawned through `gascity-reader-read-async'
-so a slow link — a remote `gc session list' takes seconds — never
-stalls the UI.  DECODE-FN receives the decoded JSON payload (what
-`gascity-command-parse' would have produced) and returns the
-`(ID . [COLUMNS])' entries.  While the read runs the mode line reads
+`gascity-command-execute'), read through the store
+\(`gascity-store-fetch': shared with every view of the city, scheduled
+per host, deadline-bounded) so a slow link — a remote `gc session
+list' takes seconds — never stalls the UI.  DECODE-FN receives the
+decoded JSON payload (what `gascity-command-parse' would have
+produced) and returns the `(ID . [COLUMNS])' entries.  While the read
+runs the mode line reads
 \"BASE [loading…]\" and the previous rows stay put.
 
-A refresh issued while one is in flight kills the older process and
-supersedes it: each request bumps `gascity-tabulated--refresh-generation'
+A refresh issued while one is in flight joins the shared read instead
+of killing it; each request bumps `gascity-tabulated--refresh-generation'
 and a result is applied only if its stamp is still current and the
-buffer is alive, so out-of-order completion cannot show stale rows.  A
+buffer is alive, so out-of-order completion cannot show stale rows.
+The buffer also subscribes to the read, so a completion requested by
+someone else (another view, an invalidation) repaints the rows.  A
 failure — launch error, non-zero exit, malformed JSON — is echoed as
 one clean line and leaves the list empty, exactly like the synchronous
 path (gce-dfe).  BASE-NAME and FILTER as for `gascity-tabulated--refresh'.
 ERROR-FN, when given, replaces the default echo for that failure line
 \(the session list's auto-refresh hygiene dedupes and counts through
 it); SUCCESS-FN, when given, runs just before the rows settle — the
-success half of that hygiene.  Returns the process, or nil when none
-could be started."
+success half of that hygiene.  Both run in the list buffer.  Returns
+the shared read's process when one is running, else nil."
   (when-let* ((error-msg (gascity-command-validate command)))
     (signal 'gascity-validation-error
             (list (format "Command validation failed: %s" error-msg)
@@ -415,8 +442,6 @@ could be started."
   (setq gascity-tabulated--filter-description
         (gascity-tabulated--format-filter filter)
         gascity-tabulated--base-name base-name)
-  (when (process-live-p gascity-tabulated--refresh-process)
-    (delete-process gascity-tabulated--refresh-process))
   (let* ((buffer (current-buffer))
          (generation (cl-incf gascity-tabulated--refresh-generation))
          ;; The argv tail: `gascity-command-line' leads with the
@@ -428,36 +453,60 @@ could be started."
                               (buffer-local-value
                                'gascity-tabulated--refresh-generation buffer)))))
          ;; ENTRIES-FN runs in the list buffer (its `default-directory'
-         ;; scopes the rig memo and any decode-time context) and only
-         ;; while this request is still the current one.
-         (settle (lambda (entries-fn)
-                   (when (funcall current-p)
-                     (with-current-buffer buffer
-                       (setq gascity-tabulated--refresh-process nil)
-                       (gascity-tabulated--init-paged
-                        base-name (funcall entries-fn)))))))
+         ;; scopes the rig memo and any decode-time context).
+         (paint (lambda (entries-fn)
+                  (with-current-buffer buffer
+                    (setq gascity-tabulated--refresh-process nil
+                          gascity-tabulated--awaiting nil
+                          gascity-tabulated--painted-at
+                          (plist-get (gascity-store-get args) :fetched-at))
+                    (gascity-tabulated--init-paged
+                     base-name (funcall entries-fn)))))
+         (decoded (lambda (payload)
+                    (lambda ()
+                      (condition-case err
+                          (funcall decode-fn payload)
+                        (gascity-error
+                         (message "gascity: %s" (gascity-error-detail err))
+                         nil))))))
     (gascity-tabulated--set-loading)
+    (setq gascity-tabulated--awaiting t)
+    ;; Passive repaint: the same read completing for anyone else — the
+    ;; dashboard, an action's invalidation — refreshes these rows too.
+    (gascity-store-unsubscribe gascity-tabulated--store-sub)
+    (setq gascity-tabulated--store-sub
+          (gascity-store-subscribe
+           args
+           (lambda (snapshot)
+             (when (and (buffer-live-p buffer)
+                        (eq (plist-get snapshot :status) 'ready)
+                        (not (plist-get snapshot :error))
+                        (not (buffer-local-value 'gascity-tabulated--awaiting
+                                                 buffer))
+                        (not (equal (plist-get snapshot :fetched-at)
+                                    (buffer-local-value
+                                     'gascity-tabulated--painted-at buffer))))
+               (funcall paint (funcall decoded (plist-get snapshot :data)))))
+           :buffer buffer))
     (setq gascity-tabulated--refresh-process
-          (gascity-reader-read-async
+          (gascity-store-fetch
            args
            (lambda (payload)
-             (when (and success-fn (funcall current-p))
-               (funcall success-fn))
-             (funcall settle
-                      (lambda ()
-                        (condition-case err
-                            (funcall decode-fn payload)
-                          (gascity-error
-                           (message "gascity: %s" (gascity-error-detail err))
-                           nil)))))
-           (lambda (msg)
-             ;; A superseded fetch is killed by its successor and reports
-             ;; that as a failure: only the current one gets to speak.
              (when (funcall current-p)
-               (if error-fn
-                   (funcall error-fn msg)
-                 (message "gascity: %s" msg))
-               (funcall settle #'ignore)))))))
+               (when success-fn
+                 (with-current-buffer buffer (funcall success-fn)))
+               (funcall paint (funcall decoded payload))))
+           (lambda (msg)
+             ;; Only the current request gets to speak.
+             (when (funcall current-p)
+               (with-current-buffer buffer
+                 (if error-fn
+                     (funcall error-fn msg)
+                   (message "gascity: %s" msg)))
+               (funcall paint #'ignore)))
+           ;; An explicit refresh re-reads; a read already in flight
+           ;; (another view's, or an earlier `g') is joined, not killed.
+           :force t))))
 
 (defun gascity-tabulated--refresh-display ()
   "Slice the current page into `tabulated-list-entries' and redraw.
@@ -1006,8 +1055,7 @@ backoff counter.  A manual `g' resets it."
              (get-buffer-window buffer 'visible)
              (not (gascity-remote-connection-locked-p
                    (buffer-local-value 'default-directory buffer)))
-             (not (process-live-p
-                   (buffer-local-value 'gascity-tabulated--refresh-process buffer))))
+             (not (gascity-tabulated-refresh-pending-p buffer)))
     (let ((non-essential t))
       (with-current-buffer buffer
         (if (> gascity-session-list--refresh-backoff 0)

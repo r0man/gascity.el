@@ -52,9 +52,7 @@ so keep the buffer object, not the unqualified name."
     ;; Pump until the refresh settles (cap ~30s).
     (let ((deadline (+ (float-time) 30)))
       (while (and (< (float-time) deadline)
-                  (process-live-p
-                   (buffer-local-value 'gascity-tabulated--refresh-process
-                                       ga-eyw9--buffer)))
+                  (gascity-tabulated-refresh-pending-p ga-eyw9--buffer))
         (accept-process-output nil 0.2)))))
 
 (defun ga-eyw9--tick (buffer)
@@ -62,8 +60,7 @@ so keep the buffer object, not the unqualified name."
   (gascity-session-list--auto-refresh-tick buffer)
   (let ((deadline (+ (float-time) 30)))
     (while (and (< (float-time) deadline)
-                (process-live-p
-                 (buffer-local-value 'gascity-tabulated--refresh-process buffer)))
+                (gascity-tabulated-refresh-pending-p buffer))
       (accept-process-output nil 0.2))))
 
 (defun ga-eyw9-run ()
@@ -112,9 +109,7 @@ in episode"
               (gascity-session-list-refresh)))
           (let ((deadline (+ (float-time) 60)))
             (while (and (< (float-time) deadline)
-                        (process-live-p
-                         (buffer-local-value
-                          'gascity-tabulated--refresh-process buf)))
+                        (gascity-tabulated-refresh-pending-p buf))
               (accept-process-output nil 0.2)))
           (with-current-buffer buf
             (if gascity-tabulated--stale-errors
