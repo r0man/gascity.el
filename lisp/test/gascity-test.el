@@ -3801,13 +3801,16 @@ fall-through a future vui change could reintroduce."
     (should (null (gascity-beads--bead-path "noprefix")))))  ; no prefix at all
 
 (ert-deftest gascity-test-bead-show-scopes-default-directory ()
-  "`gascity-bead-show' binds `default-directory' to the bead's rig store."
+  "`gascity-bead-show' hands beads.el the bead's rig store as `:directory'."
   (let (seen-dir seen-id)
     (cl-letf (((symbol-function 'gascity-command-rig-list!)
                (lambda (&rest _)
                  '((rigs . [((name . "gascity.el") (path . "/r/gce") (prefix . "gce"))]))))
               ((symbol-function 'beads-show)
-               (lambda (id &rest _) (setq seen-id id seen-dir default-directory))))
+               (lambda (id &rest args)
+                 (setq seen-id id
+                       seen-dir (or (plist-get args :directory)
+                                    default-directory)))))
       ;; Prefix resolution picks the owning rig's store.
       (gascity-bead-show "gce-afq")
       (should (equal seen-id "gce-afq"))
@@ -3840,9 +3843,11 @@ it to `bd' as -C — this is what lets a city-level convoy open (gce-bhr)."
                (lambda (_id &rest args)
                  (setq seen-dir default-directory
                        seen-directory (plist-get args :directory)))))
-      (gascity-bead-show "bs-0q2z")
-      ;; Buffer stays scoped to the prefix-routed store for naming...
-      (should (equal seen-dir "/r/bs/"))
+      (let ((default-directory "/elsewhere/"))
+        (gascity-bead-show "bs-0q2z"))
+      ;; No `default-directory' binding: beads.el scopes the buffer
+      ;; from `:directory' itself (dashboard-v3 §12 B1)...
+      (should (equal seen-dir "/elsewhere/"))
       ;; ...and the show carries `:directory' so `bd' uses -C, not cwd-mode.
       (should (equal seen-directory "/r/bs/")))))
 

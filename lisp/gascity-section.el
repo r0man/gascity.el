@@ -636,29 +636,20 @@ same split `gascity-beads--show-in-store' makes for delegated reads."
           (gascity-beads--city-store)))))
 
 (defun gascity-beads--show-in-store (id store)
-  "Display bead ID with beads.el, resolving its store at STORE.
-STORE is the bead's store directory, or nil for the ambient directory.
+  "Display bead ID with beads.el, scoped to the bead store at STORE.
+STORE is the bead's store directory as Emacs sees it (TRAMP-prefixed
+on a remote city), or nil for the ambient directory.
 
-beads.el picks which store to act on from `default-directory' — its `bd'
-runs in cwd-mode — but Gas City's shared Dolt server can resolve a given
-working directory to a *different* rig's database than its `.beads'
-config names, so a cross-rig or city-level bead (a convoy listed via `gc
-convoy list', say) errors with \"no issues found\" even though STORE is
-correct (gce-bhr).  `bd --directory' (-C) re-resolves the store locally
-and is not subject to that server state, so pass STORE through
-`beads-show''s `:directory' keyword to force it.  `default-directory' is
-still bound to STORE so beads.el names the detail buffer for the right
-project.  With no STORE there is nothing to scope, so defer to beads.el's
-own resolution.
-
-For a remote city STORE is a TRAMP name: binding `default-directory' to
-it makes beads.el run `bd' on the city's host (its runner is
-`process-file'-based), while the `-C' flag must name the store as that
-host sees it — so the `:directory' keyword gets `file-local-name' (the
-identity for a local STORE)."
+Gas City's shared Dolt server can resolve a working directory to a
+*different* rig's database than its `.beads' config names, so bd's
+cwd mode opens a cross-rig or city-level bead (a convoy listed via `gc
+convoy list', say) with \"no issues found\" (gce-bhr).  `beads-show''s
+`:directory' makes STORE the buffer's store: bd runs on STORE's host
+with `--directory' (host-local), for this lookup and every refresh
+and action in the buffer (dashboard-v3 §12 B1).  With no STORE there
+is nothing to scope, so defer to beads.el's own resolution."
   (if store
-      (let ((default-directory store))
-        (beads-show id :directory (file-local-name store)))
+      (beads-show id :directory store)
     (beads-show id)))
 
 (defun gascity-bead-show (id &optional directory)
