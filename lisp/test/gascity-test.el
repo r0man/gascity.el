@@ -10094,5 +10094,71 @@ refresh; clearing re-excludes nothing."
           (when (get-buffer "*gascity-dashboard-test*")
             (kill-buffer "*gascity-dashboard-test*")))))))
 
+;;; Menus opened from `project-switch-project'
+
+(ert-deftest gascity-test-prefix-menus-remember-directory ()
+  "Every gascity menu is a `beads-prefix', so it runs its suffixes in
+the directory it was opened for."
+  (require 'gascity-action)
+  (require 'gascity-tabulated)
+  (require 'gascity-dashboard)
+  (dolist (prefix '(gascity
+                    gascity-sling-dispatch gascity-rig-dispatch
+                    gascity-session-dispatch gascity-lifecycle-dispatch
+                    gascity-bead-dispatch gascity-mail-dispatch
+                    gascity-rig-list-filter gascity-session-list-filter
+                    gascity-convoy-list-filter gascity-mail-inbox-filter
+                    gascity-order-list-filter
+                    gascity-dashboard-events-filter-dispatch
+                    gascity-dashboard-filter-dispatch))
+    (should (cl-typep (get prefix 'transient--prefix) 'beads-prefix))))
+
+(defun gascity-test--view-directory (command home project)
+  "Return the DIR COMMAND passes to `gascity-view-get-buffer-create'.
+COMMAND is called from a buffer in HOME the way `project-switch-project'
+calls it for PROJECT."
+  (catch 'gascity-test--view-directory
+    (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+               (lambda (_base &optional dir)
+                 (throw 'gascity-test--view-directory dir))))
+      (with-temp-buffer
+        (setq default-directory home)
+        (let ((project-current-directory-override project))
+          (funcall command))))))
+
+(ert-deftest gascity-test-dashboards-open-city-of-switched-project ()
+  "From the menu of `project-switch-project', the status and city
+dashboards open the chosen project's city, not the current buffer's."
+  (require 'gascity-dashboard)
+  (dolist (command '(gascity-status gascity-dashboard))
+    (should (equal (gascity-test--view-directory
+                    command "/tmp/home/" "/tmp/city")
+                   "/tmp/city/"))
+    (should (equal (gascity-test--view-directory command "/tmp/home/" nil)
+                   "/tmp/home/"))))
+
+(ert-deftest gascity-test-menu-suffix-runs-in-switched-project ()
+  "A suffix of the `gascity' menu opened from `project-switch-project'
+runs in the chosen project, although the menu returns before the
+suffix is picked."
+  (let ((home (file-name-as-directory (make-temp-file "gascity-home" t)))
+        (city (file-name-as-directory (make-temp-file "gascity-city" t)))
+        (map (make-sparse-keymap))
+        seen)
+    (unwind-protect
+        (cl-letf (((symbol-function 'gascity-status)
+                   (lambda () (interactive) (push default-directory seen))))
+          (keymap-set map "<f12>" #'gascity)
+          (with-current-buffer (window-buffer)
+            (let ((default-directory home)
+                  (overriding-local-map map))
+              (setq-local default-directory home)
+              (let ((project-current-directory-override city))
+                (execute-kbd-macro (kbd "<f12>")))
+              (execute-kbd-macro (kbd "s"))))
+          (should (equal seen (list city))))
+      (delete-directory home t)
+      (delete-directory city t))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

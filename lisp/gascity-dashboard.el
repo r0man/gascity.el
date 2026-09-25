@@ -95,6 +95,7 @@
 
 (require 'seq)
 (require 'transient)
+(require 'beads-prefix)
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
@@ -1312,13 +1313,13 @@ the full default set, preserving other exclusions."
                   excluded)
     (append excluded gascity-dashboard--events-chatty-default)))
 
-(transient-define-prefix gascity-dashboard-events-filter-dispatch ()
+(beads-define-prefix gascity-dashboard-events-filter-dispatch ()
   "Filter the Activity feed's event types."
   ["Events filter"
    ("t" "Toggle default-chatty types" gascity-dashboard-events-toggle-chatty)
    ("c" "Clear excluded types" gascity-dashboard-events-filter-clear)])
 
-(transient-define-prefix gascity-dashboard-filter-dispatch ()
+(beads-define-prefix gascity-dashboard-filter-dispatch ()
   "Filter the city dashboard's sections."
   ["Filter"
    ("r" "Beads by rig…" gascity-dashboard-filter-rig)
@@ -1403,9 +1404,12 @@ buffer is keyed to the city it is opened for via
 `gascity-view-get-buffer-create' (host-qualified name, pinned
 `default-directory'), so local and TRAMP access modes coexist (REQ-011).
 The magit status dashboard (`gascity-status') stays the default and
-unchanged."
+unchanged.  Called from the menu of `project-switch-project', it opens
+the dashboard of the chosen project's city."
   (interactive)
-  (let ((buf (gascity-view-get-buffer-create gascity-dashboard-buffer-name)))
+  (let ((buf (gascity-view-get-buffer-create
+              gascity-dashboard-buffer-name
+              (beads-prefix-invocation-directory))))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-city-dashboard-mode)
         (gascity-city-dashboard-mode)))

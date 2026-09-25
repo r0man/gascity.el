@@ -33,6 +33,7 @@
 
 (require 'cl-lib)
 (require 'transient)
+(require 'beads-prefix)
 (require 'view)
 (require 'gascity-custom)
 (require 'gascity-error)
@@ -1274,7 +1275,7 @@ The menu stays open."
        name (gascity-sling-formula--current-values)))))
 
 ;;;###autoload (autoload 'gascity-sling-dispatch "gascity-action" nil t)
-(transient-define-prefix gascity-sling-dispatch ()
+(beads-define-prefix gascity-sling-dispatch ()
   "Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 The scope plist `(formula target arg)' is seeded at entry: arg from
 the bead or convoy at point, target nil — never prompted up front
@@ -1354,7 +1355,7 @@ The subject defaults to the original prefixed with \"RE: \"."
 ;;; Sub-transients — hand-built command-dispatch backends
 ;;; ============================================================
 
-(transient-define-prefix gascity-rig-dispatch ()
+(beads-define-prefix gascity-rig-dispatch ()
   "Dispatch rig-control actions (a hand-built command backend)."
   ["Rig control"
    ("s" "Suspend rig…" gascity-rig-suspend)
@@ -1363,7 +1364,7 @@ The subject defaults to the original prefixed with \"RE: \"."
    ("a" "Add rig…" gascity-rig-add)
    ("x" "Remove rig…" gascity-rig-remove)])
 
-(transient-define-prefix gascity-session-dispatch ()
+(beads-define-prefix gascity-session-dispatch ()
   "Dispatch session-control actions (a hand-built command backend)."
   ["Session control"
    ("n" "Nudge…" gascity-session-nudge)
@@ -1381,14 +1382,14 @@ The subject defaults to the original prefixed with \"RE: \"."
    ("P" "Unpin…" gascity-session-unpin)
    ("x" "Prune dormant…" gascity-session-prune)])
 
-(transient-define-prefix gascity-lifecycle-dispatch ()
+(beads-define-prefix gascity-lifecycle-dispatch ()
   "Dispatch city-lifecycle actions (a hand-built command backend)."
   ["City lifecycle"
    ("S" "Start city" gascity-start)
    ("K" "Stop city" gascity-stop)])
 
 ;;;###autoload (autoload 'gascity-bead-dispatch "gascity-action" nil t)
-(transient-define-prefix gascity-bead-dispatch ()
+(beads-define-prefix gascity-bead-dispatch ()
   "Dispatch bead actions on the reference at point (hand-built backend).
 The verbs resolve their subject with `gascity-bead-at-point'; each `gc bd'
 write is store-routed by the bead id's prefix.  `RET'/`b' still open the
@@ -1409,7 +1410,7 @@ bead in beads.el; this menu is targeted command dispatch (DESIGN §4)."
    ("v" "Visit (beads.el)" gascity-bead-visit)])
 
 ;;;###autoload (autoload 'gascity-mail-dispatch "gascity-action" nil t)
-(transient-define-prefix gascity-mail-dispatch ()
+(beads-define-prefix gascity-mail-dispatch ()
   "Dispatch mail actions in the inbox (a hand-built command backend).
 `read'/`archive'/`reply' act on the message at point; `send' composes a
 fresh message to a prompted recipient."

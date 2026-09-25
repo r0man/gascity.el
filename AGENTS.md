@@ -174,6 +174,9 @@ unbounded blocking call.
   bead id in parentheses; the commit body cites the design section it
   implements.
 - Live QA reports go under `docs/qa/`.
+- Define menus with beads.el's `beads-define-prefix` (`beads-prefix.el`), not
+  bare `transient-define-prefix`, so suffixes run in the directory the menu
+  was opened for (menus opened via `project-switch-project` depend on it).
 
 ## Session completion
 

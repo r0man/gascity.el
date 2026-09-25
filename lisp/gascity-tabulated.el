@@ -35,6 +35,7 @@
 (require 'seq)
 (require 'tabulated-list)
 (require 'transient)
+(require 'beads-prefix)
 (require 'view)
 (require 'beads-pager)            ; pure pagination arithmetic (window size / count / slice)
 (require 'gascity-custom)
@@ -631,7 +632,7 @@ responsive while `gc rig list' runs, remotely too."
                              rigs))))
      gascity-rig-list--filter)))
 
-(transient-define-prefix gascity-rig-list-filter ()
+(beads-define-prefix gascity-rig-list-filter ()
   "Filter the rig list."
   ["Filter rigs"
    ("-s" "Status" "--status=" :choices ("running" "suspended" "stopped"))]
@@ -912,7 +913,7 @@ seconds whenever its buffer is visible."
                        gascity-session-list-auto-refresh-interval)
              "off")))
 
-(transient-define-prefix gascity-session-list-filter ()
+(beads-define-prefix gascity-session-list-filter ()
   "Filter the session list."
   ["Filter sessions"
    ("-s" "State" "--state="
@@ -1067,7 +1068,7 @@ Asynchronous (`gascity-tabulated--refresh-async')."
                              convoys))))
      gascity-convoy-list--filter)))
 
-(transient-define-prefix gascity-convoy-list-filter ()
+(beads-define-prefix gascity-convoy-list-filter ()
   "Filter the convoy list."
   ["Filter convoys"
    ("-s" "Status" "--status=" :choices ("open" "closed"))]
@@ -1195,7 +1196,7 @@ Asynchronous (`gascity-tabulated--refresh-async')."
                              messages))))
      gascity-mail-inbox--filter)))
 
-(transient-define-prefix gascity-mail-inbox-filter ()
+(beads-define-prefix gascity-mail-inbox-filter ()
   "Filter the mail inbox."
   ["Filter mail"
    ("-u" "Unread only" "--unread")]
@@ -1320,7 +1321,7 @@ Asynchronous (`gascity-tabulated--refresh-async')."
                              orders))))
      gascity-order-list--filter)))
 
-(transient-define-prefix gascity-order-list-filter ()
+(beads-define-prefix gascity-order-list-filter ()
   "Filter the order list."
   ["Filter orders"
    ("-e" "Enabled only" "--enabled")

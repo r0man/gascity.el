@@ -70,6 +70,7 @@
 (require 'gascity-command)
 (require 'gascity-command-status)
 (require 'gascity-section)
+(require 'beads-prefix)
 
 ;; Session actions on the agent at point live in gascity-action, and the
 ;; polecat-detail opener in gascity-session — both loaded after this
@@ -1078,9 +1079,12 @@ host-qualified for a remote city (so a local and a remote dashboard
 coexist) and its `default-directory' is pinned to that city's root, so
 the refresh timer and every at-point action keep resolving the same gc
 — and, remotely, the same host — no matter where a refresh is invoked
-from."
+from.  Called from the menu of `project-switch-project', it opens the
+dashboard of the chosen project's city."
   (interactive)
-  (let ((buf (gascity-view-get-buffer-create gascity-status-buffer-name)))
+  (let ((buf (gascity-view-get-buffer-create
+              gascity-status-buffer-name
+              (beads-prefix-invocation-directory))))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-dashboard-mode)
         (gascity-dashboard-mode)))

@@ -47,6 +47,7 @@
 ;;; Code:
 
 (require 'transient)
+(require 'beads-prefix)
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'gascity-remote)
@@ -102,7 +103,7 @@ passed to `format'.  Honours `gascity-enable-debug' and
 ;;; Dispatcher
 
 ;;;###autoload (autoload 'gascity "gascity" nil t)
-(transient-define-prefix gascity ()
+(beads-define-prefix gascity ()
   "Dispatch the Gas City porcelain.
 A hand-written command-dispatch menu — the views in the left columns are
 the deliberately-designed porcelain (not auto-generated from this
