@@ -21,7 +21,10 @@ replaces gascity's own)."
                (concat "/home/u/.guix-home/profile/bin/" name)))
             ((symbol-function 'beads-remote-path-assignment)
              (lambda (&optional _dir) "PATH=/home/u/.guix-home/profile/bin:$PATH")))
-    (should (equal (let ((gascity-remote-ssh-options '("-o" "ControlPath=/x")))
+    (should (equal (let ((gascity-remote-ssh-options '("-o" "ControlPath=/x"))
+                         ;; The TRAMP-resolved path; the ssh transport
+                         ;; resolves from the prewarmed cache instead.
+                         (gascity-remote-transport 'tramp))
                      (gascity-remote-ssh-pipe-argv
                       "/ssh:u@h:/home/u/city/" '("gc" "events" "--follow")))
                    '("ssh" "-n" "-o" "ForwardX11=no" "-o" "ControlPath=/x"

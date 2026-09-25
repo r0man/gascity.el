@@ -559,6 +559,103 @@ stderr stays separate; a failure reports the remote stderr."
       (should (gascity-test-store--wait (lambda () err) 5))
       (should (string-match-p "gc: boom" err)))))
 
+(defmacro gascity-test-store--with-fake-ssh (&rest body)
+  "Run BODY with every local `ssh' spawn replaced by a local `sh' answering JSON.
+The replacement keeps the rest of `make-process''s arguments, so the
+pipe, sentinel and filters are the real ones."
+  (declare (indent 0) (debug t))
+  `(let ((real (symbol-function 'make-process)))
+     (cl-letf (((symbol-function 'make-process)
+                (lambda (&rest args)
+                  (let ((cmd (plist-get args :command)))
+                    (when (equal (car cmd) "ssh")
+                      (setq args (plist-put (copy-sequence args) :command
+                                            (list "sh" "-c" "echo '{\"ok\":true}'"))))
+                    (apply real args)))))
+       ,@body)))
+
+(ert-deftest gascity-test-store-ssh-transport-never-touches-tramp ()
+  "On the ssh transport nothing reached from a command, timer, render or
+sentinel does TRAMP I/O for exec resolution (QA F8 follow-up): with
+every I/O file operation on a TRAMP name signalling, a store read
+driven through pump and spawn, the sync reader, command-line building,
+executable lookup, the PATH fragment and the background prewarm all
+work — and the guard records no violation."
+  (let ((default-directory "/ssh:guard@example.invalid:/home/guard/city/")
+        (gascity-remote-transport 'ssh)
+        (gascity-reader-city-args-function nil)
+        (beads-remote-search-path '("~/.guix-home/profile/bin"))
+        (gascity-remote--prewarming (make-hash-table :test 'equal))
+        data)
+    (gascity-test-store--with-fake-ssh
+      (gascity-test-with-render-guard
+        ;; Store read: request → pump (first dispatch on the host, which
+        ;; also kicks the prewarm) → spawn over ssh → sentinel → callback.
+        (gascity-store-fetch '("status") (lambda (d) (setq data d)))
+        (should (gascity-test-store--wait (lambda () data) 5))
+        (should (equal data '((ok . t))))
+        ;; The sync reader goes over ssh too.
+        (should (equal (gascity-reader-read "status") '((ok . t))))
+        ;; Exec resolution and PATH: memory only.
+        (should (equal (gascity-remote-find-executable "tmux") "tmux"))
+        (should (string-match-p "\"\\$HOME\"/" (gascity-remote-path-assignment)))
+        (should (equal (car (gascity-command-line (gascity-command-rig-list)))
+                       "gc"))
+        (accept-process-output nil 0.2)
+        (should (null gascity-test-render-guard-violations))))))
+
+(ert-deftest gascity-test-store-prewarm-fills-the-exec-cache ()
+  "The background prewarm stores each absolute `command -v' answer in the
+per-connection cache; `gascity-remote-find-executable' then answers it."
+  (let ((default-directory "/ssh:pw@example.invalid:/c/")
+        (gascity-remote-transport 'ssh)
+        (gascity-remote--prewarming (make-hash-table :test 'equal))
+        (real (symbol-function 'make-process)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'make-process)
+                   (lambda (&rest args)
+                     (apply real (plist-put (copy-sequence args) :command
+                                            (list "printf" "gc /opt/bin/gc\\ntmux \\n"))))))
+          (should (equal (gascity-remote-find-executable "gc") "gc"))
+          (should (gascity-test-store--wait
+                   (lambda () (equal (gascity-remote-find-executable "gc")
+                                     "/opt/bin/gc"))
+                   5))
+          ;; No answer for tmux: still the bare name.
+          (should (equal (gascity-remote-find-executable "tmux") "tmux")))
+      (gascity-remote-forget-executables))))
+
+(ert-deftest gascity-test-store-with-timeout-unwinds-a-tramp-wait ()
+  "`gascity-remote-with-timeout' holds even when `with-timeout' is
+suspended (as TRAMP does inside its connection wait): its timer deletes
+the TRAMP connection process, the wait returns, and
+`gascity-remote-sync-timeout' is signalled."
+  (gascity-test-with-mock-remote
+    (let* ((vec (tramp-dissect-file-name default-directory))
+           (proc (let ((default-directory temporary-file-directory))
+                   (make-process :name "gascity-test-fake-tramp"
+                                 :command '("sleep" "30") :noquery t))))
+      (unwind-protect
+          (cl-letf (((symbol-function 'tramp-get-connection-process)
+                     (lambda (v) (and (equal (tramp-file-name-host v)
+                                             (tramp-file-name-host vec))
+                                      proc)))
+                    ((symbol-function 'gascity-remote-drain-connection) #'ignore))
+            (should (eq (condition-case nil
+                            (gascity-remote-with-timeout 0.2
+                              ;; TRAMP's wait: with-timeout suspended, block
+                              ;; on the connection process only.
+                              (with-timeout-suspend)
+                              (let ((n 200)) ; hard cap: 10s
+                                (while (and (> n 0) (process-live-p proc))
+                                  (accept-process-output proc 0.05 nil t)
+                                  (setq n (1- n))))
+                              (error "Process died"))
+                          (gascity-remote-sync-timeout 'timed-out))
+                        'timed-out))
+            (should-not (process-live-p proc)))
+        (when (process-live-p proc) (delete-process proc))))))
+
 ;;; Render guard (R2)
 
 (ert-deftest gascity-test-store-render-guard-fixture ()

@@ -479,7 +479,11 @@ reentrant); otherwise the pump is retried from a timer."
         (let (job)
           (while (and (> (gascity-store--capacity host lane) 0)
                       (setq job (gascity-store--pop host lane)))
-            (setf (gascity-store--host-primed host) t)
+            (unless (gascity-store--host-primed host)
+              ;; First dispatch on this host: resolve its programs in
+              ;; the background (ssh transport; no TRAMP I/O).
+              (gascity-remote-prewarm name)
+              (setf (gascity-store--host-primed host) t))
             (gascity-store--start job))))))))
 
 (defun gascity-store--enqueue (job)

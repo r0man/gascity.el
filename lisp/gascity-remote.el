@@ -199,45 +199,71 @@ flushed (a local DIR)."
   "Gas City synchronous remote call timed out"
   'gascity-error)
 
+(defun gascity-remote--kill-connection (remote)
+  "Delete the TRAMP connection process of REMOTE (a TRAMP prefix), if any.
+A TRAMP wait (`tramp-wait-for-regexp', `accept-process-output' on the
+connection) returns — with an error — once its process is gone; this is
+what bounds a synchronous TRAMP call.  No remote I/O."
+  (when-let* ((vec (ignore-errors (tramp-dissect-file-name remote)))
+              (proc (ignore-errors (tramp-get-connection-process vec))))
+    (when (process-live-p proc)
+      (delete-process proc))))
+
+(defun gascity-remote--timeout-signal (secs)
+  "Signal `gascity-remote-sync-timeout' for a bound of SECS."
+  (signal 'gascity-remote-sync-timeout
+          (list (format "synchronous remote call timed out after %s seconds\
+ (connection wedged?); raise or disable `gascity-remote-sync-timeout' to suit"
+                        secs))))
+
+(defun gascity-remote-call-with-timeout (secs fn)
+  "Call FN, abandoning it after SECS on a remote `default-directory'.
+The function behind `gascity-remote-with-timeout'.  Two bounds run:
+`with-timeout' (fires in any wait that runs timers) and a plain timer
+that deletes the directory's TRAMP connection process.  The second is
+the one that holds inside TRAMP: TRAMP suspends `with-timeout' timers
+\(`with-timeout-suspend') while it waits for its connection, so a wedged
+channel (ControlMaster deadlock, dead link) would otherwise block
+forever; deleting the connection process makes that wait return.
+Either way `gascity-remote-sync-timeout' is signalled (after a
+`gascity-remote-drain-connection' of a still-live channel).  A nil,
+zero or negative SECS, or a local directory, calls FN unbounded."
+  (if (not (and (numberp secs) (> secs 0) (file-remote-p default-directory)))
+      (funcall fn)
+    (let* ((remote (file-remote-p default-directory))
+           (fired nil)
+           (killer (run-at-time secs nil
+                                (lambda ()
+                                  (setq fired t)
+                                  (gascity-remote--kill-connection remote)))))
+      (unwind-protect
+          (condition-case err
+              (with-timeout (secs (setq fired t)
+                                  (gascity-remote--timeout-signal secs))
+                (funcall fn))
+            (gascity-remote-sync-timeout
+             ;; The abandoned channel command keeps its output in flight;
+             ;; drain so a retried command starts clean (gce-desync).
+             (ignore-error error (gascity-remote-drain-connection))
+             (signal (car err) (cdr err)))
+            (error
+             ;; The killer timer unwound a TRAMP wait: report the bound,
+             ;; not TRAMP's \"process died\" error.
+             (if fired
+                 (gascity-remote--timeout-signal secs)
+               (signal (car err) (cdr err)))))
+        (cancel-timer killer)))))
+
 (defmacro gascity-remote-with-timeout (seconds &rest body)
   "Run BODY, abandoning it after SECONDS on a remote directory.
 SECONDS is evaluated (typically `gascity-remote-sync-timeout'); a nil,
 zero, or negative value — or a LOCAL `default-directory' — runs BODY
-unbounded and unchanged.
-
-On a remote directory BODY is wrapped in `with-timeout': a synchronous
-TRAMP operation waits in `accept-process-output', where timers run, so
-the timeout can fire even though the outer call is synchronous.  When
-it fires, the connection is first drained
-\(`gascity-remote-drain-connection' — a channel command abandoned
-mid-unwind leaves output behind that the next command would harvest as
-its own stdout), then `gascity-remote-sync-timeout' is signalled, a
-`gascity-error' child the action layer's handlers already display
- cleanly.  Locally the timeout cannot fire anyway (a local
-`process-file' waits in blocking C code that runs no timers), and a
-local spawn has no network to stall on, so BODY runs as written."
+unbounded.  See `gascity-remote-call-with-timeout': the bound holds
+inside TRAMP's own waits (it deletes the connection process, which
+unwinds them), and expiry signals `gascity-remote-sync-timeout', a
+`gascity-error' child the action layer's handlers display cleanly."
   (declare (indent 1))
-  (let ((secs (make-symbol "secs")))
-    `(let ((,secs ,seconds))
-       (if (and (numberp ,secs) (> ,secs 0)
-                (file-remote-p default-directory))
-           (condition-case err
-               (with-timeout
-                   (,secs
-                    (signal 'gascity-remote-sync-timeout
-                            (list (format "synchronous remote call timed out\
- after %s seconds (connection wedged?); \
- raise or disable `gascity-remote-sync-timeout' to suit"
-                                          ,secs))))
-                 ,@body)
-             (gascity-remote-sync-timeout
-              ;; The abandoned channel command keeps its output in
-              ;; flight; drain so a retried command starts clean
-              ;; (gce-desync).  Draining is advisory — never mask the
-              ;; timeout signal with a drain failure.
-              (ignore-error error (gascity-remote-drain-connection))
-              (signal (car err) (cdr err))))
-         (progn ,@body)))))
+  `(gascity-remote-call-with-timeout ,seconds (lambda () ,@body)))
 
 ;;; History hygiene
 
@@ -412,15 +438,112 @@ Called from `gascity-context-clear-cache' — the one user-facing cache
 entry point — e.g. after a program moved on the host."
   (beads-remote-forget))
 
+(defcustom gascity-remote-transport 'ssh
+  "How asynchronous gc processes reach a remote city.
+`ssh' (the default): for a single-hop ssh-family TRAMP city
+\(`beads-remote-ssh-methods'), each async read and action runs as a LOCAL
+`ssh -T' pipe process (`beads-remote-ssh-pipe-argv') — starting it never
+blocks Emacs, stdout is byte-exact and stderr separate.  A tramp-sh
+`make-process' instead sets up a remote shell synchronously, ~0.5s of
+frozen main loop per spawn (seconds under contention).  ssh runs with
+BatchMode (it never prompts: key or agent authentication, or a
+ControlMaster, is required) plus `gascity-remote-ssh-options'.
+`tramp': always use TRAMP's `make-process' (other methods always do)."
+  :type '(choice (const :tag "Local ssh pipe" ssh)
+                 (const :tag "TRAMP make-process" tramp))
+  :group 'gascity)
+
+(defun gascity-remote-ssh-transport-p (&optional dir)
+  "Return non-nil when DIR's city is reached over the ssh pipe transport.
+DIR (default `default-directory') must be a single-hop ssh-family
+TRAMP name and `gascity-remote-transport' `ssh'.  Pure: name
+dissection only."
+  (let ((dir (or dir default-directory)))
+    (and (eq gascity-remote-transport 'ssh)
+         (file-remote-p dir)
+         (member (file-remote-p dir 'method) beads-remote-ssh-methods)
+         (not (tramp-file-name-hop (tramp-dissect-file-name dir))))))
+
+(defconst gascity-remote-prewarm-programs '("gc" "tmux" "infocmp" "bd")
+  "Programs `gascity-remote-prewarm' resolves on an ssh-transport host.")
+
+(defvar gascity-remote--prewarming (make-hash-table :test 'equal)
+  "Hosts (TRAMP prefixes) with a prewarm in flight or done.")
+
+(defun gascity-remote-prewarm (&optional dir)
+  "Resolve gascity's programs on DIR's host in the background.
+For an ssh-transport city: one local ssh pipe process
+\(`gascity-remote-ssh-pipe-argv' with `:resolve nil' — no TRAMP I/O)
+runs `command -v' for `gascity-remote-prewarm-programs' (and a bare
+`gascity-executable') under the extended PATH and stores each absolute
+answer in the per-connection executable cache shared with beads.el.
+Once per host; a failed prewarm (exit, or the
+`gascity-remote-sync-timeout' deadline) may run again later.  Returns
+nil at once."
+  (let* ((dir (or dir default-directory))
+         (remote (file-remote-p dir)))
+    (when (and (gascity-remote-ssh-transport-p dir)
+               (not (gethash remote gascity-remote--prewarming)))
+      (puthash remote t gascity-remote--prewarming)
+      (let* ((names (delete-dups
+                     (append gascity-remote-prewarm-programs
+                             (and (stringp gascity-executable)
+                                  (not (file-name-absolute-p gascity-executable))
+                                  (list gascity-executable)))))
+             (script (concat "for n in "
+                             (mapconcat #'shell-quote-argument names " ")
+                             "; do printf '%s %s\\n' \"$n\" "
+                             "\"$(command -v \"$n\" 2>/dev/null)\"; done"))
+             (chunks nil))
+        (condition-case nil
+            (let* ((default-directory temporary-file-directory)
+                   (proc
+                    (make-process
+                     :name "gascity-prewarm" :noquery t
+                     :command (gascity-remote-ssh-pipe-argv
+                               dir (list "sh" "-c" script) :resolve nil)
+                     :connection-type 'pipe :file-handler nil :stderr nil
+                     :filter (lambda (_p chunk) (push chunk chunks))
+                     :sentinel
+                     (lambda (p _e)
+                       (when (memq (process-status p) '(exit signal))
+                         (if (not (eql (process-exit-status p) 0))
+                             (remhash remote gascity-remote--prewarming)
+                           (dolist (line (split-string
+                                          (apply #'concat (nreverse chunks))
+                                          "\n" t))
+                             (let ((pair (split-string line " " t)))
+                               (when (and (= (length pair) 2)
+                                          (file-name-absolute-p (cadr pair)))
+                                 (puthash (cons remote (car pair)) (cadr pair)
+                                          beads-remote--cache))))))))))
+              (run-at-time (or gascity-remote-sync-timeout 30) nil
+                           (lambda ()
+                             (when (process-live-p proc) (delete-process proc)))))
+          (error (remhash remote gascity-remote--prewarming)))
+        nil))))
+
 (defun gascity-remote-find-executable (name &optional dir)
   "Return NAME resolved for DIR's host (default `default-directory').
-Thin wrapper over `beads-remote-find-executable': local DIRs and
-names with a directory pass through; on a remote DIR a bare NAME is
-resolved via `tramp-remote-path', then `beads-remote-search-path',
-cached per connection (misses for `beads-remote-miss-ttl' seconds).
-An unresolvable NAME comes back unchanged, so the launch fails with
-exit 127 and `gascity-remote-spawn-error-hint' names the setup paths."
-  (beads-remote-find-executable name dir))
+Local DIRs and names with a directory pass through.  For an
+ssh-transport city (`gascity-remote-ssh-transport-p') this NEVER does
+TRAMP I/O: the answer is the per-connection cache, filled in the
+background by `gascity-remote-prewarm' (started here on a miss); until
+then the bare NAME comes back — gascity's own ssh commands find it on
+the PATH they extend.  Other remote DIRs use
+`beads-remote-find-executable' (TRAMP: `tramp-remote-path', then
+`beads-remote-search-path', cached; synchronous on a miss).  An
+unresolvable NAME comes back unchanged, so the launch fails with exit
+127 and `gascity-remote-spawn-error-hint' names the setup paths."
+  (let ((dir (or dir default-directory)))
+    (if (and (gascity-remote-ssh-transport-p dir)
+             (not (file-name-absolute-p name)))
+        (let ((cached (gethash (cons (file-remote-p dir) name) beads-remote--cache)))
+          (if (stringp cached)
+              cached
+            (gascity-remote-prewarm dir)
+            name))
+      (beads-remote-find-executable name dir))))
 
 ;;; Terminfo on the host
 
@@ -486,11 +609,18 @@ call, so installing the entry on the host heals itself.  Clear with
 
 (defun gascity-remote-path-assignment (&optional dir)
   "Return a \"PATH=DIRS:$PATH\" sh fragment for DIR's host, or nil.
-Thin wrapper over `beads-remote-path-assignment': DIRS are the
-`beads-remote-search-path' entries expanded on the host.  Every remote
+For an ssh-transport city the pure fragment
+\(`gascity-remote-pure-path-assignment', no I/O); otherwise
+`beads-remote-path-assignment': the `beads-remote-search-path' entries
+expanded on the host over TRAMP.  Every remote
 gc invocation site splices it before the command, so gc's own
 children (git, dolt) resolve on the host too.  Nil for a local DIR."
-  (beads-remote-path-assignment dir))
+  (if (gascity-remote-ssh-transport-p (or dir default-directory))
+      ;; Pure for ssh-transport cities: every consumer splices the
+      ;; fragment into a string a remote shell evaluates, which expands
+      ;; the "$HOME" form — no TRAMP round trip for the remote home.
+      (gascity-remote-pure-path-assignment)
+    (beads-remote-path-assignment dir)))
 
 ;;; Spawn diagnostics
 
