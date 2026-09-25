@@ -1,0 +1,72 @@
+name: Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Dependency resolution decision (OQ-1): the suite's Package-Requires pins
+# `beads 0.1.0`, which is published on MELPA, so Eldev resolves it from
+# MELPA directly.  No sibling-clone fallback step is needed; if MELPA ever
+# lags behind beads.el `main` in a way the gate notices, add a pre-step
+# cloning github:r0man/beads.el and exporting the local-dependency path
+# (see plans/ci-cd/implementation-plan.md, W4).
+
+# Gc-gated tests decision (OQ-2): a bare `gc` on PATH is sufficient.  The
+# integration tests `skip-unless (executable-find "gc")` and fake the city
+# environment (GC_CITY etc.) in-process, so no initialized city is required
+# and no `gc init` pre-step is added.  If a future test needs a real city,
+# add `gc init` into a temp dir before `scripts/gate.sh`.
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        emacs_version:
+          - '29.4'
+          - '30.2'
+          - '31.1'
+          - 'snapshot'
+
+    # Emacs 29.4 has a known EIEIO byte-compilation bug that causes
+    # invalid-function errors for cross-file defun references in
+    # cl-defmethod dispatch.  Allow 29.4 to fail without blocking CI.
+    continue-on-error: ${{ matrix.emacs_version == '29.4' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Emacs ${{ matrix.emacs_version }}
+        uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs_version }}
+
+      - name: Cache Eldev dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.emacs.d/eldev
+          key: ${{ runner.os }}-eldev-test-v1-${{ matrix.emacs_version }}-${{ hashFiles('Eldev') }}
+          restore-keys: |
+            ${{ runner.os }}-eldev-test-v1-${{ matrix.emacs_version }}-
+
+      - name: Install Eldev
+        run: curl --fail --silent --show-error --location https://raw.github.com/doublep/eldev/master/webinstall/github-eldev | sh
+
+      # gc v1.4.2 from gastownhall/gascity. Bump by changing the version in
+      # the URL.
+      - name: Install Gascity v1.4.2
+        run: |
+          curl -fsSL https://github.com/gastownhall/gascity/releases/download/v1.4.2/gascity_1.4.2_linux_amd64.tar.gz \
+            | tar -xz -C /usr/local/bin gc
+          gc --version
+
+      - name: Run gate
+        # scripts/gate.sh runs `eldev compile --warnings-as-errors` and
+        # `eldev test` on the same Emacs, so undefined cross-file references
+        # fail CI before they reach the refinery.
+        run: scripts/gate.sh
