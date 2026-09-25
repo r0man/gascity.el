@@ -15,7 +15,7 @@
 ;; These classes are the *execution + parse* layer only: they run a `gc'
 ;; subcommand and decode its `--json' output.  The porcelain itself (the
 ;; status dashboard and the tabulated lists) is hand-built in
-;; `gascity-status' and `gascity-tabulated' in the deliberate
+;; `gascity-dashboard' and `gascity-tabulated' in the deliberate
 ;; magit/forge style — it does not auto-generate its UI from these
 ;; classes.  Transient menus, when they arrive, are a command-dispatch
 ;; backend, not the primary interface.

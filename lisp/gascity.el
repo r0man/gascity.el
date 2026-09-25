@@ -33,8 +33,7 @@
 ;; (`gascity-domain', decoded via beads.el's `beads-from-json'), the
 ;; formula-metadata module (`gascity-formula', the catalog/recipe reads,
 ;; per-city caches and client-side validation the formula-aware sling
-;; transient consumes), the
-;; status dashboard (`gascity-status'), the
+;; transient consumes), the city cockpit (`gascity-dashboard'), the
 ;; tabulated lists (`gascity-tabulated'), the agent actions — Dired and
 ;; tmux attach via beads.el's terminal module (`gascity-terminal') — the
 ;; mutating-command dispatch (`gascity-action'), and the vui detail views:
@@ -113,7 +112,6 @@ for their arguments.  The same actions are also available at point in
 the lists and the status dashboard."
   ["Gas City"
    ["Overview"
-    ("s" "Status dashboard" gascity-status)
     ("h" "City cockpit" gascity-dashboard)
     ("d" "Rig dashboard…" gascity-rig-dashboard)
     ("b" "Beads (rig)…" gascity-rig-beads)]

@@ -201,31 +201,6 @@ fall back to 5."
   :type 'number
   :group 'gascity)
 
-(defcustom gascity-status-auto-refresh t
-  "When non-nil, the Gas City status dashboard refreshes itself on a timer.
-The `*gascity-status*' dashboard re-reads `gc' every
-`gascity-status-auto-refresh-interval' seconds and re-renders in place,
-but only while its buffer is displayed in a visible window.  A buried or
-invisible dashboard does nothing: no timer work and no `gc' fetch.  The
-refresh preserves collapsed rigs and point, exactly like the manual `g'.
-
-Set to nil to refresh only manually with `g'; the command
-`gascity-status-toggle-auto-refresh' (G on the dashboard) flips it live."
-  :type 'boolean
-  :group 'gascity)
-
-(defcustom gascity-status-auto-refresh-interval 5
-  "Seconds between automatic refreshes of the Gas City status dashboard.
-Only consulted when `gascity-status-auto-refresh' is non-nil; a value at
-or below zero disables the timer (refresh manually with `g').
-
-For a remote city each refresh is an ssh round trip.  TRAMP reuses the
-connection, so the default is usually fine, and a tick is skipped while
-a previous load is still in flight — but on a slow link consider
-raising this (say 15–30) so the dashboard is not perpetually fetching."
-  :type 'number
-  :group 'gascity)
-
 (defcustom gascity-session-list-auto-refresh t
   "When non-nil, the GC-Sessions list refreshes itself on a timer.
 The `*gascity-sessions*' list re-reads `gc session list' every

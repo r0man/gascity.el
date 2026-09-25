@@ -113,7 +113,7 @@ QUALIFIER, when non-nil, is spliced in verbatim before the trailing
 buffer names and a remote city's name carries host and city path.
 Without QUALIFIER the behavior is the host-only qualification: DIR's
 TRAMP prefix spliced before the trailing `*' (e.g.
-\"*gascity-status@/ssh:user@host:*\"), and a local DIR (default
+\"*gascity-sessions@/ssh:user@host:*\"), and a local DIR (default
 `default-directory') returns BASE unchanged.  This is the one
 buffer-keying scheme for every gascity view (status dashboard, lists,
 rig dashboard, agent detail, and terminal attach buffers)."

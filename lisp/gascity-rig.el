@@ -325,10 +325,10 @@ point — the whole dashboard is one rig."
 Refuses the city HQ (e.g. bright-lights): `gc rig list' lists it for its
 beads, but it is not a `city.toml' rig and has no rig dashboard (`gc rig
 status' rejects it, so mounting one only yields an un-retryable error
-screen).  Directs to \\[gascity-status] for the city, or `b' for its beads."
+screen).  Directs to \\[gascity-dashboard] for the city, or `b' for its beads."
   (when (gascity-rig-hq rig)
     (user-error
-     "%s is the city HQ, not a rig — no rig dashboard; use M-x gascity-status, or `b' for its beads"
+     "%s is the city HQ, not a rig — no rig dashboard; use M-x gascity-dashboard, or `b' for its beads"
      (gascity-rig-name rig)))
   (gascity-rig-dashboard (gascity-rig-name rig)))
 

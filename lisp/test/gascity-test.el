@@ -559,26 +559,6 @@ action keys resolve the subject via `gascity-agent-at-point'."
     (goto-char (point-min))
     (funcall thunk)))
 
-(ert-deftest gascity-test-status-activate-agent-attaches-terminal ()
-  "RET on an agent in the status dashboard attaches its terminal, not the info view.
-Primary action is the tmux attach (`gascity-tmux-at-point'); the detail/info
-view moves to `i' (`gascity-polecat-detail-at-point') — gce-4hk."
-  (gascity-test--with-agent-at-point
-   (lambda ()
-     (let (tmux info)
-       (cl-letf (((symbol-function 'gascity-agent-attach-tmux) (lambda (_a) (setq tmux t)))
-                 ((symbol-function 'gascity-polecat-detail-at-point)
-                  (lambda () (setq info t))))
-         (gascity-status-activate)
-         (should tmux)
-         (should-not info)))))
-  ;; `i' opens the info view; RET (via activate) and `t' both attach.
-  (should (eq (keymap-lookup gascity-dashboard-mode-map "i")
-              #'gascity-polecat-detail-at-point))
-  (should (eq (keymap-lookup gascity-dashboard-mode-map "t")
-              #'gascity-tmux-at-point))
-  (should (eq (keymap-lookup gascity-dashboard-mode-map "RET")
-              #'gascity-status-activate)))
 
 (ert-deftest gascity-test-rig-dashboard-activate-agent-attaches-terminal ()
   "RET on an agent in the rig dashboard attaches its terminal, not the info view.
@@ -2370,42 +2350,8 @@ while the session-list read is in flight."
   (should (equal (gascity-status--ratio-label 0.5 nil) "0.50 MB/row"))
   (should (equal (gascity-status--ratio-label nil 1) "ratio ?")))
 
-(ert-deftest gascity-test-status-store-health-vnode ()
-  "The store-health block renders gc's path, size, rows and ratio.
-A payload without `store_health' (an older gc) renders no section at all."
-  (should-not (gascity-status--store-health-vnode '((summary . ((total_agents . 1))))))
-  (let ((text (gascity-test--vnode-text
-               (gascity-status--store-health-vnode
-                '((summary . ((store_health . ((path . "/city/.beads/dolt")
-                                               (size_bytes . 227124795)
-                                               (live_rows . 1789)
-                                               (ratio_mb_per_row . 0.12695)
-                                               (warning)
-                                               (threshold_mb_per_row . 1))))))))))
-    (should (string-search "Store health" text))
-    (should (string-search "/city/.beads/dolt" text))
-    (should (string-search "227.1 MB" text))
-    (should (string-search "1789 live rows" text))
-    (should (string-search "0.13 MB/row (threshold 1.0 MB/row)" text))))
 
-(ert-deftest gascity-test-status-events-pointer-vnode ()
-  "The dashboard closes with a dim pointer to the event log (ga-69kj).
-`gc event' has no JSON surface, so the recent-activity gap is documented,
-not hidden: the pointer names `.gc/events.jsonl' and why there is no
-section yet."
-  (let ((text (gascity-test--vnode-text
-               (gascity-status--events-pointer-vnode))))
-    (should (string-search ".gc/events.jsonl" text))
-    (should (string-search "no JSON support" text))))
 
-(ert-deftest gascity-test-status-sessions-note ()
-  "A sessions-load hint appears only when that load is not ready.
-Without it, a failed/pending session load degrades silently — agent rows
-lose `work_dir'/`session_name', so `d'/`t' no-op with no explanation."
-  (should (null (gascity-status--sessions-note-vnode 'ready nil)))
-  (should (null (gascity-status--sessions-note-vnode nil nil)))
-  (should (gascity-status--sessions-note-vnode 'error "boom"))
-  (should (gascity-status--sessions-note-vnode 'pending nil)))
 
 ;;; Status dashboard — named sessions section (gce-8ey named-sessions half)
 
@@ -2430,9 +2376,8 @@ The row is stamped with the action `gascity-agent' — enriched from the
 derivation's own session row, tmux socket attached — so the standard
 action keys (`d'/`t'/RET/`i') act on it like on any agent row
 (AGENTS.md keyboard-parity
-rule).  Mode stays nil until gc exposes it, so the row renders the dim
-\"(mode —)\" placeholder instead of a bare unexplained gap (ga-jhwz,
-REQ-001's documented fallback clause)."
+rule).  Mode stays nil until gc exposes it, and a missing mode renders
+nothing (dashboard-v3 §4.4)."
   (let* ((session (gascity-domain-decode
                    'gascity-session
                    '((agent_name . "mayor") (name . "mayor") (template . "mayor")
@@ -2440,7 +2385,7 @@ REQ-001's documented fallback clause)."
                      (session_name . "mayor"))))
          (named (car (gascity-domain-named-sessions-from-sessions (list session))))
          (row (gascity-status--named-session-row named "sock")))
-    (should (equal (gascity-test--vnode-text row) "  mayor awake (mode —)"))
+    (should (equal (gascity-test--vnode-text row) "  mayor awake"))
     ;; The agent object lives on the row's main text child (the hstack's
     ;; first element), so the action keys keep working on the placeholder.
     (let ((row-text (if (vui-vnode-text-p row) row
@@ -2455,7 +2400,8 @@ REQ-001's documented fallback clause)."
 (ert-deftest gascity-test-status-named-sessions-row-asleep-and-mode ()
   "A suspended named session renders `asleep'; a mode renders the suffix.
 The `(mode)' suffix exists only for a mode gc exposes in JSON — gc 1.4.2
-exposes none, so a modeless row carries the dim placeholder."
+exposes none, so a modeless row shows nothing more (no apology line,
+dashboard-v3 §4.4)."
   (let* ((asleep (car (gascity-domain-named-sessions-from-sessions
                        (list (gascity-domain-decode
                               'gascity-session
@@ -2463,7 +2409,7 @@ exposes none, so a modeless row carries the dim placeholder."
                                 (template . "mayor") (state . "suspended")))))))
          (row (gascity-status--named-session-row asleep nil)))
     (should (equal (gascity-named-session-label asleep) "asleep"))
-    (should (equal (gascity-test--vnode-text row) "  mayor asleep (mode —)"))
+    (should (equal (gascity-test--vnode-text row) "  mayor asleep"))
     (should (null (gascity-named-session-mode asleep))))
   (let* ((session (gascity-domain-decode 'gascity-session
                    '((agent_name . "mayor") (name . "mayor")
@@ -2479,9 +2425,8 @@ exposes none, so a modeless row carries the dim placeholder."
 A nil derivation renders no vnode at all — zero named sessions, or the
 pending/failed session load with no snapshot in hand — so the section's
 absence never unmounts its neighbors (stale-while-revalidate rule,
-REQ-003).  A row whose gc session row lacks a mode renders a dim
-\"(mode —)\" placeholder inline — a value, not a section-wide footnote
-claiming the data is unavailable (ga-jhwz)."
+REQ-003).  A row whose gc session row lacks a mode renders no placeholder at all
+\(dashboard-v3 §4.4: missing data renders nothing)."
   (should-not (gascity-status--named-sessions-vnode nil nil))
   (should-not (gascity-status--named-sessions-vnode
                (gascity-domain-named-sessions-from-sessions
@@ -2495,8 +2440,8 @@ claiming the data is unavailable (ga-jhwz)."
                 (gascity-status--named-sessions-vnode named "sock"))))
     (should (string-search "Named sessions" text))
     (should (string-search "mayor awake" text))
-    ;; No mode in the gc row: the dim placeholder rides on the row itself.
-    (should (string-search "(mode —)" text))
+    ;; No mode in the gc row: nothing is rendered for it (§4.4).
+    (should-not (string-search "(mode —)" text))
     (should-not (string-search "mode unavailable" text))
     ;; Once gc exposes a mode the row renders it in parentheses instead.
     (dolist (n named)
@@ -2506,148 +2451,8 @@ claiming the data is unavailable (ga-jhwz)."
       (should (string-search "(on_demand)" text))
       (should-not (string-search "(mode —)" text)))))
 
-(ert-deftest gascity-test-status-named-sessions-section-renders ()
-  "The mounted dashboard renders the CLI's Named sessions block.
-A canonical city-scoped session row (the materialized mayor) renders the
-section between the City block and the rigs, with the action agent
-stamped on the row; a payload holding only pool/rig rows renders no
-section at all (REQ-003, REQ-005)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)
-        (status gascity-test--status-named-sessions-city))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                (funcall (car status-box) status)
-                ;; No canonical row -> no section; the neighbors render.
-                (funcall (car sessions-box)
-                         '((sessions . [((agent_name . "bd.dog-1")
-                                         (name . "bd.dog-1")
-                                         (template . "bd.dog")
-                                         (state . "active"))])))
-                (should-not (gascity-test--buffer-contains-p "Named sessions"))
-                (should (gascity-test--buffer-contains-p "Gas City:"))
-                ;; The materialized mayor renders the CLI-shaped row.
-                (funcall (car sessions-box)
-                         '((summary . ((active . 1) (suspended . 0)))
-                           (sessions . [((agent_name . "mayor")
-                                         (name . "mayor") (template . "mayor")
-                                         (state . "active") (work_dir . "/city")
-                                         (session_name . "mayor"))])))
-                (should (gascity-test--buffer-contains-p "Named sessions"))
-                (should (gascity-test--buffer-contains-p "mayor awake"))
-                ;; CLI ordering: the block sits between City and the rigs.
-                (goto-char (point-min))
-                (let ((city (search-forward "watchdog" nil t))
-                      (named (search-forward "Named sessions" nil t))
-                      (rig (search-forward "▼ gascity.el" nil t)))
-                  (should city)
-                  (should named)
-                  (should rig)
-                  (should (< city named rig)))
-                ;; The row carries the action agent: d/t/RET act on it.
-                (goto-char (point-min))
-                (search-forward "mayor awake")
-                (goto-char (match-beginning 0))
-                (should (gascity-agent-p (get-text-property (point) 'gascity-agent))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*"))))))))
 
-(ert-deftest gascity-test-status-named-sessions-read-failure-isolated ()
-  "A failing `gc session list' read costs only the named-sessions section.
-The status read is a separate async load: header, City block, rigs, and
-store health all keep rendering from their own payload while the
-named-sessions section disappears (no session snapshot in hand) and the
-sessions note says why — one failed read must never blank the
-dashboard (REQ-005's failure-isolation half)."
-  (let ((status-box (list nil))
-        (reject-box (list nil))
-        (vui-render-delay nil)
-        (status gascity-test--status-named-sessions-city))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("session" "list")) (setcar reject-box errback))
-                  ((equal args '("agent" "list"))
-                   (funcall callback '((agents . []))))
-                  (t (error "unexpected async args: %S" args)))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                (funcall (car status-box) status)
-                (funcall (car reject-box) "boom")
-                ;; The rest of the dashboard renders from the status payload.
-                (should (gascity-test--buffer-contains-p "Gas City:"))
-                (should (gascity-test--buffer-contains-p "watchdog"))
-                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
-                (should (gascity-test--buffer-contains-p "Store health"))
-                (should-not (gascity-test--buffer-contains-p
-                             "Loading Gas City status"))
-                ;; No session snapshot -> no named-sessions section, and the
-                ;; note reports why (REQ-002's structural isolation).
-                (should-not (gascity-test--buffer-contains-p "Named sessions"))
-                (should (gascity-test--buffer-contains-p "Sessions unavailable"))
-                (should (gascity-test--buffer-contains-p "(boom)"))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
-(ert-deftest gascity-test-status-named-sessions-refresh-keeps-snapshot ()
-  "A failed sessions refresh keeps the last snapshot's named sessions.
-The same stale-while-revalidate rule the collapse tests pin: the refresh
-restarts the `session list' load with nil data, but the dashboard keeps
-rendering the previous payload instead of dropping the section or
-blanking to the loading line."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (reject-box (list nil))
-        (fail (list nil))
-        (vui-render-delay nil)
-        (status gascity-test--status-named-sessions-city)
-        (sessions '((summary . ((active . 1)))
-                    (sessions . [((agent_name . "mayor") (name . "mayor")
-                                  (template . "mayor") (state . "active")
-                                  (work_dir . "/city")
-                                  (session_name . "mayor"))]))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("session" "list"))
-                   (if (car fail) (setcar reject-box errback)
-                     (setcar sessions-box callback)))
-                  ((equal args '("agent" "list"))
-                   (funcall callback '((agents . []))))
-                  (t (error "unexpected async args: %S" args)))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                (funcall (car status-box) status)
-                (funcall (car sessions-box) sessions)
-                (should (gascity-test--buffer-contains-p "mayor awake"))
-                ;; Refresh with the sessions read failing: the stale payload
-                ;; keeps the section mounted — no blank, no loading line.
-                (setcar fail t)
-                (gascity-status--refresh-instance (current-buffer))
-                (funcall (car status-box) status)
-                (funcall (car reject-box) "boom")
-                (should (gascity-test--buffer-contains-p "Named sessions"))
-                (should (gascity-test--buffer-contains-p "mayor awake"))
-                (should-not (gascity-test--buffer-contains-p
-                             "Loading Gas City status"))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
 ;;; Status dashboard refresh — collapse preservation (vui integration, gce-gie)
 
@@ -2690,86 +2495,7 @@ renders flat, and no load left pending to trip the auto-refresh guard."
      (t (error "unexpected async args: %S" args)))
     nil))
 
-(ert-deftest gascity-test-status-refresh-preserves-collapse ()
-  "A `g' refresh preserves a rig section's collapsed state (gce-gie).
-Regression: the refresh bumped `refresh-tick', restarting the status load
-as 'pending, whose bare \"Loading…\" branch replaced the whole tree and
-unmounted every keyed rig component — resetting its component-local
-collapse `:state'.  Stale-while-revalidate keeps the prior snapshot
-mounted, so the collapse survives both the in-flight refresh and the
-arrival of fresh data."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)            ; render synchronously, no timers
-        (status '((ok . t) (city_name . "bright-lights")
-                  (controller . ((running . t)))
-                  (rigs . [((name . "gascity.el")) ((name . "other"))])
-                  (agents . [((name . "furiosa")
-                              (qualified_name . "gascity.el/gastown.furiosa")
-                              (running . t))])))
-        (sessions '((sessions . []))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                ;; Cold load resolves -> dashboard renders, rig expanded (▼).
-                (funcall (car status-box) status)
-                (funcall (car sessions-box) sessions)
-                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
-                ;; Collapse the rig via its header button (▶).
-                (gascity-test--press-header "gascity.el")
-                (should (gascity-test--buffer-contains-p "▶ gascity.el"))
-                (should-not (gascity-test--buffer-contains-p "▼ gascity.el"))
-                ;; Refresh restarts the loads as 'pending.  The stale snapshot
-                ;; keeps the tree mounted -> still collapsed, no blank.
-                (gascity-status--refresh-instance (current-buffer))
-                (should (gascity-test--buffer-contains-p "▶ gascity.el"))
-                (should-not (gascity-test--buffer-contains-p "Loading Gas City status"))
-                ;; Fresh data arrives -> collapse still preserved.
-                (funcall (car status-box) status)
-                (funcall (car sessions-box) sessions)
-                (should (gascity-test--buffer-contains-p "▶ gascity.el"))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
-(ert-deftest gascity-test-status-refresh-stale-while-revalidate ()
-  "The loading line shows only on the first, dataless load (gce-gie).
-Once a snapshot exists, an in-flight refresh keeps the previous content
-visible instead of blanking to \"Loading…\" — the same whole-tree unmount
-that lost collapse state also flickered the view on every refresh."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)
-        (status '((ok . t) (city_name . "bright-lights")
-                  (controller . ((running . t)))
-                  (rigs . [((name . "gascity.el"))])
-                  (agents . [])))
-        (sessions '((sessions . []))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                ;; First load, no data yet -> loading line shown.
-                (should (gascity-test--buffer-contains-p "Loading Gas City status"))
-                ;; Resolve -> content replaces the loading line.
-                (funcall (car status-box) status)
-                (funcall (car sessions-box) sessions)
-                (should (gascity-test--buffer-contains-p "Gas City:"))
-                (should-not (gascity-test--buffer-contains-p "Loading Gas City status"))
-                ;; Refresh, leave the new load pending -> previous content
-                ;; stays put, no flicker back to the loading line.
-                (gascity-status--refresh-instance (current-buffer))
-                (should (gascity-test--buffer-contains-p "Gas City:"))
-                (should (gascity-test--buffer-contains-p "gascity.el"))
-                (should-not (gascity-test--buffer-contains-p "Loading Gas City status"))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
 ;;; Status dashboard refresh — semantic cursor preservation (gce-9am, §11.7)
 
@@ -2779,242 +2505,17 @@ that lost collapse state also flickered the view on every refresh."
 ;; the parked-callback stub.  `gascity-status-auto-refresh' is bound nil so
 ;; entering the mode starts no live timer.
 
-(ert-deftest gascity-test-status-refresh-preserves-cursor-on-row ()
-  "Point follows the same agent row across a refresh, even when rows reorder.
-`gascity-section--around-rerender' restores point by the row's SEMANTIC id
-\(here the agent's qualified name), not by a widget path or line number, so it
-stays on that row after vui `erase-buffer's and rebuilds the tree with the
-agents in a different order (gce-9am, §11.7)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)                ; render synchronously, no timers
-        (gascity-status-auto-refresh nil)     ; mode starts no auto-refresh timer
-        ;; Cold load: furiosa then nux.  Refresh: nux then furiosa.
-        (status-a '((ok . t) (city_name . "bright-lights")
-                    (controller . ((running . t)))
-                    (rigs . [((name . "gascity.el"))])
-                    (agents . [((name . "furiosa")
-                                (qualified_name . "gascity.el/gastown.furiosa")
-                                (running . t))
-                               ((name . "nux")
-                                (qualified_name . "gascity.el/gastown.nux")
-                                (running . t))])))
-        (status-b '((ok . t) (city_name . "bright-lights")
-                    (controller . ((running . t)))
-                    (rigs . [((name . "gascity.el"))])
-                    (agents . [((name . "nux")
-                                (qualified_name . "gascity.el/gastown.nux")
-                                (running . t))
-                               ((name . "furiosa")
-                                (qualified_name . "gascity.el/gastown.furiosa")
-                                (running . t))])))
-        (sessions '((sessions . []))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (with-current-buffer (get-buffer-create "*gascity-status-test*")
-                (gascity-dashboard-mode))
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                (funcall (car status-box) status-a)
-                (funcall (car sessions-box) sessions)
-                ;; Land on the SECOND agent row (nux), so a naive "stay at the
-                ;; top" would fail.
-                (goto-char (point-min))
-                (should (search-forward "nux" nil t))
-                (goto-char (match-beginning 0))
-                (let ((id (gascity-section--line-id)))
-                  (should (equal id '(agent . "gascity.el/gastown.nux")))
-                  ;; Refresh, then let the reordered data arrive: nux moves up a
-                  ;; line, furiosa moves down.
-                  (gascity-status--refresh-instance (current-buffer))
-                  (funcall (car status-box) status-b)
-                  (funcall (car sessions-box) sessions)
-                  ;; Point is still on the nux row — it followed the id to the
-                  ;; row's new position, not the old line number or point-min.
-                  (should (equal (gascity-section--line-id) id))
-                  (should (string-search
-                           "nux" (buffer-substring (line-beginning-position)
-                                                   (line-end-position)))))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
-(ert-deftest gascity-test-status-refresh-preserves-window-point-non-selected ()
-  "A dashboard in a NON-selected window keeps its window-point across a refresh.
-Regression (gce-9am, §11.7): `erase-buffer' resets every `window-point' to 1
-and vui restores only `window-start', so a status buffer shown in a window
-other than the selected one jumped to buffer top on each tick.
-`gascity-section--around-rerender' calls `set-window-point' for every window
-showing the buffer, restoring them to the semantic row."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)
-        (gascity-status-auto-refresh nil)
-        (status '((ok . t) (city_name . "bright-lights")
-                  (controller . ((running . t)))
-                  (rigs . [((name . "gascity.el"))])
-                  (agents . [((name . "furiosa")
-                              (qualified_name . "gascity.el/gastown.furiosa")
-                              (running . t))])))
-        (sessions '((sessions . []))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (let ((buf (get-buffer-create "*gascity-status-test*"))
-              (other (get-buffer-create "*gascity-other-test*")))
-          (unwind-protect
-              (progn
-                (with-current-buffer buf (gascity-dashboard-mode))
-                (vui-mount (vui-component 'gascity-status-app)
-                           "*gascity-status-test*")
-                (funcall (car status-box) status)
-                (funcall (car sessions-box) sessions)
-                (let (target-pos)
-                  ;; Put point on the furiosa row and remember it.
-                  (with-current-buffer buf
-                    (goto-char (point-min))
-                    (should (search-forward "furiosa" nil t))
-                    (goto-char (match-beginning 0))
-                    (setq target-pos (point))
-                    (should (equal (gascity-section--line-id)
-                                   '(agent . "gascity.el/gastown.furiosa"))))
-                  ;; Selected window shows OTHER; buf lives in a split below it.
-                  (with-current-buffer other (insert "placeholder"))
-                  (set-window-buffer (selected-window) other)
-                  (let ((status-window (split-window (selected-window) nil 'below)))
-                    (set-window-buffer status-window buf)
-                    (set-window-point status-window target-pos)
-                    (should-not (eq (selected-window) status-window))
-                    ;; Refresh while buf is in the non-selected window.
-                    (gascity-status--refresh-instance buf)
-                    (funcall (car status-box) status)
-                    (funcall (car sessions-box) sessions)
-                    ;; window-point stayed on the furiosa row, not reset to 1.
-                    (let ((wp (window-point status-window)))
-                      (should (> wp 1))
-                      (with-current-buffer buf
-                        (save-excursion
-                          (goto-char wp)
-                          (should (equal (gascity-section--line-id)
-                                         '(agent . "gascity.el/gastown.furiosa")))))))))
-            (when (buffer-live-p buf) (kill-buffer buf))
-            (when (buffer-live-p other) (kill-buffer other))))))))
 
 ;;; gce-pt6 — auto-refresh the status dashboard on a timer, only when visible
 
-(ert-deftest gascity-test-status-auto-refresh-creates-timer-when-on ()
-  "`gascity-status--auto-refresh-setup' starts a repeating timer when
-`gascity-status-auto-refresh' is on and the interval is positive (gce-pt6)."
-  (let ((buf (generate-new-buffer "*gascity-status-auto-on*"))
-        (gascity-status-auto-refresh t)
-        (gascity-status-auto-refresh-interval 3600)) ; never fires in-test
-    (unwind-protect
-        (progn
-          (gascity-status--auto-refresh-setup buf)
-          (should (timerp (buffer-local-value 'gascity-status--refresh-timer buf))))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
-(ert-deftest gascity-test-status-auto-refresh-no-timer-when-off ()
-  "No timer is created when `gascity-status-auto-refresh' is nil (gce-pt6)."
-  (let ((buf (generate-new-buffer "*gascity-status-auto-off*"))
-        (gascity-status-auto-refresh nil)
-        (gascity-status-auto-refresh-interval 3600))
-    (unwind-protect
-        (progn
-          (gascity-status--auto-refresh-setup buf)
-          (should-not (buffer-local-value 'gascity-status--refresh-timer buf)))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
-(ert-deftest gascity-test-status-auto-refresh-no-timer-when-interval-nonpositive ()
-  "A non-positive interval disables the timer even with auto-refresh on (gce-pt6)."
-  (let ((buf (generate-new-buffer "*gascity-status-auto-zero*"))
-        (gascity-status-auto-refresh t)
-        (gascity-status-auto-refresh-interval 0))
-    (unwind-protect
-        (progn
-          (gascity-status--auto-refresh-setup buf)
-          (should-not (buffer-local-value 'gascity-status--refresh-timer buf)))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
-(ert-deftest gascity-test-status-auto-refresh-tick-noop-when-buried ()
-  "The timer tick does nothing when the dashboard is not displayed (gce-pt6).
-A buried buffer must not refresh — and therefore must not fetch from `gc'."
-  (let ((buf (generate-new-buffer "*gascity-status-buried*"))
-        (refreshed nil))
-    (unwind-protect
-        (cl-letf (((symbol-function 'get-buffer-window) (lambda (&rest _) nil))
-                  ((symbol-function 'gascity-status--refresh-instance)
-                   (lambda (b) (setq refreshed b))))
-          (gascity-status--auto-refresh-tick buf)
-          (should-not refreshed))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
-(ert-deftest gascity-test-status-auto-refresh-tick-refreshes-when-visible ()
-  "The timer tick refreshes the dashboard in place when it is visible (gce-pt6).
-It calls `gascity-status--refresh-instance' (collapse + point preserved),
-not a full `gascity-status' remount."
-  (let ((buf (generate-new-buffer "*gascity-status-visible*"))
-        (refreshed nil))
-    (unwind-protect
-        (cl-letf (((symbol-function 'get-buffer-window)
-                   (lambda (b &rest _) (and (eq b buf) 'a-window)))
-                  ((symbol-function 'gascity-status--refresh-instance)
-                   (lambda (b) (setq refreshed b))))
-          (gascity-status--auto-refresh-tick buf)
-          (should (eq refreshed buf)))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
-(ert-deftest gascity-test-status-auto-refresh-teardown-cancels-timer ()
-  "Killing the dashboard cancels its auto-refresh timer via `kill-buffer-hook'
-— no leaked timers (gce-pt6)."
-  (let ((buf (generate-new-buffer "*gascity-status-teardown*"))
-        (gascity-status-auto-refresh t)
-        (gascity-status-auto-refresh-interval 3600)
-        timer)
-    (unwind-protect
-        (progn
-          (gascity-status--auto-refresh-setup buf)
-          (setq timer (buffer-local-value 'gascity-status--refresh-timer buf))
-          (should (timerp timer))
-          (should (memq timer timer-list))
-          (kill-buffer buf)
-          (should-not (memq timer timer-list)))
-      (when (timerp timer) (cancel-timer timer))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
-(ert-deftest gascity-test-status-dashboard-mode-starts-timer ()
-  "Enabling `gascity-dashboard-mode' starts the auto-refresh timer when
-`gascity-status-auto-refresh' is on (gce-pt6) — the mode is the wiring point."
-  (let ((buf (generate-new-buffer "*gascity-status-mode*"))
-        (gascity-status-auto-refresh t)
-        (gascity-status-auto-refresh-interval 3600))
-    (unwind-protect
-        (with-current-buffer buf
-          (gascity-dashboard-mode)
-          (should (timerp gascity-status--refresh-timer)))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
-(ert-deftest gascity-test-status-auto-refresh-toggle ()
-  "`G' is bound to the auto-refresh toggle, which flips the variable and
-restarts/cancels the buffer's timer to match (gce-pt6)."
-  (should (eq (keymap-lookup gascity-dashboard-mode-map "G")
-              #'gascity-status-toggle-auto-refresh))
-  (let ((buf (generate-new-buffer "*gascity-status-toggle*"))
-        (gascity-status-auto-refresh nil)
-        (gascity-status-auto-refresh-interval 3600))
-    (unwind-protect
-        (with-current-buffer buf
-          ;; Off -> on: a timer appears.
-          (gascity-status-toggle-auto-refresh)
-          (should gascity-status-auto-refresh)
-          (should (timerp gascity-status--refresh-timer))
-          ;; On -> off: the timer is cancelled.
-          (gascity-status-toggle-auto-refresh)
-          (should-not gascity-status-auto-refresh)
-          (should-not (timerp gascity-status--refresh-timer)))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
 
 ;;; gce-x0c — blank line between rig groups; header carries rig path
 
@@ -3027,122 +2528,12 @@ Used to assert rig sections are visually separated by a blank row."
          (progn (forward-line 0) (forward-line -1)
                 (looking-at-p "[ \t]*$")))))
 
-(ert-deftest gascity-test-status-blank-line-between-rigs ()
-  "A blank line separates rig groups, and each rig header carries its name
-and `path' so `d'/RET act on the rig at point (gce-x0c)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)
-        (status '((ok . t) (city_name . "bright-lights")
-                  (controller . ((running . t)))
-                  (rigs . [((name . "rig-a") (path . "/p/a"))
-                           ((name . "rig-b") (path . "/p/b"))])
-                  (agents . [])))
-        (sessions '((sessions . []))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                (funcall (car status-box) status)
-                (funcall (car sessions-box) sessions)
-                ;; Both rigs render, separated by a blank line.
-                (should (gascity-test--buffer-contains-p "▼ rig-a"))
-                (should (gascity-test--buffer-contains-p "▼ rig-b"))
-                (should (gascity-test--blank-line-above-p "▼ rig-b"))
-                ;; The header carries the rig name + path (for `d' and RET).
-                (goto-char (point-min))
-                (search-forward "rig-a")
-                (goto-char (match-beginning 0))
-                (should (equal (get-text-property (point) 'gascity-rig) "rig-a"))
-                (should (equal (get-text-property (point) 'gascity-rig-dir) "/p/a"))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
 ;;; gce-ed4 — TAB toggles a rig section's collapse (magit convention)
 
-(ert-deftest gascity-test-status-tab-toggles-section ()
-  "TAB toggles a rig section's collapse in the status dashboard (gce-ed4).
-The magit-section convention binds TAB to \"toggle the visibility of the
-section at point\".  The status board is the only dashboard with
-collapsible sections, so the binding lives in its map (not the shared
-`gascity-section-mode-map'); pressing TAB on a rig header flips its
-collapse (▼ <-> ▶) exactly as RET does, while RET keeps its prior job —
-toggle on a header, attach a terminal on a row.  Off a rig header there is
-nothing collapsible, so TAB signals a clean `user-error' rather than
-toggling or attaching something unrelated."
-  ;; Bindings: TAB -> the section toggle; RET unchanged.
-  (should (eq (keymap-lookup gascity-dashboard-mode-map "TAB")
-              #'gascity-status-toggle-section))
-  (should (eq (keymap-lookup gascity-dashboard-mode-map "RET")
-              #'gascity-status-activate))
-  ;; Off a rig header (an agent row, say): a clean user-error, no toggle.
-  (with-temp-buffer
-    (insert "  ● furiosa")
-    (goto-char (point-min))
-    (should-error (gascity-status-toggle-section) :type 'user-error))
-  ;; End-to-end: TAB on the header collapses (▼ -> ▶), TAB again expands.
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)            ; render synchronously, no timers
-        (status '((ok . t) (city_name . "bright-lights")
-                  (controller . ((running . t)))
-                  (rigs . [((name . "gascity.el"))])
-                  (agents . [])))
-        (sessions '((sessions . []))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app) "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                (funcall (car status-box) status)
-                (funcall (car sessions-box) sessions)
-                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
-                ;; TAB collapses the rig.
-                (gascity-test--press-header
-                 "gascity.el" #'gascity-status-toggle-section)
-                (should (gascity-test--buffer-contains-p "▶ gascity.el"))
-                (should-not (gascity-test--buffer-contains-p "▼ gascity.el"))
-                ;; TAB again expands it.
-                (gascity-test--press-header
-                 "gascity.el" #'gascity-status-toggle-section)
-                (should (gascity-test--buffer-contains-p "▼ gascity.el"))
-                (should-not (gascity-test--buffer-contains-p "▶ gascity.el"))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
 ;;; ga-1kdu — TAB's message distinguishes a non-collapsible section from no section
 
-(ert-deftest gascity-test-status-tab-non-collapsible-section ()
-  "TAB on a non-collapsible `gascity-section' header says so honestly (ga-1kdu).
-The City block carries `gascity-section' but has no collapse state; TAB
-there used to claim \"No section to toggle here\", denying a section the
-header plainly marks (bright-lights dogfood §1).  The message now
-distinguishes \"section exists but not collapsible\" from \"no section at\nall\"."
-  ;; The dashboard's city-agents section header is the exact structure the
-  ;; bug reported against: stamp the same properties the render emits.
-  (let ((header (vui-text "City" :face 'gascity-header 'gascity-section t)))
-    (should (plist-get (vui-vnode-text-properties header) 'gascity-section))
-    ;; At that point, TAB reports the section, not its absence.
-    (with-temp-buffer
-      (insert (vui-vnode-text-content header))
-      (add-text-properties (point-min) (1- (point-max))
-                           (vui-vnode-text-properties header))
-      (goto-char (point-min))
-      (should (equal (should-error (gascity-status-toggle-section)
-                                   :type 'user-error)
-                     '(user-error "This section has no collapse state")))))
-  ;; Off any section (an agent row): the old "nothing here" message.
-  (with-temp-buffer
-    (insert "  ● furiosa")
-    (goto-char (point-min))
-    (should (equal (should-error (gascity-status-toggle-section)
-                                 :type 'user-error)
-                   '(user-error "No section to toggle here")))))
 
 ;;; tmux socket resolution
 
@@ -4592,11 +3983,7 @@ silently drops a section from N/P navigation."
                  '("Agent:")))
   (should (equal (gascity-test--section-labels
                   (gascity-session--beads-section "On hook" nil 'ready ""))
-                 '("On hook (0)")))
-  ;; Status dashboard header (the city line).
-  (should (equal (gascity-test--section-labels
-                  (gascity-status--header-vnode '((city_name . "bl"))))
-                 '("Gas City:"))))
+                 '("On hook (0)"))))
 
 (ert-deftest gascity-test-section-nav-keys ()
   "`N'/`P' are section nav in the shared map; dashboards inherit them, nudge -> `M'.
@@ -4819,9 +4206,13 @@ dashboard only); mail verbs live in the inbox.  Phase 2: `c' on the three
 bead-bearing vui views opens `gascity-bead-dispatch' (note moved to its
 `o'), `S' opens the sling/route transient, and the inbox gains `R' reply
 and `c' mail-dispatch."
+  ;; The cockpit's `R' resets an agent or restarts a rig (the row decides).
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "R") #'gascity-dashboard-reset))
+  (dolist (map (list gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map gascity-session-list-mode-map))
+    (should (eq (keymap-lookup map "R") #'gascity-session-reset-at-point)))
   (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
                      gascity-session-detail-mode-map gascity-session-list-mode-map))
-    (should (eq (keymap-lookup map "R") #'gascity-session-reset-at-point))
     (should (eq (keymap-lookup map "U") #'gascity-session-undrain-at-point)))
   ;; `c' is the bead-dispatch menu and `S' the sling transient on the three
   ;; views that carry bead references (not the flat session list).
@@ -7148,41 +6539,6 @@ user repro)."
           (when (get-buffer name) (kill-buffer name))
           (delete-directory (concat remote-prefix workdir) t))))))
 
-(ert-deftest gascity-test-status-tick-skips-inflight-load ()
-  "The auto-refresh tick never restarts loads still in flight (gce-90t #9).
-Bumping the refresh tick changes every `vui-use-async' key, which KILLS
-the in-flight gc process and restarts the load — so on a link where a
-read takes longer than the interval (a remote city over ssh), an
-unguarded timer would starve the dashboard forever."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (vui-render-delay nil)
-        (refreshes 0))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--status-async-stub status-box sessions-box)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app)
-                         "*gascity-status-test*")
-              (let ((buf (get-buffer "*gascity-status-test*")))
-                ;; Cold loads parked -> in flight -> the tick must skip.
-                (should (gascity-status--loads-pending-p buf))
-                (cl-letf (((symbol-function 'get-buffer-window)
-                           (lambda (&rest _) t))
-                          ((symbol-function 'gascity-status--refresh-instance)
-                           (lambda (&rest _) (cl-incf refreshes) t)))
-                  (gascity-status--auto-refresh-tick buf)
-                  (should (= refreshes 0))
-                  ;; Resolve both loads -> idle -> the next tick refreshes.
-                  (funcall (car status-box)
-                           '((city_name . "x") (rigs . []) (agents . [])))
-                  (funcall (car sessions-box) '((sessions . [])))
-                  (should-not (gascity-status--loads-pending-p buf))
-                  (gascity-status--auto-refresh-tick buf)
-                  (should (= refreshes 1)))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*")))))))
 
 ;;; Status dashboard parity with `gc status' (gce-v4c)
 
@@ -7251,84 +6607,8 @@ dashboard; the buffer is killed afterwards."
           (when (get-buffer "*gascity-status-test*")
             (kill-buffer "*gascity-status-test*")))))))
 
-(ert-deftest gascity-test-status-dashboard-parity ()
-  "The dashboard renders every `gc status' field the JSON exposes (gce-v4c).
-It used to show the city name, a flat agent list and the rig sections only —
-a fraction of what `gc status' prints.  Pin the rest: the city path, the
-controller's mode and PID, the suspended flag, the session counts, each
-rig's path, the store-health block, and pool members nested under their
-template with its bounds instead of masquerading as unrelated agents.
 
-Not asserted here because no `gc --json' payload carries them: the API URL
-and the \"Named sessions\" block (mode / awake state).  See the TODO in
-gascity-status.el."
-  (gascity-test--mount-status-dashboard
-   (lambda ()
-     ;; Header: city + path, controller mode/PID, health, suspended, counts.
-     (should (gascity-test--buffer-contains-p
-              "Gas City: bright-lights  /home/roman/bright-lights"))
-     (should (gascity-test--buffer-contains-p
-              "controller supervisor (PID 16949) · health ok · not suspended"))
-     (should (gascity-test--buffer-contains-p
-              "agents 9/25 running · sessions 9 active, 0 suspended"))
-     ;; A city pool groups its members under the template's bounds.
-     (should (gascity-test--buffer-contains-p "▼ bd.dog  scaled (min=0, max=2)"))
-     (should (gascity-test--buffer-contains-p "    ○ bd.dog-1"))
-     (should (gascity-test--buffer-contains-p "    ○ bd.dog-2"))
-     ;; …while a singleton stays a plain row at the outer indent.
-     (should (gascity-test--buffer-contains-p "  ● mayor"))
-     ;; The rig header carries its path, as `gc status''s "Rigs:" block does.
-     (should (gascity-test--buffer-contains-p
-              "▼ gascity.el  /home/roman/workspace/gascity.el"))
-     ;; Both polecats nest: the running one joins via its session template,
-     ;; the stopped one (no session at all) via its namespace.
-     (should (gascity-test--buffer-contains-p
-              "▼ gastown.polecat  scaled (min=0, max=5)"))
-     (should (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
-     (should (gascity-test--buffer-contains-p "    ○ gastown.nux"))
-     (should (gascity-test--buffer-contains-p "  ● witness"))
-     ;; Store health.
-     (should (gascity-test--buffer-contains-p "Store health"))
-     (should (gascity-test--buffer-contains-p "/home/roman/bright-lights/.beads/dolt"))
-     ;; The documented events pointer closes the dashboard (ga-69kj).
-     (should (gascity-test--buffer-contains-p
-              "recent activity: .gc/events.jsonl"))
-     (should (gascity-test--buffer-contains-p
-              "227.1 MB · 1789 live rows · 0.13 MB/row (threshold 1.0 MB/row)")))))
 
-(ert-deftest gascity-test-status-pool-collapse ()
-  "A pool group collapses like a rig section, and the state survives a refresh.
-RET on the pool header hides its members; the collapse lives in the root
-component's state, so the stale-while-revalidate refresh keeps it."
-  (gascity-test--mount-status-dashboard
-   (lambda ()
-     (should (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
-     (gascity-test--press-header "gastown.polecat")
-     (should (gascity-test--buffer-contains-p "▶ gastown.polecat"))
-     (should-not (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
-     ;; The rig section around it is untouched.
-     (should (gascity-test--buffer-contains-p "▼ gascity.el"))
-     ;; A refresh re-resolves every read; the collapse survives it.
-     (gascity-status--refresh-instance (current-buffer))
-     (should (gascity-test--buffer-contains-p "▶ gastown.polecat"))
-     (should-not (gascity-test--buffer-contains-p "    ● gastown.furiosa"))
-     ;; TAB toggles it back open — the same section toggle RET performs.
-     (gascity-test--press-header "gastown.polecat"
-                                 #'gascity-status-toggle-section)
-     (should (gascity-test--buffer-contains-p "▼ gastown.polecat"))
-     (should (gascity-test--buffer-contains-p "    ● gastown.furiosa")))))
-
-(ert-deftest gascity-test-status-pool-line-id ()
-  "A pool header has a semantic id, so point holds it across a re-render.
-Without one, `gascity-section--line-id' returned nil on the header and the
-cursor fell back to vui's positional restore — which drops point to the top
-of the buffer when the rows above it change."
-  (gascity-test--mount-status-dashboard
-   (lambda ()
-     (goto-char (point-min))
-     (should (search-forward "gastown.polecat" nil t))
-     (should (equal (gascity-section--line-id)
-                    '(pool . "gascity.el/gastown.polecat"))))))
 
 ;;; ============================================================
 ;;; Never block the UI on a remote city (gce-eldoc, Part B)
@@ -7425,41 +6705,6 @@ then `project-current' is nil, never a VC walk."
 
 ;;; B2 — the dashboard tick reads the connection lock, not `tramp-locked'
 
-(ert-deftest gascity-test-status-tick-skips-locked-connection ()
-  "The auto-refresh tick skips while the DASHBOARD's connection is
-mid-command — read off the buffer's own `default-directory' (the timer
-runs with an unrelated buffer current) via
-`gascity-remote-connection-locked-p' — and refreshes once it clears.
-The old `tramp-locked' guard was always off under TRAMP >= 2.6."
-  (gascity-test--with-mock-remote
-    (file-directory-p default-directory)
-    (let* ((vec (tramp-dissect-file-name default-directory))
-           (proc (tramp-get-connection-process vec))
-           (dashboard (generate-new-buffer "*gascity-status-locked-test*"))
-           (refreshes 0))
-      (skip-unless proc)
-      (unwind-protect
-          (progn
-            (with-current-buffer dashboard
-              (setq default-directory gascity-test--mock-directory))
-            (cl-letf (((symbol-function 'get-buffer-window)
-                       (lambda (&rest _) t))
-                      ((symbol-function 'gascity-status--loads-pending-p)
-                       (lambda (&rest _) nil))
-                      ((symbol-function 'gascity-status--refresh-instance)
-                       (lambda (&rest _) (cl-incf refreshes) t)))
-              ;; Another, LOCAL buffer is current when the timer fires.
-              (with-temp-buffer
-                (let ((default-directory temporary-file-directory))
-                  (unwind-protect
-                      (progn
-                        (tramp-set-connection-property proc "locked" t)
-                        (gascity-status--auto-refresh-tick dashboard)
-                        (should (= refreshes 0)))
-                    (tramp-flush-connection-property proc "locked"))
-                  (gascity-status--auto-refresh-tick dashboard)
-                  (should (= refreshes 1))))))
-        (kill-buffer dashboard)))))
 
 ;;; B3 — sync remote-path hardening
 
@@ -7514,48 +6759,6 @@ session list — with no payload in hand — still probes."
           (should (= probes 1))))
     (gascity-context-clear-cache)))
 
-(ert-deftest gascity-test-status-render-never-reads-sync ()
-  "Mounting and refreshing the dashboard runs no synchronous gc read,
-even on a payload without `city_name' and outside any city tree — the
-socket resolution used to fall through to `gc status' from render."
-  (gascity-context-clear-cache)
-  (let ((vui-render-delay nil)
-        (payload '((ok . t)
-                   (rigs . [((name . "gascity.el") (prefix . "gce")
-                             (path . "/p/gascity.el"))])
-                   (agents . [((name . "mayor") (qualified_name . "mayor")
-                               (scope . "city") (running . t))]))))
-    (cl-letf (((symbol-function 'gascity-reader-read)
-               (lambda (&rest args) (error "sync read from render: %S" args)))
-              ((symbol-function 'gascity-reader-run)
-               (lambda (&rest args) (error "sync run from render: %S" args)))
-              ((symbol-function 'gascity-context-city-name)
-               (lambda (&rest _) nil))
-              ((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional _errback)
-                 (funcall callback
-                          (cond ((equal args '("status")) payload)
-                                ((equal args '("session" "list"))
-                                 '((sessions . [])))
-                                ((equal args '("agent" "list"))
-                                 '((agents . [])))
-                                (t (error "unexpected async args: %S" args))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-status-app)
-                         "*gascity-status-test*")
-              (with-current-buffer "*gascity-status-test*"
-                (should (gascity-test--buffer-contains-p "gascity.el"))
-                (should (gascity-test--buffer-contains-p "mayor"))
-                (gascity-status--refresh-instance (current-buffer))
-                (should (gascity-test--buffer-contains-p "gascity.el"))
-                ;; The payload seeded the rig memo for this host.
-                (should (equal (gascity-rigs-cached-prefixes) '("gce")))))
-          (when (get-buffer "*gascity-status-test*")
-            (kill-buffer "*gascity-status-test*"))
-          (gascity-context-clear-cache))))))
 
 (ert-deftest gascity-test-remote-reader-run-no-temp-file ()
   "A remote `gascity-reader-run' captures stderr with NO temp file on
@@ -8549,7 +7752,12 @@ string (REQ-003)."
                   ("th-1a2b" . ("th-1a2b" . "th-1a2b"))
                   ("scix-worker" . ("scix-worker"))
                   ("human" . ("human"))
-                  ("bd-x1" . ("bd-x1"))
+                  ;; Two-letter city prefixes are gc's own session ids
+                  ;; (`ec-…', `bl-…'): the join that used to fail
+                  ;; (dashboard-v3 §2).
+                  ("bd-x1" . ("bd-x1" . "bd-x1"))
+                  ("gc__implementation-worker-ec-56em"
+                   . ("gc__implementation-worker" . "ec-56em"))
                   ("  polecat-gc-335825 " . ("polecat" . "gc-335825"))))
     (let ((result (gascity-dashboard--parse-assignee (car case))))
       (should (equal (car result) (car (cdr case))))
@@ -8564,110 +7772,10 @@ string (REQ-003)."
   (should-not (gascity-dashboard--bare-session-id-p "td-abcd"))
   (should-not (gascity-dashboard--bare-session-id-p "scix-worker-gc-335812")))
 
-(ert-deftest gascity-test-dashboard-work-in-flight-joins-live-sessions ()
-  "Work in flight joins in-progress beads to live sessions via the parser.
-One row per bead in payload order; a bead whose session is not live (or
-whose assignee carries no handle) degrades to an unjoined row (REQ-003)."
-  (let* ((beads '(((id . "gc-5rarj") (status . "in_progress")
-                   (title . "A") (assignee . "polecat-gc-335825"))
-                  ((id . "gc-4if7h") (status . "in_progress")
-                   (title . "B") (assignee . "scix-worker-gc-335812"))
-                  ((id . "gc-4ded") (status . "in_progress")
-                   (title . "C") (assignee . "human"))
-                  ((id . "gc-4eee") (status . "in_progress")
-                   (title . "D") (assignee . "polecat-gc-999999"))))
-         (sessions '(((id . "gc-335825") (agent_name . "polecat")
-                      (state . "active") (closed . nil))
-                     ((id . "gc-335812") (agent_name . "scix-worker")
-                      (state . "active") (closed . nil))
-                     ((id . "gc-999999") (agent_name . "polecat")
-                      (state . "suspended") (closed . nil))))
-         (rows (gascity-dashboard--work-in-flight beads sessions)))
-    (should (= (length rows) 4))
-    ;; Joined: bead -> live session, role parsed off the assignee.
-    (should (equal (nth 1 (nth 0 rows)) "polecat"))
-    (should (equal (nth 2 (nth 0 rows)) "gc-335825"))
-    (should (equal (alist-get 'id (nth 3 (nth 0 rows))) "gc-335825"))
-    (should (equal (nth 2 (nth 1 rows)) "gc-335812"))
-    ;; Unjoined: no parseable handle.
-    (should (equal (nth 2 (nth 2 rows)) nil))
-    (should (null (nth 3 (nth 2 rows))))
-    ;; Parsed but not live (suspended) -> unjoined row.
-    (should (equal (nth 2 (nth 3 rows)) "gc-999999"))
-    (should (null (nth 3 (nth 3 rows))))))
 
-(ert-deftest gascity-test-dashboard-work-in-flight-dedupes ()
-  "A bead appears at most once, first payload occurrence wins."
-  (let ((rows (gascity-dashboard--work-in-flight
-               '(((id . "gc-1") (assignee . "polecat-gc-111") (title . "x"))
-                 ((id . "gc-1") (assignee . "polecat-gc-111") (title . "x")))
-               '(((id . "gc-111") (agent_name . "polecat")
-                  (state . "active") (closed . nil))))))
-    (should (= (length rows) 1))))
 
-(ert-deftest gascity-test-dashboard-needs-you-precedence ()
-  "Exactly one reason per agent: errored > rate-limited > stalled, and one
-next action each (REQ-004).  There is no pending-interaction reason:
-pending interactions need the supervisor API; out of scope by user
-directive — an agent that looks awaitable (or even a stale pending arg)
-must classify by its derivable CLI state instead."
-  (let* ((agents '(((qualified_name . "a") (state . "failed") (running . t))
-                   ((qualified_name . "b") (state . "rate-limited"))
-                   ((qualified_name . "c") (state . "active") (running . t)
-                    (session . "s-1"))
-                   ((qualified_name . "d") (state . "detached") (running . t))
-                   ((qualified_name . "e") (running . t) (session . nil))
-                   ((qualified_name . "f") (state . "WAITING"))
-                   ((qualified_name . "g") (state . "Crashed"))
-                   ((qualified_name . "h") (running . nil) (session . nil))))
-         (rows (gascity-dashboard--needs-you agents)))
-    (should (= (length rows) 6))
-    (should (equal (nth 0 rows) '("a" "errored" "Exited failed." "reset")))
-    (should (equal (nth 1 rows) '("b" "rate-limited" "Throttled by a provider limit." "nudge")))
-    ;; Actively running with a live session blocks nobody.
-    (should-not (assoc "c" rows))
-    ;; Stalled: detached, or running with no live session.
-    (should (equal (nth 2 rows) '("d" "stalled" "Detached from its session." "nudge")))
-    (should (equal (nth 3 rows) '("e" "stalled" "Running with no live session." "nudge")))
-    ;; State matching is case-insensitive.
-    (should (equal (nth 4 rows) '("f" "rate-limited" "Throttled by a provider limit." "nudge")))
-    (should (equal (nth 5 rows) '("g" "errored" "Exited Crashed." "reset")))
-    ;; Honesty: `awaiting-input' can no longer be produced, by any agent.
-    (should-not (member "awaiting-input" (mapcar #'cl-second rows)))
-    (should-not (rassq 'respond gascity-dashboard--needs-you-actions))
-    ;; The selector takes no pending argument at all (arity pinned).
-    (should (condition-case nil
-                (progn (gascity-dashboard--needs-you agents nil) nil)
-              (wrong-number-of-arguments t)))))
 
-(ert-deftest gascity-test-dashboard-needs-you-awaiting-input-unreachable ()
-  "`awaiting-input' is gone as a classification output (AC 5).
-An agent in a perfectly awaitable shape still classifies by its CLI-
-derivable state — never by a pending interaction the CLI cannot see."
-  (let ((agent '((qualified_name . "p") (state . "active") (running . t)
-                 (session . nil))))
-    ;; Running with no live session is the stalled reason — awaiting
-    ;; input is never emitted, no matter what the agent looks like.
-    (should (equal (gascity-dashboard--needs-you-reason agent) "stalled"))
-    (should-not (member "awaiting-input"
-                        (mapcar (lambda (a) (gascity-dashboard--needs-you-reason a))
-                                (list agent
-                                      '((qualified_name . "q") (state . "waiting"))
-                                      '((qualified_name . "r") (state . "active")
-                                        (running . t) (session . "s-9"))
-                                      '((qualified_name . "s"))))))))
 
-(ert-deftest gascity-test-dashboard-needs-you-count-parity ()
-  "The badge count and the section rows read the same selector output.
-The count the section header shows is the selector output's length, from
-one call site (REQ-004)."
-  (let* ((agents '(((qualified_name . "x") (state . "stuck"))
-                   ((qualified_name . "y") (running . t))))
-         (rows (gascity-dashboard--needs-you agents)))
-    (should (= (length rows) 2))
-    (should (equal (car rows) '("x" "errored" "Exited stuck." "reset")))
-    ;; Running with no live session is the stalled reason.
-    (should (equal (nth 1 rows) '("y" "stalled" "Running with no live session." "nudge")))))
 
 ;;; City dashboard — workflow runs (REQ-014, S1 of Dashboard v2)
 
@@ -8710,244 +7818,14 @@ two open runs (one with a closed step, an active step, a queued step;
 one with no steps), one closed run with a closed step, and a plain
 non-workflow bead.")
 
-(ert-deftest gascity-test-dashboard-run-root-p-discrimination ()
-  "Root vs step: `gc.kind: workflow' is the root signal; a step carries
-`gc.root_bead_id'.  The fallback for a shape without `gc.kind' is the
-root key WITHOUT a step anchor."
-  (let ((rows (append gascity-test--runs-beads nil)))
-    (should (gascity-dashboard--run-root-p (nth 0 rows)))
-    (should-not (gascity-dashboard--run-root-p (nth 1 rows)))
-    (should-not (gascity-dashboard--run-root-p (nth 7 rows)))
-    ;; Fallback: same key, no `gc.kind', no `gc.root_bead_id' => root.
-    (should (gascity-dashboard--run-root-p
-             '((id . "ga-fb") (metadata . ((gc.graphv2_root_key . "k"))))))
-    ;; ...but the same key WITH a step anchor is a step.
-    (should-not (gascity-dashboard--run-root-p
-                 '((id . "ga-fb2")
-                   (metadata . ((gc.graphv2_root_key . "k")
-                                (gc.root_bead_id . "ga-fb"))))))))
 
-(ert-deftest gascity-test-dashboard-workflow-runs-groups-and-progress ()
-  "Runs group by `gc.graphv2_root_key': one row per open root in payload
-order, progress = closed/total steps, current step = first non-closed
-step with an assignee, updated = root `updated_at'."
-  (let* ((result (gascity-dashboard--workflow-runs gascity-test--runs-beads))
-         (rows (plist-get result :rows)))
-    (should (= (length rows) 2))
-    ;; Row 1: the do-work run.
-    (should (equal (alist-get 'id (nth 0 (nth 0 rows))) "ga-run1"))
-    (should (equal (nth 1 (nth 0 rows)) 1))       ; closed steps
-    (should (equal (nth 2 (nth 0 rows)) 3))       ; total steps
-    ;; Current step: the in_progress step with an assignee (not the
-    ;; closed one, not the unassigned queued one).
-    (should (equal (alist-get 'id (nth 3 (nth 0 rows))) "ga-step2"))
-    (should (equal (nth 4 (nth 0 rows)) "2026-09-24T10:00:00Z"))
-    ;; Row 2: the build-basic run with no steps at all.
-    (should (equal (alist-get 'id (nth 0 (nth 1 rows))) "ga-run2"))
-    (should (equal (nth 1 (nth 1 rows)) 0))
-    (should (equal (nth 2 (nth 1 rows)) 0))
-    (should-not (nth 3 (nth 1 rows)))))
 
-(ert-deftest gascity-test-dashboard-workflow-runs-exclude-closed ()
-  "Closed runs are excluded from the default view; the result reports
-their count so the section can render the dim \"N closed runs\" line."
-  (let ((result (gascity-dashboard--workflow-runs gascity-test--runs-beads)))
-    (should (= (plist-get result :closed-count) 1))
-    (should-not (seq-find (lambda (row)
-                            (equal (alist-get 'id (nth 0 row)) "ga-run3"))
-                          (plist-get result :rows)))))
 
-(ert-deftest gascity-test-dashboard-workflow-runs-accepts-wrapped-payload ()
-  "The selector accepts the `issues'-wrapped payload shape too."
-  (let ((result (gascity-dashboard--workflow-runs
-                 (list (cons 'issues gascity-test--runs-beads)))))
-    (should (= (length (plist-get result :rows)) 2))))
 
-(ert-deftest gascity-test-dashboard-run-row-stamps-root-id ()
-  "A run row renders id/formula/phase/progress/current-step/updated and
-stamps `gascity-bead' with the ROOT bead id (the drill-in hook)."
-  (let* ((result (gascity-dashboard--workflow-runs gascity-test--runs-beads))
-         (row (nth 0 (plist-get result :rows)))
-         (vnode (gascity-dashboard--run-row row))
-         (text (gascity-test--vnode-text vnode)))
-    (should (string-match-p "ga-run1" text))
-    (should (string-match-p "do-work" text))
-    (should (string-match-p "in_progress" text))
-    (should (string-match-p "1/3" text))
-    (should (string-match-p "ga-step2" text))
-    (should (equal (plist-get (vui-vnode-text-properties vnode)
-                              'gascity-bead)
-                   "ga-run1"))))
 
-(ert-deftest gascity-test-dashboard-runs-section-renders-and-hides-closed ()
-  "The mounted dashboard renders the Runs section above Work in flight
-with live runs; closed runs are hidden behind the dim count line.
-(REQ-014, AC 1's structure.)"
-  (let ((status-box (list nil))
-        (inprog-box (list nil))
-        (runs-box (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
-                   (setcar inprog-box callback))
-                  ((equal args '("bd" "list" "--status"
-                                 "open,in_progress,blocked,deferred,closed"
-                                 "--rig" "gascity.el"))
-                   (setcar runs-box callback))
-                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car inprog-box)
-                         `((issues . ,(vconcat gascity-test--runs-beads))))
-                (funcall (car runs-box)
-                         `((issues . ,(vconcat gascity-test--runs-beads))))
 
-                (should (gascity-test--buffer-contains-p "▼ Runs"))
-                (should (gascity-test--buffer-contains-p "ga-run1"))
-                (should (gascity-test--buffer-contains-p "ga-run2"))
-                ;; The closed run's row is absent — only the dim count
-                ;; line mentions it.  (Its title still appears via the Beads
-                ;; section's In-progress group below; that group is the raw
-                ;; bead list, not the run view.)
-                (should (gascity-test--buffer-contains-p
-                         "1 closed run hidden"))
-                ;; Runs sits above Work in flight.
-                (should (< (progn (goto-char (point-min))
-                                  (search-forward "▼ Runs") (point))
-                           (progn (goto-char (point-min))
-                                  (search-forward "▼ Work in flight") (point))))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-runs-section-error-inline ()
-  "A failed `gc bd list' read renders the Runs section's error dimly with
-a retry hint — the per-section failure rule (REQ-010, REQ-014)."
-  (let ((status-box (list nil))
-        (inprog-reject (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
-                   (setcar inprog-reject errback))
-                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car inprog-reject) "boom-bd-list")
-                (should (gascity-test--buffer-contains-p "▼ Runs"))
-                (should (gascity-test--buffer-contains-p "gc error: boom-bd-list"))
-                (should (gascity-test--buffer-contains-p "press g to retry"))
-                ;; The other sections keep rendering.
-                (should (gascity-test--buffer-contains-p "▼ Work in flight"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
-(ert-deftest gascity-test-dashboard-cockpit-mail-and-costs ()
-  "The cockpit renders the mail-unread header from the `gc mail count'
-payload, exactly one dim costs pointer row after it, and the api
-placeholder (AC 4, AC 6 pointer rendering)."
-  (let* ((text (gascity-test--vnode-text
-                (gascity-dashboard--cockpit-vnode
-                 gascity-test--dashboard-status '((unread . 4) (total . 9)))))
-         (lines (split-string text "\n")))
-    (should (string-match-p "mail 4 unread" text))
-    ;; Zero unread renders too (the dim-when-zero shape).
-    (should (string-match-p
-             "mail 0 unread"
-             (gascity-test--vnode-text
-              (gascity-dashboard--cockpit-vnode
-               gascity-test--dashboard-status '((unread . 0) (total . 2))))))
-    ;; Missing payload degrades to 0, never a nil in the format.
-    (should (string-match-p
-             "mail 0 unread"
-             (gascity-test--vnode-text
-              (gascity-dashboard--cockpit-vnode
-               gascity-test--dashboard-status nil))))
-    ;; Exactly one costs pointer row, dim (gascity-dim face), after the
-    ;; mail segment.
-    (should (= 1 (cl-count-if
-                  (lambda (l) (string-match-p "costs — run `gc costs' in a shell; no JSON surface" l))
-                  lines)))
-    (let* ((cockpit (gascity-dashboard--cockpit-vnode
-                     gascity-test--dashboard-status '((unread . 4))))
-           (kids (vui-vnode-vstack-children cockpit))
-           (idx (cl-position-if
-                 (lambda (k) (and (vui-vnode-text-p k)
-                                  (string-match-p "mail 4 unread" (vui-vnode-text-content k))))
-                 kids))
-           (cost (and idx (nth (+ idx 2) kids))))
-      (should cost)
-      (should (vui-vnode-text-p cost))
-      (should (eq (vui-vnode-text-face cost) 'gascity-dim))
-      (should (string-match-p "costs — run `gc costs' in a shell" (vui-vnode-text-content cost))))
-    ;; The mail line itself is dim.
-    (should (cl-count-if
-             (lambda (l) (string-match-p "mail 4 unread" l))
-             lines))))
 
-(ert-deftest gascity-test-dashboard-mail-key-and-read ()
-  "`m' opens the existing mail inbox, and the cockpit's mail header comes
-from an async `(mail count)' read through the reader (AC 4)."
-  (should (eq (lookup-key gascity-city-dashboard-mode-map "m")
-              #'gascity-mail-inbox))
-  (should (commandp 'gascity-mail-inbox))
-  ;; The root component's mail read is wired: render with a stub reader
-  ;; and check the (mail count) argv is requested.
-  (let ((mail-box (list nil))
-        (seen-args nil)
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional _errback)
-                 (push args seen-args)
-                 (if (equal args '("mail" "count"))
-                     (setcar mail-box callback)
-                   (funcall callback '((issues . [])))))))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-mail-test*")
-              (should (member '("mail" "count") seen-args))
-              ;; Resolve the count: the cockpit header renders the unread.
-              (funcall (car mail-box) '((unread . 4) (total . 9)))
-              (with-current-buffer "*gascity-dashboard-mail-test*"
-                (should (gascity-test--buffer-contains-p "mail 4 unread"))))
-          (when (get-buffer "*gascity-dashboard-mail-test*")
-            (kill-buffer "*gascity-dashboard-mail-test*")))))))
-
-(ert-deftest gascity-test-dashboard-bead-filter ()
-  "The `/` rig filter narrows bead rows by id prefix; nil passes all."
-  (let ((beads '(((id . "ga-1")) ((id . "be-2")) ((id . "ga-3"))))))
-  "The `/` rig filter narrows bead rows by id prefix; nil passes all."
-  (let ((beads '(((id . "ga-1")) ((id . "be-2")) ((id . "ga-3")))))
-    (should (= (length (seq-filter
-                        (lambda (b) (gascity-dashboard--bead-in-filter-p b "ga-"))
-                        beads))
-               2))
-    (should (= (length (seq-filter
-                        (lambda (b) (gascity-dashboard--bead-in-filter-p b nil))
-                        beads))
-               3)))
-  (should (equal (gascity-dashboard--rig-prefix
-                  "gascity.el"
-                  '(((name . "gascity.el") (prefix . "ga"))
-                    ((name . "beads.el") (prefix . "be"))))
-                 "ga")))
 
 ;;; City dashboard — rendering (mocked async reads, cl-letf)
 
@@ -9000,335 +7878,13 @@ the shape the dashboard expects."
                        (t '((issues . [])))))))
     nil))
 
-(ert-deftest gascity-test-dashboard-renders-sections ()
-  "The mounted dashboard renders every section with data in hand.
-Cockpit, work in flight, needs you, agents, sessions, beads, activity and
-rigs all render from their own payloads (REQ-001, REQ-002)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (inprog-box (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (gascity-test--dashboard-async-stub
-                `((("status") . ,status-box)
-                  (("session" "list") . ,sessions-box)
-                  (("bd" "list" "--status" "in_progress" "--rig" "gascity.el") . ,inprog-box)))))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box)
-                         '((issues . [((id . "ga-10p0")
-                                       (status . "in_progress")
-                                       (title . "Implement")
-                                       (assignee . "human"))])))
-                (should (gascity-test--buffer-contains-p "Gas City:"))
-                (should (gascity-test--buffer-contains-p "emacs-city"))
-                (should (gascity-test--buffer-contains-p "api —"))
-                (should (gascity-test--buffer-contains-p "▼ Work in flight"))
-                (should (gascity-test--buffer-contains-p "ga-10p0"))
-                (should (gascity-test--buffer-contains-p "▼ Needs you"))
-                (should (gascity-test--buffer-contains-p "▼ Agents"))
-                (should (gascity-test--buffer-contains-p "gascity.el/gc.worker"))
-                (should (gascity-test--buffer-contains-p "▼ Sessions"))
-                (should (gascity-test--buffer-contains-p "▼ Beads"))
-                (should (gascity-test--buffer-contains-p "Ready"))
-                (should (gascity-test--buffer-contains-p "▼ Activity"))
-                (should (gascity-test--buffer-contains-p "▼ Rigs")))
-              (should t))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-section-failure-isolated ()
-  "One failing section's read renders its error dimly with a retry hint
-and never blanks the other sections (REQ-010, REQ-006)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (inprog-box (list nil))
-        (ready-reject (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
-                   (setcar inprog-box callback))
-                  ((equal args '("bd" "ready")) (setcar ready-reject errback))
-                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box) '((issues . [])))
-                (funcall (car ready-reject) "boom")
-                (should (gascity-test--buffer-contains-p "gc error: boom"))
-                (should (gascity-test--buffer-contains-p "press g to retry"))
-                ;; The other sections keep their payloads.
-                (should (gascity-test--buffer-contains-p "▼ Work in flight"))
-                (should (gascity-test--buffer-contains-p "▼ Agents"))
-                (should (gascity-test--buffer-contains-p "▼ Rigs"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-pending-nil-does-not-unmount ()
-  "A section still pending with nil data keeps its neighbors mounted.
-A pending state must never unmount a subtree (REQ-010): the cockpit
-renders from its own payload while the beads section still loads."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (inprog-box (list nil))
-        (ready-box (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
-                   (setcar inprog-box callback))
-                  ((equal args '("bd" "ready")) (setcar ready-box callback))
-                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                ;; The ready-beads read is still pending.
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box) '((issues . [])))
-                (should (gascity-test--buffer-contains-p "Gas City:"))
-                (should (gascity-test--buffer-contains-p "▼ Beads"))
-                (should (gascity-test--buffer-contains-p "loading…"))
-                ;; Resolving it fills the group in.
-                (funcall (car ready-box)
-                         '((issues . [((id . "ga-1") (status . "open")
-                                       (title . "One"))])))
-                (should (gascity-test--buffer-contains-p "ga-1"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-refresh-keeps-snapshot-and-collapse ()
-  "A `g' refresh is stale-while-revalidate: the prior payloads keep
-rendering while the reloads are in flight, and collapse state survives
-(REQ-010, REQ-012)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (inprog-box (list nil))
-        (events-box (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
-                   (setcar inprog-box callback))
-                  ((equal args '("events" "--since" "2h"))
-                   (setcar events-box callback))
-                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box) '((issues . [])))
-                (should (gascity-test--buffer-contains-p "▼ Agents"))
-                ;; Collapse the Agents section via its header.
-                (goto-char (point-min))
-                (search-forward "▼ Agents")
-                (goto-char (match-beginning 0))
-                (gascity-dashboard-activate)
-                (should (gascity-test--buffer-contains-p "▶ Agents"))
-                ;; Refresh: stale payloads keep the tree mounted, and the
-                ;; collapsed section stays collapsed.
-                (gascity-dashboard-refresh)
-                (should (gascity-test--buffer-contains-p "▶ Agents"))
-                (should-not (gascity-test--buffer-contains-p
-                             "Loading city dashboard"))
-                ;; Fresh data arrives -> collapse still preserved.
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box) '((issues . [])))
-                (funcall (car events-box) '(nil . 0))
-                (should (gascity-test--buffer-contains-p "▶ Agents"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-stale-refresh-error-inline ()
-  "A failed refresh over a good snapshot keeps the rows AND shows the error.
-The stale-while-revalidate rule keeps the last payload mounted, but the
-failure is still surfaced dimly with a retry hint — never swallowed
-(REQ-010, e2e failing-section check)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (inprog-box (list nil))
-        (convoy-box (list nil))
-        (convoy-fail (list nil))
-        (convoy-reject (list nil))
-        (vui-render-delay nil)
-        (convoys '((convoys . [((id . "ga-y9e4") (title . "drain unit 0")
-                                (status . "open")
-                                (progress . ((closed . 0) (total . 1))))]))))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
-                   (setcar inprog-box callback))
-                  ((equal args '("convoy" "list"))
-                   (if (car convoy-fail)
-                       (setcar convoy-reject errback)
-                     (setcar convoy-box callback)))
-                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box) '((issues . [])))
-                (funcall (car convoy-box) convoys)
-                ;; Good data first, convoys loaded.
-                (should (gascity-test--buffer-contains-p "ga-y9e4"))
-                ;; Refresh with the convoy read failing: stale rows keep
-                ;; rendering AND the error shows dimly with a retry hint.
-                (setcar convoy-fail t)
-                (gascity-dashboard-refresh)
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box) '((issues . [])))
-                (funcall (car convoy-reject) "boom-over-tramp")
-                (should (gascity-test--buffer-contains-p "ga-y9e4"))
-                (should (gascity-test--buffer-contains-p
-                         "gc error: boom-over-tramp (showing last good data)"))
-                (should (gascity-test--buffer-contains-p "press g to retry"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-work-section-error-inline ()
-  "A failed work-in-flight refresh over a good first load keeps the
-joined rows and surfaces the failure dimly with a retry hint (R1,
-REQ-010): the fabricated work load propagates the read's `:error'."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (inprog-box (list nil))
-        (inprog-fail (list nil))
-        (inprog-reject (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("status")) (setcar status-box callback))
-                  ((equal args '("session" "list")) (setcar sessions-box callback))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "gascity.el"))
-                   (if (car inprog-fail)
-                       (setcar inprog-reject errback)
-                     (setcar inprog-box callback)))
-                  ((equal args '("events" "--since" "2h")) (funcall callback '(nil . 0)))
-                  (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . []) (convoys . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-box)
-                         '((issues . [((id . "ga-10p0")
-                                       (status . "in_progress")
-                                       (title . "Implement")
-                                       (assignee . "human"))])))
-                ;; Good first load: the joined row renders.
-                (should (gascity-test--buffer-contains-p "ga-10p0"))
-                ;; Refresh with the in-progress read failing: the stale
-                ;; rows keep rendering AND the Work section shows the
-                ;; error dimly with a retry hint (previously dropped:
-                ;; the fabricated load carried no `:error').
-                (setcar inprog-fail t)
-                (gascity-dashboard-refresh)
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car inprog-reject) "boom-over-tramp")
-                (should (gascity-test--buffer-contains-p "ga-10p0"))
-                (should (gascity-test--buffer-contains-p
-                         "gc error: boom-over-tramp (showing last good data)"))
-                (should (gascity-test--buffer-contains-p "press g to retry"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-agent-row-needs-you-reason ()
-  "A needs-you-flagged roster row prints the REASON, not the name twice.
-The needs-you map stores (NAME REASON DETAIL ACTION) rows, so the `!'
-branch formats the reason string, not the name again (R3)."
-  (let* ((agent '((name . "w1") (qualified_name . "gascity.el/gc.worker")
-                  (running . t) (suspended . :json-false)))
-         (rows (gascity-dashboard--needs-you (list agent)))
-         (map (make-hash-table :test 'equal)))
-    (should (equal (nth 1 (car rows)) "stalled"))
-    (dolist (row rows) (puthash (nth 0 row) row map))
-    (let ((text (gascity-test--vnode-text
-                 (gascity-dashboard--agent-row
-                  agent map (make-hash-table :test 'equal) "sock"))))
-      (should (string-match-p "● !stalled gascity.el/gc.worker" text))
-      (should-not (string-match-p
-                   "gascity.el/gc.worker gascity.el/gc.worker" text)))))
 
-(ert-deftest gascity-test-dashboard-filter-rig-no-sync-gc ()
-  "The `/` filter sources its candidates from the rig memo, never the
-synchronous gc executor (R2, AC-5): a memo stub feeds the completion and
-any `gascity-command-rig-list!' call fails the test."
-  (let ((captured 'unset))
-    (cl-letf (((symbol-function 'gascity-rigs-cached)
-               (lambda (&optional _)
-                 (list (make-instance 'gascity-rig :name "gascity.el"
-                                      :prefix "ga")
-                       (make-instance 'gascity-rig :name "beads.el"
-                                      :prefix "be"))))
-              ((symbol-function 'completing-read)
-               (lambda (_prompt candidates)
-                 (car (member "gascity.el" candidates))))
-              ((symbol-function 'gascity-command-rig-list!)
-               (lambda () (error "synchronous gc call in the / filter")))
-              ((symbol-function 'gascity-dashboard--set-bead-rig)
-               (lambda (rig) (setq captured rig))))
-      (gascity-dashboard-filter-rig)
-      (should (equal captured "gascity.el"))))
-  ;; An empty completion clears the filter.
-  (let ((captured 'unset))
-    (cl-letf (((symbol-function 'gascity-rigs-cached)
-               (lambda (&optional _) nil))
-              ((symbol-function 'completing-read)
-               (lambda (_prompt _candidates) ""))
-              ((symbol-function 'gascity-dashboard--set-bead-rig)
-               (lambda (rig) (setq captured rig))))
-      (gascity-dashboard-filter-rig)
-      (should (equal captured nil)))))
 
 (ert-deftest gascity-test-dashboard-buffer-is-view-keyed ()
   "The dashboard buffer is created through the view-buffer factory.
@@ -9350,7 +7906,7 @@ buffer."
       (gascity-dashboard)
       (should (= factory-calls 1))
       (with-current-buffer "*gascity-dashboard-fake*"
-        (should (derived-mode-p 'gascity-city-dashboard-mode)))
+        (should (derived-mode-p 'gascity-dashboard-mode)))
       (gascity-dashboard)
       (should (= factory-calls 2))
       (when (get-buffer "*gascity-dashboard-fake*")
@@ -9495,7 +8051,7 @@ input-convoy row joined from the run root's metadata."
                 (should (gascity-test--buffer-contains-p
                          "phase in_progress"))
                 (should (gascity-test--buffer-contains-p "progress 1/3"))
-                (should (gascity-test--buffer-contains-p "▼ Steps (3)"))
+                (should (gascity-test--buffer-contains-p "Steps  3"))
                 (should (gascity-test--buffer-contains-p "ga-bpc6"))
                 (should (gascity-test--buffer-contains-p "spec · open · —"))
                 (should (gascity-test--buffer-contains-p "ga-w3rq"))
@@ -9505,7 +8061,7 @@ input-convoy row joined from the run root's metadata."
                          "gc__implementation-worker-ec-wfaj"))
                 (should (gascity-test--buffer-contains-p "— · closed · —"))
                 (should (gascity-test--buffer-contains-p
-                         "▼ Input convoy (1)"))
+                         "Input convoy  1"))
                 (should (gascity-test--buffer-contains-p
                          "input convoy ga-da1f open 0/1"))))
           (when (get-buffer "*gascity-run-test*")
@@ -9563,8 +8119,8 @@ independent load, degrades to its absent state (REQ-010)."
                          "*gascity-run-test*")
               (with-current-buffer "*gascity-run-test*"
                 (funcall (car bd-reject) "boom")
-                (should (gascity-test--buffer-contains-p "gc error: boom"))
-                (should (gascity-test--buffer-contains-p "press g to retry"))
+                (should (gascity-test--buffer-contains-p "■ gc steps: boom"))
+                (should (gascity-test--buffer-contains-p "g retry"))
                 ;; The header and the convoy section stay up.
                 (should (gascity-test--buffer-contains-p "Run ga-um77"))
                 (should (gascity-test--buffer-contains-p
@@ -9650,143 +8206,10 @@ drills into the bead at point."
 
 ;;; City dashboard — Runs rig fan-out (S5 live-check fix)
 
-(ert-deftest gascity-test-dashboard-fanout-unions-rig-stores ()
-  "The rig fan-out unions the per-rig stores in rig order, each row
-stamped with its owning store (the drill-in's `--rig' scope hook)."
-  (let ((resolved nil)
-        (parked nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional _errback &rest _)
-                 (cond
-                  ((equal args '("rig" "list"))
-                   (funcall callback
-                            '((rigs . [((name . "alpha") (prefix . "al"))
-                                      ((name . "beta") (prefix . "be"))]))))
-                  (t
-                   (push (cons args callback) parked)))
-                 nil)))
-      (gascity-dashboard--bd-list-rigs-async
-       '("bd" "list" "--status" "in_progress")
-       (lambda (rows) (setq resolved rows))
-       (lambda (_err) (setq resolved :rejected)))
-      ;; One read per rig, in rig order, with the `--rig' scope.
-      (should (equal (mapcar #'car parked)
-                     (list '("bd" "list" "--status" "in_progress" "--rig" "beta")
-                           '("bd" "list" "--status" "in_progress" "--rig" "alpha"))))
-      (funcall (alist-get '("bd" "list" "--status" "in_progress" "--rig" "alpha")
-                      parked nil nil #'equal)
-               '((issues . [((id . "al-1") (status . "in_progress"))])))
-      (funcall (alist-get '("bd" "list" "--status" "in_progress" "--rig" "beta")
-                      parked nil nil #'equal)
-               '((issues . [((id . "be-1") (status . "in_progress"))])))
-      ;; Union in rig order, each row stamped with its store.
-      (should (equal resolved
-                     (vector '((id . "al-1") (status . "in_progress")
-                               (gascity-rig . "alpha"))
-                             '((id . "be-1") (status . "in_progress")
-                               (gascity-rig . "beta"))))))))
 
-(ert-deftest gascity-test-dashboard-fanout-partial-failure-degrades ()
-  "A failing rig store skips just that store — the union still
-resolves with the other rigs' rows; only a total failure rejects."
-  (let (resolved rejected)
-    ;; One of two rigs fails: alpha's rows survive.
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond
-                  ((equal args '("rig" "list"))
-                   (funcall callback
-                            '((rigs . [((name . "alpha")) ((name . "beta"))]))))
-                  ((equal args '("bd" "list" "--status" "in_progress" "--rig" "beta"))
-                   (funcall errback "boom-beta"))
-                  (t (funcall callback '((issues . [((id . "al-1"))])))))
-                 nil)))
-      (gascity-dashboard--bd-list-rigs-async
-       '("bd" "list" "--status" "in_progress")
-       (lambda (rows) (setq resolved rows))
-       (lambda (err) (setq rejected err)))
-      (should (null rejected))
-      (should (equal resolved
-                     (vector '((id . "al-1") (gascity-rig . "alpha")))))))
-    ;; Every rig fails: the section's error path fires.
-    (let (resolved rejected)
-      (cl-letf (((symbol-function 'gascity-reader-read-async)
-                 (lambda (args callback &optional errback &rest _)
-                   (cond
-                    ((equal args '("rig" "list"))
-                     (funcall callback '((rigs . [((name . "alpha"))]))))
-                    (t (funcall errback "boom-all")))
-                   nil)))
-        (gascity-dashboard--bd-list-rigs-async
-         '("bd" "list" "--status" "in_progress")
-         (lambda (rows) (setq resolved rows))
-         (lambda (err) (setq rejected err)))
-        (should (equal rejected "boom-all")))))
 
-(ert-deftest gascity-test-dashboard-fanout-no-rigs-resolves-empty ()
-  "A city with no rigs resolves the empty payload, never a hang."
-  (let (resolved)
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional _errback &rest _)
-                 (when (equal args '("rig" "list"))
-                   (funcall callback '((rigs . []))))
-                 nil)))
-      (gascity-dashboard--bd-list-rigs-async
-       '("bd" "list" "--status" "in_progress")
-       (lambda (rows) (setq resolved rows))
-       (lambda (_err) (setq resolved :rejected)))
-      (should (equal resolved [])))))
 
-(ert-deftest gascity-test-dashboard-runs-read-carries-all-statuses ()
-  "The Runs census reads EVERY status per rig (the fan-out scope): a
-run's progress fraction counts closed steps, which an in-progress read
-never sees (S5 live check — the real build-basic run rendered 0/0)."
-  (let ((args-captured nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional _errback &rest _)
-                 (push args args-captured)
-                 (if (equal args '("rig" "list"))
-                     (funcall callback '((rigs . [((name . "gascity.el"))])))
-                   (funcall callback '((issues . []))))
-                 nil)))
-      (gascity-dashboard--bd-list-rigs-async
-       '("bd" "list" "--status" "open,in_progress,blocked,deferred,closed")
-       #'ignore #'ignore)
-      (should (member '("bd" "list" "--status"
-                        "open,in_progress,blocked,deferred,closed"
-                        "--rig" "gascity.el")
-                      args-captured))
-      ;; The in-progress census (Work in flight, Beads) stays separate.
-      (gascity-dashboard--bd-list-rigs-async
-       '("bd" "list" "--status" "in_progress")
-       #'ignore #'ignore)
-      (should (member '("bd" "list" "--status" "in_progress"
-                        "--rig" "gascity.el")
-                      args-captured)))))
 
-(ert-deftest gascity-test-dashboard-workflow-runs-live-step-shape ()
-  "The live S5 shape: steps carry ONLY `gc.root_bead_id' — the root key
-never reaches the steps — and the grouping still counts them toward
-the run's progress fraction (the real build-basic run rendered 0/0
-before this)."
-  (let* ((rows '((id . "ga-live") (status . "in_progress")
-                 (title . "do-work") (updated_at . "2026-09-24T15:00:00Z")
-                 (metadata . ((gc.kind . "workflow")
-                              (gc.formula_name . "do-work")
-                              (gc.graphv2_root_key . "graphv2-root:ga-live")))))
-         (step-open '((id . "ga-lbl7") (status . "in_progress")
-                      (assignee . "gc__worker")
-                      (metadata . ((gc.root_bead_id . "ga-live")))))
-         (step-closed '((id . "ga-prep") (status . "closed")
-                        (metadata . ((gc.root_bead_id . "ga-live")))))
-         (result (gascity-dashboard--workflow-runs
-                  (vector rows step-open step-closed))))
-    (should (= (length (plist-get result :rows)) 1))
-    (let ((row (car (plist-get result :rows))))
-      (should (equal (alist-get 'id (nth 0 row)) "ga-live"))
-      (should (= (nth 1 row) 1))          ; one closed step
-      (should (= (nth 2 row) 2))          ; two steps total
-      (should (equal (alist-get 'id (nth 3 row)) "ga-lbl7")))))
 
 (ert-deftest gascity-test-dashboard-ret-on-run-row-opens-run-show ()
   "RET on a Runs-section row opens the run-detail drill-in scoped to
@@ -9879,78 +8302,9 @@ the feed — the remote-parity shape of the whole-feed-failure rule
   (should (equal (gascity-reader--parse-json-lines "just noise\n")
                  '(nil . 0))))
 
-(ert-deftest gascity-test-dashboard-events-exclude-chatty-default ()
-  "The default exclusion drops the chatty types, everything else passes."
-  (let* ((events (list '((type . "order.fired") (subject . "x"))
-                       '((type . "bead.updated") (subject . "y"))
-                       '((type . "order.completed") (subject . "w"))
-                       '((type . "session.started") (subject . "z"))))
-         (view (gascity-dashboard--events-view
-                (cons events 0) gascity-dashboard--events-chatty-default
-                gascity-dashboard-events-limit)))
-    (should (= (length (plist-get view :events)) 1))
-    (should (equal (alist-get 'type (car (plist-get view :events)))
-                   "session.started"))
-    (should (= (plist-get view :hidden) 0))
-    (should (= (plist-get view :bad) 0))))
 
-(ert-deftest gascity-test-dashboard-events-cap-trims-oldest ()
-  "The limit cap keeps the payload's tail (the most recent events) and
-counts the dropped ones in :hidden."
-  (let* ((events (cl-loop for i from 1 to 5
-                          collect `((type . "t") (seq . ,i))))
-         (view (gascity-dashboard--events-view (cons events 0) nil 2)))
-    (should (= (length (plist-get view :events)) 2))
-    ;; The LAST events survive (ascending seq = oldest first).
-    (should (equal (alist-get 'seq (car (plist-get view :events))) 4))
-    (should (equal (alist-get 'seq (car (last (plist-get view :events))))
-                   5))
-    (should (= (plist-get view :hidden) 3)))
-  ;; A feed shorter than the limit is untouched.
-  (let ((view (gascity-dashboard--events-view
-               (cons '(((type . "t"))) 0) nil 500)))
-    (should (= (length (plist-get view :events)) 1))
-    (should (= (plist-get view :hidden) 0))))
 
-(ert-deftest gascity-test-dashboard-event-ts-and-summary ()
-  "The ts renders HH:MM:SS out of the RFC3339 stamp; the summary is the
-first line of payload.title (preferred) or payload.summary, nil when
-neither."
-  (should (equal (gascity-dashboard--event-ts
-                  '((ts . "2026-09-24T13:59:12.293914966+02:00")))
-                 "13:59:12"))
-  ;; Unexpected shapes degrade to the raw value.
-  (should (equal (gascity-dashboard--event-ts '((ts . "whenever")))
-                 "whenever"))
-  (should-not (gascity-dashboard--event-ts '((subject . "x"))))
-  (should (equal (gascity-dashboard--event-summary
-                  '((payload . ((title . "first line\nsecond")))))
-                 "first line"))
-  (should (equal (gascity-dashboard--event-summary
-                  '((payload . ((summary . "  the summary ")))))
-                 "the summary"))
-  ;; title wins over summary; no summary fields, no summary.
-  (should (equal (gascity-dashboard--event-summary
-                  '((payload . ((title . "t") (summary . "s")))))
-                 "t"))
-  (should-not (gascity-dashboard--event-summary
-               '((payload . ((other . "x")))))))
 
-(ert-deftest gascity-test-dashboard-events-toggle-chatty-set ()
-  "The chatty toggle works as a set: none excluded adds all; any
-excluded removes all; other exclusions are preserved."
-  (should (equal (gascity-dashboard--events-toggle-chatty nil)
-                 gascity-dashboard--events-chatty-default))
-  (should (equal (gascity-dashboard--events-toggle-chatty
-                  gascity-dashboard--events-chatty-default)
-                 nil))
-  (should (equal (gascity-dashboard--events-toggle-chatty '("custom.x"))
-                 (append '("custom.x")
-                         gascity-dashboard--events-chatty-default)))
-  (should (equal (gascity-dashboard--events-toggle-chatty
-                  (append '("custom.x")
-                          gascity-dashboard--events-chatty-default))
-                 '("custom.x"))))
 
 (defconst gascity-test--dashboard-events-payload
   (cons (list '((type . "session.started") (subject . "ec-51a1")
@@ -9967,147 +8321,8 @@ excluded removes all; other exclusions are preserved."
   "A JSONL events payload: three visible events (one failed), one chatty
 type, and two malformed lines.")
 
-(ert-deftest gascity-test-dashboard-activity-renders-events ()
-  "The Activity section renders event rows, the cap line and the
-malformed-line count from the JSONL payload; the read goes through the
-reader's :lines mode and the chatty type is filtered from rows and
-count alike (plan S3)."
-  (let ((status-box (list nil))
-        (sessions-box (list nil))
-        (events-box (list nil))
-        (lines-flag nil)
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond ((equal args '("status"))
-                        (setcar status-box callback))
-                       ((equal args '("session" "list"))
-                        (setcar sessions-box callback))
-                       ((equal args '("events" "--since" "2h"))
-                        (setq lines-flag t)
-                        (setcar events-box callback))
-                       (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . [])))))
-                 nil))
-              (gascity-dashboard-events-limit 2))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car sessions-box) gascity-test--dashboard-sessions)
-                (funcall (car events-box)
-                         gascity-test--dashboard-events-payload)
-                ;; The JSONL path was requested, not the single-payload
-                ;; --json one.
-                (should lines-flag)
-                ;; Header counts the FILTERED, CAPPED rows (3 good
-                ;; non-chatty events capped to 2; the chatty one and
-                ;; the two malformed lines never render as rows).
-                (should (gascity-test--buffer-contains-p "▼ Activity (2)"))
-                ;; The cap keeps the MOST RECENT events: the oldest
-                ;; visible row (ec-51a1) is hidden by the cap…
-                (should (gascity-test--buffer-contains-p "14:00:01"))
-                (should (gascity-test--buffer-contains-p "ec-52b2"))
-                (should (gascity-test--buffer-contains-p "14:00:02"))
-                (should (gascity-test--buffer-contains-p "ec-53c3"))
-                (should-not (gascity-test--buffer-contains-p "13:59:12"))
-                (should-not (gascity-test--buffer-contains-p "worker up"))
-                ;; The chatty type is excluded by default.
-                (should-not (gascity-test--buffer-contains-p
-                             "nudge-on-route"))
-                (should-not (gascity-test--buffer-contains-p
-                             "order.fired"))
-                ;; The cap dropped the oldest visible event…
-                (should (gascity-test--buffer-contains-p
-                         "1 older events hidden"))
-                ;; …and the payload's malformed lines degrade to a dim
-                ;; inline line, never a failure.
-                (should (gascity-test--buffer-contains-p
-                         "2 malformed event lines skipped"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-activity-failure-inline ()
-  "A failing Activity read shows the standard dim error line with a
-retry hint and never blanks the dashboard (REQ-010)."
-  (let ((status-box (list nil))
-        (events-reject (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond ((equal args '("status"))
-                        (setcar status-box callback))
-                       ((equal args '("events" "--since" "2h"))
-                        (setcar events-reject errback))
-                       (t (funcall callback
-                                   '((issues . []) (convoys . []))))))
-                 nil))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car events-reject) "boom-events")
-                (should (gascity-test--buffer-contains-p "▼ Activity"))
-                (should (gascity-test--buffer-contains-p
-                         "gc error: boom-events"))
-                (should (gascity-test--buffer-contains-p
-                         "press g to retry"))
-                ;; The other sections keep rendering.
-                (should (gascity-test--buffer-contains-p "▼ Agents"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
-(ert-deftest gascity-test-dashboard-events-filter-toggle-lifted ()
-  "The events filter is lifted to the root component: toggling the
-default-chatty set off reveals the excluded rows and survives a
-refresh; clearing re-excludes nothing."
-  (let ((status-box (list nil))
-        (events-box (list nil))
-        (vui-render-delay nil))
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (args callback &optional errback &rest _)
-                 (cond ((equal args '("status"))
-                        (setcar status-box callback))
-                       ((equal args '("events" "--since" "2h"))
-                        (setcar events-box callback))
-                       (t (funcall callback '((rigs . [((name . "gascity.el"))]) (issues . [])))))
-                 nil)))
-      (save-window-excursion
-        (unwind-protect
-            (progn
-              (vui-mount (vui-component 'gascity-dashboard-app)
-                         "*gascity-dashboard-test*")
-              (with-current-buffer "*gascity-dashboard-test*"
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car events-box)
-                         (cons (list '((type . "order.fired")
-                                       (subject . "nudge-on-route")
-                                       (ts . "2026-09-24T13:59:13.000000000+02:00")
-                                       (ok . t)))
-                               0))
-                ;; Excluded by default…
-                (should-not (gascity-test--buffer-contains-p
-                             "nudge-on-route"))
-                ;; …revealed by the toggle…
-                (gascity-dashboard-events-toggle-chatty)
-                (should (gascity-test--buffer-contains-p "nudge-on-route"))
-                ;; …and the state survives a refresh.
-                (gascity-dashboard-refresh)
-                (funcall (car status-box) gascity-test--dashboard-status)
-                (funcall (car events-box)
-                         (cons (list '((type . "order.fired")
-                                       (subject . "nudge-on-route")
-                                       (ts . "2026-09-24T13:59:13.000000000+02:00")
-                                       (ok . t)))
-                               0))
-                (should (gascity-test--buffer-contains-p "nudge-on-route"))))
-          (when (get-buffer "*gascity-dashboard-test*")
-            (kill-buffer "*gascity-dashboard-test*")))))))
 
 ;;; Menus opened from `project-switch-project'
 
@@ -10123,9 +8338,8 @@ the directory it was opened for."
                     gascity-bead-dispatch gascity-mail-dispatch
                     gascity-rig-list-filter gascity-session-list-filter
                     gascity-convoy-list-filter gascity-mail-inbox-filter
-                    gascity-order-list-filter
-                    gascity-dashboard-events-filter-dispatch
-                    gascity-dashboard-filter-dispatch))
+                    gascity-order-list-filter gascity-dolt-list-filter
+                    gascity-dashboard-filter gascity-dispatch))
     (should (cl-typep (get prefix 'transient--prefix) 'beads-prefix))))
 
 (defun gascity-test--view-directory (command home project)
@@ -10142,10 +8356,10 @@ calls it for PROJECT."
           (funcall command))))))
 
 (ert-deftest gascity-test-dashboards-open-city-of-switched-project ()
-  "From the menu of `project-switch-project', the status and city
-dashboards open the chosen project's city, not the current buffer's."
+  "From the menu of `project-switch-project', the city cockpit opens
+the chosen project's city, not the current buffer's."
   (require 'gascity-dashboard)
-  (dolist (command '(gascity-status gascity-dashboard))
+  (dolist (command '(gascity-dashboard))
     (should (equal (gascity-test--view-directory
                     command "/tmp/home/" "/tmp/city")
                    "/tmp/city/"))
@@ -10161,7 +8375,7 @@ suffix is picked."
         (map (make-sparse-keymap))
         seen)
     (unwind-protect
-        (cl-letf (((symbol-function 'gascity-status)
+        (cl-letf (((symbol-function 'gascity-dashboard)
                    (lambda () (interactive) (push default-directory seen))))
           (keymap-set map "<f12>" #'gascity)
           (with-current-buffer (window-buffer)
@@ -10170,7 +8384,7 @@ suffix is picked."
               (setq-local default-directory home)
               (let ((project-current-directory-override city))
                 (execute-kbd-macro (kbd "<f12>")))
-              (execute-kbd-macro (kbd "s"))))
+              (execute-kbd-macro (kbd "h"))))
           (should (equal seen (list city))))
       (delete-directory home t)
       (delete-directory city t))))

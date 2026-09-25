@@ -130,6 +130,15 @@ when it had to be cut."
                    cut
                  (propertize cut 'help-echo (substring-no-properties str))))))))
 
+(defun gascity-ui-truncate (string width)
+  "Return STRING cut to at most WIDTH columns with `…' (no padding).
+The full text rides in `help-echo' when it had to be cut."
+  (let ((str (or string "")))
+    (if (<= (string-width str) width)
+        str
+      (propertize (truncate-string-to-width str width 0 nil "…")
+                  'help-echo (substring-no-properties str)))))
+
 (defun gascity-ui-right-align (left right width)
   "Return LEFT and RIGHT joined so RIGHT ends at column WIDTH.
 At least two spaces separate them; a LEFT too wide to leave room just

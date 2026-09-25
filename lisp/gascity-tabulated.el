@@ -581,7 +581,100 @@ spans every page).  Each list's own keymap parents off this and adds
   "]" #'gascity-tabulated-next-page
   "[" #'gascity-tabulated-prev-page
   "G" #'gascity-tabulated-goto-page
-  "S" #'gascity-sling-dispatch)
+  "S" #'gascity-sling-dispatch
+  "C-o" #'gascity-tabulated-detail-show
+  "C-c C-f" #'gascity-tabulated-detail-follow-mode
+  "q" #'gascity-tabulated-quit)
+
+;; §5.4 in every list: TAB/S-TAB next/previous row, `?' dispatch, `j'
+;; jump; SPC shows the row's detail in a side window (rows cannot host
+;; an inline drawer), replacing tabulated-list's SPC = next line.
+(gascity-thing-define-keys gascity-tabulated-base-map)
+(keymap-set gascity-tabulated-base-map "SPC" #'gascity-tabulated-detail-toggle)
+
+;;; Detail side window (§5.4)
+
+(defconst gascity-tabulated-detail-buffer-name "*gascity-detail*"
+  "Base name of the side window showing the list row at point.")
+
+(defun gascity-tabulated--detail-lines (id entry)
+  "Return the detail lines of a list row: its ID object, then its ENTRY.
+An EIEIO object lists its slots, an alist its keys; anything else its
+printed form.  Pure over the row already in hand (no gc call)."
+  (append
+   (cond
+    ((eieio-object-p id)
+     (mapcar (lambda (slot)
+               (format "%-14s %s" slot
+                       (gascity-tabulated--str
+                        (and (slot-boundp id slot) (slot-value id slot)))))
+             (mapcar #'eieio-slot-descriptor-name
+                     (eieio-class-slots (eieio-object-class id)))))
+    ((and (consp id) (consp (car id)))
+     (mapcar (lambda (kv) (format "%-14s %s" (car kv)
+                                  (gascity-tabulated--str (cdr kv))))
+             id))
+    (t (list (format "%s" id))))
+   (and entry
+        (cons ""
+              (cl-loop for col across tabulated-list-format
+                       for cell across entry
+                       collect (format "%-14s %s" (car col)
+                                       (if (consp cell) (car cell) cell)))))))
+
+(defun gascity-tabulated--detail-window ()
+  "Return the live window showing the detail buffer of this list, or nil."
+  (let ((buf (get-buffer (gascity-remote-buffer-name
+                          gascity-tabulated-detail-buffer-name))))
+    (and buf (get-buffer-window buf))))
+
+(defun gascity-tabulated-detail-show ()
+  "Show the row at point in the `*gascity-detail*' side window (`C-o').
+The list keeps focus, like `C-o' in occur, compilation and Dired."
+  (interactive)
+  (let ((id (tabulated-list-get-id))
+        (entry (tabulated-list-get-entry)))
+    (unless id (user-error "No row at point"))
+    (let ((buf (get-buffer-create (gascity-remote-buffer-name
+                                   gascity-tabulated-detail-buffer-name)))
+          (lines (gascity-tabulated--detail-lines id entry)))
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (string-join lines "\n") "\n")
+          (goto-char (point-min)))
+        (special-mode))
+      (display-buffer buf '((display-buffer-in-side-window)
+                            (side . right) (window-width . 0.4))))))
+
+(defun gascity-tabulated-detail-toggle ()
+  "Toggle the `*gascity-detail*' side window for the row at point (SPC)."
+  (interactive)
+  (let ((win (gascity-tabulated--detail-window)))
+    (if win
+        (delete-window win)
+      (gascity-tabulated-detail-show))))
+
+(defun gascity-tabulated--detail-follow ()
+  "Update an open detail window to the row at point (follow mode)."
+  (when (and (gascity-tabulated--detail-window) (tabulated-list-get-id))
+    (gascity-tabulated-detail-show)))
+
+(define-minor-mode gascity-tabulated-detail-follow-mode
+  "Make the `*gascity-detail*' window follow point in this list (`C-c C-f').
+The counterpart of `next-error-follow-minor-mode'."
+  :lighter " Fol"
+  (if gascity-tabulated-detail-follow-mode
+      (add-hook 'post-command-hook #'gascity-tabulated--detail-follow nil t)
+    (remove-hook 'post-command-hook #'gascity-tabulated--detail-follow t)))
+
+(defun gascity-tabulated-quit ()
+  "Close the detail window when one is open, else bury the list (`q')."
+  (interactive)
+  (let ((win (gascity-tabulated--detail-window)))
+    (if win
+        (delete-window win)
+      (quit-window))))
 
 ;;; Filter menus (dashboard-v3 §5.5)
 ;;

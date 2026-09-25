@@ -79,7 +79,7 @@ When no :global-section (and no explicit :transient) is given it passes
 :transient nil, so a plain command expands to just its class and NAME!
 function — as before.  The engine would otherwise auto-generate a
 transient whose derived prefix (NAME minus \"-command-\") would clobber
-gascity's hand-written view commands such as `gascity-status' and
+gascity's hand-written view commands such as `gascity-dashboard' and
 `gascity-rig-list'."
   (declare (indent 2))
   (let* ((gs-result (beads-meta-extract-option :global-section options))

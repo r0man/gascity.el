@@ -27,6 +27,7 @@
 
 (require 'seq)                    ; seq-find (section-header scan)
 (require 'beads-section)
+(require 'beads-thing)
 (require 'vui)
 (require 'wid-edit)
 (require 'gascity-custom)
@@ -108,6 +109,131 @@ first section — signalling a `user-error' rather than wrapping."
         (goto-char prev)
       (user-error "No previous section"))))
 
+;;; Things: TAB / S-TAB / SPC in every vui view (dashboard-v3 §5.4)
+;;
+;; The motion itself is beads.el's thing primitive (`beads-thing-forward'
+;; and friends): a thing is a run of text carrying one `beads-thing'
+;; value.  The cockpit stamps its things while rendering; the other vui
+;; views (rig dashboard, agent detail, run detail) stamp nothing, so the
+;; commands below first mark their things from the identity properties
+;; their rows already carry — a section header (`gascity-section'), an
+;; agent, bead or rig row — and give those headers a fold: SPC hides the
+;; section body with an `invisible' overlay, re-applied after every
+;; re-render so a fold survives refresh.
+
+(defvar-local gascity-section--folded nil
+  "Header texts of the sections folded in this (non-cockpit) vui view.")
+
+(defun gascity-section--line-thing ()
+  "Return the thing to stamp on the current line, or nil.
+Section headers become `section' things; object rows `row' things."
+  (let ((header (gascity-section--line-property 'gascity-section))
+        (id (gascity-section--line-id)))
+    (cond (header
+           (let ((text (string-trim (buffer-substring-no-properties
+                                     (line-beginning-position)
+                                     (line-end-position)))))
+             (list :kind 'section :id text
+                   :toggle (lambda () (gascity-section--toggle-fold text)))))
+          (id (list :kind 'row :id id)))))
+
+(defun gascity-section-stamp-things ()
+  "Mark this vui view's things with `beads-thing' where unmarked.
+Idempotent and cheap (one pass over the lines); lines already carrying
+a `beads-thing' (the cockpit's own stamps) are left alone."
+  (let ((inhibit-read-only t)
+        (inhibit-modification-hooks t)
+        (buffer-undo-list t))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((beg (line-beginning-position))
+              (end (line-end-position)))
+          (unless (text-property-not-all beg end 'beads-thing nil)
+            (when-let* ((thing (gascity-section--line-thing)))
+              (let ((start (save-excursion
+                             (back-to-indentation) (point))))
+                (when (< start end)
+                  (put-text-property start end 'beads-thing thing))))))
+        (forward-line 1)))))
+
+(defun gascity-section--section-end (pos)
+  "Return the end of the section body whose header line holds POS."
+  (save-excursion
+    (goto-char pos)
+    (forward-line 1)
+    (let ((next (seq-find (lambda (p) (> p (point)))
+                          (gascity-section--header-starts))))
+      (if next
+          (save-excursion (goto-char next) (line-beginning-position))
+        (point-max)))))
+
+(defun gascity-section--apply-folds ()
+  "Hide the bodies of the folded sections of this view."
+  (remove-overlays (point-min) (point-max) 'gascity-section-fold t)
+  (dolist (start (gascity-section--header-starts))
+    (let ((text (save-excursion
+                  (goto-char start)
+                  (string-trim (buffer-substring-no-properties
+                                (line-beginning-position) (line-end-position))))))
+      (when (member text gascity-section--folded)
+        (let* ((body (save-excursion (goto-char start) (line-end-position)))
+               (end (gascity-section--section-end start))
+               (ov (make-overlay body (max body (1- end)))))
+          (overlay-put ov 'invisible t)
+          (overlay-put ov 'gascity-section-fold t)
+          (overlay-put ov 'after-string (propertize " …" 'face 'gascity-dim)))))))
+
+(defun gascity-section--toggle-fold (text)
+  "Fold or unfold the section whose header reads TEXT."
+  (setq gascity-section--folded
+        (if (member text gascity-section--folded)
+            (remove text gascity-section--folded)
+          (cons text gascity-section--folded)))
+  (gascity-section--apply-folds))
+
+(defun gascity-thing-forward (&optional n)
+  "Move to the Nth next thing (TAB), marking this view's things first."
+  (interactive "p")
+  (unless (derived-mode-p 'tabulated-list-mode)
+    (gascity-section-stamp-things))
+  (beads-thing-forward n))
+
+(defun gascity-thing-backward (&optional n)
+  "Move to the Nth previous thing (S-TAB), marking this view's things first."
+  (interactive "p")
+  (unless (derived-mode-p 'tabulated-list-mode)
+    (gascity-section-stamp-things))
+  (beads-thing-backward n))
+
+(defun gascity-thing-toggle ()
+  "Toggle the thing at point (SPC): fold, expand, or open its detail."
+  (interactive)
+  (unless (derived-mode-p 'tabulated-list-mode)
+    (gascity-section-stamp-things))
+  (beads-thing-toggle))
+
+(defun gascity-thing-define-keys (map)
+  "Install the §5.4 movement keys, `?' and `j' in MAP; return MAP.
+TAB/S-TAB/SPC go through the gascity wrappers of beads.el's thing
+commands (see `beads-thing-define-keys'), `?' opens the dispatch and
+`j' the jump prefix — the same in every gascity view."
+  (beads-thing-define-keys map)
+  (dolist (key '("TAB" "<tab>"))
+    (keymap-set map key #'gascity-thing-forward))
+  (dolist (key '("<backtab>" "S-TAB" "S-<tab>"))
+    (keymap-set map key #'gascity-thing-backward))
+  (keymap-set map "SPC" #'gascity-thing-toggle)
+  (dolist (cmd '(vui-forward widget-forward forward-button))
+    (define-key map (vector 'remap cmd) #'gascity-thing-forward))
+  (dolist (cmd '(vui-backward widget-backward backward-button))
+    (define-key map (vector 'remap cmd) #'gascity-thing-backward))
+  ;; Defined in gascity-dashboard (loaded later); quoted, resolved at
+  ;; key time.
+  (keymap-set map "?" 'gascity-dispatch)
+  (keymap-set map "j" 'gascity-jump-prefix)
+  map)
+
 (defvar-keymap gascity-section-mode-map
   :doc "Keymap for `gascity-section-mode'."
   :parent beads-section-mode-map
@@ -134,6 +260,8 @@ first section — signalling a `user-error' rather than wrapping."
   ;; tabulated lists (which inherit it from `tabulated-list-mode-map')
   ;; and the magit/forge convention (gce-0d5).
   "q" #'quit-window)
+
+(gascity-thing-define-keys gascity-section-mode-map)
 
 (define-derived-mode gascity-section-mode beads-section-mode "GasCity"
   "Base major mode for gascity vui section buffers.
@@ -194,8 +322,11 @@ the caller leaves to vui's own restoration."
   (let ((agent (gascity-section--line-property 'gascity-agent))
         (bead (gascity-section--line-property 'gascity-bead))
         (rig (gascity-section--line-property 'gascity-rig))
-        (pool (gascity-section--line-property 'gascity-pool)))
+        (pool (gascity-section--line-property 'gascity-pool))
+        (thing (gascity-section--line-property 'beads-thing)))
     (cond
+     ((and (consp thing) (keywordp (car thing)) (plist-get thing :id))
+      (cons 'thing (format "%s" (plist-get thing :id))))
      ((gascity-agent-p agent) (cons 'agent (or (gascity-agent-name agent) "")))
      ((and (stringp bead) (not (string-empty-p bead))) (cons 'bead bead))
      ((and (stringp rig) (not (string-empty-p rig))) (cons 'rig rig))
@@ -240,6 +371,10 @@ this is a pass-through, so vui's behaviour elsewhere is unchanged."
               (setq id line-id
                     col (current-column)))))
         (funcall orig instance)
+        (with-current-buffer buf
+          (gascity-section-stamp-things)
+          (when gascity-section--folded
+            (gascity-section--apply-folds)))
         (when id
           (with-current-buffer buf
             (gascity-section--restore-cursor-to-id id col)))

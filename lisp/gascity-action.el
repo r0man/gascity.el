@@ -45,11 +45,11 @@
 (require 'gascity-domain)    ; typed at-point objects (agent/rig/order)
 (require 'gascity-section)   ; gascity-agent-at-point
 (require 'gascity-tabulated) ; list refresh commands + command runners
-(require 'gascity-status)    ; gascity-status-refresh
 
 ;; Detail-view refresh commands live in gascity-rig / gascity-session,
 ;; which require this module; `gascity--refresh-current-view' calls them
 ;; by name after a mutation made from a detail buffer.
+(declare-function gascity-dashboard-refresh "gascity-dashboard")
 (declare-function gascity-rig-dashboard-refresh "gascity-rig")
 (declare-function gascity-polecat-detail-refresh "gascity-session")
 
@@ -212,7 +212,7 @@ display-oriented `scoped-name'."
 (defun gascity--refresh-current-view ()
   "Refresh the current gascity list, dashboard, or detail view after a mutation."
   (cond
-   ((derived-mode-p 'gascity-dashboard-mode) (gascity-status-refresh))
+   ((derived-mode-p 'gascity-dashboard-mode) (gascity-dashboard-refresh))
    ((derived-mode-p 'gascity-rig-list-mode) (gascity-rig-list-refresh))
    ((derived-mode-p 'gascity-session-list-mode) (gascity-session-list-refresh))
    ((derived-mode-p 'gascity-order-list-mode) (gascity-order-list-refresh))

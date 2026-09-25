@@ -178,7 +178,7 @@ resolves the memoized city-root walk, never spawns gc."
   "Return the view buffer named BASE, keyed and pinned to DIR's city.
 The one factory behind every buffer a gascity view opens — dashboards,
 lists, detail views, mail message/body views, peek and dry-run output,
-compose drafts.  BASE is the buffer's base name (\"*gascity-status*\");
+compose drafts.  BASE is the buffer's base name (\"*gascity-sessions*\");
 DIR defaults to `default-directory' (the view or action context).  The
 buffer's name is city-qualified for a directory inside a city — the
 governing city root spliced in, local cities included, so two cities on
