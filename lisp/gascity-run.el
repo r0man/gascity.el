@@ -199,10 +199,17 @@ Open by default while busy (`gascity-run--busy-p'); a toggle in VIEW's
 (defun gascity-run-plans (root)
   "Return the plan files of run ROOT: a list of (KEY . PATH), host-local.
 Every `gc.build.*_path' / `gc.implementation.*_path' metadata with a
-value, each path once, in metadata order."
-  (let ((seen nil) (out nil))
+value, each path once, in metadata order.  A relative path (some
+formulas record `plans/…/review-report.md') is relative to the run's
+`gc.work_dir'; joined as strings, no file name handler (R2)."
+  (let ((seen nil) (out nil)
+        (work-dir (gascity-run--meta root 'gc.work_dir)))
     (dolist (cell (alist-get 'metadata root))
       (let ((key (symbol-name (car cell))) (path (cdr cell)))
+        (when (and (stringp path) (not (string-empty-p path))
+                   (not (string-prefix-p "/" path))
+                   (stringp work-dir) (string-prefix-p "/" work-dir))
+          (setq path (concat (file-name-as-directory work-dir) path)))
         (when (and (string-match-p "\\`gc\\.\\(build\\|implementation\\)\\..*_path\\'" key)
                    (stringp path) (not (string-empty-p path))
                    (not (member path seen)))
@@ -495,6 +502,7 @@ RET never folds (§5.4)."
         (bead (get-text-property (point) 'gascity-bead)))
     (cond (file (gascity-run-visit-file file))
           (bead (gascity-beads--show-in-store bead (gascity-run--store)))
+          ((get-text-property (point) 'gascity-section) nil)
           (t (user-error "Nothing to act on here")))))
 
 (defun gascity-run-root-bead ()

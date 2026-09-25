@@ -275,6 +275,12 @@ An assignee without a live session is its tmux name
   (let ((short (gascity-dashboard--short-agent name)))
     (if (string-match "\\`gc__\\(.+\\)\\'" short) (match-string 1 short) short)))
 
+(defun gascity-runs--time-cell (ts now)
+  "Return TS relative to NOW, left-padded to 9 columns (no trailing pad).
+The rig column before it then lines up whatever the time's width."
+  (let ((time (gascity-ui-time ts now)))
+    (concat (make-string (max 0 (- 9 (string-width time))) ?\s) time)))
+
 (defun gascity-runs--worker (bead sessions socket)
   "Return (TEXT . AGENT) for the worker of in-progress BEAD.
 TEXT is `● name  bead' (`○' when no live session), AGENT the action
@@ -306,7 +312,7 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                          (gascity-ui-truncate (plist-get run :formula) 40))
                  (concat (gascity-dashboard--dim
                           (gascity-ui-fit (or (plist-get run :rig) "city") 10))
-                         " " (gascity-ui-time (plist-get run :time) now))))
+                         " " (gascity-runs--time-cell (plist-get run :time) now))))
          (tail (pcase state
                  ('active (if worker (car worker)
                             (gascity-dashboard--dim "no live worker")))
@@ -315,10 +321,14 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                            (or (plist-get run :failure) "outcome: fail")))
                  (_ (gascity-dashboard--dim (or (plist-get run :outcome) "")))))
          (line2 (concat "     "
-                        (gascity-dashboard--ladder-string (plist-get run :ladder))
-                        "  " (gascity-ui-fit (plist-get run :label) 14)
-                        " " (gascity-ui-fit (plist-get run :progress) 6)
-                        " " tail))
+                        (if (plist-get run :ladder)
+                            (concat (gascity-dashboard--ladder-string
+                                     (plist-get run :ladder))
+                                    "  " (gascity-ui-fit (plist-get run :label) 14)
+                                    " " (gascity-ui-fit (plist-get run :progress) 6)
+                                    " ")
+                          (gascity-dashboard--dim "no steps  "))
+                        tail))
          (drawer-id (concat "run:" id)))
     (cons (apply #'gascity-dashboard--line (concat line1 "\n" line2)
                  'beads-thing (gascity-dashboard--thing
@@ -329,7 +339,8 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                  (and (cdr worker) (list 'gascity-agent (cdr worker))))
           (and (gascity-dashboard--drawer-open-p drawer-id)
                (gascity-dashboard--drawer
-                (gascity-dashboard--run-drawer (plist-get run :ladder)))))))
+                (or (gascity-dashboard--run-drawer (plist-get run :ladder))
+                    (list (gascity-dashboard--dim "no steps yet"))))))))
 
 (defun gascity-runs--history-row (run ctx)
   "Return the lines of RUN's one-line history row (and drawer) in CTX."
@@ -344,7 +355,7 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
              " " (gascity-ui-fit (plist-get run :progress) 6)
              " " (gascity-ui-fit (or (plist-get run :outcome) "") 8))
      (concat (gascity-dashboard--dim (gascity-ui-fit (or (plist-get run :rig) "city") 10))
-             " " (gascity-ui-time (plist-get run :time) (plist-get ctx :now)))
+             " " (gascity-runs--time-cell (plist-get run :time) (plist-get ctx :now)))
      (lambda () (gascity-dashboard--run-drawer (plist-get run :ladder)))
      'gascity-bead id
      'gascity-run-rig (or (plist-get run :rig) ""))))

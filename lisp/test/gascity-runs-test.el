@@ -519,6 +519,16 @@ under the drain step, and hides control nodes until asked."
     (should (equal (cdar plans)
                    "/home/roman/workspace/beads.el/plans/project-switch-scope/decomposition.md"))))
 
+(ert-deftest gascity-test-run-plans-relative-to-work-dir ()
+  "A relative plan path is joined to the run's gc.work_dir."
+  (let ((root '((id . "hw-hry")
+                (metadata . ((gc.build.review_report_path
+                              . "plans/x/review-report.md")
+                             (gc.work_dir . "/home/roman/hello-world"))))))
+    (should (equal (gascity-run-plans root)
+                   '(("gc.build.review_report_path"
+                      . "/home/roman/hello-world/plans/x/review-report.md"))))))
+
 (defmacro gascity-runs-test--with-detail (beads run &rest body)
   "Mount the run detail of RUN over BEADS; run BODY in its buffer."
   (declare (indent 2))
