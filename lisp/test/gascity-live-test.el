@@ -100,8 +100,10 @@ without host resolution, resuming with --after."
                     (list "/bin/sh" "-c" gascity-live--exit-reporter "gc"
                           "events" "--follow" "--after" "7"
                           "--city" "/home/u/city/")
-                    :resolve nil)))
-    (should (equal (seq-take argv 2) '("ssh" "-o")))
+                    :resolve nil :stdin t)))
+    ;; stdin stays open (no -n): the host watcher stops gc at EOF.
+    (should-not (member "-n" argv))
+    (should (equal (car argv) "ssh"))
     (should (member "-T" argv))
     (should (member "BatchMode=yes" argv))
     (should (string-match-p "--after 7 --city /home/u/city/\\'" (car (last argv))))))

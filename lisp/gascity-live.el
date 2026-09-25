@@ -354,7 +354,9 @@ from a timer."
            ;; from a dropped connection, where ssh exits 255 without it.
            (append (list "/bin/sh" "-c" gascity-live--exit-reporter executable)
                    (gascity-live--args stream))
-           :resolve nil))
+           :resolve nil
+           ;; No -n: the host watcher kills gc at stdin EOF.
+           :stdin t))
       (cons gascity-executable (gascity-live--args stream)))))
 
 (defun gascity-live--stderr-buffer (stream)

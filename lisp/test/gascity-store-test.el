@@ -706,28 +706,20 @@ a background `gc rig list'; nothing runs gc synchronously."
         (should (eq opened 'cockpit))
         (should (member '("rig" "list") (mapcar #'car reads)))))))
 
-(ert-deftest gascity-test-store-refresh-timers-die-with-their-buffer ()
-  "Auto-refresh timers never outlive their view: killing the session list
-or the cockpit cancels its timer (a leaked one fired remote refreshes
-inside later tests' event loops)."
-  (let ((gascity-session-list-auto-refresh t)
-        (gascity-session-list-auto-refresh-interval 5)
+(ert-deftest gascity-test-store-views-leave-no-timer-behind ()
+  "Views refresh from the live event stream, not timers: the session list
+and the cockpit start no repeating timer, and killing them leaves none
+\(a leaked one fired remote refreshes inside later tests' event loops)."
+  (let ((before (copy-sequence timer-list))
         (list-buf (generate-new-buffer "*gascity-test-timer-list*"))
-        (cockpit (generate-new-buffer "*gascity-test-timer-cockpit*"))
-        list-timer cockpit-timer)
-    (with-current-buffer list-buf
-      (gascity-session-list--auto-refresh-setup list-buf)
-      (setq list-timer gascity-session-list--refresh-timer))
-    (with-current-buffer cockpit
-      (let ((gascity-dashboard-live t))
-        (gascity-dashboard--live-setup)
-        (setq cockpit-timer gascity-dashboard--timer)))
-    (should (memq list-timer timer-list))
-    (should (memq cockpit-timer timer-list))
+        (cockpit (generate-new-buffer "*gascity-test-timer-cockpit*")))
+    (with-current-buffer list-buf (gascity-session-list-mode))
+    (with-current-buffer cockpit (gascity-dashboard-mode))
     (kill-buffer list-buf)
     (kill-buffer cockpit)
-    (should-not (memq list-timer timer-list))
-    (should-not (memq cockpit-timer timer-list))))
+    (should-not (seq-some (lambda (tm) (and (timer--repeat-delay tm)
+                                            (not (memq tm before))))
+                          timer-list))))
 
 ;;; D9 non-blocking guard
 

@@ -335,7 +335,7 @@ TRAMP connection at all.  Nil when the search path is empty."
                      (t (shell-quote-argument entry))))
              beads-remote-search-path ":"))))
 
-(cl-defun gascity-remote-ssh-pipe-argv (dir argv &key cd env (resolve t))
+(cl-defun gascity-remote-ssh-pipe-argv (dir argv &key cd env (resolve t) stdin)
   "Return a local no-pty ssh argv running ARGV on the host of DIR.
 The one builder of every process gascity runs on a remote host without
 TRAMP: async reads and actions (`gascity-reader', dashboard-v3 §8.3 R3)
@@ -343,7 +343,9 @@ and long-lived streams (`gc events --follow', R4).  The result is
 `beads-remote-ssh-pipe-argv' (BatchMode, keep-alives, TRAMP user, port
 and host, one shell-quoted command) with `gascity-remote-ssh-options'
 and gascity's own ControlPath spliced in after \"ssh\", plus \"-n\" and
-\"-o ForwardX11=no\" (unless already present).
+\"-o ForwardX11=no\" (unless already present).  STDIN non-nil omits
+\"-n\": the live event stream keeps the session's stdin open so a
+host-side watcher notices, by EOF, that the stream was stopped.
 
 The remote command is: `cd' to CD (a TRAMP or host-local directory
 name; t means DIR), then the ENV assignments (an alist of (VAR .
@@ -386,7 +388,7 @@ for a non-ssh method or a multi-hop DIR."
                    ;; can never wait on us) and no X11 forwarding — a
                    ;; `ForwardX11 yes' in ~/.ssh/config makes the master
                    ;; print xauth warnings (QA F8 root cause, item 3).
-                   (unless (member "-n" argv) (list "-n"))
+                   (unless (or stdin (member "-n" argv)) (list "-n"))
                    (unless (member "ForwardX11=no" argv)
                      (list "-o" "ForwardX11=no"))
                    gascity-remote-ssh-options
