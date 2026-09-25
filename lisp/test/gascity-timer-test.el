@@ -18,6 +18,7 @@
 (require 'cl-lib)
 (require 'gascity)
 (require 'gascity-test-helpers)
+(require 'gascity-store-test)          ; gascity-test-store--wait
 
 (defmacro gascity-timer-test--suspended (&rest body)
   "Run BODY the way TRAMP runs a sentinel: with timers suspended."
@@ -134,6 +135,51 @@ are suspended, still runs — and the next batch arms a new one."
       (should (equal (car flushed) '("mail.sent")))
       (gascity-live--queue stream "session.woke")
       (should (gascity-timer-test--wait (lambda () (= (length flushed) 2)))))))
+
+(ert-deftest gascity-test-timer-store-rerun-and-followups-survive-suspension ()
+  "Work a LOCAL completion schedules from inside its sentinel — the
+re-read of an entry invalidated mid-read, an action's follow-up
+invalidations — survives TRAMP's timer suspension (review of B1)."
+  (gascity-test-with-store-stubs reads actions
+    (let ((default-directory "/tmp/city/")
+          (gascity-store-refetch-hidden t)
+          (gascity-store-action-followups '(0.05)))
+      (with-temp-buffer
+        (gascity-store-subscribe '("session" "list") #'ignore)
+        (gascity-store-fetch '("session" "list") #'ignore)
+        (gascity-store-invalidate-event '("session.woke") "/tmp/city/")
+        ;; The read lands inside a suspension window (a sentinel run
+        ;; from TRAMP's accept-process-output).
+        (let ((timer-list nil) (timer-idle-list nil))
+          (funcall (nth 1 (car reads)) 's1))
+        (setq reads nil)
+        (should (gascity-test-store--wait (lambda () reads)))
+        (should (equal (car (car reads)) '("session" "list")))
+        (funcall (nth 1 (car reads)) 's1b)
+        ;; An action completing inside the window: its follow-up runs.
+        (setq reads nil)
+        (gascity-store-action '("session" "suspend" "a") :target "a" :echo nil)
+        (let ((timer-list nil) (timer-idle-list nil))
+          (funcall (nth 1 (car actions)) (list :exit-code 0 :stdout "" :stderr "")))
+        ;; The immediate invalidation's read, then the follow-up's.
+        (should (= 1 (length reads)))
+        (funcall (nth 1 (car reads)) 's2)
+        (setq reads nil)
+        (should (gascity-test-store--wait (lambda () reads)))))))
+
+(ert-deftest gascity-test-timer-store-rescue-skipped-in-render ()
+  "An entry point called during a vui render does not run lost deferred
+calls (they may spawn); the watchdog runs them right after."
+  (let ((ran nil))
+    (let ((timer-list nil) (timer-idle-list nil))
+      (gascity-timer-at 0 (lambda () (setq ran t))))
+    (let ((gascity-timer--lost-after 0))
+      (sleep-for 0.01)
+      (let ((gascity-store--in-render t))
+        (gascity-store--rescue))
+      (should-not ran)
+      (gascity-store--rescue)
+      (should ran))))
 
 (provide 'gascity-timer-test)
 ;;; gascity-timer-test.el ends here

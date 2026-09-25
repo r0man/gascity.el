@@ -87,6 +87,7 @@
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'beads-remote)
+(require 'gascity-timer)
 
 ;;; Paths
 
@@ -569,9 +570,9 @@ nil at once."
                                           (file-name-absolute-p (cadr pair)))
                                  (puthash (cons remote (car pair)) (cadr pair)
                                           beads-remote--cache))))))))))
-              (run-at-time (or gascity-remote-sync-timeout 30) nil
-                           (lambda ()
-                             (when (process-live-p proc) (delete-process proc)))))
+              (gascity-timer-at (or gascity-remote-sync-timeout 30)
+                                (lambda ()
+                                  (when (process-live-p proc) (delete-process proc)))))
           (error (remhash remote gascity-remote--prewarming)))
         nil))))
 

@@ -361,7 +361,7 @@ sees current data.  Never blocks.  DIR defaults to `default-directory'."
   "Return the snapshot of ARGS read in DIR, or nil when never requested.
 Never spawns anything; DIR defaults to `default-directory'.  First
 runs completions whose deferral was lost (`gascity-timer-rescue')."
-  (gascity-timer-rescue)
+  (gascity-store--rescue)
   (when-let* ((entry (gethash (gascity-store-key args dir) gascity-store--entries)))
     (gascity-store-snapshot entry)))
 
@@ -409,6 +409,16 @@ as for `gascity-store-fetch'.  Subscribing does not read; pair it with
             (delq handle (gascity-store-entry-subscribers entry))))))
 
 ;;; Deferral
+
+(defvar vui--rendering-p)
+
+(defun gascity-store--rescue ()
+  "Run deferred calls whose timer was lost (`gascity-timer-rescue').
+Not during a vui render: a rescued completion may pump and start a
+process, and nothing may spawn inside a render or mount (QA F8
+hardening); the watchdog runs it a moment later instead."
+  (unless (or gascity-store--in-render (bound-and-true-p vui--rendering-p))
+    (gascity-timer-rescue)))
 
 (defun gascity-store--after (host fn)
   "Run FN now for a local HOST, else deferred (`gascity-timer-at' 0).
@@ -509,7 +519,7 @@ dispatch — the synchronous first-contact resolution of gc — runs from
 a timer, FROM-TIMER non-nil) and while its TRAMP channel is not
 mid-command (a spawn from inside another TRAMP call would be
 reentrant); otherwise the pump is retried from a timer."
-  (gascity-timer-rescue)
+  (gascity-store--rescue)
   (let ((name (gascity-store--host-name host)))
     (cond
      ((and (not (string-empty-p name))
@@ -723,9 +733,11 @@ action, the plist of `gascity-reader-run-async'."
       ;; delivery below), so the event's effect is not missed.
       (when (gascity-store-entry-rerun entry)
         (setf (gascity-store-entry-rerun entry) nil)
-        (run-at-time 0 nil (lambda ()
-                             (unless (gascity-store-entry-job entry)
-                               (gascity-store--request entry :force t))))))
+        ;; Local completions run inside the sentinel: a plain timer
+        ;; here could be lost to TRAMP's timer suspension (B1).
+        (gascity-timer-at 0 (lambda ()
+                              (unless (gascity-store-entry-job entry)
+                                (gascity-store--request entry :force t))))))
     (pcase (car result)
       (:ok
        (setf (gascity-store-entry-data entry) (cadr result)
@@ -816,7 +828,7 @@ FORCE re-reads even a fresh entry (joining one in flight all the
 same); MAX-AGE overrides the TTL; BUFFER is the requesting buffer
 \(visible buffers are served first).  Returns non-nil when a read is
 in flight afterwards."
-  (gascity-timer-rescue)
+  (gascity-store--rescue)
   (let ((job (gascity-store-entry-job entry)))
     (cond
      (job
@@ -872,7 +884,7 @@ overrides its TTL.  BUFFER (default the current buffer) is the
 requester, for priority.  Returns the process of the read joined or
 started when one is running (for liveness checks only: it is shared,
 never kill it), else nil — answered from the store, or queued."
-  (gascity-timer-rescue)
+  (gascity-store--rescue)
   (let* ((entry (gascity-store--entry (gascity-store--dir dir) args lines loader)))
     (if (and (not force) (not (gascity-store-entry-job entry))
              (gascity-store--fresh-p entry max-age))
@@ -1259,7 +1271,9 @@ DIR defaults to `default-directory'.  Pure; views render `…' on it."
           ;; (a woken session becomes active seconds to a minute on),
           ;; and gc emits no event for those transitions: look again.
           (dolist (delay gascity-store-action-followups)
-            (run-at-time delay nil #'gascity-store--invalidate-for-action args dir)))
+            ;; Scheduled from a (local: synchronous) completion, i.e.
+            ;; maybe inside a sentinel: survive timer suspension (B1).
+            (gascity-timer-at delay #'gascity-store--invalidate-for-action args dir)))
         (if (gascity-store--job-on-success job)
             (gascity-store--safe-call (gascity-store--job-on-success job) payload)
           (when (gascity-store--job-echo job)
