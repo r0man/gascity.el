@@ -436,6 +436,8 @@ reentrant); otherwise the pump is retried from a timer."
      ((and (not (string-empty-p name))
            (not from-timer)
            (not (gascity-store--host-primed host))
+           ;; The ssh pipe transport has no synchronous first contact.
+           (not (gascity-reader--ssh-pipe-p name))
            (or (gascity-store--host-reads host) (gascity-store--host-actions host)))
       (gascity-store--pump-later host))
      ((and (not (string-empty-p name))
@@ -509,7 +511,17 @@ deferred for a remote host."
                                (ignore-errors (delete-process proc))))))))
     (let ((proc (condition-case err
                     (let ((default-directory (gascity-store--job-dir job)))
-                      (funcall (gascity-store--job-start job) finish))
+                      ;; A TRAMP `make-process' sets its connection up
+                      ;; synchronously; a wedged setup ("Setup connection
+                      ;; … using ssh" forever) must hit the R5 deadline
+                      ;; like the process itself, and count as the host
+                      ;; being unreachable.
+                      (if (and (file-remote-p default-directory)
+                               (not (gascity-reader--ssh-pipe-p))
+                               (not (eq (gascity-store--job-lane job) 'virtual)))
+                          (gascity-remote-with-timeout gascity-remote-async-timeout
+                            (funcall (gascity-store--job-start job) finish))
+                        (funcall (gascity-store--job-start job) finish)))
                   (error
                    (funcall finish (list :error (error-message-string err)))
                    nil))))

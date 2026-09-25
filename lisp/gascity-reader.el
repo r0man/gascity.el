@@ -373,17 +373,20 @@ payload, so parsing starts at the first `{'/`[' instead of failing on
 unrelated transport output.  Signals `gascity-json-parse-error' on
 malformed input."
   (condition-case err
-      (let ((json-object-type 'alist)
-            (json-array-type 'vector)
-            (json-key-type 'symbol)
-            (json-null nil)
-            (json-false nil))
-        (json-read-from-string
-         (if (memq (aref (string-trim-left string) 0) '(?{ ?\[))
-             string
-           (or (and (string-match "[{\\[]" string)
-                    (substring string (match-beginning 0)))
-               string))))
+      ;; Native parser (dashboard-v3 QA F3: json.el's reader was most of
+      ;; a 600-850 ms cockpit stall).  Same shape as before: objects as
+      ;; symbol-keyed alists, arrays as vectors, null AND false as nil.
+      ;; `json-parse-buffer' reads ONE value and ignores what follows,
+      ;; as json.el did — trailing transport chatter stays harmless.
+      (with-temp-buffer
+        (insert string)
+        (goto-char (point-min))
+        (skip-chars-forward " \t\n\r")
+        (unless (memq (char-after) '(?{ ?\[))
+          (when (re-search-forward "[{\\[]" nil t)
+            (goto-char (match-beginning 0))))
+        (json-parse-buffer :object-type 'alist :array-type 'array
+                           :null-object nil :false-object nil))
     (error
      (signal 'gascity-json-parse-error
              (list (format "Failed to parse gc JSON output: %s"
@@ -625,15 +628,6 @@ ControlMaster, is required) plus `gascity-remote-ssh-options'.
                  (const :tag "TRAMP make-process" tramp))
   :group 'gascity)
 
-(defcustom gascity-remote-ssh-options
-  '("-o" "ControlMaster=auto" "-o" "ControlPersist=60")
-  "Extra ssh options for the `ssh' transport of `gascity-remote-transport'.
-A `ControlPath' under `temporary-file-directory' is added unless one is
-given here, so concurrent reads share one connection per host instead of
-logging in once each."
-  :type '(repeat string)
-  :group 'gascity)
-
 (defun gascity-reader--ssh-pipe-p (&optional dir)
   "Return non-nil when async gc for DIR runs over the ssh pipe transport."
   (let ((dir (or dir default-directory)))
@@ -644,60 +638,33 @@ logging in once each."
 
 (defun gascity-reader--ssh-command (executable args city-env)
   "Return the local ssh argv running EXECUTABLE ARGS in `default-directory'.
-The remote command is one shell string: cd to the host-local
-directory, the CITY-ENV assignments, the PATH fragment of
-`gascity-remote-path-assignment', then exec EXECUTABLE ARGS — each token
-quoted once for the remote login shell (`beads-remote-ssh-pipe-argv').
-`gascity-remote-ssh-options' are spliced in after \"ssh\"."
-  (let* ((prefix (mapconcat
-                  #'identity
-                  (delq nil
-                        (list (concat "cd " (shell-quote-argument
-                                             (file-local-name default-directory))
-                                      " &&")
-                              (and city-env
-                                   (mapconcat
-                                    (lambda (pair)
-                                      (concat (car pair) "="
-                                              (shell-quote-argument (cdr pair))))
-                                    city-env " "))
-                              (gascity-remote-path-assignment)))
-                  " "))
-         (argv (beads-remote-ssh-pipe-argv default-directory
-                                           (cons executable args) prefix))
-         (options (append gascity-remote-ssh-options
-                          (unless (cl-some (lambda (o) (string-prefix-p "ControlPath" o))
-                                           gascity-remote-ssh-options)
-                            (list "-o" (concat "ControlPath="
-                                               (expand-file-name
-                                                "gascity-ssh-%C"
-                                                temporary-file-directory)))))))
-    (append (list (car argv)) options (cdr argv))))
+Built by `gascity-remote-ssh-pipe-argv' without host resolution: cd to
+the city directory, the CITY-ENV assignments, the pure PATH fragment,
+exec — no TRAMP round trip, so the first-connection handshake happens
+in the ssh process, never inside a command."
+  (gascity-remote-ssh-pipe-argv default-directory (cons executable args)
+                                :cd t :env city-env :resolve nil))
 
 (defun gascity-reader--spawn-ssh (args city-env callback)
   "Start gc ARGS over the ssh pipe transport; CALLBACK gets the result plist.
 ARGS already carry any city-targeting tokens; CITY-ENV the env-city
 overrides.  CALLBACK receives (:exit-code CODE :stdout OUT :stderr ERR
 :executable EXE) exactly once (CODE nil when ssh could not be
-launched).  The executable and PATH fragment come from the per-host
-cache (first contact: bounded synchronous TRAMP resolution, §8.5).
-The process is local — its sentinel does no TRAMP operation.  Returns
+launched).  The command is built without any TRAMP round trip
+\(`gascity-reader--ssh-command'), so nothing here blocks.  The process
+is local — its sentinel does no TRAMP operation.  Returns
 the process, or nil when none was started."
-  (let* ((executable
-          (condition-case err
-              (gascity-reader--bounded-executable)
-            (gascity-remote-sync-timeout
-             (funcall callback (list :exit-code nil :stdout ""
-                                     :stderr (error-message-string err)
-                                     :executable gascity-executable))
-             nil))))
+  ;; The executable is `gascity-executable' as configured (connection-
+  ;; locally too): an absolute host path is used as is, a bare name is
+  ;; found on the remote PATH the command extends — no TRAMP probe.
+  (let* ((executable (with-connection-local-variables gascity-executable)))
     (when executable
       (let* ((command (gascity-reader--ssh-command executable args city-env))
              (default-directory temporary-file-directory)
-             (out "") (err "")
+             (out nil) (err nil)
              (stderr-proc (make-pipe-process
                            :name "gascity-gc-stderr" :noquery t
-                           :filter (lambda (_p chunk) (setq err (concat err chunk))))))
+                           :filter (lambda (_p chunk) (push chunk err)))))
         (when (fboundp 'gascity--log)
           (gascity--log 'info "Running over ssh: %s" (mapconcat #'identity command " ")))
         (condition-case e
@@ -705,7 +672,7 @@ the process, or nil when none was started."
              :name "gascity-gc" :command command :noquery t
              :connection-type 'pipe :file-handler nil
              :stderr stderr-proc
-             :filter (lambda (_p chunk) (setq out (concat out chunk)))
+             :filter (lambda (_p chunk) (push chunk out))
              :sentinel
              (lambda (proc _event)
                (when (memq (process-status proc) '(exit signal))
@@ -716,7 +683,8 @@ the process, or nil when none was started."
                      (setq n (1- n))))
                  (when (process-live-p stderr-proc) (delete-process stderr-proc))
                  (funcall callback (list :exit-code (process-exit-status proc)
-                                         :stdout out :stderr err
+                                         :stdout (apply #'concat (nreverse out))
+                                         :stderr (apply #'concat (reverse err))
                                          :executable executable)))))
           (error
            (delete-process stderr-proc)
@@ -955,7 +923,7 @@ turns it on, at the cost of a fresh ssh per read."
             (full-args (if (or lines (member "--json" args))
                            args
                          (append args (list "--json"))))
-            (output "")
+            (output nil)
             ;; Both captured now: the sentinel fires with whatever buffer
             ;; (and so `default-directory' and any connection-locally
             ;; applied `gascity-executable') happens to be current then.
@@ -995,10 +963,13 @@ turns it on, at the cost of a fresh ssh per read."
               :connection-type 'pipe
               :file-handler t
               :stderr stderr-buffer
-              :filter (lambda (_proc chunk) (setq output (concat output chunk)))
+              ;; Chunks are consed and joined once: repeated `concat'
+              ;; is quadratic on a large payload (QA F3).
+              :filter (lambda (_proc chunk) (push chunk output))
               :sentinel
               (lambda (proc _event)
                 (when (memq (process-status proc) '(exit signal))
+                  (setq output (apply #'concat (nreverse output)))
                   (let ((code (process-exit-status proc)))
                     (unwind-protect
                         (cond
@@ -1146,7 +1117,7 @@ none was started (CALLBACK has then already been called)."
                               (fboundp 'tramp-direct-async-process-p)
                               (tramp-direct-async-process-p)
                               (generate-new-buffer " *gascity-gc-stderr*")))
-          (output ""))
+          (output nil))
      (when executable
        (when (fboundp 'gascity--log)
          (gascity--log 'info "Running async action: %s %s"
@@ -1164,10 +1135,11 @@ none was started (CALLBACK has then already been called)."
               :connection-type 'pipe
               :file-handler t
               :stderr stderr-buffer
-              :filter (lambda (_proc chunk) (setq output (concat output chunk)))
+              :filter (lambda (_proc chunk) (push chunk output))
               :sentinel
               (lambda (proc _event)
                 (when (memq (process-status proc) '(exit signal))
+                  (setq output (apply #'concat (nreverse output)))
                   (when (buffer-live-p stderr-buffer)
                     (kill-buffer stderr-buffer))
                   (let ((split (gascity-reader--split-output output delimiter)))

@@ -441,6 +441,16 @@ method: the read's payload lands, the action logs its stderr."
         (should log)
         (kill-buffer log)))))
 
+(ert-deftest gascity-test-store-native-json-shape ()
+  "The native parser keeps the old decode shape: symbol-keyed alists,
+vectors, null AND false as nil; leading and trailing chatter ignored."
+  (should (equal (gascity-reader-parse-json
+                  "Warning: banner\n{\"a\":null,\"b\":false,\"c\":[1,{\"d\":true}],\"e\":{}} tail")
+                 '((a) (b) (c . [1 ((d . t))]) (e))))
+  (should (equal (gascity-reader-parse-json "[]") []))
+  (should-error (gascity-reader-parse-json "{\"a\":") :type 'gascity-json-parse-error)
+  (should-error (gascity-reader-parse-json "") :type 'gascity-json-parse-error))
+
 ;;; ssh pipe transport
 
 (ert-deftest gascity-test-store-ssh-command-round-trips-argv ()
@@ -452,20 +462,26 @@ the ControlMaster options and the TRAMP user/port/host."
          (default-directory (concat "/ssh:alice@example.org#2222:" local "/"))
          (gascity-remote-ssh-options '("-o" "ControlMaster=auto")))
     (unwind-protect
-        (cl-letf (((symbol-function 'gascity-remote-path-assignment)
-                   (lambda (&rest _) "PATH=/opt/gc/bin:$PATH")))
-          (let* ((argv (gascity-reader--ssh-command
+        (let ((beads-remote-search-path '("/opt/gc/bin" "~/.guix-home/profile/bin")))
+          (let* ((argv (gascity-test-with-render-guard
+                         ;; Built with no TRAMP I/O at all (R2, §8.5).
+                         (gascity-reader--ssh-command
                         "printf" '("%s\n" "status" "a b'c" "$HOME")
-                        '(("GC_CITY" . "/home/alice/my city/"))))
+                        '(("GC_CITY" . "/home/alice/my city/")))))
                  (cmd (car (last argv))))
             (should (equal (car argv) "ssh"))
             (should (member "BatchMode=yes" argv))
             (should (member "ControlMaster=auto" argv))
-            (should (cl-some (lambda (o) (string-prefix-p "ControlPath=" o)) argv))
+            ;; gascity's own ControlPath, never TRAMP's tramp.%C.
+            (should (cl-some (lambda (o) (and (string-prefix-p "ControlPath=" o)
+                                              (string-match-p "gascity-ssh-%C" o)))
+                             argv))
             (should (equal (cl-subseq argv (- (length argv) 7) (1- (length argv)))
                            '("-l" "alice" "-p" "2222" "example.org" "--")))
             (should (string-match-p "GC_CITY=" cmd))
-            (should (string-match-p "PATH=/opt/gc/bin:\\$PATH exec printf" cmd))
+            (should (string-match-p
+                     "PATH=/opt/gc/bin:\"\\$HOME\"/.guix-home/profile/bin:\"\\$PATH\" exec printf"
+                     cmd))
             ;; Evaluate the remote command locally, as the login shell would.
             (with-temp-buffer
               (should (eql 0 (call-process "/bin/sh" nil t nil "-c"

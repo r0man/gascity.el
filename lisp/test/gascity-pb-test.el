@@ -13,15 +13,18 @@
 (require 'gascity)
 
 (ert-deftest gascity-test-pb-ssh-pipe-argv-resolves-gc ()
-  "The pipe argv resolves gc on the host and splices the PATH fragment."
+  "The pipe argv resolves gc on the host and splices the PATH fragment.
+`gascity-remote-ssh-options' follow \"ssh\" (a ControlPath given there
+replaces gascity's own)."
   (cl-letf (((symbol-function 'beads-remote-find-executable)
              (lambda (name &optional _dir)
                (concat "/home/u/.guix-home/profile/bin/" name)))
             ((symbol-function 'beads-remote-path-assignment)
              (lambda (&optional _dir) "PATH=/home/u/.guix-home/profile/bin:$PATH")))
-    (should (equal (gascity-remote-ssh-pipe-argv
-                    "/ssh:u@h:/home/u/city/" '("gc" "events" "--follow"))
-                   '("ssh" "-T" "-o" "BatchMode=yes"
+    (should (equal (let ((gascity-remote-ssh-options '("-o" "ControlPath=/x")))
+                     (gascity-remote-ssh-pipe-argv
+                      "/ssh:u@h:/home/u/city/" '("gc" "events" "--follow")))
+                   '("ssh" "-o" "ControlPath=/x" "-T" "-o" "BatchMode=yes"
                      "-o" "ServerAliveInterval=15"
                      "-o" "ServerAliveCountMax=3"
                      "-l" "u" "h" "--"

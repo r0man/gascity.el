@@ -301,20 +301,91 @@ the result is (\"ssh\" \"-t\" [\"-l\" USER] [\"-p\" PORT] HOST TOKENS...).
 Signals a `user-error' for a non-ssh method or a multi-hop name."
   (beads-remote-ssh-argv name argv))
 
-(defun gascity-remote-ssh-pipe-argv (dir argv)
+(defcustom gascity-remote-ssh-options
+  '("-o" "ControlMaster=auto" "-o" "ControlPersist=60")
+  "Extra ssh options of `gascity-remote-ssh-pipe-argv'.
+Spliced in after \"ssh\" for every no-pty pipe process (async reads,
+actions, the live event stream).  Unless a ControlPath is given here, a
+gascity-own one is added (`gascity-remote-ssh-control-path'), distinct
+from TRAMP's \"tramp.%C\", so concurrent processes to one host share a
+single ssh master: the first process performs the handshake — in the
+background, it is a process — and the others multiplex over it."
+  :type '(repeat string)
+  :group 'gascity)
+
+(defun gascity-remote-ssh-control-path ()
+  "Return the ControlPath of gascity's ssh masters (never TRAMP's)."
+  (expand-file-name "gascity-ssh-%C" temporary-file-directory))
+
+(defun gascity-remote-pure-path-assignment ()
+  "Return a \"PATH=DIRS:$PATH\" fragment built WITHOUT touching the host.
+Like `gascity-remote-path-assignment', but a `~/'-relative
+`beads-remote-search-path' entry becomes \"$HOME\"/… for the remote
+shell to expand, instead of asking TRAMP for the remote home — pure
+string operations (§8.3 R2), so a pipe process can be built with no
+TRAMP connection at all.  Nil when the search path is empty."
+  (when beads-remote-search-path
+    (format "PATH=%s:\"$PATH\""
+            (mapconcat
+             (lambda (entry)
+               (cond ((string-match "\\`~/\\(.*\\)\\'" entry)
+                      (concat "\"$HOME\"/"
+                              (shell-quote-argument (match-string 1 entry))))
+                     ((equal entry "~") "\"$HOME\"")
+                     (t (shell-quote-argument entry))))
+             beads-remote-search-path ":"))))
+
+(cl-defun gascity-remote-ssh-pipe-argv (dir argv &key cd env (resolve t))
   "Return a local no-pty ssh argv running ARGV on the host of DIR.
-For long-lived streams (`gc events --follow', `gc session logs -f')
-that must bypass the TRAMP channel (dashboard-v3 §8.3 R4).  ARGV's
-program is resolved on the host (`gascity-remote-find-executable') and
-the command runs with `gascity-remote-path-assignment' in front, as
-one shell-quoted string (`beads-remote-ssh-pipe-argv').  Both lookups
-are cached per connection; the first call for a host does synchronous
-TRAMP I/O, so call this from a command, never from redisplay.
-Signals a `user-error' for a non-ssh method or a multi-hop DIR."
-  (beads-remote-ssh-pipe-argv
-   dir
-   (cons (gascity-remote-find-executable (car argv) dir) (cdr argv))
-   (gascity-remote-path-assignment dir)))
+The one builder of every process gascity runs on a remote host without
+TRAMP: async reads and actions (`gascity-reader', dashboard-v3 §8.3 R3)
+and long-lived streams (`gc events --follow', R4).  The result is
+`beads-remote-ssh-pipe-argv' (BatchMode, keep-alives, TRAMP user, port
+and host, one shell-quoted command) with `gascity-remote-ssh-options'
+and gascity's own ControlPath spliced in after \"ssh\".
+
+The remote command is: `cd' to CD (a TRAMP or host-local directory
+name; t means DIR), then the ENV assignments (an alist of (VAR .
+VALUE)), then the PATH fragment, then exec ARGV.
+
+With RESOLVE (the default) ARGV's program is resolved on the host
+\(`gascity-remote-find-executable') and the PATH fragment is
+`gascity-remote-path-assignment' — both cached per connection, but the
+first call for a host is synchronous TRAMP I/O.  With RESOLVE nil
+nothing touches the host: the program is used as given (a bare name is
+found on the remote PATH) and the fragment is
+`gascity-remote-pure-path-assignment' — the first-connection handshake
+then happens entirely inside the ssh process.  Signals a `user-error'
+for a non-ssh method or a multi-hop DIR."
+  (let* ((cd (if (eq cd t) dir cd))
+         (prefix
+          (mapconcat
+           #'identity
+           (delq nil
+                 (list (and cd (concat "cd " (shell-quote-argument
+                                              (file-local-name cd))
+                                       " &&"))
+                       (and env
+                            (mapconcat (lambda (pair)
+                                         (concat (car pair) "="
+                                                 (shell-quote-argument (cdr pair))))
+                                       env " "))
+                       (if resolve
+                           (gascity-remote-path-assignment dir)
+                         (gascity-remote-pure-path-assignment))))
+           " "))
+         (argv (beads-remote-ssh-pipe-argv
+                dir
+                (if resolve
+                    (cons (gascity-remote-find-executable (car argv) dir) (cdr argv))
+                  argv)
+                (and (not (string-empty-p prefix)) prefix)))
+         (options (append gascity-remote-ssh-options
+                          (unless (cl-some (lambda (o) (string-prefix-p "ControlPath" o))
+                                           gascity-remote-ssh-options)
+                            (list "-o" (concat "ControlPath="
+                                               (gascity-remote-ssh-control-path)))))))
+    (append (list (car argv)) options (cdr argv))))
 
 ;;; Finding executables on the host
 
