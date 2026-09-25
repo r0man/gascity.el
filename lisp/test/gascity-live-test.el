@@ -522,5 +522,45 @@ stops it and leaves no process, timer or stream behind."
                                 timer-list)))
       (mapc #'kill-buffer bufs))))
 
+(ert-deftest gascity-test-live-poll-reads-through-the-store ()
+  "The polling fallback reads through `gascity-store-fetch' (forced, one
+stable entry, JSON Lines, the city dir), never the reader directly, and
+never overlaps its own previous poll."
+  (let ((s (gascity-live-test--stream :root "/sudo:root@localhost:/c/"))
+        fetches)
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (&rest _) (error "Poll must go through the store")))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (args _cb &optional _eb &rest keys)
+                 (push (cons args keys) fetches) nil)))
+      (gascity-live--poll s)
+      (gascity-live--poll s))                ; still busy: no second read
+    (should (= (length fetches) 1))
+    (let ((call (car fetches)))
+      (should (equal (car call) (gascity-live--poll-args)))
+      (should (eq (plist-get (cdr call) :force) t))
+      (should (eq (plist-get (cdr call) :lines) t))
+      (should (equal (plist-get (cdr call) :dir) "/sudo:root@localhost:/c/")))))
+
+(ert-deftest gascity-test-live-poll-result-dedup-and-gap ()
+  "A poll learns the head first, then delivers only newer events; a
+window that no longer overlaps the last seq asks for a full refresh."
+  (let ((s (gascity-live-test--stream))
+        delivered queued)
+    (cl-letf (((symbol-function 'gascity-live--deliver)
+               (lambda (_s events) (setq delivered (mapcar (lambda (e) (alist-get 'seq e)) events))))
+              ((symbol-function 'gascity-live--queue)
+               (lambda (_s type) (push type queued))))
+      (gascity-live--poll-result s '(((seq . 5)) ((seq . 7))))
+      (should (= (gascity-live--stream-seq s) 7))
+      (should-not delivered)
+      (gascity-live--poll-result s '(((seq . 6)) ((seq . 7)) ((seq . 8)) ((seq . 9))))
+      (should (equal delivered '(8 9)))
+      (should-not queued)
+      (setf (gascity-live--stream-seq s) 9)
+      (gascity-live--poll-result s '(((seq . 20)) ((seq . 21))))
+      (should (equal queued '(:all)))
+      (should (equal delivered '(20 21))))))
+
 (provide 'gascity-live-test)
 ;;; gascity-live-test.el ends here

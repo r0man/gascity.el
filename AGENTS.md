@@ -91,9 +91,10 @@ a view of it is attached (`gascity-live-attach`, called from the view's
 mode; `kill-buffer` detaches, the last view out stops the stream). Remote
 ssh-family cities stream over a local `ssh -T` pipe
 (`gascity-remote-ssh-pipe-argv … :resolve nil`, no TRAMP round trip);
-other methods poll `gc events --after SEQ`. Events are batched for 2.5 s
-and routed by type prefix to `gascity-store-invalidate-event` (store-backed
-views repaint themselves), `gascity-live-invalidate-functions`, and the
+other methods poll `gc events --since WINDOW` through the store. Events
+are batched for 2.5 s and routed by type prefix to
+`gascity-store-invalidate-event` (store-backed views repaint themselves),
+`gascity-live-invalidate-functions`, and the
 attached views' own refresh functions. Resume is gap-free (`--after
 SEQ`) with a 2/5/15/60 s backoff; `g` reconnects, `W` toggles. Header
 lines read `gascity-live-header-string` (pure). No streams start in

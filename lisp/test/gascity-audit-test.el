@@ -632,11 +632,13 @@ look up the remote home.")
     ;; (bounded by `gascity-remote-sync-timeout') — reported.
     ((gascity-context-city-root . expand-file-name) . "memoized walk")
     ((gascity-context-city-root . locate-dominating-file) . "memoized walk")
-    ;; The reader's bounded directory probe: the live poll timer (non-ssh
-    ;; methods) reads outside the store, which would skip it for a
-    ;; known-good directory — reported.
+    ;; The reader's bounded directory probe, reached from the live poll
+    ;; (non-ssh methods) through `gascity-store-fetch': the store binds
+    ;; `gascity-reader-skip-dir-probe' for a known-good directory, so it
+    ;; only probes on a cold first read, like every store read.  The
+    ;; static scan cannot see that binding.
     ((gascity-reader--remote-dir-absent-bounded-p . file-directory-p)
-     . "bounded probe from the live poll (reported)"))
+     . "live poll via the store: skipped for a known-good dir"))
   "Exactly the (CALLEE . PRIMITIVE) pairs the static scan finds reachable
 from a timer, sentinel or filter, each with why it is acceptable.  A new
 pair fails `gascity-test-audit-callback-file-io-reviewed' until reviewed

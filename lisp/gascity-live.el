@@ -21,8 +21,8 @@
 ;;   never holds a tramp-sh channel and its output is byte-exact JSONL.
 ;;   It is built with no TRAMP round trip, so (re)starts never block.
 ;; - Any other remote method (docker, sudo, multi-hop): no stream; a
-;;   `gc events --after SEQ' poll every `gascity-live-poll-interval'
-;;   seconds through the async reader.
+;;   `gc events --since WINDOW' poll every `gascity-live-poll-interval'
+;;   seconds through the store (`gascity-store-fetch').
 ;;
 ;; stderr of a stream goes to the `*gascity-live: CITY*' buffer; its
 ;; last line becomes the header reason.  Every event carries `seq'; the
@@ -525,7 +525,7 @@ dropped, which is `offline'."
 ;;; Polling (remote methods a plain ssh cannot reach)
 
 (defun gascity-live--start-poll (stream)
-  "Run STREAM as a `gc events --after SEQ' poll."
+  "Run STREAM as a periodic `gc events --since' poll through the store."
   (setf (gascity-live--stream-mode stream) 'poll)
   (gascity-live--set-state stream 'polling nil)
   (unless (timerp (gascity-live--stream-poll-timer stream))
@@ -533,29 +533,55 @@ dropped, which is `offline'."
           (run-at-time 0 gascity-live-poll-interval
                        #'gascity-live--poll stream))))
 
+(defcustom gascity-live-poll-window "5m"
+  "The `gc events --since' window of each poll (see `gascity-live--poll').
+Must comfortably exceed `gascity-live-poll-interval'; a poll that finds
+no overlap with the last seq it saw asks for a full refresh instead."
+  :type 'string
+  :group 'gascity-live)
+
+(defun gascity-live--poll-args ()
+  "Return the argv of every poll read: one stable store entry."
+  (list "events" "--since" gascity-live-poll-window))
+
+(defun gascity-live--poll-result (stream events)
+  "Deliver the EVENTS of a poll that STREAM has not seen yet.
+The first poll only learns the head seq (the past is not news).  When
+the oldest event of the window is already past the next seq expected,
+events were missed: queue a full refresh."
+  (let* ((last (gascity-live--stream-seq stream))
+         (seqs (delq nil (mapcar (lambda (e)
+                                   (let ((s (alist-get 'seq e)))
+                                     (and (integerp s) s)))
+                                 events))))
+    (cond
+     ((null last)
+      (when seqs
+        (setf (gascity-live--stream-seq stream) (apply #'max seqs))))
+     (t
+      (when (and seqs (> (apply #'min seqs) (1+ last)))
+        (gascity-live--queue stream :all))
+      (gascity-live--deliver
+       stream (seq-filter (lambda (e)
+                            (let ((s (alist-get 'seq e)))
+                              (and (integerp s) (> s last))))
+                          events))))))
+
 (defun gascity-live--poll (stream)
-  "Fetch the events STREAM missed since its last seq."
+  "Fetch the events STREAM may have missed, through the store.
+`gascity-store-fetch' with :force: a known-good directory skips the
+reader's directory probe, the host's read cap and offline pause apply,
+and a read already in flight is joined rather than doubled.  A poll
+never overlaps its own previous one."
   (unless (gascity-live--stream-poll-busy stream)
-    (let ((default-directory (gascity-live--stream-root stream))
-          (seq (gascity-live--stream-seq stream))
-          (non-essential t))
+    (let ((root (gascity-live--stream-root stream)))
       (setf (gascity-live--stream-poll-busy stream) t)
       (condition-case err
-          (gascity-reader-read-async
-           (if seq
-               (list "events" "--after" (number-to-string seq))
-             (list "events" "--since" "1m"))
+          (gascity-store-fetch
+           (gascity-live--poll-args)
            (lambda (result)
              (setf (gascity-live--stream-poll-busy stream) nil)
-             (let ((events (car result)))
-               (if seq
-                   (gascity-live--deliver stream events)
-                 ;; Bootstrap: only learn the head, the past is not news.
-                 (dolist (e events)
-                   (let ((s (alist-get 'seq e)))
-                     (when (and (integerp s)
-                                (> s (or (gascity-live--stream-seq stream) -1)))
-                       (setf (gascity-live--stream-seq stream) s))))))
+             (gascity-live--poll-result stream (car result))
              (gascity-live--set-state stream 'polling nil))
            (lambda (msg)
              (setf (gascity-live--stream-poll-busy stream) nil)
@@ -564,7 +590,7 @@ dropped, which is `offline'."
               (if (string-match-p "request failed\\|dial tcp" msg)
                   'supervisor-down 'offline)
               msg))
-           :lines t)
+           :dir root :lines t :force t)
         (error
          (setf (gascity-live--stream-poll-busy stream) nil)
          (gascity-live--set-state stream 'offline (error-message-string err)))))))
