@@ -523,45 +523,92 @@ stops it and leaves no process, timer or stream behind."
                                 timer-list)))
       (mapc #'kill-buffer bufs))))
 
+(ert-deftest gascity-test-live-poll-argv ()
+  "With a seq the poll is a gap-free `--watch --after SEQ' (gc 1.4.2
+rejects --after without --watch/--follow); without one it only learns
+the head from a short `--since' window."
+  (let ((s (gascity-live-test--stream)))
+    (should (equal (gascity-live--poll-argv s)
+                   (list "events" "--since" gascity-live-poll-bootstrap)))
+    (setf (gascity-live--stream-seq s) 42)
+    (should (equal (gascity-live--poll-argv s)
+                   (list "events" "--watch" "--after" "42"
+                         "--timeout" gascity-live-poll-watch)))))
+
 (ert-deftest gascity-test-live-poll-reads-through-the-store ()
-  "The polling fallback reads through `gascity-store-fetch' (forced, one
-stable entry, JSON Lines, the city dir), never the reader directly, and
-never overlaps its own previous poll."
-  (let ((s (gascity-live-test--stream :root "/sudo:root@localhost:/c/"))
-        fetches)
-    (cl-letf (((symbol-function 'gascity-reader-read-async)
-               (lambda (&rest _) (error "Poll must go through the store")))
-              ((symbol-function 'gascity-store-fetch)
+  "The polling fallback reads through `gascity-store-fetch' on ONE stable
+entry (forced, the city dir) whose loader runs the poll argv — never the
+reader directly, never twice while busy."
+  (let ((s (gascity-live-test--stream :root "/sudo:root@localhost:/c/" :seq 7))
+        fetches read)
+    (cl-letf (((symbol-function 'gascity-store-fetch)
                (lambda (args _cb &optional _eb &rest keys)
                  (push (cons args keys) fetches) nil)))
-      (gascity-live--poll s)
-      (gascity-live--poll s))                ; still busy: no second read
-    (should (= (length fetches) 1))
-    (let ((call (car fetches)))
-      (should (equal (car call) (gascity-live--poll-args)))
-      (should (eq (plist-get (cdr call) :force) t))
-      (should (eq (plist-get (cdr call) :lines) t))
-      (should (equal (plist-get (cdr call) :dir) "/sudo:root@localhost:/c/")))))
+      (cl-letf (((symbol-function 'gascity-reader-read-async)
+                 (lambda (&rest _) (error "Poll must go through the store"))))
+        (gascity-live--poll s)
+        (gascity-live--poll s))              ; still busy: no second read
+      (should (= (length fetches) 1))
+      (let ((call (car fetches)))
+        (should (equal (car call) gascity-live--poll-entry))
+        (should (eq (plist-get (cdr call) :force) t))
+        (should (equal (plist-get (cdr call) :dir) "/sudo:root@localhost:/c/"))
+        ;; The store runs the loader: it reads the watch argv as JSONL
+        ;; in the city dir and resolves with the events.
+        (let (resolved)
+          (cl-letf (((symbol-function 'gascity-reader-read-async)
+                     (lambda (args cb &optional _eb &rest keys)
+                       (setq read (list args default-directory (plist-get keys :lines)))
+                       (funcall cb '((((seq . 8))) . 0)))))
+            (funcall (plist-get (cdr call) :loader)
+                     (lambda (v) (setq resolved v)) #'ignore))
+          (should (equal (car read) (gascity-live--poll-argv s)))
+          (should (equal (nth 1 read) "/sudo:root@localhost:/c/"))
+          (should (nth 2 read))
+          (should (equal resolved '(((seq . 8))))))))))
 
-(ert-deftest gascity-test-live-poll-result-dedup-and-gap ()
-  "A poll learns the head first, then delivers only newer events; a
-window that no longer overlaps the last seq asks for a full refresh."
+(ert-deftest gascity-test-live-poll-result-head-then-new ()
+  "A poll without a seq learns the head only; later polls deliver the
+events past the last seq."
   (let ((s (gascity-live-test--stream))
-        delivered queued)
+        delivered)
     (cl-letf (((symbol-function 'gascity-live--deliver)
-               (lambda (_s events) (setq delivered (mapcar (lambda (e) (alist-get 'seq e)) events))))
-              ((symbol-function 'gascity-live--queue)
-               (lambda (_s type) (push type queued))))
+               (lambda (_s events)
+                 (setq delivered (mapcar (lambda (e) (alist-get 'seq e)) events)))))
       (gascity-live--poll-result s '(((seq . 5)) ((seq . 7))))
       (should (= (gascity-live--stream-seq s) 7))
       (should-not delivered)
-      (gascity-live--poll-result s '(((seq . 6)) ((seq . 7)) ((seq . 8)) ((seq . 9))))
-      (should (equal delivered '(8 9)))
-      (should-not queued)
-      (setf (gascity-live--stream-seq s) 9)
-      (gascity-live--poll-result s '(((seq . 20)) ((seq . 21))))
-      (should (equal queued '(:all)))
-      (should (equal delivered '(20 21))))))
+      (gascity-live--poll-result s '(((seq . 7)) ((seq . 8)) ((seq . 9))))
+      (should (equal delivered '(8 9))))))
+
+(ert-deftest gascity-test-live-key-canonical ()
+  "One city, one key: TRAMP's filled-in default host, a missing slash
+and a local `~' all normalise (pure, no I/O)."
+  (gascity-test-ensure-mock-method)
+  (let ((host (system-name)))
+    (should (equal (gascity-live-key "/mock::/home/u/city")
+                   (gascity-live-key (format "/mock:%s:/home/u/city/" host))))
+    (should (string-prefix-p (format "/mock:%s:" host)
+                             (gascity-live-key "/mock::/home/u/city/"))))
+  (should (equal (gascity-live-key "/ssh:u@h:/c") "/ssh:u@h:/c/"))
+  (should (equal (gascity-live-key "~/city") (expand-file-name "~/city/")))
+  (should (equal (gascity-live-key "/sudo::/c/")
+                 (gascity-live-key (concat (gascity-remote-prefix "/sudo::/c/") "/c/")))))
+
+(ert-deftest gascity-test-live-find-across-spellings ()
+  "A view whose directory spells the city \"/mock::/c/\" finds the stream
+stored under TRAMP's filled-in \"/mock:HOST:/c/\": header and lighter
+see it."
+  (gascity-test-ensure-mock-method)
+  (let* ((gascity-live--streams (make-hash-table :test 'equal))
+         (stored (format "/mock:%s:/home/u/city/" (system-name)))
+         (s (gascity-live-test--stream :root (gascity-live-key stored)
+                                       :state 'polling)))
+    (puthash (gascity-live-key stored) s gascity-live--streams)
+    (let ((default-directory "/mock::/home/u/city/"))
+      (should (eq (gascity-live--find) s))
+      (should (equal (gascity-live-header-string) "● live (polling)")))
+    (should (eq (gascity-live--find "/mock::/home/u/city/sub/") s))))
 
 (ert-deftest gascity-test-live-leak-fixture-catches-a-leak ()
   "The per-test leak check fails a passing test that leaves a live stream

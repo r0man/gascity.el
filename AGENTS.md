@@ -91,7 +91,7 @@ a view of it is attached (`gascity-live-attach`, called from the view's
 mode; `kill-buffer` detaches, the last view out stops the stream). Remote
 ssh-family cities stream over a local `ssh -T` pipe
 (`gascity-remote-ssh-pipe-argv … :resolve nil`, no TRAMP round trip);
-other methods poll `gc events --since WINDOW` through the store. Events
+other methods poll `gc events --watch --after SEQ` through the store. Events
 are batched for 2.5 s and routed by type prefix to
 `gascity-store-invalidate-event` (store-backed views repaint themselves),
 `gascity-live-invalidate-functions`, and the

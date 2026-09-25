@@ -21,7 +21,7 @@
 ;;   never holds a tramp-sh channel and its output is byte-exact JSONL.
 ;;   It is built with no TRAMP round trip, so (re)starts never block.
 ;; - Any other remote method (docker, sudo, multi-hop): no stream; a
-;;   `gc events --since WINDOW' poll every `gascity-live-poll-interval'
+;;   `gc events --watch --after SEQ' poll every `gascity-live-poll-interval'
 ;;   seconds through the store (`gascity-store-fetch').
 ;;
 ;; stderr of a stream goes to the `*gascity-live: CITY*' buffer; its
@@ -58,6 +58,7 @@
 
 (declare-function tramp-dissect-file-name "tramp")
 (declare-function tramp-file-name-hop "tramp")
+(declare-function tramp-file-name-localname "tramp")
 (declare-function gascity-context-city-root-cached "gascity-context" (&optional dir))
 
 ;;; Options
@@ -145,21 +146,33 @@ Called with (ROOT STATE REASON).  Views redraw their header here.")
 (defvar gascity-live--streams (make-hash-table :test 'equal)
   "City root → `gascity-live--stream'.")
 
+(defun gascity-live-key (dir)
+  "Return the canonical stream-table key of directory DIR.
+A remote DIR becomes its dissected TRAMP prefix plus localname, so
+\"/mock::/c/\" and \"/mock:HOST:/c/\" (TRAMP's default host filled in,
+as `gascity-context-city-root' returns it) are one city; a local DIR is
+expanded.  Pure: dissection only (`gascity-remote-prefix'), no I/O."
+  (let ((dir (file-name-as-directory dir)))
+    (if-let* ((prefix (gascity-remote-prefix dir))
+              (vec (ignore-errors (tramp-dissect-file-name dir))))
+        (concat prefix (file-name-as-directory (tramp-file-name-localname vec)))
+      (expand-file-name dir))))
+
 (defun gascity-live--root (&optional dir)
-  "Return the city root for DIR (default `default-directory').
+  "Return the city root for DIR (default `default-directory'), as a key.
+Canonical (`gascity-live-key'), so every spelling of a city is one.
 The memoized city walk only (`gascity-context-city-root-cached'); view
 buffers are pinned to their root, so DIR itself is the answer there."
   ;; Memo only (never the walk, which is TRAMP I/O on a remote city):
   ;; a view buffer's `default-directory' IS its pinned city root.
   (let ((dir (or dir default-directory)))
-    (or (gascity-context-city-root-cached dir)
-        (file-name-as-directory dir))))
+    (gascity-live-key (or (gascity-context-city-root-cached dir) dir))))
 
 (defun gascity-live--find (&optional dir)
   "Return the stream covering DIR (default `default-directory'), or nil.
 Pure string matching on known roots: no file-name handler I/O, safe
 in header lines and redisplay."
-  (let ((dir (file-name-as-directory (or dir default-directory)))
+  (let ((dir (gascity-live-key (or dir default-directory)))
         (best nil))
     (maphash (lambda (root stream)
                (when (and (string-prefix-p root dir)
@@ -273,6 +286,17 @@ The one routing table is the store's, `gascity-store-event-routes'."
       (gascity-live--invalidate (gascity-live--stream-root stream)
                                 kinds types))))
 
+(defun gascity-live--store-dirs (root)
+  "Return ROOT and the distinct directories of its attached views."
+  (let ((dirs (list root)))
+    (when-let* ((stream (gethash root gascity-live--streams)))
+      (dolist (buf (gascity-live--stream-views stream))
+        (when (buffer-live-p buf)
+          (cl-pushnew (file-name-as-directory
+                       (buffer-local-value 'default-directory buf))
+                      dirs :test #'equal))))
+    (nreverse dirs)))
+
 (defun gascity-live--invalidate (root kinds types)
   "Route one debounced batch for the city at ROOT.
 KINDS are view kinds (or `all'), TYPES the event types.  Calls the
@@ -280,10 +304,14 @@ store's event invalidation when the store is loaded, runs
 `gascity-live-invalidate-functions', then each attached view's
 REFRESH whose kinds intersect KINDS.  Views reading through the store
 repaint from the store's own refetch; REFRESH is for the others."
-  (if (eq kinds 'all)
-      (gascity-store-invalidate :dir root)
-    (dolist (type types)
-      (gascity-store-invalidate-event type root)))
+  ;; The store matches entry directories as spelled (a view's
+  ;; \"/mock::/c/\" is not the canonical \"/mock:host:/c/\"): invalidate
+  ;; under the stream root and under each attached view's directory.
+  (dolist (dir (gascity-live--store-dirs root))
+    (if (eq kinds 'all)
+        (gascity-store-invalidate :dir dir)
+      (dolist (type types)
+        (gascity-store-invalidate-event type dir))))
   (run-hook-with-args 'gascity-live-invalidate-functions root kinds types)
   (when-let* ((stream (gethash root gascity-live--streams)))
     (dolist (buf (gascity-live--stream-views stream))
@@ -525,7 +553,7 @@ dropped, which is `offline'."
 ;;; Polling (remote methods a plain ssh cannot reach)
 
 (defun gascity-live--start-poll (stream)
-  "Run STREAM as a periodic `gc events --since' poll through the store."
+  "Run STREAM as a periodic `gc events --watch --after' poll (the store)."
   (setf (gascity-live--stream-mode stream) 'poll)
   (gascity-live--set-state stream 'polling nil)
   (unless (timerp (gascity-live--stream-poll-timer stream))
@@ -533,55 +561,72 @@ dropped, which is `offline'."
           (run-at-time 0 gascity-live-poll-interval
                        #'gascity-live--poll stream))))
 
-(defcustom gascity-live-poll-window "5m"
-  "The `gc events --since' window of each poll (see `gascity-live--poll').
-Must comfortably exceed `gascity-live-poll-interval'; a poll that finds
-no overlap with the last seq it saw asks for a full refresh instead."
+(defcustom gascity-live-poll-watch "2s"
+  "How long each poll waits for a first event when none is pending.
+A poll is `gc events --watch --after SEQ --timeout' this: gc replays
+every event after SEQ and exits at once, or waits this long for one."
   :type 'string
   :group 'gascity-live)
 
-(defun gascity-live--poll-args ()
-  "Return the argv of every poll read: one stable store entry."
-  (list "events" "--since" gascity-live-poll-window))
+(defcustom gascity-live-poll-bootstrap "60s"
+  "The `gc events --since' window of a poll that knows no seq yet.
+It only learns the head seq; must cover `gascity-live-poll-interval'."
+  :type 'string
+  :group 'gascity-live)
+
+(defconst gascity-live--poll-entry '("events" "--live-poll")
+  "Store key of the polls: one stable entry for every poll of a city.
+The argv changes with the seq, so it is the entry's loader that runs
+it (`gascity-live--poll'); keyed by argv, every seq would leave its
+own payload in the store.")
+
+(defun gascity-live--poll-argv (stream)
+  "Return the gc argv of STREAM's next poll.
+With a seq: `events --watch --after SEQ --timeout W', gap-free by seq
+\(gc 1.4.2 rejects --after without --watch or --follow).  Without one:
+`events --since B' to learn the head."
+  (if-let* ((seq (gascity-live--stream-seq stream)))
+      (list "events" "--watch" "--after" (number-to-string seq)
+            "--timeout" gascity-live-poll-watch)
+    (list "events" "--since" gascity-live-poll-bootstrap)))
 
 (defun gascity-live--poll-result (stream events)
-  "Deliver the EVENTS of a poll that STREAM has not seen yet.
-The first poll only learns the head seq (the past is not news).  When
-the oldest event of the window is already past the next seq expected,
-events were missed: queue a full refresh."
-  (let* ((last (gascity-live--stream-seq stream))
-         (seqs (delq nil (mapcar (lambda (e)
-                                   (let ((s (alist-get 'seq e)))
-                                     (and (integerp s) s)))
-                                 events))))
-    (cond
-     ((null last)
-      (when seqs
-        (setf (gascity-live--stream-seq stream) (apply #'max seqs))))
-     (t
-      (when (and seqs (> (apply #'min seqs) (1+ last)))
-        (gascity-live--queue stream :all))
+  "Hand STREAM the EVENTS of a poll.
+A poll that knew no seq only learns the head (the past is not news);
+otherwise every event past the last seq is delivered."
+  (let ((last (gascity-live--stream-seq stream)))
+    (if (null last)
+        (let ((seqs (delq nil (mapcar (lambda (e)
+                                        (let ((s (alist-get 'seq e)))
+                                          (and (integerp s) s)))
+                                      events))))
+          (when seqs
+            (setf (gascity-live--stream-seq stream) (apply #'max seqs))))
       (gascity-live--deliver
        stream (seq-filter (lambda (e)
                             (let ((s (alist-get 'seq e)))
                               (and (integerp s) (> s last))))
-                          events))))))
+                          events)))))
 
 (defun gascity-live--poll (stream)
-  "Fetch the events STREAM may have missed, through the store.
-`gascity-store-fetch' with :force: a known-good directory skips the
-reader's directory probe, the host's read cap and offline pause apply,
-and a read already in flight is joined rather than doubled.  A poll
-never overlaps its own previous one."
+  "Fetch the events STREAM missed, through the store.
+`gascity-store-fetch' with :force on the stable entry
+`gascity-live--poll-entry', whose loader runs `gascity-live--poll-argv':
+the host's read cap, deadline and offline pause apply, and a poll never
+overlaps its own previous one.  Once a poll has succeeded the reader's
+directory probe is skipped, as the store skips it for a known-good
+directory."
   (unless (gascity-live--stream-poll-busy stream)
-    (let ((root (gascity-live--stream-root stream)))
+    (let ((root (gascity-live--stream-root stream))
+          (argv (gascity-live--poll-argv stream))
+          (known-good (eq (gascity-live--stream-state stream) 'polling)))
       (setf (gascity-live--stream-poll-busy stream) t)
       (condition-case err
           (gascity-store-fetch
-           (gascity-live--poll-args)
-           (lambda (result)
+           gascity-live--poll-entry
+           (lambda (events)
              (setf (gascity-live--stream-poll-busy stream) nil)
-             (gascity-live--poll-result stream (car result))
+             (gascity-live--poll-result stream events)
              (gascity-live--set-state stream 'polling nil))
            (lambda (msg)
              (setf (gascity-live--stream-poll-busy stream) nil)
@@ -590,7 +635,14 @@ never overlaps its own previous one."
               (if (string-match-p "request failed\\|dial tcp" msg)
                   'supervisor-down 'offline)
               msg))
-           :dir root :lines t :force t)
+           :dir root :force t
+           :loader (lambda (resolve reject)
+                     (let ((default-directory root)
+                           (gascity-reader-skip-dir-probe
+                            (or gascity-reader-skip-dir-probe known-good)))
+                       (gascity-reader-read-async
+                        argv (lambda (result) (funcall resolve (car result)))
+                        reject :lines t))))
         (error
          (setf (gascity-live--stream-poll-busy stream) nil)
          (gascity-live--set-state stream 'offline (error-message-string err)))))))
@@ -794,7 +846,8 @@ succeeds after an outage is news the stream's backoff should not wait
 out."
   (when (eq state 'online)
     (maphash (lambda (root stream)
-               (when (and (equal (or (file-remote-p root) "") host)
+               (when (and (equal (or (gascity-remote-prefix root) "")
+                                 (or (gascity-remote-prefix host) host))
                           (gascity-live--stream-enabled stream)
                           (gascity-live--stream-views stream)
                           (not (memq (gascity-live--stream-state stream)
