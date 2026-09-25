@@ -418,7 +418,7 @@ overwrite the rows of a later `g'.")
   "Fetch COMMAND asynchronously and repaint the current tabulated buffer.
 The non-blocking counterpart of `gascity-tabulated--refresh', and what
 every list's `g' runs: COMMAND is a `gascity-command' read (its argv
-via `gascity-command-line', its validation as in
+via `gascity-command-arguments', its validation as in
 `gascity-command-execute'), read through the store
 \(`gascity-store-fetch': shared with every view of the city, scheduled
 per host, deadline-bounded) so a slow link — a remote `gc session
@@ -452,9 +452,9 @@ the shared read's process when one is running, else nil."
         gascity-tabulated--base-name base-name)
   (let* ((buffer (current-buffer))
          (generation (cl-incf gascity-tabulated--refresh-generation))
-         ;; The argv tail: `gascity-command-line' leads with the
-         ;; executable, which the reader adds itself.
-         (args (cdr (gascity-command-line command)))
+         ;; The argv tail only: the reader adds the executable itself,
+         ;; so resolving it here (a host round trip) would be wasted.
+         (args (gascity-command-arguments command))
          (current-p (lambda ()
                       (and (buffer-live-p buffer)
                            (= generation

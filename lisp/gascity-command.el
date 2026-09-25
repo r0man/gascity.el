@@ -210,6 +210,12 @@ the subject bead id and pass it as `:directory'.")
   "Return COMMAND's full command line as a list of strings.
 The list starts with the executable.")
 
+(cl-defgeneric gascity-command-arguments (command)
+  "Return COMMAND's argv after the executable, as a list of strings.
+What the async reader and the action runner take: they supply the
+executable themselves, so building it here (a host round trip for a
+remote city) would be wasted.")
+
 (cl-defgeneric gascity-command-validate (command)
   "Return an error string for COMMAND, or nil when it is valid.")
 
@@ -268,9 +274,14 @@ omits Guix profile directories just as `tramp-remote-path' does."
          (cl-call-next-method))))
 
 (cl-defmethod gascity-command-line ((command gascity-command))
+  "Return COMMAND's argument list: `gascity-command-arguments'."
+  (gascity-command-arguments command))
+
+(cl-defmethod gascity-command-arguments ((command gascity-command))
   "Build COMMAND's argument list from its slot metadata.
 Order: subcommand tokens, global flags, then the option/positional
-arguments inferred by `beads-meta-build-command-line'."
+arguments inferred by `beads-meta-build-command-line'.  No executable,
+so no host resolution: safe on the paths that must not block."
   (let ((subcommand (gascity-command-subcommand command))
         (global-args (gascity-command--global-options command)))
     (if subcommand

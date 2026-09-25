@@ -205,7 +205,7 @@ Returns nil."
                         (with-current-buffer origin
                           (gascity--refresh-current-view))))))
       (gascity-store-action
-       (cdr (gascity-command-line command))
+       (gascity-command-arguments command)
        :target target
        :json (and (slot-exists-p command 'json) (slot-value command 'json))
        :invalidate invalidate
