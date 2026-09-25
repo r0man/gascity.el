@@ -114,7 +114,7 @@ re-prefixing host-local paths that gc reports, the buffer-name keying scheme,
 and turning a TRAMP name into a local `ssh -t HOST …` argv for tmux attach
 (the terminal backend only spawns local processes). Bare `gc`/`tmux` names are
 resolved on the host via `tramp-remote-path`, then by probing the Guix profile
-dirs in `gascity-remote-search-path`, cached per connection; every remote
+dirs in `beads-remote-search-path`, cached per connection; every remote
 invocation also prepends those dirs to PATH so gc's own children (git, dolt)
 resolve. Keep redisplay-time and eldoc code off the TRAMP channel.
 

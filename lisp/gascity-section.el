@@ -490,7 +490,7 @@ gc emits either a bare array of beads or an object wrapping them under
 ;; one choke point every bd command line passes through, resolving the
 ;; program the same zero-setup way as gc and tmux
 ;; (`gascity-remote-find-executable': `tramp-remote-path' first, then
-;; the `gascity-remote-search-path' profile directories, cached per
+;; the `beads-remote-search-path' profile directories, cached per
 ;; connection).
 
 (defun gascity-beads--resolve-command-line (line)

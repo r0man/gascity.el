@@ -446,7 +446,7 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   connection-local `gascity-executable`) is used as-is; (2)
   `executable-find` on the host, which searches `tramp-remote-path` and
   so honours a `tramp-own-remote-path` setup; (3) the
-  `gascity-remote-search-path` directories in order — by default the
+  `beads-remote-search-path` directories in order — by default the
   Guix home, user, and system profile bins, `~` expanded host-side —
   first hit wins. Guix hosts therefore work with ZERO setup. Hits are
   cached per (connection × name) with `gascity-context-clear-cache` as
@@ -460,7 +460,7 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   before any `with-temp-buffer` (the buffer switch would hide the
   buffer-locally applied value). A remote "command not found" is a shell
   exit 127, not a spawn error, so the setup hint — naming the host and
-  all three fixes (`tramp-own-remote-path`, `gascity-remote-search-path`,
+  all three fixes (`tramp-own-remote-path`, `beads-remote-search-path`,
   connection-local `gascity-executable`) — rides the non-zero-exit path
   as well as the spawn-failure path.
 - **PATH export for gc's subprocesses (gce-k5d).** Resolving gc to an
@@ -471,7 +471,7 @@ city — no silent fallback to a local gc (gce-90t). The moving parts:
   profile directories, so a real city dies with "git: executable file
   not found in $PATH". Every remote invocation site therefore splices
   the sh fragment `PATH=<dirs>:$PATH` (`gascity-remote-path-assignment`;
-  `<dirs>` = the `gascity-remote-search-path` entries, `~` expanded on
+  `<dirs>` = the `beads-remote-search-path` entries, `~` expanded on
   the host via the remote `expand-file-name`, shell-quoted,
   colon-joined) before the command: the reader's sync and async runners
   share one remote wrapper (`gascity-reader--command`,

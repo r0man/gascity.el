@@ -112,9 +112,9 @@ M-x gascity-status
 Setup: usually none. A bare program name is resolved on the host —
 first against `tramp-remote-path` (via `executable-find`), then, when
 that misses, by probing the profile directories in
-`gascity-remote-search-path`, by default the Guix profiles
-(`~/.guix-home/profile/bin`, `~/.guix-profile/bin`,
-`/run/current-system/profile/bin`). A host that installs `gc` and
+`beads-remote-search-path` (shared with beads.el), by default the Guix
+profiles (`~/.guix-home/profile/bin`, `~/.guix-profile/bin`,
+`/run/current-system/profile/bin`), then Nix and `~/.local/bin`, `~/bin`. A host that installs `gc` and
 `tmux` via Guix therefore works out of the box. Resolutions are cached
 per connection; `M-x gascity-context-clear-cache` forgets them (e.g.
 after moving a binary on the host). For other layouts, either extend
@@ -182,9 +182,10 @@ Notes:
 `M-x customize-group RET gascity RET`. Notably:
 
 - `gascity-executable` — name/path of the `gc` binary (default `"gc"`).
-- `gascity-remote-search-path` — remote directories probed for `gc`/`tmux`
-  on a remote city when `tramp-remote-path` misses; defaults to the Guix
-  profile bins.
+- `beads-remote-search-path` (beads.el, formerly
+  `gascity-remote-search-path`) — remote directories probed for
+  `gc`/`tmux`/`bd` on a remote city when `tramp-remote-path` misses;
+  defaults to the Guix, Nix and `~/.local/bin` profile bins.
 - `gascity-terminal-backend` — `nil` (auto: vterm > eat > term), `vterm`, `eat`,
   or `term`, for tmux attach.
 - `gascity-tmux-socket` — tmux server socket the agents run on. `nil`

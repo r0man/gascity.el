@@ -12,6 +12,8 @@
 
 ;;; Code:
 
+(require 'beads-custom)
+
 ;;; Customization group
 
 (defgroup gascity nil
@@ -30,13 +32,13 @@ absolute path is used as-is.
 For a remote city (a TRAMP `default-directory'), a bare name is
 resolved on the host by `gascity-remote-find-executable': first
 against `tramp-remote-path' — NOT the variable `exec-path' — then by probing the
-profile directories in `gascity-remote-search-path', which covers
+profile directories in `beads-remote-search-path', which covers
 Guix hosts with zero setup.  When gc lives elsewhere, either extend
 TRAMP's search path:
 
   (add-to-list \\='tramp-remote-path \\='tramp-own-remote-path)
 
-add its directory to `gascity-remote-search-path', or set this
+add its directory to `beads-remote-search-path', or set this
 variable connection-locally to an absolute remote path — every
 invocation site reads it under `with-connection-local-variables':
 
@@ -50,46 +52,12 @@ invocation site reads it under `with-connection-local-variables':
 
 ;;; Remote cities
 
-(defcustom gascity-remote-search-path
-  '("~/.guix-home/profile/bin"
-    "~/.guix-profile/bin"
-    "/run/current-system/profile/bin")
-  "Remote directories probed for gc, tmux, and bd as a resolution fallback.
-On a remote city, a bare program name (`gascity-executable', the tmux
-probes, the `bd' of a delegated beads.el view) that `executable-find'
-cannot resolve on the host — TRAMP searches `tramp-remote-path', which
-omits non-default profile directories — is looked up in these
-directories instead, first hit wins.  Entries are host-side paths;
-`~' expands to the remote home.  The defaults cover Guix hosts (guix
-home, user, and system profiles) with zero configuration.
-
-These directories are also prepended to the PATH exported to every
-remote gc invocation (`gascity-remote-path-assignment'), so the
-subprocesses gc spawns — git for pack imports, dolt — resolve on the
-host as well; resolving gc alone would not survive its first fork.
-
-Resolutions and the exported PATH fragment are cached per connection;
-clear with `gascity-context-clear-cache' after installing a program
-or changing this path."
-  :type '(repeat string)
-  :group 'gascity)
-
-(defcustom gascity-remote-miss-ttl 60
-  "Seconds a failed remote executable lookup is remembered, 0 to disable.
-Resolving a bare program name on a remote host
-\(`gascity-remote-find-executable') costs one channel round trip per
-`gascity-remote-search-path' entry, all synchronous on the UI thread.
-A hit is cached until `gascity-context-clear-cache'; a definite miss
-\(every probe answered \"no\") used to be re-probed on every call, so a
-program absent from the host — `infocmp' on a minimal image, say —
-made each terminal status tick or attach pay the full walk again.  A
-miss is now remembered for this many seconds instead, then re-probed,
-so installing the program on the host still heals itself within the
-TTL.  Probe errors (a dropped connection) are never cached — the next
-call retries at once.  Set to 0 to restore the old re-probe-every-call
-behaviour."
-  :type 'natnum
-  :group 'gascity)
+;; Remote executable resolution is beads.el's (`beads-remote'): one
+;; search path and one miss TTL for bd, gc and tmux alike.
+(define-obsolete-variable-alias 'gascity-remote-search-path
+  'beads-remote-search-path "0.1.0")
+(define-obsolete-variable-alias 'gascity-remote-miss-ttl
+  'beads-remote-miss-ttl "0.1.0")
 
 (defcustom gascity-remote-sync-timeout 30
   "Seconds before a synchronous remote call is abandoned, 0 to disable.

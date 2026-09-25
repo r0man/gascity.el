@@ -37,7 +37,7 @@
 ;;   default, so on a host that installs gc/tmux via Guix profiles a
 ;;   bare program name resolves to nothing until the user configures
 ;;   TRAMP.  `gascity-remote-find-executable' closes that gap with zero
-;;   setup: it falls back to probing `gascity-remote-search-path' (the
+;;   setup: it falls back to probing `beads-remote-search-path' (the
 ;;   standard Guix profile bins) and returns an absolute host-local
 ;;   path, cached per connection.  Resolving gc itself is not enough,
 ;;   though: gc spawns subprocesses (git for pack imports, dolt), and
@@ -45,7 +45,10 @@
 ;;   `gascity-remote-path-assignment' closes that second gap — a
 ;;   \"PATH=dirs:$PATH\" sh fragment every remote invocation site
 ;;   splices before the command, prepending the same profile
-;;   directories to the PATH gc's children resolve against.
+;;   directories to the PATH gc's children resolve against.  Both
+;;   (and the per-connection cache and ssh argv builders) live in
+;;   beads.el's `beads-remote', shared with bd; the gascity functions
+;;   are thin wrappers (dashboard-v3 §12 B4).
 ;;
 ;; - Connection reuse.  Async reads (`gascity-reader-read-async') run
 ;;   through TRAMP's `make-process' :file-handler, so their handler is
@@ -83,6 +86,7 @@
 (require 'tramp)
 (require 'gascity-custom)
 (require 'gascity-error)
+(require 'beads-remote)
 
 ;;; Paths
 
@@ -289,136 +293,52 @@ default keeps TRAMP's own entries untouched."
 
 ;;; Local ssh argv for a remote host
 
-(defconst gascity-remote-ssh-methods '("ssh" "sshx" "scp" "scpx")
-  "TRAMP methods whose host a plain local `ssh' can reach.
-These all authenticate over ssh with the same user/host/port triple, so
-an interactive attach can bypass TRAMP and run `ssh' directly.")
-
 (defun gascity-remote-ssh-argv (name argv)
-  "Return a local ssh argv running ARGV on the host of TRAMP file NAME.
-NAME is a remote TRAMP file name (or bare prefix) using an ssh-based
-method (`gascity-remote-ssh-methods'); ARGV is the (PROGRAM . ARGS) list
-to run there.  The result is (\"ssh\" \"-t\" [\"-l\" USER] [\"-p\" PORT]
-HOST TOKENS...), each remote token shell-quoted for the remote POSIX
-shell — ssh joins them with spaces and hands the line to the login
-shell.  Signals a `user-error' for a non-ssh method or a multi-hop
-name (neither maps onto one plain ssh invocation)."
-  (unless (tramp-tramp-file-p name)
-    (user-error "Not a remote TRAMP name: %s" name))
-  (let* ((vec (tramp-dissect-file-name name))
-         (method (tramp-file-name-method vec))
-         (user (tramp-file-name-user vec))
-         (host (tramp-file-name-host vec))
-         (port (tramp-file-name-port vec))
-         (hop (tramp-file-name-hop vec)))
-    (when hop
-      (user-error "Multi-hop TRAMP name not supported for a direct ssh: %s"
-                  name))
-    (unless (member method gascity-remote-ssh-methods)
-      (user-error "TRAMP method %s cannot be reached with plain ssh (need %s)"
-                  method (mapconcat #'identity gascity-remote-ssh-methods "/")))
-    (append (list "ssh" "-t")
-            (and user (list "-l" user))
-            (and port (list "-p" (format "%s" port)))
-            (list host)
-            (mapcar #'shell-quote-argument argv))))
+  "Return a local ssh argv running ARGV with a tty on the host of NAME.
+Thin wrapper over `beads-remote-ssh-argv' (the tmux attach path): NAME
+is a TRAMP name with an ssh-family method, ARGV is (PROGRAM . ARGS);
+the result is (\"ssh\" \"-t\" [\"-l\" USER] [\"-p\" PORT] HOST TOKENS...).
+Signals a `user-error' for a non-ssh method or a multi-hop name."
+  (beads-remote-ssh-argv name argv))
+
+(defun gascity-remote-ssh-pipe-argv (dir argv)
+  "Return a local no-pty ssh argv running ARGV on the host of DIR.
+For long-lived streams (`gc events --follow', `gc session logs -f')
+that must bypass the TRAMP channel (dashboard-v3 §8.3 R4).  ARGV's
+program is resolved on the host (`gascity-remote-find-executable') and
+the command runs with `gascity-remote-path-assignment' in front, as
+one shell-quoted string (`beads-remote-ssh-pipe-argv').  Both lookups
+are cached per connection; the first call for a host does synchronous
+TRAMP I/O, so call this from a command, never from redisplay.
+Signals a `user-error' for a non-ssh method or a multi-hop DIR."
+  (beads-remote-ssh-pipe-argv
+   dir
+   (cons (gascity-remote-find-executable (car argv) dir) (cdr argv))
+   (gascity-remote-path-assignment dir)))
 
 ;;; Finding executables on the host
 
-(defvar gascity-remote--executable-cache (make-hash-table :test 'equal)
-  "Cache mapping (REMOTE-PREFIX . NAME) to a resolved host-local path.
-A successful resolution is cached as the path string until the cache
-is cleared.  A definite miss (every probe answered \"no\") is cached as
-\(:miss . TIME) and honoured for `gascity-remote-miss-ttl' seconds —
-the probe walk is a chain of synchronous channel round trips, and a
-program absent from the host would otherwise cost the full walk on
-every status tick and attach.  After the TTL the miss is re-probed, so
-installing the program on the host still heals itself; a probe ERROR
-\(dropped connection) is never cached at all.  The per-connection PATH
-fragment of `gascity-remote-path-assignment' lives here too, under the
-un-collidable key (REMOTE-PREFIX . :path), as do positive terminfo
-probes of `gascity-remote-terminfo-p', under
-\(REMOTE-PREFIX . (:terminfo . TERM)).  Cleared by
-`gascity-remote-forget-executables' (via
-`gascity-context-clear-cache').")
+(defvaralias 'gascity-remote--executable-cache 'beads-remote--cache
+  "Per-connection resolution cache, shared with beads.el.
+Executable resolutions and the PATH fragment are `beads-remote''s;
+gascity stores its positive terminfo probes here too, under
+\(REMOTE-PREFIX . (:terminfo . TERM)).")
 
 (defun gascity-remote-forget-executables ()
   "Forget cached remote executable resolutions.
 Called from `gascity-context-clear-cache' — the one user-facing cache
 entry point — e.g. after a program moved on the host."
-  (clrhash gascity-remote--executable-cache))
+  (beads-remote-forget))
 
 (defun gascity-remote-find-executable (name &optional dir)
   "Return NAME resolved for DIR's host (default `default-directory').
-For a local DIR, or when NAME already carries a directory (an absolute
-path, or `~/…' — e.g. a connection-local `gascity-executable'), NAME is
-returned unchanged.  For a remote DIR a bare NAME is resolved to an
-absolute host-local path (`file-local-name' form, valid in
-`process-file', `make-process', and remote shell command lines):
-
-1. `executable-find' on the host, which searches `tramp-remote-path'
-   and so honours any user setup such as `tramp-own-remote-path';
-2. each `gascity-remote-search-path' entry in order — `~' expanded on
-   the host — testing NAME for executability there; first hit wins.
-   The defaults cover Guix profiles with zero configuration.
-
-Successful resolutions are cached per (connection × NAME); clear with
-`gascity-context-clear-cache'.  An unresolvable NAME returns NAME
-unchanged, so the launch fails exactly where it always did — the
-remote shell's \"command not found\" (exit 127) — and
-`gascity-remote-spawn-error-hint' names the setup paths.  That miss
-is remembered for `gascity-remote-miss-ttl' seconds (the walk is all
-synchronous channel traffic), then re-probed.  A probe error (a
-dropped connection) also returns NAME unchanged but is never cached,
-so the next call retries at once."
-  (let ((remote (file-remote-p (or dir default-directory))))
-    (if (or (not remote) (file-name-absolute-p name))
-        name
-      (let* ((key (cons remote name))
-             (cached (gethash key gascity-remote--executable-cache)))
-        (cond
-         ((stringp cached) cached)
-         ((gascity-remote--miss-fresh-p cached) name)
-         (t
-          (let* ((default-directory (or dir default-directory))
-                 (errored nil)
-                 (found
-                  (condition-case nil
-                      (or (executable-find name t)
-                          (cl-some
-                           (lambda (entry)
-                             (let ((candidate
-                                    (expand-file-name
-                                     name (expand-file-name
-                                           (concat remote entry)))))
-                               (and (file-executable-p candidate)
-                                    (file-local-name candidate))))
-                           gascity-remote-search-path))
-                    ;; A probe error (unreachable host, dead
-                    ;; connection) must surface as the launch failure
-                    ;; the callers already handle, not here — and must
-                    ;; not be mistaken for a definite miss below.
-                    (error (setq errored t) nil))))
-            (cond (found
-                   (puthash key found gascity-remote--executable-cache))
-                  ((not errored)
-                   (puthash key (cons :miss (float-time))
-                            gascity-remote--executable-cache))
-                  (t (remhash key gascity-remote--executable-cache)))
-            (or found name))))))))
-
-(defun gascity-remote--miss-fresh-p (entry)
-  "Return non-nil when cache ENTRY is a miss still inside its TTL.
-ENTRY is a `gascity-remote--executable-cache' value; only a
-\(:miss . TIME) pair younger than `gascity-remote-miss-ttl' seconds
-counts.  A TTL of 0 (or a non-number) never honours a miss, restoring
-the re-probe-every-call behaviour."
-  (and (consp entry)
-       (eq (car entry) :miss)
-       (numberp (cdr entry))
-       (numberp gascity-remote-miss-ttl)
-       (> gascity-remote-miss-ttl 0)
-       (< (- (float-time) (cdr entry)) gascity-remote-miss-ttl)))
+Thin wrapper over `beads-remote-find-executable': local DIRs and
+names with a directory pass through; on a remote DIR a bare NAME is
+resolved via `tramp-remote-path', then `beads-remote-search-path',
+cached per connection (misses for `beads-remote-miss-ttl' seconds).
+An unresolvable NAME comes back unchanged, so the launch fails with
+exit 127 and `gascity-remote-spawn-error-hint' names the setup paths."
+  (beads-remote-find-executable name dir))
 
 ;;; Terminfo on the host
 
@@ -484,54 +404,11 @@ call, so installing the entry on the host heals itself.  Clear with
 
 (defun gascity-remote-path-assignment (&optional dir)
   "Return a \"PATH=DIRS:$PATH\" sh fragment for DIR's host, or nil.
-DIRS are the `gascity-remote-search-path' entries expanded on DIR's
-host (default `default-directory'; a `~' becomes the remote home),
-shell-quoted and colon-joined.  Returns nil for a local DIR, an empty
-search path, or when host-side expansion fails (e.g. a dropped
-connection) — callers then run the command unaugmented, and the launch
-fails exactly where it always did.
-
-Every remote invocation site splices this fragment before the command
-it hands the remote shell.  Resolving gc itself to an absolute profile
-path (`gascity-remote-find-executable') is not enough: gc spawns
-subprocesses (git for pack imports, dolt), and those children inherit
-the spawned process's PATH — `tramp-remote-path' for tramp-sh, the
-login environment for direct-async — which omits the profile
-directories, so a real city fails with \"git: executable file not
-found in $PATH\".  The assignment must be evaluated BY the remote
-shell, where $PATH expands to whatever the process actually inherited;
-exporting PATH through `process-environment' cannot express that:
-every TRAMP handler (tramp-sh process-file/make-process and
-direct-async alike, verified on Emacs 30/TRAMP 2.7) forwards env
-entries shell-quoted, so a $PATH in the value arrives literal and the
-inherited tail is lost.
-
-Nonexistent directories are kept: a dead PATH entry is harmless, and
-filtering would cost an existence probe per entry per connection while
-masking a profile created later.  The fragment is cached per
-connection alongside the executable resolutions; clear with
-`gascity-context-clear-cache' after changing
-`gascity-remote-search-path'."
-  (let ((remote (file-remote-p (or dir default-directory))))
-    (when (and remote gascity-remote-search-path)
-      (let ((key (cons remote :path)))
-        (or (gethash key gascity-remote--executable-cache)
-            (when-let* ((dirs
-                         (condition-case nil
-                             (mapcar (lambda (entry)
-                                       (shell-quote-argument
-                                        (file-local-name
-                                         (expand-file-name
-                                          (concat remote entry)))))
-                                     gascity-remote-search-path)
-                           ;; Expanding `~' needs the connection; a
-                           ;; probe error must surface as the launch
-                           ;; failure the callers already handle.
-                           (error nil))))
-              (puthash key
-                       (format "PATH=%s:$PATH"
-                               (mapconcat #'identity dirs ":"))
-                       gascity-remote--executable-cache)))))))
+Thin wrapper over `beads-remote-path-assignment': DIRS are the
+`beads-remote-search-path' entries expanded on the host.  Every remote
+gc invocation site splices it before the command, so gc's own
+children (git, dolt) resolve on the host too.  Nil for a local DIR."
+  (beads-remote-path-assignment dir))
 
 ;;; Spawn diagnostics
 
@@ -542,7 +419,7 @@ REASON is the underlying error string.  For a local DIR (default
 remote DIR the message names the host and the three setup paths: remote
 programs resolve against `tramp-remote-path' (not the local variable
 `exec-path'), which omits non-default profile directories unless
-`tramp-own-remote-path' is added; `gascity-remote-search-path' is the
+`tramp-own-remote-path' is added; `beads-remote-search-path' is the
 probed fallback (a hit there needs no setup at all, so reaching this
 hint means the program was in none of its directories); and VAR, when
 non-nil, is a defcustom symbol (e.g. `gascity-executable') the user can
@@ -553,7 +430,7 @@ set connection-locally to an absolute remote path."
       (format (concat "Cannot run %s on %s: %s — put it on TRAMP's remote"
                       " path: (add-to-list 'tramp-remote-path"
                       " 'tramp-own-remote-path) or add its directory to"
-                      " `gascity-remote-search-path'%s")
+                      " `beads-remote-search-path'%s")
               program remote reason
               (if var
                   (format ", or set %s connection-locally for this host" var)

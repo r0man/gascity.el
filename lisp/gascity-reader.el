@@ -36,7 +36,7 @@
 ;; absolute path can be set via connection-local profiles (see the
 ;; defcustom); a bare name is then resolved on the host by
 ;; `gascity-remote-find-executable' (`tramp-remote-path', falling back
-;; to the Guix profile directories in `gascity-remote-search-path'), so
+;; to the Guix profile directories in `beads-remote-search-path'), so
 ;; a Guix host works with zero setup.  Remote commands run through the
 ;; /bin/sh wrapper of `gascity-reader--command', which also exports
 ;; those directories on PATH — gc spawns subprocesses (git for pack
@@ -258,7 +258,7 @@ files.  `gascity-executable' is resolved under
 `with-connection-local-variables', honouring a per-host
 connection-local value; a bare name on a remote directory is then
 resolved to an absolute host path by `gascity-remote-find-executable'
-\(`tramp-remote-path', falling back to `gascity-remote-search-path').
+\(`tramp-remote-path', falling back to `beads-remote-search-path').
 The remote wrapper also exports the search-path directories on PATH so
 gc's own subprocesses (git, dolt) resolve too (gce-k5d).  An env-city
 override (`gascity-reader--city-env-pair') is applied as a

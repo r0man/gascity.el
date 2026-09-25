@@ -5788,7 +5788,7 @@ non-zero-exit path of `gascity-reader-read' (gce-90t audit #6)."
       (should (string-match-p "mock" msg))
       ;; All three setup paths are named (gce-qke).
       (should (string-match-p "tramp-own-remote-path" msg))
-      (should (string-match-p "gascity-remote-search-path" msg))
+      (should (string-match-p "beads-remote-search-path" msg))
       (should (string-match-p "gascity-executable" msg)))))
 
 (ert-deftest gascity-test-remote-reader-read-retries-stale-channel ()
@@ -6188,10 +6188,10 @@ directory, and a best-effort success on a remote one."
 (ert-deftest gascity-test-remote-find-executable ()
   "Bare names resolve on the host with zero setup (gce-qke): a
 `tramp-remote-path' hit (`executable-find') wins, else the
-`gascity-remote-search-path' profile directories are probed in order,
+`beads-remote-search-path' profile directories are probed in order,
 first hit wins.  Hits are cached per (connection × name) until
 `gascity-context-clear-cache'; a definite miss is cached for
-`gascity-remote-miss-ttl' seconds (the walk is synchronous channel
+`beads-remote-miss-ttl' seconds (the walk is synchronous channel
 traffic on every status tick otherwise), so installing the program
 heals itself after the TTL, at once with a TTL of 0 or a cache clear;
 a probe ERROR is never cached.  Local directories and names that
@@ -6224,7 +6224,7 @@ already carry a directory pass through untouched."
            (dir-b (expand-file-name "b/bin" tmp))
            (tool-a (expand-file-name "gascity-test-tool" dir-a))
            (tool-b (expand-file-name "gascity-test-tool" dir-b))
-           (gascity-remote-search-path (list dir-a dir-b)))
+           (beads-remote-search-path (list dir-a dir-b)))
       (unwind-protect
           (progn
             (make-directory dir-a t)
@@ -6244,7 +6244,7 @@ already carry a directory pass through untouched."
             ;; unchanged (the launch error path owns the hint).
             (gascity-context-clear-cache)
             (let ((probes 0)
-                  (gascity-remote-miss-ttl 60))
+                  (beads-remote-miss-ttl 60))
               (cl-letf* ((real (symbol-function 'file-executable-p))
                          ((symbol-function 'file-executable-p)
                           (lambda (f) (cl-incf probes) (funcall real f))))
@@ -6266,7 +6266,7 @@ already carry a directory pass through untouched."
                 (should (= probes 0))
                 ;; A TTL of 0 heals immediately — and the earlier
                 ;; directory wins — with no cache clear.
-                (let ((gascity-remote-miss-ttl 0))
+                (let ((beads-remote-miss-ttl 0))
                   (should (equal (gascity-remote-find-executable
                                   "gascity-test-tool")
                                  tool-a)))
@@ -6311,7 +6311,7 @@ degenerate lines (nil, a non-string program) pass through unharmed."
 
 (ert-deftest gascity-test-beads-resolve-command-line-remote ()
   "On a remote store a bare bd resolves like gc/tmux do (gce-9hh): not on
-`tramp-remote-path' -> probe the `gascity-remote-search-path' profile
+`tramp-remote-path' -> probe the `beads-remote-search-path' profile
 directories, first executable hit wins.  An absolute program and an
 unresolvable name pass through, the latter to fail exactly where it
 always did (beads.el's own error surface)."
@@ -6321,7 +6321,7 @@ always did (beads.el's own error surface)."
            (tmp (make-temp-file "gascity-test-bd-profile" t))
            (bin (expand-file-name "bin" tmp))
            (tool (expand-file-name "gascity-test-bd" bin))
-           (gascity-remote-search-path (list bin)))
+           (beads-remote-search-path (list bin)))
       (unwind-protect
           (progn
             (make-directory bin t)
@@ -6382,11 +6382,11 @@ until `gascity-context-clear-cache'."
         (let* ((remote (file-remote-p default-directory))
                (home (file-local-name
                       (expand-file-name (concat remote "~")))))
-          (let ((gascity-remote-search-path nil))
+          (let ((beads-remote-search-path nil))
             (should-not (gascity-remote-path-assignment)))
           ;; Order kept, `~' expanded host-side, a nonexistent entry
           ;; and one needing shell quoting both ride along verbatim.
-          (let ((gascity-remote-search-path
+          (let ((beads-remote-search-path
                  '("~/gascity-test-absent/bin" "/opt/gascity test/bin")))
             (should (equal (gascity-remote-path-assignment)
                            (format "PATH=%s/gascity-test-absent/bin:%s:$PATH"
@@ -6395,7 +6395,7 @@ until `gascity-context-clear-cache'."
                                     "/opt/gascity test/bin")))))
           ;; Cached per connection: a changed search path answers stale
           ;; until the one cache entry point clears it.
-          (let ((gascity-remote-search-path '("/gascity-test-other/bin")))
+          (let ((beads-remote-search-path '("/gascity-test-other/bin")))
             (should (string-match-p "gascity-test-absent"
                                     (gascity-remote-path-assignment)))
             (gascity-context-clear-cache)
@@ -6405,7 +6405,7 @@ until `gascity-context-clear-cache'."
 
 (defmacro gascity-test--with-fake-remote-gc (&rest body)
   "Run BODY with a fake remote gc resolved via the search path.
-Binds `gascity-remote-search-path' to (DIR-A \"~/gascity-test-absent/bin\")
+Binds `beads-remote-search-path' to (DIR-A \"~/gascity-test-absent/bin\")
 — DIR-A a fresh host directory holding the `gascity-test-gc' script,
 the `~' entry a nonexistent one — and `gascity-executable' to the bare
 script name, so the zero-config chain (search-path resolution + PATH
@@ -6427,7 +6427,7 @@ expected leading PATH entries, colon-terminated)."
             (child (expand-file-name "gascity-test-child" dir-a))
             (home (file-local-name (expand-file-name (concat remote "~"))))
             (path-prefix (concat dir-a ":" home "/gascity-test-absent/bin:"))
-            (gascity-remote-search-path
+            (beads-remote-search-path
              (list dir-a "~/gascity-test-absent/bin"))
             (gascity-executable "gascity-test-gc"))
        (ignore remote dir-a fake-gc path-prefix)
@@ -6558,7 +6558,7 @@ gc's subprocesses must resolve there too.  A local line stays bare."
   (gascity-test--with-mock-remote
     (gascity-context-clear-cache)
     (unwind-protect
-        (let ((gascity-remote-search-path '("/gascity-test-profile/bin"))
+        (let ((beads-remote-search-path '("/gascity-test-profile/bin"))
               (lines nil))
           ;; session-peek streams through the BASE backend — status and
           ;; the list commands specialize `execute-interactive' into
