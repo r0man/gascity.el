@@ -90,8 +90,8 @@ established (no local sh).  BODY sees a real TRAMP connection."
     file-name-case-insensitive-p)
   "File-name handler operations the render guard lets through.
 Pure name manipulation: gascity-remote calls these constantly while
-rendering.  `expand-file-name' is allowed only on an absolute name
-without `~' (see `gascity-test--render-guard-handler').")
+rendering.  `expand-file-name' is allowed when no `~' needs the remote
+home (see `gascity-test--render-guard-pure-p').")
 
 (defvar gascity-test-render-guard-violations nil
   "Operations the render guard refused, most recent first.
@@ -102,10 +102,17 @@ swallowed the signal (`ignore-errors').")
   "Return non-nil when OPERATION on ARGS needs no I/O."
   (or (memq operation gascity-test-render-guard-pure-operations)
       (and (eq operation 'expand-file-name)
-           (let ((name (car args)))
+           (let* ((tilde "\\`\\(?:/[^/:]+:[^/:]*:\\)?~")
+                  (name (car args))
+                  (dir (or (cadr args) default-directory)))
+             ;; Pure when nothing needs the remote home: an absolute
+             ;; NAME, or a relative one joined to an absolute DIR.
              (and (stringp name)
-                  (file-name-absolute-p name)
-                  (not (string-match-p "\\`\\(?:/[^/:]+:[^/:]*:\\)?~" name)))))))
+                  (not (string-match-p tilde name))
+                  (or (file-name-absolute-p name)
+                      (and (stringp dir)
+                           (file-name-absolute-p dir)
+                           (not (string-match-p tilde dir)))))))))
 
 (defun gascity-test--render-guard-handler (operation &rest args)
   "File-name handler signalling on OPERATION unless it is pure.
