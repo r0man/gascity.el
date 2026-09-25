@@ -287,6 +287,11 @@ this (say 15–30)."
   "Face for a suspended rig or agent."
   :group 'gascity-faces)
 
+(defface gascity-warning
+  '((t :inherit warning))
+  "Face for a watch-level (▲) signal: worth a look, not yet failing."
+  :group 'gascity-faces)
+
 (defface gascity-failed
   '((t :inherit error))
   "Face for a failed or errored state."

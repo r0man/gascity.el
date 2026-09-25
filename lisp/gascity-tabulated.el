@@ -47,6 +47,7 @@
 (require 'gascity-command)
 (require 'gascity-reader)             ; read-async (non-blocking list refresh)
 (require 'gascity-types)
+(require 'gascity-ui)                 ; filter-menu builders, relative times
 
 ;; Bead delegation (convoy `RET' -> beads.el) goes through
 ;; `gascity-bead-show' in gascity-section, which scopes the store; the
@@ -141,6 +142,17 @@ cell, e.g. a \"closed/total\" progress string."
     (lambda (a b)
       (< (funcall key (gascity-tabulated--cell-string a n))
          (funcall key (gascity-tabulated--cell-string b n))))))
+
+(defun gascity-tabulated--time-sorter (n)
+  "Return a sort predicate for column N holding `gascity-ui-time' cells.
+A relative time (`3m', `yesterday') does not sort as a string, so the
+predicate compares the ISO timestamps the cells carry in `help-echo'."
+  (let ((key (lambda (entry)
+               (or (gascity-ui-parse-time
+                    (get-text-property
+                     0 'help-echo (gascity-tabulated--cell-string entry n)))
+                   0))))
+    (lambda (a b) (< (funcall key a) (funcall key b)))))
 
 (defun gascity-tabulated--progress-fraction (cell)
   "Return the completion fraction of a \"closed/total\" progress CELL.
@@ -560,14 +572,67 @@ that column's cell."
 (defvar-keymap gascity-tabulated-base-map
   :doc "Shared parent keymap for gascity tabulated-list buffers.
 Adds window-sized pagination (`]' next, `[' previous, `G' goto) on top
-of `tabulated-list-mode-map', and overrides its `S' sort to span every
-page (`gascity-tabulated-sort').  Each list's own keymap parents off this
-and adds `g' refresh, `/' filter, and `RET'."
+of `tabulated-list-mode-map'.  `S' is sling in every gascity view
+\(dashboard-v3 §5.3), so tabulated-list's `S' sort moves to a header
+click and the `-S' suffix of every `/' menu (`gascity-tabulated-sort'
+spans every page).  Each list's own keymap parents off this and adds
+`g' refresh, `/' filter, and `RET'."
   :parent tabulated-list-mode-map
   "]" #'gascity-tabulated-next-page
   "[" #'gascity-tabulated-prev-page
   "G" #'gascity-tabulated-goto-page
-  "S" #'gascity-tabulated-sort)
+  "S" #'gascity-sling-dispatch)
+
+;;; Filter menus (dashboard-v3 §5.5)
+;;
+;; Every list keeps its filter as a plist of command initargs in its own
+;; buffer-local variable.  `gascity-tabulated--install-filter' points the
+;; shared `/' menu plumbing (`gascity-filter-*' in gascity-ui) at that
+;; variable and the list's refresh command, so a suffix applies its
+;; change at once, and `x' clears everything.
+
+(defun gascity-tabulated--plist-drop (plist key)
+  "Return a copy of PLIST without KEY."
+  (cl-loop for (k v) on plist by #'cddr
+           unless (eq k key) append (list k v)))
+
+(defun gascity-tabulated--install-filter (var refresh)
+  "Wire this list's `/' menu to filter variable VAR and command REFRESH.
+VAR names the list's buffer-local filter plist; REFRESH re-reads the
+list.  Run from each list mode's body (after `kill-all-local-variables')."
+  (setq-local gascity-filter-get-function
+              (lambda (key) (plist-get (symbol-value var) key)))
+  (setq-local gascity-filter-set-function
+              (lambda (key value)
+                (set var (if value
+                             (plist-put (copy-sequence (symbol-value var))
+                                        key value)
+                           (gascity-tabulated--plist-drop
+                            (symbol-value var) key)))
+                (funcall refresh)))
+  (setq-local gascity-filter-reset-function
+              (lambda () (set var nil) (funcall refresh))))
+
+(defun gascity-tabulated--sort-description ()
+  "Describe the active sort column for the `-S' suffix."
+  (gascity-filter-describe
+   "sort by…"
+   (and (car tabulated-list-sort-key)
+        (format "%s%s" (car tabulated-list-sort-key)
+                (if (cdr tabulated-list-sort-key) " ↓" "")))
+   "none"))
+
+(transient-define-suffix gascity-tabulated-sort-by ()
+  "Sort the whole list by a column chosen by name (the `/ -S' suffix).
+Choosing the active column again flips its direction."
+  :transient t
+  :description #'gascity-tabulated--sort-description
+  (interactive)
+  (let* ((columns (cl-loop for col across tabulated-list-format
+                           when (nth 2 col) collect (car col)))
+         (column (completing-read "Sort by: " columns nil t)))
+    (gascity-tabulated-sort
+     (cl-position column tabulated-list-format :key #'car :test #'equal))))
 
 ;;; ============================================================
 ;;; Rigs
@@ -632,27 +697,15 @@ responsive while `gc rig list' runs, remotely too."
                              rigs))))
      gascity-rig-list--filter)))
 
+(gascity-filter-define-choice gascity-rig-list-filter-state
+  :status "state" '("running" "suspended" "stopped"))
+
 (beads-define-prefix gascity-rig-list-filter ()
-  "Filter the rig list."
+  "Filter the rig list; each change applies at once (§5.5)."
   ["Filter rigs"
-   ("-s" "Status" "--status=" :choices ("running" "suspended" "stopped"))]
-  ["Apply"
-   ("a" "Apply" gascity-rig-list--apply-filter)
-   ("c" "Clear" gascity-rig-list--clear-filter)])
-
-(defun gascity-rig-list--apply-filter (&optional args)
-  "Apply transient ARGS as the rig-list filter and refresh."
-  (interactive (list (transient-args 'gascity-rig-list-filter)))
-  (let ((status (transient-arg-value "--status=" args)))
-    (setq gascity-rig-list--filter
-          (and status (not (string-empty-p status)) (list :status status))))
-  (gascity-rig-list-refresh))
-
-(defun gascity-rig-list--clear-filter ()
-  "Clear the rig-list filter and refresh."
-  (interactive)
-  (setq gascity-rig-list--filter nil)
-  (gascity-rig-list-refresh))
+   ("-s" gascity-rig-list-filter-state)
+   ("-S" gascity-tabulated-sort-by)
+   ("x" gascity-filter-reset)])
 
 (defvar-keymap gascity-rig-list-mode-map
   :doc "Keymap for `gascity-rig-list-mode'."
@@ -683,7 +736,9 @@ the rig at point.
          ("Branch" 14 t) ("Store" 12 t)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Name" nil))
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (gascity-tabulated--install-filter 'gascity-rig-list--filter
+                                     #'gascity-rig-list-refresh))
 
 ;;;###autoload
 (defun gascity-rig-list ()
@@ -913,31 +968,19 @@ seconds whenever its buffer is visible."
                        gascity-session-list-auto-refresh-interval)
              "off")))
 
+(gascity-filter-define-choice gascity-session-list-filter-state
+  :state "state" '("active" "suspended" "closed" "all"))
+
+(gascity-filter-define-choice gascity-session-list-filter-rig
+  :rig "rig" (mapcar #'gascity-rig-name (gascity-rigs-cached)))
+
 (beads-define-prefix gascity-session-list-filter ()
-  "Filter the session list."
+  "Filter the session list; each change applies at once (§5.5)."
   ["Filter sessions"
-   ("-s" "State" "--state="
-    :choices ("active" "suspended" "closed" "all"))
-   ("-r" "Rig" "--rig=")]
-  ["Apply"
-   ("a" "Apply" gascity-session-list--apply-filter)
-   ("c" "Clear" gascity-session-list--clear-filter)])
-
-(defun gascity-session-list--apply-filter (&optional args)
-  "Apply transient ARGS as the session-list filter and refresh."
-  (interactive (list (transient-args 'gascity-session-list-filter)))
-  (let ((state (transient-arg-value "--state=" args))
-        (rig (transient-arg-value "--rig=" args)))
-    (setq gascity-session-list--filter
-          (append (and state (not (string-empty-p state)) (list :state state))
-                  (and rig (not (string-empty-p rig)) (list :rig rig)))))
-  (gascity-session-list-refresh))
-
-(defun gascity-session-list--clear-filter ()
-  "Clear the session-list filter and refresh."
-  (interactive)
-  (setq gascity-session-list--filter nil)
-  (gascity-session-list-refresh))
+   ("-s" gascity-session-list-filter-state)
+   ("-r" gascity-session-list-filter-rig)
+   ("-S" gascity-tabulated-sort-by)
+   ("x" gascity-filter-reset)])
 
 (defvar-keymap gascity-session-list-mode-map
   :doc "Keymap for `gascity-session-list-mode'."
@@ -994,6 +1037,8 @@ while visible; `W' toggles that live.
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Agent" nil))
   (tabulated-list-init-header)
+  (gascity-tabulated--install-filter 'gascity-session-list--filter
+                                     #'gascity-session-list-refresh)
   (gascity-session-list--auto-refresh-setup))
 
 ;;;###autoload
@@ -1068,27 +1113,15 @@ Asynchronous (`gascity-tabulated--refresh-async')."
                              convoys))))
      gascity-convoy-list--filter)))
 
+(gascity-filter-define-choice gascity-convoy-list-filter-state
+  :status "state" '("open" "closed"))
+
 (beads-define-prefix gascity-convoy-list-filter ()
-  "Filter the convoy list."
+  "Filter the convoy list; each change applies at once (§5.5)."
   ["Filter convoys"
-   ("-s" "Status" "--status=" :choices ("open" "closed"))]
-  ["Apply"
-   ("a" "Apply" gascity-convoy-list--apply-filter)
-   ("c" "Clear" gascity-convoy-list--clear-filter)])
-
-(defun gascity-convoy-list--apply-filter (&optional args)
-  "Apply transient ARGS as the convoy-list filter and refresh."
-  (interactive (list (transient-args 'gascity-convoy-list-filter)))
-  (let ((status (transient-arg-value "--status=" args)))
-    (setq gascity-convoy-list--filter
-          (and status (not (string-empty-p status)) (list :status status))))
-  (gascity-convoy-list-refresh))
-
-(defun gascity-convoy-list--clear-filter ()
-  "Clear the convoy-list filter and refresh."
-  (interactive)
-  (setq gascity-convoy-list--filter nil)
-  (gascity-convoy-list-refresh))
+   ("-s" gascity-convoy-list-filter-state)
+   ("-S" gascity-tabulated-sort-by)
+   ("x" gascity-filter-reset)])
 
 (defvar-keymap gascity-convoy-list-mode-map
   :doc "Keymap for `gascity-convoy-list-mode'."
@@ -1108,6 +1141,8 @@ Asynchronous (`gascity-tabulated--refresh-async')."
                            3 #'gascity-tabulated--progress-fraction))])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "ID" nil))
+  (gascity-tabulated--install-filter 'gascity-convoy-list--filter
+                                     #'gascity-convoy-list-refresh)
   (tabulated-list-init-header))
 
 ;;;###autoload
@@ -1151,7 +1186,7 @@ marker).  The entry id is the typed message, so `RET' can show every field."
   (list message
         (vector (gascity-tabulated--str (gascity-mail-from message))
                 (gascity-tabulated--str (gascity-mail-subject message))
-                (gascity-tabulated--format-timestamp (gascity-mail-created-at message))
+                (gascity-ui-time (gascity-mail-created-at message))
                 (if (gascity-mail-inbox--unread-p message) "●" ""))))
 
 (cl-defmethod gascity-at-point-visit ((message gascity-mail))
@@ -1196,26 +1231,15 @@ Asynchronous (`gascity-tabulated--refresh-async')."
                              messages))))
      gascity-mail-inbox--filter)))
 
+(gascity-filter-define-toggle gascity-mail-inbox-filter-unread
+  :unread "unread only")
+
 (beads-define-prefix gascity-mail-inbox-filter ()
-  "Filter the mail inbox."
+  "Filter the mail inbox; each change applies at once (§5.5)."
   ["Filter mail"
-   ("-u" "Unread only" "--unread")]
-  ["Apply"
-   ("a" "Apply" gascity-mail-inbox--apply-filter)
-   ("c" "Clear" gascity-mail-inbox--clear-filter)])
-
-(defun gascity-mail-inbox--apply-filter (&optional args)
-  "Apply transient ARGS as the mail-inbox filter and refresh."
-  (interactive (list (transient-args 'gascity-mail-inbox-filter)))
-  (setq gascity-mail-inbox--filter
-        (and (member "--unread" args) (list :unread t)))
-  (gascity-mail-inbox-refresh))
-
-(defun gascity-mail-inbox--clear-filter ()
-  "Clear the mail-inbox filter and refresh."
-  (interactive)
-  (setq gascity-mail-inbox--filter nil)
-  (gascity-mail-inbox-refresh))
+   ("-u" gascity-mail-inbox-filter-unread)
+   ("-S" gascity-tabulated-sort-by)
+   ("x" gascity-filter-reset)])
 
 (defvar-keymap gascity-mail-inbox-mode-map
   :doc "Keymap for `gascity-mail-inbox-mode'."
@@ -1240,10 +1264,14 @@ marks read); `a' archives (confirmed); `u' marks unread.
 \\{gascity-mail-inbox-mode-map}"
   :group 'gascity
   (setq tabulated-list-format
-        [("From" 24 t) ("Subject" 50 t) ("Date" 16 t) ("New" 3 nil)])
+        `[("From" 24 t) ("Subject" 50 t)
+          ("When" 10 ,(gascity-tabulated--time-sorter 2))
+          ("New" 3 nil)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key nil)
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (gascity-tabulated--install-filter 'gascity-mail-inbox--filter
+                                     #'gascity-mail-inbox-refresh))
 
 ;;;###autoload
 (defun gascity-mail-inbox ()
@@ -1321,29 +1349,19 @@ Asynchronous (`gascity-tabulated--refresh-async')."
                              orders))))
      gascity-order-list--filter)))
 
+(gascity-filter-define-toggle gascity-order-list-filter-enabled
+  :enabled "enabled only")
+
+(gascity-filter-define-choice gascity-order-list-filter-type
+  :type "type" '("exec" "formula"))
+
 (beads-define-prefix gascity-order-list-filter ()
-  "Filter the order list."
+  "Filter the order list; each change applies at once (§5.5)."
   ["Filter orders"
-   ("-e" "Enabled only" "--enabled")
-   ("-t" "Type" "--type=")]
-  ["Apply"
-   ("a" "Apply" gascity-order-list--apply-filter)
-   ("c" "Clear" gascity-order-list--clear-filter)])
-
-(defun gascity-order-list--apply-filter (&optional args)
-  "Apply transient ARGS as the order-list filter and refresh."
-  (interactive (list (transient-args 'gascity-order-list-filter)))
-  (let ((type (transient-arg-value "--type=" args)))
-    (setq gascity-order-list--filter
-          (append (and (member "--enabled" args) (list :enabled t))
-                  (and type (not (string-empty-p type)) (list :type type)))))
-  (gascity-order-list-refresh))
-
-(defun gascity-order-list--clear-filter ()
-  "Clear the order-list filter and refresh."
-  (interactive)
-  (setq gascity-order-list--filter nil)
-  (gascity-order-list-refresh))
+   ("-e" gascity-order-list-filter-enabled)
+   ("-t" gascity-order-list-filter-type)
+   ("-S" gascity-tabulated-sort-by)
+   ("x" gascity-filter-reset)])
 
 (defvar-keymap gascity-order-list-mode-map
   :doc "Keymap for `gascity-order-list-mode'."
@@ -1364,7 +1382,9 @@ manually (bypassing its trigger).
          ("Trigger" 10 t) ("Schedule" 12 t) ("On" 3 nil)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Order" nil))
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (gascity-tabulated--install-filter 'gascity-order-list--filter
+                                     #'gascity-order-list-refresh))
 
 ;;;###autoload
 (defun gascity-order-list ()
@@ -1414,12 +1434,18 @@ Asynchronous (`gascity-tabulated--refresh-async')."
              (gascity-tabulated--vector->list
               (alist-get 'databases payload))))))
 
+(beads-define-prefix gascity-dolt-list-filter ()
+  "Sort the Dolt database list (§5.5: `/' is the one menu in every view)."
+  ["Dolt databases"
+   ("-S" gascity-tabulated-sort-by)])
+
 (defvar-keymap gascity-dolt-list-mode-map
   :doc "Keymap for `gascity-dolt-list-mode'.
-Dolt has no meaningful filter dimension, so no `/'; pagination
+Dolt has no filter dimension, so its `/' menu only sorts; pagination
 \(`]'/`['/`G') comes from the parent map."
   :parent gascity-tabulated-base-map
   "g"   #'gascity-dolt-list-refresh
+  "/"   #'gascity-dolt-list-filter
   "RET" #'gascity-dolt-list-show)
 
 (define-derived-mode gascity-dolt-list-mode tabulated-list-mode "GC-Dolt"

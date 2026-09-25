@@ -49,6 +49,7 @@
 (require 'transient)
 (require 'beads-prefix)
 (require 'gascity-custom)
+(require 'gascity-ui)
 (require 'gascity-error)
 (require 'gascity-remote)
 (require 'gascity-reader)
@@ -113,7 +114,7 @@ the lists and the status dashboard."
   ["Gas City"
    ["Overview"
     ("s" "Status dashboard" gascity-status)
-    ("D" "City dashboard" gascity-dashboard)
+    ("h" "City cockpit" gascity-dashboard)
     ("d" "Rig dashboard…" gascity-rig-dashboard)
     ("b" "Beads (rig)…" gascity-rig-beads)]
    ["Lists"

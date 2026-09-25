@@ -4226,7 +4226,7 @@ Unread is the negation of the v1 `read' boolean (gc decodes `false' to nil)."
 
 (ert-deftest gascity-test-mail-entry ()
   "A mail entry reads the v1 schema keys and marks unread rows.
-`from'/`subject'/`created_at' (date + time) become the columns, the typed
+`from'/`subject'/`created_at' (relative) become the columns, the typed
 message is the id, and a non-`read' message shows the ● marker."
   (let* ((message (gascity-domain-decode
                    'gascity-mail
@@ -4236,8 +4236,15 @@ message is the id, and a non-`read' message shows the ● marker."
          (entry (gascity-mail-inbox--entry message)))
     (should (eq (car entry) message))
     (should (gascity-mail-p (car entry)))
-    (should (equal (gascity-test--plain-cols entry)
-                   '("mayor/" "Re: status" "2026-06-01 19:18" "●"))))
+    (let ((cols (gascity-test--plain-cols entry)))
+      (should (equal (nth 0 cols) "mayor/"))
+      (should (equal (nth 1 cols) "Re: status"))
+      ;; Relative time, ISO in help-echo (dashboard-v3 §6.1).
+      (should (equal (nth 2 cols)
+                     (gascity-ui-relative-time "2026-06-01T19:18:18Z")))
+      (should (equal (get-text-property 0 'help-echo (aref (cadr entry) 2))
+                     "2026-06-01T19:18:18Z"))
+      (should (equal (nth 3 cols) "●"))))
   ;; A read message clears the marker.
   (should (equal (nth 3 (gascity-test--plain-cols
                          (gascity-mail-inbox--entry
@@ -9351,17 +9358,20 @@ buffer."
 
 (ert-deftest gascity-test-dashboard-wiring ()
   "The dashboard is wired as an entry point: the command is interactive
-and the `gascity' dispatch transient lists it (Overview column, key `D').
+and the `gascity' dispatch transient lists it (Overview column, key `h';
+`D' is the Dolt list alone, dashboard-v3 P0).
 The suffix is located by its KEY string: transient >= 0.12 dropped the
 numeric-coordinate LOC form (a list's second element is now a child
 key/command, not an index), while a bare key string works across the
 transient versions this package builds against."
   (should (commandp 'gascity-dashboard))
   (should (commandp 'gascity-dashboard-refresh))
-  (let ((suffix (transient-get-suffix 'gascity "D")))
+  (let ((suffix (transient-get-suffix 'gascity "h")))
     (should suffix)
     (should (eq (plist-get (cdr suffix) :command)
-                'gascity-dashboard))))
+                'gascity-dashboard)))
+  (should (eq (plist-get (cdr (transient-get-suffix 'gascity "D")) :command)
+              'gascity-dolt-list)))
 
 ;;; Run detail (gascity-run.el) — selectors, rendering, wiring
 
