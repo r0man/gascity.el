@@ -342,17 +342,6 @@ feeds, and queue their invalidation."
       (gascity-live--invalidate (gascity-live--stream-root stream)
                                 kinds types))))
 
-(defun gascity-live--store-dirs (root)
-  "Return ROOT and the distinct directories of its attached views."
-  (let ((dirs (list root)))
-    (when-let* ((stream (gethash root gascity-live--streams)))
-      (dolist (buf (gascity-live--stream-views stream))
-        (when (buffer-live-p buf)
-          (cl-pushnew (file-name-as-directory
-                       (buffer-local-value 'default-directory buf))
-                      dirs :test #'equal))))
-    (nreverse dirs)))
-
 (defun gascity-live--invalidate (root kinds types)
   "Route one debounced batch for the city at ROOT.
 KINDS are view kinds (or `all'), TYPES the event types.  Calls the
@@ -360,16 +349,14 @@ store's event invalidation when the store is loaded, runs
 `gascity-live-invalidate-functions', then each attached view's
 REFRESH whose kinds intersect KINDS.  Views reading through the store
 repaint from the store's own refetch; REFRESH is for the others."
-  ;; The store matches entry directories as spelled (a view's
-  ;; \"/mock::/c/\" is not the canonical \"/mock:host:/c/\"): invalidate
-  ;; under the stream root and under each attached view's directory —
-  ;; once per directory for the whole batch (the union of its kinds):
-  ;; per type, an entry several types touch would be re-read again
-  ;; each time its previous read had already finished.
-  (dolist (dir (gascity-live--store-dirs root))
-    (if (eq kinds 'all)
-        (gascity-store-invalidate :dir dir)
-      (gascity-store-invalidate-event types dir)))
+  ;; One invalidation for the whole batch (the union of its kinds): per
+  ;; type, an entry several types touch would be re-read again each
+  ;; time its previous read had already finished.  Store keys are
+  ;; canonical (`gascity-remote-canonical-dir'), so the root covers
+  ;; every spelling of the city's directories.
+  (if (eq kinds 'all)
+      (gascity-store-invalidate :dir root)
+    (gascity-store-invalidate-event types root))
   (run-hook-with-args 'gascity-live-invalidate-functions root kinds types)
   (when-let* ((stream (gethash root gascity-live--streams)))
     (dolist (buf (gascity-live--stream-views stream))

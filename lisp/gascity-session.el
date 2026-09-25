@@ -611,15 +611,29 @@ no round trip, and killing the local process stops gc on the host.
           (dolist (w windows) (set-window-point w (point-max))))))))
 
 (defun gascity-session--log-sentinel (proc event)
-  "Note in PROC's buffer that the follower ended with EVENT."
-  (let ((buf (process-buffer proc)))
-    (when (and (buffer-live-p buf) (memq (process-status proc) '(exit signal)))
-      (with-current-buffer buf
-        (let ((inhibit-read-only t))
-          (save-excursion
-            (goto-char (point-max))
-            (insert (propertize (format "\n[follow ended: %s]\n" (string-trim event))
-                                'face 'gascity-dim))))))))
+  "Note in PROC's buffer that the follower ended with EVENT.
+The last stderr line, if any, rides along in the note, and the hidden
+stderr buffer goes with the process (it used to outlive every view)."
+  (when (memq (process-status proc) '(exit signal))
+    (let* ((buf (process-buffer proc))
+           (err-buf (process-get proc 'gascity-stderr))
+           (err (and (buffer-live-p err-buf)
+                     (gascity-ui-first-line
+                      (with-current-buffer err-buf
+                        (let ((lines (split-string (buffer-string) "\n" t "[ \t]+")))
+                          (car (last lines))))))))
+      (when (buffer-live-p err-buf)
+        (let ((p (get-buffer-process err-buf)))
+          (when (process-live-p p) (delete-process p)))
+        (kill-buffer err-buf))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (let ((inhibit-read-only t))
+            (save-excursion
+              (goto-char (point-max))
+              (insert (propertize (format "\n[follow ended: %s%s]\n" (string-trim event)
+                                          (if err (concat " — " err) ""))
+                                  'face 'gascity-dim)))))))))
 
 (defun gascity-session-follow-log ()
   "Follow the log of this buffer's agent in `*gascity-log: TARGET*' (`f').
@@ -638,16 +652,20 @@ TRAMP as a local ssh pipe.  `q' in the log buffer stops it."
               (let ((inhibit-read-only t)) (erase-buffer))
               (setq gascity-session--log-process
                     ;; A local process always: remote cities go through ssh.
-                    (let ((default-directory (if (file-remote-p dir) "~/" dir)))
-                      (make-process :name (format "gascity-log %s" target)
-                                    :buffer buf
-                                    :command argv
-                                    :connection-type 'pipe
-                                    :noquery t
-                                    :stderr (get-buffer-create
-                                             (format " *gascity-log-stderr: %s*" target))
-                                    :filter #'gascity-session--log-filter
-                                    :sentinel #'gascity-session--log-sentinel)))))
+                    (let* ((default-directory (if (file-remote-p dir) "~/" dir))
+                           (err-buf (get-buffer-create
+                                     (format " *gascity-log-stderr: %s*" target)))
+                           (proc (make-process :name (format "gascity-log %s" target)
+                                               :buffer buf
+                                               :command argv
+                                               :connection-type 'pipe
+                                               :noquery t
+                                               :stderr err-buf
+                                               :filter #'gascity-session--log-filter
+                                               :sentinel #'gascity-session--log-sentinel)))
+                      (when (processp proc)
+                        (process-put proc 'gascity-stderr err-buf))
+                      proc))))
       (unless (process-live-p gascity-session--log-process)
         (funcall gascity-session--log-spawn)))
     (pop-to-buffer buf)))

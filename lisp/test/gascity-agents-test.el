@@ -336,6 +336,28 @@ local follower stops gc on the host (no leaked `session logs -f')."
         (should (eq (keymap-lookup gascity-log-mode-map "q") #'kill-current-buffer)))
       (kill-buffer "*gascity-log: mayor*"))))
 
+(ert-deftest gascity-test-agent-detail-follow-log-stderr-goes-with-it ()
+  "The follower's hidden stderr buffer is killed when the follower ends;
+its last line lands in the end note (QA #11)."
+  (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+             (lambda (name &rest _) (get-buffer-create name)))
+            ((symbol-function 'gascity-session--log-argv)
+             (lambda (&rest _) '("sh" "-c" "echo out; echo 'no such session' >&2")))
+            ((symbol-function 'pop-to-buffer) #'ignore))
+    (with-temp-buffer
+      (setq default-directory temporary-file-directory)
+      (setq-local gascity-section--agent
+                  (make-instance 'gascity-agent :name "mayor" :session-name "mayor"))
+      (gascity-session-follow-log))
+    (let ((deadline (+ (float-time) 5)))
+      (while (and (get-buffer " *gascity-log-stderr: mayor*")
+                  (< (float-time) deadline))
+        (accept-process-output nil 0.05)))
+    (should-not (get-buffer " *gascity-log-stderr: mayor*"))
+    (with-current-buffer "*gascity-log: mayor*"
+      (should (string-search "no such session" (buffer-string))))
+    (kill-buffer "*gascity-log: mayor*")))
+
 (ert-deftest gascity-test-agent-peek-opens-at-once ()
   "`v' shows `…' before gc answers, then the captured pane (§8.5)."
   (let (on-success)
