@@ -2308,8 +2308,8 @@ fails, every agent must still render — as its own row."
 
 (ert-deftest gascity-test-status-pool-label ()
   "The pool header states the bounds `gc status' prints; -1 reads as ∞."
-  (should (equal (gascity-status--pool-label 0 5) "scaled (min=0, max=5)"))
-  (should (equal (gascity-status--pool-label 1 -1) "scaled (min=1, max=∞)")))
+  (should (equal (gascity-status--pool-label 0 5) "scaled 0–5"))
+  (should (equal (gascity-status--pool-label 1 -1) "scaled 1–∞")))
 
 (ert-deftest gascity-test-status-short-name ()
   "Inside a rig section a name drops the rig prefix it is already scoped by."

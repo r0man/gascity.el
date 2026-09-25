@@ -69,6 +69,7 @@
 (require 'gascity-dashboard)
 (require 'gascity-health)
 (require 'gascity-cities)
+(require 'gascity-agents)
 (require 'gascity-run)
 (require 'gascity-session)
 

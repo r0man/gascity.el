@@ -33,6 +33,7 @@
 (require 'wid-edit)
 (require 'vui)
 (require 'gascity-custom)
+(require 'gascity-ui)
 (require 'gascity-domain)             ; typed session/agent objects
 (require 'gascity-section)
 
@@ -229,9 +230,9 @@ Namespaced by kind so a pool and an agent can never collide on a key."
 
 (defun gascity-status--pool-label (min max)
   "Return the bounds clause of a pool header, given its MIN and MAX.
-Mirrors `gc status''s \"scaled (min=0, max=5)\"; an unbounded pool (gc
-reports max as -1) reads as \"max=∞\"."
-  (format "scaled (min=%s, max=%s)"
+`scaled 0–2' (dashboard-v3 §7.3); an unbounded pool (gc reports max as
+-1) reads `scaled 1–∞'."
+  (format "scaled %s–%s"
           (or min 0)
           (if (and (numberp max) (< max 0)) "∞" (or max 1))))
 
@@ -379,6 +380,19 @@ absence must never blank its neighbors).  Otherwise this is a dim
 
 ;;; Components
 
+(defvar-local gascity-status-toggle-function nil
+  "Function of (KIND NAME) folding a rig (KIND `rig') or pool (`pool').
+The view that hosts these components sets it; the headers' SPC thing
+calls it (dashboard-v3 §5.4).")
+
+(defun gascity-status--fold-thing (kind name)
+  "Return the `beads-thing' value of the KIND header NAME (SPC folds it)."
+  (list :kind 'fold :id (format "%s:%s" kind name)
+        :toggle (lambda ()
+                  (if gascity-status-toggle-function
+                      (funcall gascity-status-toggle-function kind name)
+                    (message "Nothing to toggle here")))))
+
 (vui-defcomponent gascity-status-rig (rig agents templates session-map socket
                                           collapsed collapsed-pools)
   "A collapsible section for one RIG (a `gascity-rig') and its scoped AGENTS.
@@ -398,7 +412,7 @@ status' prints it and it is the fastest way to tell two checkouts apart."
                   (gascity-status--rig-agents name agents)
                   templates session-map))
          (header (format "%s %s%s"
-                         (if collapsed "▶" "▼")
+                         (if collapsed "▸" "▾")
                          name
                          (if suspended "  (suspended)" ""))))
     (vui-vstack
@@ -408,9 +422,10 @@ status' prints it and it is the fastest way to tell two checkouts apart."
                 :face (if suspended 'gascity-suspended 'gascity-rig)
                 'gascity-rig name
                 'gascity-rig-dir path
-                'gascity-section t)
+                'gascity-section t
+                'beads-thing (gascity-status--fold-thing 'rig name))
       (when path
-        (vui-text path
+        (vui-text (gascity-ui-path path)
                   :face 'gascity-dim
                   'gascity-rig name
                   'gascity-rig-dir path)))
@@ -436,10 +451,11 @@ click toggle it."
      (vui-hstack
       :spacing 2
       (vui-text (format "  %s %s"
-                        (if collapsed "▶" "▼")
+                        (if collapsed "▸" "▾")
                         (gascity-status--short-name name rig-name))
                 :face 'gascity-header
-                'gascity-pool name)
+                'gascity-pool name
+                'beads-thing (gascity-status--fold-thing 'pool name))
       (vui-text (gascity-status--pool-label (nth 2 pool) (nth 3 pool))
                 :face 'gascity-dim
                 'gascity-pool name))

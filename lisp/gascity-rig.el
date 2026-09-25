@@ -104,15 +104,7 @@ City-wide orders carry a nil `rig' and are excluded."
 
 ;;; Rendering (vnodes, dashboard-v3 §6.1 / §7.13)
 
-(defun gascity-rig--path (path)
-  "Return host-local PATH with the home prefix shown as `~/' (pure)."
-  (let ((home (if (file-remote-p default-directory)
-                  (format "/home/%s/" (or (file-remote-p default-directory 'user)
-                                          user-login-name))
-                (file-name-as-directory (expand-file-name "~")))))
-    (if (and (stringp path) (string-prefix-p home path))
-        (concat "~/" (substring path (length home)))
-      (or path ""))))
+(defalias 'gascity-rig--path #'gascity-ui-path)
 
 (defun gascity-rig--header-vnode (rig city-name)
   "Return the title line of the RIG alist within CITY-NAME.
