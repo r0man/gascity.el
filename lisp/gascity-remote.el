@@ -342,7 +342,8 @@ TRAMP: async reads and actions (`gascity-reader', dashboard-v3 §8.3 R3)
 and long-lived streams (`gc events --follow', R4).  The result is
 `beads-remote-ssh-pipe-argv' (BatchMode, keep-alives, TRAMP user, port
 and host, one shell-quoted command) with `gascity-remote-ssh-options'
-and gascity's own ControlPath spliced in after \"ssh\".
+and gascity's own ControlPath spliced in after \"ssh\", plus \"-n\" and
+\"-o ForwardX11=no\" (unless already present).
 
 The remote command is: `cd' to CD (a TRAMP or host-local directory
 name; t means DIR), then the ENV assignments (an alist of (VAR .
@@ -380,11 +381,19 @@ for a non-ssh method or a multi-hop DIR."
                     (cons (gascity-remote-find-executable (car argv) dir) (cdr argv))
                   argv)
                 (and (not (string-empty-p prefix)) prefix)))
-         (options (append gascity-remote-ssh-options
-                          (unless (cl-some (lambda (o) (string-prefix-p "ControlPath" o))
-                                           gascity-remote-ssh-options)
-                            (list "-o" (concat "ControlPath="
-                                               (gascity-remote-ssh-control-path)))))))
+         (options (append
+                   ;; Always: stdin from /dev/null (a remote read of stdin
+                   ;; can never wait on us) and no X11 forwarding — a
+                   ;; `ForwardX11 yes' in ~/.ssh/config makes the master
+                   ;; print xauth warnings (QA F8 root cause, item 3).
+                   (unless (member "-n" argv) (list "-n"))
+                   (unless (member "ForwardX11=no" argv)
+                     (list "-o" "ForwardX11=no"))
+                   gascity-remote-ssh-options
+                   (unless (cl-some (lambda (o) (string-prefix-p "ControlPath" o))
+                                    gascity-remote-ssh-options)
+                     (list "-o" (concat "ControlPath="
+                                        (gascity-remote-ssh-control-path)))))))
     (append (list (car argv)) options (cdr argv))))
 
 ;;; Finding executables on the host

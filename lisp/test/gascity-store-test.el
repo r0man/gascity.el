@@ -299,6 +299,22 @@ and a refresh tick re-reads once even when the entry is fresh."
                 (should (string-match-p "ready:v3:idle" (buffer-string)))))
           (when (get-buffer "*store-hook*") (kill-buffer "*store-hook*")))))))
 
+(ert-deftest gascity-test-store-render-dispatch-is-deferred ()
+  "A read requested from a vui render starts from the scheduler timer,
+never inside the render or mount (QA F8 hardening)."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((vui-render-delay nil)
+          (gascity-store-inline-render-dispatch nil)
+          (default-directory "/tmp/city/"))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-test-store--app) "*store-defer*")
+              (should (null reads))
+              (should (gascity-test-store--wait (lambda () reads)))
+              (should (equal (car (car reads)) '("status"))))
+          (when (get-buffer "*store-defer*") (kill-buffer "*store-defer*")))))))
+
 ;;; Actions
 
 (ert-deftest gascity-test-store-action-serializes-per-target ()
@@ -472,6 +488,10 @@ the ControlMaster options and the TRAMP user/port/host."
             (should (equal (car argv) "ssh"))
             (should (member "BatchMode=yes" argv))
             (should (member "ControlMaster=auto" argv))
+            ;; Pipe stdio hygiene (QA F8): stdin from /dev/null, no X11.
+            (should (member "-n" argv))
+            (should (member "ForwardX11=no" argv))
+            (should (member "-T" argv))
             ;; gascity's own ControlPath, never TRAMP's tramp.%C.
             (should (cl-some (lambda (o) (and (string-prefix-p "ControlPath=" o)
                                               (string-match-p "gascity-ssh-%C" o)))
@@ -667,6 +687,47 @@ the pending hook; the mark goes when the action settles."
                                      tabulated-list-entries)
                              '("active" "active")))))
         (kill-buffer buf)))))
+
+(ert-deftest gascity-test-store-jump-rig-cold-cache ()
+  "`j g' on a cold rig memo offers only \"city\" (the cockpit) and starts
+a background `gc rig list'; nothing runs gc synchronously."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((default-directory "/tmp/city/") offered opened)
+      (clrhash gascity-context--rigs-cache)
+      (cl-letf (((symbol-function 'gascity-reader-run)
+                 (lambda (&rest _) (error "sync gc")))
+                ((symbol-function 'gascity-rig-at-point) #'ignore)
+                ((symbol-function 'completing-read)
+                 (lambda (_p coll &rest _) (setq offered coll) "city"))
+                ((symbol-function 'gascity-dashboard)
+                 (lambda (&rest _) (setq opened 'cockpit))))
+        (gascity-jump-rig)
+        (should (equal offered '("city")))
+        (should (eq opened 'cockpit))
+        (should (member '("rig" "list") (mapcar #'car reads)))))))
+
+(ert-deftest gascity-test-store-refresh-timers-die-with-their-buffer ()
+  "Auto-refresh timers never outlive their view: killing the session list
+or the cockpit cancels its timer (a leaked one fired remote refreshes
+inside later tests' event loops)."
+  (let ((gascity-session-list-auto-refresh t)
+        (gascity-session-list-auto-refresh-interval 5)
+        (list-buf (generate-new-buffer "*gascity-test-timer-list*"))
+        (cockpit (generate-new-buffer "*gascity-test-timer-cockpit*"))
+        list-timer cockpit-timer)
+    (with-current-buffer list-buf
+      (gascity-session-list--auto-refresh-setup list-buf)
+      (setq list-timer gascity-session-list--refresh-timer))
+    (with-current-buffer cockpit
+      (let ((gascity-dashboard-live t))
+        (gascity-dashboard--live-setup)
+        (setq cockpit-timer gascity-dashboard--timer)))
+    (should (memq list-timer timer-list))
+    (should (memq cockpit-timer timer-list))
+    (kill-buffer list-buf)
+    (kill-buffer cockpit)
+    (should-not (memq list-timer timer-list))
+    (should-not (memq cockpit-timer timer-list))))
 
 ;;; D9 non-blocking guard
 

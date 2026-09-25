@@ -2104,23 +2104,31 @@ jump echoes instead of failing."
 
 (defun gascity-jump-rig ()
   "Open the rig dashboard of the rig at point, else prompt (`j g').
-The prompt reads the rig memo only — never a synchronous `gc'."
+The prompt reads the rig memo only — never a synchronous `gc' — and
+refreshes it in the background (`gascity-rig-names-for-prompt'), so a
+cold memo fills in for the next prompt; \"city\" opens the cockpit."
   (interactive)
   (let ((rig (or (gascity-rig-at-point)
                  (completing-read "Rig: "
-                                  (mapcar #'gascity-rig-name (gascity-rigs-cached))
+                                  (cons "city" (gascity-rig-names-for-prompt))
                                   nil t))))
-    (gascity-rig-dashboard rig)))
+    (if (equal rig "city")
+        (gascity-dashboard)
+      (gascity-rig-dashboard rig))))
 
 (defun gascity-jump-beads ()
   "Open beads.el for the rig at point, else chosen: a rig or the city (`j b').
-Candidates come from the rig memo only (§8.5)."
+Candidates come from the rig memo only (§8.5), refreshed in the
+background for the next prompt."
   (interactive)
   (let ((rig (or (gascity-rig-at-point)
                  (let ((choice (completing-read
                                 "Beads for: "
-                                (cons "city" (gascity-dashboard--rig-store-names
-                                              (gascity-rigs-cached)))
+                                (cons "city" (progn
+                                               ;; Background refresh of the memo.
+                                               (gascity-rig-names-for-prompt)
+                                               (gascity-dashboard--rig-store-names
+                                                (gascity-rigs-cached))))
                                 nil t)))
                    (and (not (equal choice "city")) choice)))))
     (if rig

@@ -149,6 +149,15 @@ When it answers non-nil, a completed action leaves invalidation to the
 stream (§8.5 \"Refresh\"); nil (the default, no stream yet) means
 actions invalidate the kinds they touch themselves.")
 
+(defvar gascity-store-inline-render-dispatch nil
+  "Non-nil lets a read requested during a vui render spawn inline (tests).
+Normally `gascity-store-use' only queues its read: the process starts
+from the scheduler's timer, never inside a render or mount (QA F8
+hardening, item 4).")
+
+(defvar gascity-store--in-render nil
+  "Non-nil while `gascity-store-use' requests a read from a vui render.")
+
 (defvar gascity-store-synchronous-delivery nil
   "Non-nil delivers remote completions synchronously (tests only).
 Normally a remote completion is deferred with `run-at-time' 0 so it
@@ -463,7 +472,9 @@ reentrant); otherwise the pump is retried from a timer."
             (gascity-store--start job))))))))
 
 (defun gascity-store--enqueue (job)
-  "Queue JOB on its host and lane, then pump; virtual jobs start at once."
+  "Queue JOB on its host and lane, then pump; virtual jobs start at once.
+From inside a vui render the pump runs from a timer instead
+\(`gascity-store-inline-render-dispatch')."
   (if (eq (gascity-store--job-lane job) 'virtual)
       (gascity-store--start job)
     (let ((host (gascity-store--job-host job)))
@@ -472,7 +483,10 @@ reentrant); otherwise the pump is retried from a timer."
                 (append (gascity-store--host-actions host) (list job)))
         (setf (gascity-store--host-reads host)
               (append (gascity-store--host-reads host) (list job))))
-      (gascity-store--pump host))))
+      (if (and gascity-store--in-render
+               (not gascity-store-inline-render-dispatch))
+          (gascity-store--pump-later host)
+        (gascity-store--pump host)))))
 
 (defun gascity-store--adjust-running (job delta)
   "Add DELTA to the running count of JOB's host lane (not for virtual)."
@@ -834,11 +848,14 @@ for a nil ARGS.  :lines, :loader and :dir as for `gascity-store-fetch'."
                                        entry
                                        (gascity-store--vui-notifier instance buffer)
                                        buffer))))
-          (when entry (gascity-store--request entry :buffer buffer)))
+          (when entry
+            (let ((gascity-store--in-render t))
+              (gascity-store--request entry :buffer buffer))))
          ((not (equal (plist-get state :tick) tick))
           (setcar ref (plist-put state :tick tick))
           (when entry
-            (gascity-store--request entry :force t :buffer buffer))))))
+            (let ((gascity-store--in-render t))
+              (gascity-store--request entry :force t :buffer buffer)))))))
     (if entry
         (gascity-store-snapshot entry)
       (list :status 'ready :data (plist-get keys :default) :error nil))))

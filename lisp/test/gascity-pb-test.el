@@ -24,7 +24,8 @@ replaces gascity's own)."
     (should (equal (let ((gascity-remote-ssh-options '("-o" "ControlPath=/x")))
                      (gascity-remote-ssh-pipe-argv
                       "/ssh:u@h:/home/u/city/" '("gc" "events" "--follow")))
-                   '("ssh" "-o" "ControlPath=/x" "-T" "-o" "BatchMode=yes"
+                   '("ssh" "-n" "-o" "ForwardX11=no" "-o" "ControlPath=/x"
+                     "-T" "-o" "BatchMode=yes"
                      "-o" "ServerAliveInterval=15"
                      "-o" "ServerAliveCountMax=3"
                      "-l" "u" "h" "--"

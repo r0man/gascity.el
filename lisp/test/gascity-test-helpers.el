@@ -43,6 +43,12 @@
 
 (advice-add 'ert-run-test :before #'gascity-test--reset-store)
 
+;; Tests park the async reader's callbacks and fire them synchronously,
+;; so reads requested during a vui mount must spawn inline there; the
+;; production timer dispatch is tested on its own
+;; (`gascity-test-store-render-dispatch-is-deferred').
+(setq gascity-store-inline-render-dispatch t)
+
 ;;; TRAMP mock method
 
 (defconst gascity-test-mock-directory
