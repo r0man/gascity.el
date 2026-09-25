@@ -35,6 +35,12 @@ The fake remote host is marked primed, so dispatch is synchronous too."
              t)
        ,@body)))
 
+(defun gascity-test-store--live-procs ()
+  "Return the live processes gascity started (reads, prewarm, streams)."
+  (seq-filter (lambda (p) (and (process-live-p p)
+                               (string-prefix-p "gascity" (process-name p))))
+              (process-list)))
+
 (defun gascity-test-store--wait (pred &optional seconds)
   "Run timers and process output until PRED is non-nil or SECONDS (2) pass."
   (let ((deadline (+ (float-time) (or seconds 2))))
@@ -668,7 +674,7 @@ work — and the guard records no violation."
         ;; Store read: request → pump (first dispatch on the host, which
         ;; also kicks the prewarm) → spawn over ssh → sentinel → callback.
         (gascity-store-fetch '("status") (lambda (d) (setq data d)))
-        (should (gascity-test-store--wait (lambda () data) 5))
+        (should (gascity-test-store--wait (lambda () data) 30))
         (should (equal data '((ok . t))))
         ;; The sync reader goes over ssh too.
         (should (equal (gascity-reader-read "status") '((ok . t))))
@@ -677,7 +683,12 @@ work — and the guard records no violation."
         (should (string-match-p "\"\\$HOME\"/" (gascity-remote-path-assignment)))
         (should (equal (car (gascity-command-line (gascity-command-rig-list)))
                        "gc"))
-        (accept-process-output nil 0.2)
+        ;; Every process the test started (the read, the prewarm) has
+        ;; exited and its sentinel has run: nothing can still record a
+        ;; violation after the check.  A condition, not a sleep.
+        (should (gascity-test-store--wait
+                 (lambda () (null (gascity-test-store--live-procs))) 30))
+        (accept-process-output nil 0)
         (should (null gascity-test-render-guard-violations))))))
 
 (ert-deftest gascity-test-store-prewarm-fills-the-exec-cache ()

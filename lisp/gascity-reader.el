@@ -266,7 +266,10 @@ when ssh cannot be launched."
     ;; always run.
     (while (and (not result) proc
                 (or (not deadline) (< (float-time) deadline)))
-      (accept-process-output proc 0.05))
+      ;; Once PROC has exited, wait on no process in particular: a wait
+      ;; on a dead PROC can keep returning without running its pending
+      ;; sentinel, and the result would never arrive (seen under load).
+      (accept-process-output (and (process-live-p proc) proc) 0.05))
     (cond
      (result
       (if (plist-get result :exit-code)
