@@ -820,13 +820,61 @@ never kill it), else nil — answered from the store, or queued."
 
 ;;; vui hook
 
+(defvar gascity-store--rerender-queue nil
+  "Buffers whose vui root re-renders at the end of this command-loop turn.")
+
+(defvar gascity-store--rerender-timer nil
+  "The zero-delay timer flushing `gascity-store--rerender-queue'.")
+
+(defun gascity-store--flush-rerenders ()
+  "Re-render every queued vui root once."
+  (let ((queue (nreverse gascity-store--rerender-queue)))
+    (setq gascity-store--rerender-queue nil
+          gascity-store--rerender-timer nil)
+    (dolist (item queue)
+      (let ((buffer (car item)) (instance (cdr item)))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer
+            (when-let* ((root (vui--find-root instance)))
+              (gascity-store--safe-call #'vui--rerender-instance root))))))))
+
+(defun gascity-store--visible-state (snapshot)
+  "Return what a render can show of SNAPSHOT, to compare notifications.
+The payload by identity (a new read is a new object), the rest by
+value: a notification that changes none of it (an invalidation's stale
+mark, a request joining a read in flight) re-renders nothing."
+  (cons (plist-get snapshot :data)
+        (list (plist-get snapshot :status) (plist-get snapshot :error)
+              (plist-get snapshot :pending) (plist-get snapshot :timed-out)
+              (plist-get snapshot :offline) (plist-get snapshot :fetched-at))))
+
 (defun gascity-store--vui-notifier (instance buffer)
-  "Return a subscriber re-rendering vui INSTANCE's root in BUFFER."
-  (lambda (_snapshot)
-    (when (buffer-live-p buffer)
-      (with-current-buffer buffer
-        (when-let* ((root (vui--find-root instance)))
-          (vui--rerender-instance root))))))
+  "Return a subscriber re-rendering vui INSTANCE's root in BUFFER.
+Notifications are coalesced: however many entries of the view change
+within one command-loop turn (a refresh's reads landing, an offline
+storm), the root re-renders once, from a zero-delay timer; and a
+notification that changes nothing the view shows re-renders nothing
+\(`gascity-store--visible-state').  With
+`gascity-store-synchronous-delivery' (tests) the render is immediate."
+  (let ((last nil))
+    (lambda (snapshot)
+      (let ((state (gascity-store--visible-state snapshot)))
+        (unless (and last (eq (car state) (car last))
+                     (equal (cdr state) (cdr last)))
+          (setq last state)
+          (when (buffer-live-p buffer)
+            (if gascity-store-synchronous-delivery
+                (with-current-buffer buffer
+                  (when-let* ((root (vui--find-root instance)))
+                    (vui--rerender-instance root)))
+              (let ((item (cons buffer (with-current-buffer buffer
+                                         (vui--find-root instance)))))
+                (when (cdr item)
+                  (unless (member item gascity-store--rerender-queue)
+                    (push item gascity-store--rerender-queue))
+                  (unless (timerp gascity-store--rerender-timer)
+                    (setq gascity-store--rerender-timer
+                          (run-at-time 0 nil #'gascity-store--flush-rerenders))))))))))))
 
 (defun gascity-store-use (args &rest keys)
   "Read gc ARGS through the store from inside a vui component.

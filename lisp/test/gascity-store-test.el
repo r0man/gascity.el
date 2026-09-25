@@ -310,7 +310,9 @@ command that opened the view (§8.5)."
 
 (ert-deftest gascity-test-store-use-renders-and-revalidates ()
   "The hook re-renders on arrival, keeps data while a refresh is pending,
-and a refresh tick re-reads once even when the entry is fresh."
+and a refresh tick re-reads once even when the entry is fresh.
+Store-driven re-renders land at the end of the turn (coalesced), so
+the checks wait for them."
   (gascity-test-with-store-stubs reads _actions
     (let ((vui-render-delay nil)
           (default-directory "/tmp/city/"))
@@ -319,23 +321,64 @@ and a refresh tick re-reads once even when the entry is fresh."
             (progn
               (vui-mount (vui-component 'gascity-test-store--app) "*store-hook*")
               (with-current-buffer "*store-hook*"
-                (should (string-match-p "pending:nil:pending" (buffer-string)))
+                (should (gascity-test-store--wait
+                         (lambda () (string-match-p "pending:nil:pending" (buffer-string)))))
                 (funcall (nth 1 (car reads)) 'v1)
-                (should (string-match-p "ready:v1:idle" (buffer-string)))
+                (should (gascity-test-store--wait
+                         (lambda () (string-match-p "ready:v1:idle" (buffer-string)))))
                 ;; Refresh: bump the tick.
                 (let ((state (vui-instance-state vui--root-instance)))
                   (setf (vui-instance-state vui--root-instance)
                         (plist-put state :tick 1))
                   (vui-flush-sync))
                 (should (= (length reads) 2))
-                (should (string-match-p "ready:v1:pending" (buffer-string)))
+                (should (gascity-test-store--wait
+                         (lambda () (string-match-p "ready:v1:pending" (buffer-string)))))
                 (funcall (nth 1 (car reads)) 'v2)
-                (should (string-match-p "ready:v2:idle" (buffer-string)))
+                (should (gascity-test-store--wait
+                         (lambda () (string-match-p "ready:v2:idle" (buffer-string)))))
                 ;; Another requester's read of the same entry re-renders too.
                 (gascity-store-fetch '("status") #'ignore nil :force t)
                 (funcall (nth 1 (car reads)) 'v3)
-                (should (string-match-p "ready:v3:idle" (buffer-string)))))
+                (should (gascity-test-store--wait
+                         (lambda () (string-match-p "ready:v3:idle" (buffer-string)))))))
           (when (get-buffer "*store-hook*") (kill-buffer "*store-hook*")))))))
+
+(ert-deftest gascity-test-store-use-coalesces-rerenders ()
+  "Several entries of one view landing in one turn re-render it once, and
+a notification that changes nothing visible re-renders nothing."
+  (gascity-test-with-store-stubs reads _actions
+    (let ((vui-render-delay nil)
+          (default-directory "/tmp/city/")
+          (renders 0))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-test-store--app2) "*store-coalesce*")
+              (with-current-buffer "*store-coalesce*"
+                (should (gascity-test-store--wait (lambda () (= (length reads) 2))))
+                (setq gascity-test-store--renders 0)
+                (dolist (r reads) (funcall (nth 1 r) 'v))
+                (should (gascity-test-store--wait
+                         (lambda () (string-match-p "v v" (buffer-string)))))
+                (should (= gascity-test-store--renders 1))
+                ;; A stale mark alone: nothing visible changes.
+                (setq gascity-test-store--renders 0)
+                (gascity-store-invalidate :dir default-directory :refetch nil)
+                (gascity-test-store--wait (lambda () nil) 0.1)
+                (should (= gascity-test-store--renders 0))
+                (ignore renders)))
+          (when (get-buffer "*store-coalesce*") (kill-buffer "*store-coalesce*")))))))
+
+(defvar gascity-test-store--renders 0 "Renders of `gascity-test-store--app2'.")
+
+(vui-defcomponent gascity-test-store--app2 ()
+  "A two-read component for the coalescing test."
+  :render
+  (let ((a (gascity-store-use '("status")))
+        (b (gascity-store-use '("session" "list"))))
+    (cl-incf gascity-test-store--renders)
+    (vui-text (format "%S %S" (plist-get a :data) (plist-get b :data)))))
 
 (ert-deftest gascity-test-store-render-dispatch-is-deferred ()
   "A read requested from a vui render starts from the scheduler timer,
