@@ -106,19 +106,33 @@ swallowed the signal (`ignore-errors').")
 
 (defun gascity-test--render-guard-pure-p (operation args)
   "Return non-nil when OPERATION on ARGS needs no I/O."
-  (or (memq operation gascity-test-render-guard-pure-operations)
+  (or (and (memq operation gascity-test-render-guard-pure-operations)
+           ;; `file-remote-p' on a host-only name ("/ssh:h:") expands its
+           ;; empty localname — the remote home, a round trip — once
+           ;; the connection exists; treat it as I/O always.
+           (not (and (eq operation 'file-remote-p)
+                     (stringp (car args))
+                     (string-match-p "\\`/[^/:|]+:[^/:|]*:\\'" (car args)))))
       (and (eq operation 'expand-file-name)
            (let* ((tilde "\\`\\(?:/[^/:]+:[^/:]*:\\)?~")
+                  (host-only "\\`/[^/:|]+:[^/:|]*:\\'")
+                  (remote-no-slash "\\`/[^/:|]+:[^/:|]*:[^/]")
                   (name (car args))
                   (dir (or (cadr args) default-directory)))
              ;; Pure when nothing needs the remote home: an absolute
              ;; NAME, or a relative one joined to an absolute DIR.
+             ;; A host-only name ("/ssh:h:") has an EMPTY localname:
+             ;; expanding it asks the host for its home directory.
              (and (stringp name)
                   (not (string-match-p tilde name))
-                  (or (file-name-absolute-p name)
+                  (not (string-match-p host-only name))
+                  (or (and (file-name-absolute-p name)
+                           (not (string-match-p remote-no-slash name)))
                       (and (stringp dir)
                            (file-name-absolute-p dir)
-                           (not (string-match-p tilde dir)))))))))
+                           (not (string-match-p tilde dir))
+                           (not (string-match-p host-only dir))
+                           (not (string-match-p remote-no-slash dir)))))))))
 
 (defun gascity-test--render-guard-handler (operation &rest args)
   "File-name handler signalling on OPERATION unless it is pure.

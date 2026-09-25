@@ -76,6 +76,8 @@
 (require 'gascity-reader)
 
 (declare-function gascity--log "gascity")
+(declare-function tramp-dissect-file-name "tramp" (name &optional nodefault))
+(declare-function tramp-file-name-host "tramp" (vec))
 
 ;;; Customization
 
@@ -210,7 +212,9 @@ never runs inside a TRAMP operation.")
 
 (defun gascity-store--dir-host (dir)
   "Return the scheduler host name of DIR: its TRAMP prefix, or \"\"."
-  (or (file-remote-p dir) ""))
+  ;; Pure (`gascity-remote-prefix'): never `file-remote-p', which
+  ;; expands a host-only name over TRAMP.
+  (or (gascity-remote-prefix dir) ""))
 
 (defun gascity-store--host (name)
   "Return the scheduler state of host NAME, creating it."
@@ -471,6 +475,9 @@ reentrant); otherwise the pump is retried from a timer."
            (or (gascity-store--host-reads host) (gascity-store--host-actions host)))
       (gascity-store--pump-later host))
      ((and (not (string-empty-p name))
+           ;; Only TRAMP's channel can be mid-command: the ssh pipe
+           ;; transport never shares it, so its hosts skip the check.
+           (not (gascity-reader--ssh-pipe-p name))
            (or (gascity-store--host-reads host) (gascity-store--host-actions host))
            (gascity-remote-connection-locked-p name))
       (gascity-store--pump-later host 0.1))
@@ -555,7 +562,7 @@ deferred for a remote host."
                       ;; … using ssh" forever) must hit the R5 deadline
                       ;; like the process itself, and count as the host
                       ;; being unreachable.
-                      (if (and (file-remote-p default-directory)
+                      (if (and (gascity-remote-prefix default-directory)
                                (not (gascity-reader--ssh-pipe-p))
                                (not (eq (gascity-store--job-lane job) 'virtual)))
                           (gascity-remote-with-timeout gascity-remote-async-timeout
@@ -951,7 +958,8 @@ TYPE is an event type string (\"session.woke\"); the routing table is
 for a remote DIR — computed from the name alone, no I/O."
   (let* ((local (file-local-name (directory-file-name dir)))
          (city (file-name-nondirectory local))
-         (host (file-remote-p dir 'host)))
+         (host (and (gascity-remote-prefix dir)
+                    (tramp-file-name-host (tramp-dissect-file-name dir)))))
     (format "*gascity-log: %s%s*" city (if host (concat "@" host) ""))))
 
 (defun gascity-store-log (dir format-string &rest args)

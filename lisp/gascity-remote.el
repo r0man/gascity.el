@@ -103,6 +103,21 @@ or already-remote PATH — returns PATH unchanged."
                      (file-remote-p (or dir default-directory)))))
     (if remote (concat remote path) path)))
 
+;;; Pure name operations
+
+(defun gascity-remote-prefix (name)
+  "Return NAME's TRAMP prefix (\"/method:user@host:\"), or nil when local.
+Pure: NAME is only dissected (`tramp-dissect-file-name'), never
+expanded.  Use this instead of `file-remote-p' wherever NAME may be a
+host-only name such as \"/ssh:host:\" — a scheduler host key, a
+configured host: TRAMP's `file-remote-p' expands its argument, and
+expanding an EMPTY localname asks the host for its home directory, a
+synchronous round trip (`tramp-get-home-directory') that wedged a
+timer at 100% CPU (P1 bug on f80fab1)."
+  (when (and (stringp name) (tramp-tramp-file-p name))
+    (when-let* ((vec (ignore-errors (tramp-dissect-file-name name))))
+      (tramp-make-tramp-file-name vec 'noloc))))
+
 ;;; Buffer identity
 
 (defun gascity-remote-buffer-name (base &optional dir qualifier)
@@ -135,8 +150,11 @@ roundtrip (`with-tramp-locked-connection') — the old global
 same host must skip its probe while this is set: a fresh channel command
 from inside another one interleaves output on the shared connection
 process (or signals \"Forbidden reentrant call of Tramp\")."
-  (when-let* ((remote (file-remote-p (or dir default-directory)))
-              (vec (ignore-errors (tramp-dissect-file-name remote)))
+  ;; Pure: dissect, never `file-remote-p' — DIR may be a host-only
+  ;; scheduler key (see `gascity-remote-prefix').
+  (when-let* ((name (or dir default-directory))
+              ((tramp-tramp-file-p name))
+              (vec (ignore-errors (tramp-dissect-file-name name)))
               (proc (tramp-get-connection-process vec)))
     (tramp-get-connection-property proc "locked")))
 
@@ -152,8 +170,9 @@ tries to parse tmux status-probe chatter as `gc' JSON (gce parse-error
 been quiet for a moment, so a retried command starts on a clean
 channel.  Quits propagate (`with-local-quit') — the user can always
 abort the wait; errors are swallowed, draining is advisory."
-  (when-let* ((remote (file-remote-p (or dir default-directory)))
-              (vec (ignore-errors (tramp-dissect-file-name remote)))
+  (when-let* ((name (or dir default-directory))
+              ((tramp-tramp-file-p name))
+              (vec (ignore-errors (tramp-dissect-file-name name)))
               (proc (tramp-get-connection-process vec)))
     (when (process-live-p proc)
       (ignore-error error
@@ -458,11 +477,14 @@ ControlMaster, is required) plus `gascity-remote-ssh-options'.
 DIR (default `default-directory') must be a single-hop ssh-family
 TRAMP name and `gascity-remote-transport' `ssh'.  Pure: name
 dissection only."
+  ;; Pure: dissect only — DIR may be a host-only scheduler key, which
+  ;; `file-remote-p' would expand over TRAMP (`gascity-remote-prefix').
   (let ((dir (or dir default-directory)))
     (and (eq gascity-remote-transport 'ssh)
-         (file-remote-p dir)
-         (member (file-remote-p dir 'method) beads-remote-ssh-methods)
-         (not (tramp-file-name-hop (tramp-dissect-file-name dir))))))
+         (tramp-tramp-file-p dir)
+         (when-let* ((vec (ignore-errors (tramp-dissect-file-name dir))))
+           (and (member (tramp-file-name-method vec) beads-remote-ssh-methods)
+                (not (tramp-file-name-hop vec)))))))
 
 (defconst gascity-remote-prewarm-programs '("gc" "tmux" "infocmp" "bd")
   "Programs `gascity-remote-prewarm' resolves on an ssh-transport host.")
@@ -481,7 +503,7 @@ Once per host; a failed prewarm (exit, or the
 `gascity-remote-sync-timeout' deadline) may run again later.  Returns
 nil at once."
   (let* ((dir (or dir default-directory))
-         (remote (file-remote-p dir)))
+         (remote (gascity-remote-prefix dir)))
     (when (and (gascity-remote-ssh-transport-p dir)
                (not (gethash remote gascity-remote--prewarming)))
       (puthash remote t gascity-remote--prewarming)
@@ -538,7 +560,8 @@ unresolvable NAME comes back unchanged, so the launch fails with exit
   (let ((dir (or dir default-directory)))
     (if (and (gascity-remote-ssh-transport-p dir)
              (not (file-name-absolute-p name)))
-        (let ((cached (gethash (cons (file-remote-p dir) name) beads-remote--cache)))
+        (let ((cached (gethash (cons (gascity-remote-prefix dir) name)
+                               beads-remote--cache)))
           (if (stringp cached)
               cached
             (gascity-remote-prewarm dir)

@@ -59,6 +59,8 @@
 ;; consults; `fboundp'-guarded at the call site for older TRAMPs.
 (declare-function tramp-dissect-file-name "tramp" (name &optional nodefault))
 (declare-function tramp-file-name-hop "tramp" (vec))
+(declare-function tramp-file-name-method "tramp" (vec))
+(declare-function tramp-tramp-file-p "tramp" (name))
 (declare-function tramp-direct-async-process-p "tramp" (&rest args))
 
 ;;; City targeting

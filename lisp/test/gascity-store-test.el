@@ -574,6 +574,48 @@ pipe, sentinel and filters are the real ones."
                     (apply real args)))))
        ,@body)))
 
+(ert-deftest gascity-test-store-pump-host-key-does-no-tramp-io ()
+  "Pumping a remote host — keyed by its host-only name \"/ssh:h:\" — does no
+TRAMP I/O (P1 bug on f80fab1: `file-remote-p' on the key expanded its
+empty localname, asking the host for its home directory inside the
+scheduler timer).  With every I/O op on a TRAMP name signalling: the
+pump over a queued read, the locked-p and transport predicates on the
+host key, the store's host queries, and the Cities prefix all stay
+pure — for the ssh transport and the TRAMP fallback alike."
+  (dolist (transport '(ssh tramp))
+    (gascity-store-clear)
+    (gascity-test-with-store-stubs reads _actions
+      (let ((default-directory "/ssh:guard@example.invalid:/home/guard/city/")
+            (gascity-remote-transport transport)
+            (key "/ssh:guard@example.invalid:"))
+        (gascity-test-with-render-guard
+         (gascity-test-store--with-fake-ssh
+          (let ((host (gascity-store--host key))
+                (gascity-remote--prewarming (make-hash-table :test 'equal)))
+            ;; Unprimed: the first dispatch also starts the background
+            ;; exec prewarm on the host key (ssh transport).
+            (gascity-store-fetch '("status") #'ignore)
+            (gascity-store--pump host t)
+            (should (member '("status") (mapcar #'car reads)))
+            (should-not (gascity-remote-connection-locked-p key))
+            (should (eq (and (gascity-reader--ssh-pipe-p key) t) (eq transport 'ssh)))
+            (should-not (gascity-store-offline-p key))
+            (should (equal (gascity-remote-prefix key) key))
+            (should (equal (gascity-cities--prefix key) key))
+            (should (member key (gascity-store-hosts)))
+            (accept-process-output nil 0.1)))
+          (should (null gascity-test-render-guard-violations)))))))
+
+(ert-deftest gascity-test-store-render-guard-flags-host-only-expansion ()
+  "The render guard treats expanding a host-only TRAMP name as I/O."
+  (gascity-test-ensure-mock-method)
+  (gascity-test-with-render-guard
+    (should-error (expand-file-name "/ssh:guard@example.invalid:")
+                  :type 'gascity-test-render-guard-io)
+    (should-error (file-remote-p "/ssh:guard@example.invalid:")
+                  :type 'gascity-test-render-guard-io)
+    (should (equal (gascity-remote-prefix "/ssh:guard@example.invalid:")
+                   "/ssh:guard@example.invalid:"))))
 (ert-deftest gascity-test-store-ssh-transport-never-touches-tramp ()
   "On the ssh transport nothing reached from a command, timer, render or
 sentinel does TRAMP I/O for exec resolution (QA F8 follow-up): with

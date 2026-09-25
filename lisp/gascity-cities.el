@@ -69,7 +69,9 @@ HOST is the TRAMP prefix (\"\" locally), PATH the host-local city path.")
 (defun gascity-cities--prefix (host)
   "Return the TRAMP prefix of configured HOST (a prefix or a bare name)."
   (substring-no-properties
-   (or (file-remote-p host)
+   ;; Pure: a configured host is often host-only ("/ssh:h:"), which
+   ;; `file-remote-p' would expand over TRAMP (`gascity-remote-prefix').
+   (or (gascity-remote-prefix host)
        (format "/ssh:%s:" host))))
 
 (defun gascity-cities-hosts ()
@@ -165,7 +167,10 @@ Pure: the remote home is the TRAMP user's `/home/USER/'."
 With OFFLINE the host is unreachable (the store retries it): `○'."
   (list (list (cons 'host host))
         (vector (concat (gascity-ui-glyph (if offline 'idle 'fail)) " "
-                        (propertize (or (file-remote-p host 'host) "local")
+                        (propertize (or (and (gascity-remote-prefix host)
+                                             (tramp-file-name-host
+                                              (tramp-dissect-file-name host)))
+                                        "local")
                                     'face 'gascity-city))
                 host "" "" ""
                 (propertize (if offline "offline"
