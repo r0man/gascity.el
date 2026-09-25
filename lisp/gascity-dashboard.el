@@ -632,6 +632,7 @@ reopened beads, escalated/held beads, unread mail, store health."
           (add :level 'fail :kind "agent" :id (concat "agent:" (plist-get a :name))
                :text (format "%s  running, no live session" (plist-get a :name))
                :right (or (plist-get a :rig) "city")
+               :drawer (lambda () (gascity-dashboard--agent-drawer a))
                :props (list 'gascity-agent (plist-get a :object)))))
       ;; ■ sessions that crashed or timed out and were not woken since.
       (let ((woke (make-hash-table :test 'equal))
@@ -1108,7 +1109,8 @@ properties.  The row is a thing whose SPC toggles the drawer."
                 (lambda (item)
                   (apply
                    #'gascity-dashboard--object-row
-                   (plist-get item :id)
+                   ;; Own drawer ids: the same agent in Agents keeps its own.
+                   (concat "needs:" (plist-get item :id))
                    (concat "  " (gascity-ui-glyph (plist-get item :level)) " "
                            (gascity-ui-fit (plist-get item :kind) 8) " "
                            (gascity-ui-fit (plist-get item :text) 48)
@@ -1132,9 +1134,9 @@ properties.  The row is a thing whose SPC toggles the drawer."
 (defun gascity-dashboard--needs-you-drawer (item)
   "Return the drawer lines of a Needs you ITEM."
   (let ((event (plist-get (plist-get item :props) 'gascity-dashboard-event)))
-    (if event
-        (gascity-dashboard--event-drawer event)
-      (list (format "%s  %s" (plist-get item :kind) (plist-get item :text))))))
+    (cond ((plist-get item :drawer) (funcall (plist-get item :drawer)))
+          (event (gascity-dashboard--event-drawer event))
+          (t (list (format "%s  %s" (plist-get item :kind) (plist-get item :text)))))))
 
 (defun gascity-dashboard--moving-lines (ctx)
   "Return the Moving section lines for CTX: runs with their workers."
@@ -1328,7 +1330,10 @@ worker drawn under its run (not a top-level row of the section)."
                 (and (plist-get agent :created)
                      (format "created %s ago"
                              (gascity-ui-relative-time (plist-get agent :created))))
-                (and (not session) (format "%s" (plist-get agent :state)))))))
+                (and (not session)
+                     (pcase (plist-get agent :state)
+                       ('stalled "gc says running; no live session backs it")
+                       (state (format "%s, no session" state))))))))
 
 (defun gascity-dashboard--stopped-fold (asleep ctx)
   "Return the `▸ stopped' fold row for ASLEEP agents (expanded in place)."
@@ -1501,7 +1506,8 @@ worker drawn under its run (not a top-level row of the section)."
   "Return EVENT's remaining fields as `key value' drawer lines."
   (let (lines)
     (dolist (field event)
-      (unless (memq (car field) '(ts type seq ok))
+      (unless (or (memq (car field) '(ts type seq ok))
+                  (null (cdr field)))
         (let ((v (cdr field)))
           (push (format "%-10s %s" (car field)
                         (truncate-string-to-width
@@ -2017,7 +2023,9 @@ Pure: reads buffer-local state and the TRAMP name only (§8.3 R2)."
   "Call the first defined command of CANDIDATES, else say NAME is pending.
 Views built by later phases are reached by name; until one exists the
 jump echoes instead of failing."
-  (let ((cmd (seq-find #'fboundp candidates)))
+  ;; `commandp', not `fboundp': `gascity-mail' is also the mail class's
+  ;; constructor, a function but no command.
+  (let ((cmd (seq-find #'commandp candidates)))
     (if cmd
         (call-interactively cmd)
       (message "The %s view is not available yet" name))))

@@ -647,5 +647,19 @@ SPC on a header folds that section, and the fold is re-applied."
   (should (eq (keymap-lookup gascity-dashboard-mode-map "l")
               #'gascity-dashboard-rig-log)))
 
+(ert-deftest gascity-test-cockpit-jump-needs-a-command ()
+  "A jump target must be a command: `gascity-mail' is also a class
+constructor, so `j m' falls through to the mail inbox command."
+  (let (called)
+    (cl-letf (((symbol-function 'gascity-mail-inbox)
+               (lambda () (interactive) (setq called 'inbox))))
+      (gascity-jump-mail)
+      (should (eq called 'inbox))))
+  (let ((msg nil))
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (setq msg (apply #'format fmt args)))))
+      (gascity-jump--call '(gascity-no-such-view) "Health")
+      (should (equal msg "The Health view is not available yet")))))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here
