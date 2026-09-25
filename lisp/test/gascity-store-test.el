@@ -595,6 +595,79 @@ nothing runs gc synchronously (§8.5, QA F4)."
         (should (equal (gascity-action--rig-names) '("alpha")))
         (should (null (gascity-context-rig-name-cached "/nowhere/")))))))
 
+;;; Rendered flags: ◐ stale / timed out, offline header, pending `…'
+
+(ert-deftest gascity-test-store-flags-section-stale-marks ()
+  "A store snapshot that kept good data over a failed or timed-out refresh
+marks its section `◐ stale' / `◐ timed out', the reason in help-echo."
+  (let* ((stale (gascity-ui-effective-load
+                 '(:status ready :data (x) :error "gc status failed: boom")
+                 (list nil)))
+         (late (gascity-ui-effective-load
+                '(:status ready :data (x) :error "gc status timed out after 30s"
+                          :timed-out t)
+                (list nil)))
+         (m1 (gascity-ui-stale-mark (list stale)))
+         (m2 (gascity-ui-stale-mark (list stale late))))
+    (should (string-match-p "◐ stale" m1))
+    (should (equal (get-text-property 1 'help-echo m1) "gc status failed: boom"))
+    (should (string-match-p "◐ timed out" m2))
+    (should (string-search "timed out after 30s" (get-text-property 1 'help-echo m2)))
+    (should (equal (gascity-ui-stale-mark
+                    (list (gascity-ui-effective-load '(:status ready :data (x))
+                                                     (list nil))))
+                   ""))))
+
+(ert-deftest gascity-test-store-flags-offline-header ()
+  "The cockpit header shows `○ offline @host' while the store paused the host."
+  (with-temp-buffer
+    (setq default-directory "/ssh:farhost:/c/")
+    (should-not (string-search "offline" (gascity-dashboard--header-line)))
+    (gascity-store--set-state (gascity-store--host "/ssh:farhost:") 'offline
+                              "ssh: Connection refused")
+    (let ((line (gascity-dashboard--header-line)))
+      (should (string-search "offline @farhost" line))
+      (should (string-search "@farhost" line))
+      (should (equal (get-text-property (string-search "offline" line)
+                                        'help-echo line)
+                     "ssh: Connection refused")))))
+
+(ert-deftest gascity-test-store-flags-pending-rows ()
+  "While an action on a target runs, its rows show `…' in the status slot:
+the vui glyph helper and a tabulated list's status column, redrawn by
+the pending hook; the mark goes when the action settles."
+  (gascity-test-with-store-stubs _reads actions
+    (let ((default-directory "/tmp/city/")
+          (buf (get-buffer-create "*gascity-test-pending*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer buf
+              (setq default-directory "/tmp/city/")
+              (tabulated-list-mode)
+              (setq tabulated-list-format [("Agent" 12 t) ("State" 8 t)])
+              (tabulated-list-init-header)
+              (gascity-tabulated--init-paged
+               "Sessions" (list (list "rig/a" (vector "rig/a" "active"))
+                                (list "rig/b" (vector "rig/b" "active")))))
+            (should (equal (gascity-ui-pending-glyph "rig/a" "●") "●"))
+            (gascity-store-action '("session" "suspend" "rig/a") :target "rig/a"
+                                  :echo nil)
+            (should (equal (substring-no-properties
+                            (gascity-ui-pending-glyph "rig/a" "●"))
+                           "…"))
+            (with-current-buffer buf
+              (should (equal (mapcar (lambda (e) (substring-no-properties
+                                                  (aref (cadr e) 1)))
+                                     tabulated-list-entries)
+                             '("…" "active"))))
+            (funcall (nth 1 (car actions)) (list :exit-code 0 :stdout "" :stderr ""))
+            (with-current-buffer buf
+              (should (equal (mapcar (lambda (e) (substring-no-properties
+                                                  (aref (cadr e) 1)))
+                                     tabulated-list-entries)
+                             '("active" "active")))))
+        (kill-buffer buf)))))
+
 ;;; D9 non-blocking guard
 
 (defconst gascity-test-store--sync-exempt

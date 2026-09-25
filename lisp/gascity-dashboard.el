@@ -914,7 +914,7 @@ A folded section (root state) shows only its header, `▸'-marked."
                                                    (plist-get opts :hint)))))
                              "  "))
          (partial (and errors (not dataless)
-                       (gascity-ui-partial-mark (string-join errors "\n"))))
+                       (gascity-ui-stale-mark loads)))
          (header (gascity-dashboard--row
                   (concat (if folded (concat (gascity-ui-glyph 'folded) " ") "")
                           (propertize title 'face 'gascity-header)
@@ -1234,7 +1234,9 @@ worker drawn under its run (not a top-level row of the section)."
                               name session (plist-get ctx :socket)))))
     (apply #'gascity-dashboard--object-row
            (concat "work:" id)
-           (concat indent (gascity-ui-glyph (if session 'ok 'idle)) " "
+           (concat indent (gascity-ui-pending-glyph
+                           name (gascity-ui-glyph (if session 'ok 'idle)))
+                   " "
                    (gascity-ui-fit (gascity-dashboard--short-agent name) 24) " "
                    (gascity-ui-fit id 9) " "
                    (gascity-ui-fit (or (alist-get 'title bead) "") 26) " "
@@ -1320,8 +1322,9 @@ worker drawn under its run (not a top-level row of the section)."
          (name (plist-get agent :name)))
     (gascity-dashboard--object-row
      (concat "agent:" name)
-     (concat "  " (gascity-ui-glyph (pcase state ('stalled 'fail)
-                                      ('running 'ok) (_ 'idle)))
+     (concat "  " (gascity-ui-pending-glyph
+                   name (gascity-ui-glyph (pcase state ('stalled 'fail)
+                                            ('running 'ok) (_ 'idle))))
              " " (gascity-ui-fit name 34)
              " " (gascity-ui-fit (or (plist-get agent :provider) "") 4)
              " " (gascity-ui-fit (or (plist-get agent :bead) "") 9)
@@ -1961,10 +1964,21 @@ Uses `magit-log-all' when magit is installed, else `vc-print-root-log'."
 Pure: reads buffer-local state and the TRAMP name only (§8.3 R2)."
   (let* ((city (or gascity-dashboard--city "?"))
          (host (file-remote-p default-directory 'host))
-         (live (if (timerp gascity-dashboard--timer)
-                   (concat (gascity-ui-glyph 'ok) " live")
-                 (concat (gascity-ui-glyph 'idle)
-                         (propertize " live off" 'face 'gascity-dim))))
+         (offline (and host (gascity-store-offline-p)))
+         (live (cond
+                (offline
+                 ;; The store paused this host (§8.3 R5): one state for
+                 ;; the whole city, never an error per section.
+                 (propertize (concat (gascity-ui-glyph 'idle)
+                                     (propertize (concat " offline @" host)
+                                                 'face 'gascity-failed))
+                             'help-echo
+                             (or (plist-get (gascity-store-host-status) :reason)
+                                 "host unreachable; retrying")))
+                ((timerp gascity-dashboard--timer)
+                 (concat (gascity-ui-glyph 'ok) " live"))
+                (t (concat (gascity-ui-glyph 'idle)
+                           (propertize " live off" 'face 'gascity-dim)))))
          (age (and gascity-dashboard--refreshed-at
                    (gascity-dashboard--dim
                     (format "↻ %s ago"

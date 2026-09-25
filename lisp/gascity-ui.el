@@ -27,6 +27,7 @@
 (require 'transient)
 (require 'vui)
 (require 'gascity-custom)
+(require 'gascity-store)             ; pending actions (the `…' marks)
 
 ;;; Glyphs (§6.1)
 
@@ -51,6 +52,54 @@ KIND is a key of `gascity-ui-glyphs'; an unknown KIND yields a space."
     (if entry
         (propertize (nth 1 entry) 'face (nth 2 entry))
       " ")))
+
+;;; Pending actions (§8.5): the `…' in a row's status slot
+
+(defun gascity-ui-pending-p (target &optional dir)
+  "Return non-nil while an async gc call on TARGET is outstanding.
+TARGET is the object id an action names (a session alias, rig name,
+message or bead id); DIR (default `default-directory') picks the host.
+Pure: a store table lookup."
+  (and (stringp target) (gascity-store-action-pending-p target dir)))
+
+(defun gascity-ui-pending-glyph (target glyph &optional dir)
+  "Return GLYPH, or a dim `…' while an action on TARGET is in flight.
+The row status slot of every view (dashboard-v3 §8.5 \"Pending
+state\"); the `help-echo' says why.  TARGET and DIR as for
+`gascity-ui-pending-p'."
+  (if (gascity-ui-pending-p target dir)
+      (propertize "…" 'face 'gascity-dim
+                  'help-echo (format "gc call on %s in flight" target))
+    glyph))
+
+(defvar vui--root-instance)
+(declare-function vui--rerender-instance "vui")
+
+(defun gascity-ui--pending-changed (_target dir _pending)
+  "Re-render the gascity views of DIR's host so `…' marks follow.
+Runs from `gascity-store-pending-functions' when an action starts or
+settles: vui views re-render their root, tabulated lists redraw their
+page (`gascity-tabulated--refresh-display').  Buffers of other hosts
+are left alone; nothing here reads gc or touches a file."
+  (let ((host (file-remote-p dir)))
+    (dolist (buf (buffer-list))
+      (when (and (string-prefix-p "*gascity" (buffer-name buf))
+                 (equal host (file-remote-p
+                              (buffer-local-value 'default-directory buf))))
+        (with-current-buffer buf
+          (condition-case nil
+              (cond
+               ((and (boundp 'vui--root-instance) vui--root-instance)
+                (vui--rerender-instance vui--root-instance))
+               ((and (derived-mode-p 'tabulated-list-mode)
+                     (fboundp 'gascity-tabulated--refresh-display)
+                     (bound-and-true-p gascity-tabulated--all-entries))
+                (let ((pt (point)))
+                  (funcall 'gascity-tabulated--refresh-display)
+                  (goto-char (min pt (point-max))))))
+            (error nil)))))))
+
+(add-hook 'gascity-store-pending-functions #'gascity-ui--pending-changed)
 
 ;;; Times
 
@@ -186,6 +235,27 @@ and a `gascity-section' flag (the `N'/`P' target) there."
   "Return the dim `…' line of a section whose first read is in flight."
   (vui-text (propertize "  …" 'face 'gascity-dim) 'gascity-ui-status 'loading))
 
+(defun gascity-ui-stale-mark (loads)
+  "Return the header mark of a section whose LOADS hold stale data, or \"\".
+LOADS is a list of `gascity-ui-effective-load' plists.  A load that
+kept its last good data over a failed refresh marks the section
+`◐ timed out' (the read hit its deadline, dashboard-v3 §8.3 R5) or
+`◐ stale' (it failed); the failure texts ride in `help-echo'.  Loads
+with no data are the error line's business, not this mark's."
+  (let* ((stale (seq-filter (lambda (l) (and (plist-get l :error)
+                                             (plist-get l :data)))
+                            loads))
+         (errors (delq nil (mapcar (lambda (l) (plist-get l :error)) stale))))
+    (if (null stale)
+        ""
+      (propertize (concat " " (gascity-ui-glyph 'partial)
+                          (propertize (if (seq-some (lambda (l) (plist-get l :timed-out))
+                                                    stale)
+                                          " timed out"
+                                        " stale")
+                                      'face 'gascity-dim))
+                  'help-echo (mapconcat (lambda (e) (format "%s" e)) errors "\n")))))
+
 (defun gascity-ui-partial-mark (err)
   "Return a `◐' mark whose `help-echo' carries ERR, or \"\" when ERR is nil."
   (if err
@@ -206,7 +276,8 @@ over a good snapshot rides along in `:error'."
            ;; A store snapshot (`gascity-store-use'): the last good
            ;; payload plus the failure of the refresh that followed it.
            (list :state 'stale :data (setcar ref (plist-get res :data))
-                 :error (plist-get res :error)))
+                 :error (plist-get res :error)
+                 :timed-out (plist-get res :timed-out)))
           ((eq state 'ready)
            (list :state 'ready :data (setcar ref (plist-get res :data))))
           ((car ref)
@@ -223,8 +294,8 @@ NAME is the section's identity, LABEL its title, LOAD an
 `gascity-ui-effective-load' plist, COLLAPSED whether it is
 folded, ROWS-FN the body builder over the load's data and COUNT-FN the
 summary count (default: `length').  First load: `…' in the summary;
-error with no data: a `■ gc …' line; error over data: `◐' on the
-header; empty: `none'."
+error with no data: a `■ gc …' line; error over data: `◐ stale' or
+`◐ timed out' on the header (`gascity-ui-stale-mark'); empty: `none'."
   (let* ((state (plist-get load :state))
          (data (plist-get load :data))
          (usable (memq state '(ready stale)))
@@ -237,8 +308,8 @@ header; empty: `none'."
                   (concat (if collapsed (concat (gascity-ui-glyph 'folded) " ") "")
                           label)
                   (concat (or summary "")
-                          (gascity-ui-partial-mark
-                           (and (eq state 'stale) (plist-get load :error))))
+                          (gascity-ui-stale-mark
+                           (and (eq state 'stale) (list load))))
                   'gascity-dashboard-section name)))
     (apply #'vui-vstack
            header

@@ -508,6 +508,34 @@ the shared read's process when one is running, else nil."
            ;; (another view's, or an earlier `g') is joined, not killed.
            :force t))))
 
+(defconst gascity-tabulated--status-columns '("Status" "State" "New" "On")
+  "Column names that are a row's status slot, where `…' marks a pending action.")
+
+(defun gascity-tabulated--row-target (id)
+  "Return the object id an action on row ID names, or nil."
+  (cond ((gascity-agent-p id) (gascity-agent-name id))
+        ((gascity-rig-p id) (gascity-rig-name id))
+        ((gascity-mail-p id) (gascity-mail-id id))
+        ((gascity-order-p id) (or (gascity-order-name id)
+                                  (gascity-order-scoped-name id)))
+        ((stringp id) id)))
+
+(defun gascity-tabulated--mark-pending (id cols)
+  "Return COLS with `…' in the status slot while an action on row ID runs.
+The status slot is the first column named in
+`gascity-tabulated--status-columns' (else the first column).  COLS is
+returned untouched when nothing is pending (dashboard-v3 §8.5)."
+  (let ((target (gascity-tabulated--row-target id)))
+    (if (not (gascity-ui-pending-p target))
+        cols
+      (let* ((names (mapcar #'car (append tabulated-list-format nil)))
+             (i (or (cl-some (lambda (n) (cl-position n names :test #'equal))
+                             gascity-tabulated--status-columns)
+                    0))
+             (out (copy-sequence cols)))
+        (aset out i (gascity-ui-pending-glyph target (aref out i)))
+        out))))
+
 (defun gascity-tabulated--refresh-display ()
   "Slice the current page into `tabulated-list-entries' and redraw.
 The full entry list is first ordered by the active sort key across every
@@ -521,7 +549,9 @@ the full data."
   (setq tabulated-list-entries
         (mapcar (lambda (entry)
                   (list (car entry)
-                        (gascity-tabulated--truncate-row (cadr entry))))
+                        (gascity-tabulated--mark-pending
+                         (car entry)
+                         (gascity-tabulated--truncate-row (cadr entry)))))
                 (gascity-tabulated--page-slice)))
   (tabulated-list-print t)
   (gascity-tabulated--update-mode-name))
