@@ -1,4 +1,4 @@
-;;; gascity-run.el --- run detail (step graph + input convoy) -*- lexical-binding: t; -*-
+;;; gascity-run.el --- Run detail: one workflow run's steps -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026
 
@@ -6,294 +6,506 @@
 
 ;;; Commentary:
 
-;; The run-detail view (S2 of plans/dashboard-v2): one buffer rendering
-;; the step graph of a graph.v2 workflow run — the drill-in behind the
-;; city dashboard's Runs section (`gascity-run-show', the run root bead
-;; id or the run row at point).
+;; The run detail (plans/dashboard-v3 §7.7), `*gascity-run: ID*', the
+;; drill-in behind a run row of the cockpit and the Runs view:
 ;;
-;; Data plane: the view reads the full `gc bd list --json' payload with
-;; its OWN async read (one read, independent load) and filters it
-;; client-side to the run.  Membership is metadata-driven, verified
-;; live: the run's root bead carries `gc.kind workflow' and
-;; `gc.graphv2_root_key', but the step beads carry only
-;; `gc.root_bead_id' = the root id — so grouping walks that key, not
-;; the root key (the requirements' `same root key' sketch does not
-;; hold for steps).  The read carries every status — progress counts
-;; closed steps, which a default `bd list' hides.
+;;   ⬣ be-52m5  build-basic                       beads.el · started 2h
+;;     formula  build-basic (graph.v2)   source ~/.gc/cache/…/build-basic.formula.toml
+;;     plans    requirements.md · implementation-plan.md · review-report.md
+;;     convoy   be-93dg  open 0/1  project-switch-scope
 ;;
-;; A run lives in its dispatching rig's bead store; the read scopes to
-;; it with `--rig NAME' (the dashboard's fan-out stamps each row with
-;; `gascity-rig', so `RET' hands the owning store along — `RET' at point
-;; never needs a second `rig list').  Without a rig the view keeps its
-;; own single city-scoped read; the affected-list filter keeps runs in
-;; the city's other rig stores visible.
+;;   Steps  1/10                                    C show control nodes
+;;     ◆ prepare                   be-5aht   pass     run-operator      2h
+;;     ⬣ requirements              be-bcb5   iter 1   ● requirements-planner-1
+;;     ▾ review                    be-mqhp   loop
+;;         · setup-build-basic-review  be-bdcr
+;;         ▸ build-basic-review-loop   be-zdon   loop
+;;     ...
 ;;
-;; The input convoy is joined on the run root's `gc.input_convoy_id'
-;; metadata.  A caller holding the dashboard's already-loaded
-;; `convoy list' row passes it as the CONVOY argument (no extra read);
-;; opened outside the dashboard the view falls back to its own async
-;; `gc convoy status <id> --json' read — an INDEPENDENT load, so a
-;; convoy failure dims one section while the step graph keeps
-;; rendering (the per-section failure rule).
+;; The steps are the run's bead graph arranged by `gc.step_ref' path:
+;; the formula prefix stripped (`build-basic.review' → `review'),
+;; iteration beads (`review.iteration.1', no prefix) hang under their
+;; step, nested steps under theirs; drain members (no step ref) under
+;; the run's drain step.  A step whose only children are plain
+;; iterations shows its latest iteration inline (`iter N'); any other
+;; step with children is a fold row (`▸'/`▾', open by default while
+;; something beneath it is active or failed).  Control nodes (`gc.kind'
+;; spec / scope-check / workflow-finalize) are hidden until `C'.
 ;;
-;; Rendering follows the city dashboard's conventions: one section per
-;; step (step id, title, kind — `gc.kind' or `gc.control_for' — status,
-;; assignee) in payload order, a header with phase, progress
-;; closed/total and formula, a dim convoy row when an input convoy
-;; exists.  Refresh is stale-while-revalidate; a failing read renders
-;; the standard inline error, dim, with a retry hint — never a blank
-;; pane.  No synchronous `gc' call anywhere in the module.
+;; The `plans' line lists the run root's `gc.build.*_path' plan files
+;; (and `gc.implementation.*_path'), each a thing whose `RET' visits it
+;; on the city's host (`gascity-remote-localize-path', §8.3 R6).
+;;
+;; Reads: the Runs view's shared run-beads entry (`gascity-runs-use-beads',
+;; so opening a run from Runs costs no gc call), `session list' for the
+;; live assignees, `convoy status ID' for the input convoy.  All through
+;; the store; the render is pure (§8.3 R2).
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'seq)
+(require 'subr-x)
 (require 'vui)
+(require 'beads-thing)
 (require 'gascity-custom)
-(require 'gascity-context)            ; gascity-view-get-buffer-create
-(require 'gascity-store)              ; gascity-store-use
-(require 'gascity-section)            ; mode, bead-at-point, refresh
-(require 'gascity-tabulated)          ; shared cell formatters (--str)
-(require 'gascity-dashboard)          ; shared section vnodes (header/body)
+(require 'gascity-ui)
+(require 'gascity-context)
+(require 'gascity-remote)
+(require 'gascity-store)
+(require 'gascity-section)
+(require 'gascity-dashboard)
+(require 'gascity-runs)
 
-;;; Buffer
-
-(defconst gascity-run-buffer-name "*gascity-run*"
-  "Base name of the run-detail buffer.
-The `view-buffer' factory (`gascity-view-get-buffer-create') qualifies it
-with the city root for a local city and the TRAMP prefix for a remote
-one, so run details of different cities coexist.")
+(defconst gascity-run-buffer-name "*gascity-run: %s*"
+  "Format of the run detail buffer name; %s is the run's root bead id.")
 
 (defvar-local gascity-run--current-run nil
-  "The run root bead id the buffer's mounted component was opened for.")
+  "The run root bead id this buffer shows.")
 
 (defvar-local gascity-run--current-rig nil
-  "The rig store the buffer's mounted component reads (`--rig' scope).
-Nil when the view was opened without a rig hint — the read is then
-plain city-scoped, with the affected-list fallback for runs owned by
-another rig's store.")
+  "The rig store of the run this buffer shows (nil: the city store).")
 
-;;; Pure selectors (raw decoded `bd list' / `convoy status' alists)
+(defvar-local gascity-run--city nil
+  "The city name of this run detail buffer.")
+
+;;; Step tree (pure)
 
 (defun gascity-run--meta (bead key)
-  "Return metadata KEY (a symbol) from the raw BEAD alist, or nil."
+  "Return metadata KEY (a symbol) of BEAD, or nil."
   (alist-get key (alist-get 'metadata bead)))
 
-(defun gascity-run--root-id (row)
-  "Return the run root id for a raw bead ROW.
-The run root is the workflow bead itself (`gc.kind workflow', no
-`gc.root_bead_id'); a step row carries the root id in its
-`gc.root_bead_id' metadata, so opening a step id climbs to the run it
-belongs to.  A row with neither returns its own id."
-  (or (gascity-run--meta row 'gc.root_bead_id)
-      (alist-get 'id row)))
+(defun gascity-run--control-p (bead)
+  "Return non-nil when BEAD is a control node (spec, scope check, finalize)."
+  (member (gascity-run--meta bead 'gc.kind) gascity-dashboard--control-kinds))
 
-(defun gascity-run--root-row (run-id rows)
-  "Return the raw row whose id is RUN-ID from `bd list' ROWS, or nil."
-  (seq-find (lambda (row) (equal (alist-get 'id row) run-id))
-            (append rows nil)))
+(defun gascity-run--iteration-p (bead)
+  "Return non-nil when BEAD is a loop iteration (`….iteration.N')."
+  (let ((ref (gascity-run--meta bead 'gc.step_ref)))
+    (and (stringp ref) (string-match-p "\\.iteration\\.[0-9]+\\'" ref))))
 
-(defun gascity-run--steps (run-id rows)
-  "Return the step ROWS of the run rooted at RUN-ID, in payload order.
-A step is a bead whose metadata carries `gc.root_bead_id' = RUN-ID; the
-root itself carries no such key (verified live) and is excluded.  The
-order is the payload's — gc returns dependency order for `bd list'."
-  (let ((steps nil))
-    (dolist (row (append rows nil) (nreverse steps))
-      (let ((id (alist-get 'id row)))
-        (when (and (stringp id)
-                   (not (equal id run-id))
-                   (equal (gascity-run--meta row 'gc.root_bead_id) run-id))
-          (push row steps))))))
+(defun gascity-run--attempt (bead)
+  "Return BEAD's `gc.attempt' as a number (0 when absent)."
+  (string-to-number (format "%s" (or (gascity-run--meta bead 'gc.attempt) "0"))))
 
-(defun gascity-run--progress (steps)
-  "Return (CLOSED . TOTAL) for the STEPS list.
-CLOSED counts steps in the \"closed\" status; TOTAL is all steps."
-  (cons (seq-count (lambda (step)
-                     (equal (alist-get 'status step) "closed"))
-                   (append steps nil))
-        (length steps)))
+(defun gascity-run--parent-path (path table)
+  "Return the longest proper prefix of PATH (at dots) that is in TABLE."
+  (let ((segs (split-string path "\\.")))
+    (catch 'found
+      (cl-loop for k from (1- (length segs)) downto 1
+               for prefix = (string-join (seq-take segs k) ".")
+               when (gethash prefix table) do (throw 'found prefix))
+      nil)))
 
-(defun gascity-run--phase (root)
-  "Return the run's phase: the ROOT row's bead status."
-  (alist-get 'status root))
+(defun gascity-run-tree (root graph &optional show-control)
+  "Return the step tree of run ROOT from its GRAPH beads.
+A list of top-level nodes; a node is a plist (:bead :path :name
+:children).  Control nodes are left out unless SHOW-CONTROL.  Children
+are in formula order (blocks-dependency depth, then attempt, then id)."
+  (let* ((formula (gascity-run--meta root 'gc.formula_name))
+         (beads (seq-remove (lambda (b) (and (not show-control)
+                                             (gascity-run--control-p b)))
+                            graph))
+         (depth (gascity-dashboard--depths graph))
+         (table (make-hash-table :test 'equal))
+         (nodes nil)
+         (loose nil))
+    (dolist (b beads)
+      (let ((path (gascity-dashboard--step-path b formula)))
+        (if path
+            (let ((node (list :bead b :path path :name nil :children nil)))
+              (unless (gethash path table) (puthash path node table))
+              (push node nodes))
+          (push (list :bead b :path nil :name nil :children nil) loose))))
+    (setq nodes (nreverse nodes))
+    (let* ((top nil)
+           (drain (seq-find (lambda (n)
+                              (and (equal (gascity-run--meta (plist-get n :bead) 'gc.kind)
+                                          "drain")
+                                   (not (string-search "." (plist-get n :path)))))
+                            nodes))
+           (order (lambda (a b)
+                    (let* ((ba (plist-get a :bead)) (bb (plist-get b :bead))
+                           (da (gethash (alist-get 'id ba) depth 0))
+                           (db (gethash (alist-get 'id bb) depth 0)))
+                      (cond ((/= da db) (< da db))
+                            ((/= (gascity-run--attempt ba) (gascity-run--attempt bb))
+                             (< (gascity-run--attempt ba) (gascity-run--attempt bb)))
+                            (t (string< (alist-get 'id ba) (alist-get 'id bb)))))))
+           (adopt (lambda (parent node)
+                    (if parent
+                        (plist-put parent :children
+                                   (cons node (plist-get parent :children)))
+                      (push node top)))))
+      (dolist (n nodes)
+        (let* ((path (plist-get n :path))
+               (parent-path (gascity-run--parent-path path table))
+               (parent (and parent-path (gethash parent-path table)))
+               (rel (if parent-path (substring path (1+ (length parent-path))) path)))
+          ;; A nested formula's steps carry its name too
+          ;; (`iteration.1.review.acceptance-review'): the last segment
+          ;; names the step, the drawer shows the whole ref.
+          (plist-put n :name
+                     (if (string-match "\\`iteration\\.\\([0-9]+\\)\\'" rel)
+                         (concat "iteration " (match-string 1 rel))
+                       (car (last (split-string rel "\\.")))))
+          (funcall adopt parent n)))
+      (dolist (n (nreverse loose))
+        (plist-put n :name (or (alist-get 'title (plist-get n :bead)) ""))
+        (funcall adopt drain n))
+      (cl-labels ((sorted (list)
+                    (mapcar (lambda (n)
+                              (plist-put n :children (sorted (plist-get n :children))))
+                            (sort list order))))
+        (sorted top)))))
 
-(defun gascity-run--formula (root)
-  "Return the run's formula (`gc.formula_name') from the ROOT row."
-  (gascity-run--meta root 'gc.formula_name))
+(defun gascity-run--latest-iteration (node)
+  "Return the latest iteration child of NODE when it is only iterations.
+NODE's children must all be leaf iterations; otherwise nil."
+  (let ((kids (plist-get node :children)))
+    (and kids
+         (seq-every-p (lambda (k) (and (gascity-run--iteration-p (plist-get k :bead))
+                                       (null (plist-get k :children))))
+                      kids)
+         (car (last (sort (copy-sequence kids)
+                          (lambda (a b) (< (gascity-run--attempt (plist-get a :bead))
+                                           (gascity-run--attempt (plist-get b :bead))))))))))
 
-(defun gascity-run--input-convoy-id (root)
-  "Return the run ROOT row's `gc.input_convoy_id', or nil."
-  (gascity-run--meta root 'gc.input_convoy_id))
+(defun gascity-run--node-state (node)
+  "Return NODE's state: its latest iteration's while it runs, else its own."
+  (let* ((own (gascity-dashboard--bead-state (plist-get node :bead)))
+         (iter (gascity-run--latest-iteration node)))
+    (if (and iter (not (eq own 'done)))
+        (gascity-dashboard--bead-state (plist-get iter :bead))
+      own)))
+
+(defun gascity-run--busy-p (node)
+  "Return non-nil when NODE or anything beneath it is active or failed."
+  (or (memq (gascity-run--node-state node) '(active failed))
+      (seq-some #'gascity-run--busy-p (plist-get node :children))))
+
+(defun gascity-run--fold-p (node)
+  "Return non-nil when NODE renders as a fold row."
+  (and (plist-get node :children) (not (gascity-run--latest-iteration node))))
+
+(defun gascity-run--open-p (node view)
+  "Return non-nil when fold NODE is expanded under VIEW state.
+Open by default while busy (`gascity-run--busy-p'); a toggle in VIEW's
+:expanded list flips the default."
+  (let ((toggled (member (concat "fold:" (alist-get 'id (plist-get node :bead)))
+                         (plist-get view :expanded))))
+    (if (gascity-run--busy-p node) (not toggled) toggled)))
+
+(defun gascity-run-plans (root)
+  "Return the plan files of run ROOT: a list of (KEY . PATH), host-local.
+Every `gc.build.*_path' / `gc.implementation.*_path' metadata with a
+value, each path once, in metadata order."
+  (let ((seen nil) (out nil))
+    (dolist (cell (alist-get 'metadata root))
+      (let ((key (symbol-name (car cell))) (path (cdr cell)))
+        (when (and (string-match-p "\\`gc\\.\\(build\\|implementation\\)\\..*_path\\'" key)
+                   (stringp path) (not (string-empty-p path))
+                   (not (member path seen)))
+          (push path seen)
+          (push (cons key path) out))))
+    (nreverse out)))
+
+(defun gascity-run--short-path (path)
+  "Return host-local PATH home-abbreviated, middle elided past 48 columns."
+  (let ((p (gascity-dashboard--path path)))
+    (if (<= (string-width p) 48)
+        p
+      (let ((segs (split-string p "/")))
+        (concat (string-join (seq-take segs 3) "/") "/…/" (car (last segs)))))))
+
+;;; Rendering
+
+(defun gascity-run--file-thing (path label)
+  "Return LABEL as a thing that visits host-local PATH on RET."
+  (propertize label
+              'gascity-run-file path
+              'help-echo path
+              'beads-thing (gascity-dashboard--thing 'file path)))
+
+(defun gascity-run--header-lines (run root ctx)
+  "Return the header lines of RUN (a summary) with ROOT in CTX."
+  (let* ((now (plist-get ctx :now))
+         (state (plist-get run :state))
+         (source (gascity-run--meta root 'gc.formula_source))
+         (contract (gascity-run--meta root 'gc.formula_contract))
+         (plans (gascity-run-plans root))
+         (convoy (plist-get ctx :convoy))
+         (lines
+          (list
+           (gascity-dashboard--row
+            (concat (gascity-runs--state-glyph state) " "
+                    (propertize (plist-get run :id) 'face 'gascity-header) "  "
+                    (plist-get run :formula)
+                    (if (plist-get run :outcome)
+                        (concat "  " (gascity-dashboard--dim (plist-get run :outcome)))
+                      ""))
+            (gascity-dashboard--dim
+             (format "%s · %s %s" (or (plist-get run :rig) "city")
+                     (if (memq state '(done failed)) "closed" "started")
+                     (gascity-ui-time (plist-get run :time) now)))
+            'gascity-bead (plist-get run :id)
+            'beads-thing (gascity-dashboard--thing 'row "root"))
+           (concat "  " (gascity-dashboard--dim "formula  ")
+                   (plist-get run :formula)
+                   (if contract (gascity-dashboard--dim (format " (%s)" contract)) "")
+                   (if source
+                       (concat "   " (gascity-dashboard--dim "source ")
+                               (gascity-run--file-thing
+                                source (gascity-run--short-path source)))
+                     "")))))
+    (when plans
+      (let ((row (concat "  " (gascity-dashboard--dim "plans    ")))
+            (width 0))
+        (dolist (plan plans)
+          (let ((name (file-name-nondirectory (cdr plan))))
+            (when (and (> width 0) (> (+ width (string-width name) 3) 64))
+              (setq lines (append lines (list row))
+                    row "           "
+                    width 0))
+            (setq row (concat row (if (> width 0) (gascity-dashboard--dim " · ") "")
+                              (gascity-run--file-thing (cdr plan) name))
+                  width (+ width (string-width name) 3))))
+        (setq lines (append lines (list row)))))
+    (when convoy
+      (let* ((c (car convoy))
+             (progress (cdr convoy))
+             (id (alist-get 'id c)))
+        (setq lines
+              (append
+               lines
+               (list (gascity-dashboard--line
+                      (concat "  " (gascity-dashboard--dim "convoy   ")
+                              id "  " (or (alist-get 'status c) "")
+                              (if progress
+                                  (format " %s/%s" (or (alist-get 'closed progress) "?")
+                                          (or (alist-get 'total progress) "?"))
+                                "")
+                              "  " (gascity-dashboard--dim (or (alist-get 'title c) "")))
+                      'gascity-bead id
+                      'beads-thing (gascity-dashboard--thing 'row "convoy")))))))
+    lines))
+
+(defun gascity-run--detail (node)
+  "Return the detail column of step NODE: iteration, outcome, loop, kind."
+  (let* ((bead (plist-get node :bead))
+         (kind (gascity-run--meta bead 'gc.kind))
+         (iter (gascity-run--latest-iteration node)))
+    (cond (iter (format "iter %d" (gascity-run--attempt (plist-get iter :bead))))
+          ((gascity-run--fold-p node)
+           (pcase kind ("ralph" "loop") ("scope" "iteration") ("drain" "drain")
+                  (_ (or kind ""))))
+          ((gascity-run--control-p bead) kind)
+          ((equal (alist-get 'status bead) "closed")
+           (or (gascity-run--meta bead 'gc.outcome) "closed"))
+          ((equal kind "drain") "drain")
+          (t (let ((s (alist-get 'status bead))) (if (equal s "open") "" (or s "")))))))
+
+(defun gascity-run--step-drawer (bead)
+  "Return the drawer lines of step BEAD (all from the payload in hand)."
+  (let ((meta (alist-get 'metadata bead)))
+    (delq nil
+          (list (string-join
+                 (delq nil (list (alist-get 'status bead)
+                                 (and (alist-get 'gc.outcome meta)
+                                      (concat "outcome " (alist-get 'gc.outcome meta)))
+                                 (and (alist-get 'gc.attempt meta)
+                                      (format "attempt %s" (alist-get 'gc.attempt meta)))
+                                 (and (alist-get 'gc.kind meta)
+                                      (concat "kind " (alist-get 'gc.kind meta)))))
+                 " · ")
+                (and (alist-get 'gc.step_ref meta)
+                     (concat "ref      " (alist-get 'gc.step_ref meta)))
+                (and (alist-get 'assignee bead)
+                     (concat "assignee " (alist-get 'assignee bead)))
+                (and (alist-get 'gc.failure_reason meta)
+                     (concat "failure  " (alist-get 'gc.failure_reason meta)))
+                (and (alist-get 'title bead)
+                     (concat "title    " (alist-get 'title bead)))))))
+
+(defun gascity-run--step-lines (node depth ctx)
+  "Return the lines of step NODE at DEPTH (and its children) in CTX."
+  (let* ((view (plist-get ctx :view))
+         (iter (gascity-run--latest-iteration node))
+         (shown (if iter (plist-get iter :bead) (plist-get node :bead)))
+         (id (alist-get 'id shown))
+         (fold (gascity-run--fold-p node))
+         (open (and fold (gascity-run--open-p node view)))
+         (state (gascity-run--node-state node))
+         (assignee (alist-get 'assignee shown))
+         (session (gascity-dashboard--session-for-assignee
+                   assignee (plist-get ctx :sessions)))
+         (who (cond (session (alist-get 'agent_name session))
+                    (assignee (car (gascity-dashboard--parse-assignee assignee)))))
+         (agent (and session (gascity-dashboard--agent-object
+                              who session (plist-get ctx :socket))))
+         ;; Names keep their column while they fit; a long nested name
+         ;; pushes its row's columns right rather than being cut.
+         (name-width (max 10 (- 25 (* 2 depth))
+                          (min 30 (string-width (or (plist-get node :name) "")))))
+         (time (gascity-ui-time (if (equal (alist-get 'status shown) "closed")
+                                    (alist-get 'closed_at shown)
+                                  (alist-get 'updated_at shown))
+                                (plist-get ctx :now)))
+         (left (concat (make-string (+ 2 (* 2 depth)) ?\s)
+                       (if fold
+                           (gascity-ui-glyph (if open 'expanded 'folded))
+                         (gascity-ui-glyph (pcase state
+                                             ('done 'done) ('active 'active)
+                                             ('failed 'failed) (_ 'pending))))
+                       " " (gascity-ui-fit (or (plist-get node :name) "") name-width)
+                       " " (gascity-ui-fit id 9)
+                       " " (gascity-ui-fit (gascity-run--detail node) 9)))
+         ;; The worker gets what the row has left before the time.
+         (left (if who
+                   (let ((mark (if session (concat (gascity-ui-glyph 'ok) " ") "")))
+                     (concat left " " mark
+                             (gascity-ui-truncate
+                              (gascity-runs-agent-name who)
+                              (max 8 (- gascity-dashboard--width 2 (string-width left)
+                                        (string-width mark) (string-width time))))))
+                 left))
+         (thing-id (concat (if fold "fold:" "step:")
+                           (alist-get 'id (plist-get node :bead))))
+         (row (apply #'gascity-dashboard--row left (gascity-dashboard--dim time)
+                     'gascity-bead id
+                     'beads-thing
+                     (gascity-dashboard--thing
+                      (if fold 'fold 'row) thing-id
+                      (lambda () (gascity-dashboard--flip
+                                  (if fold :expanded :drawers) thing-id)))
+                     (and agent (list 'gascity-agent agent)))))
+    (cons row
+          (append
+           (and (not fold) (gascity-dashboard--drawer-open-p thing-id)
+                (mapcar (lambda (l) (concat (make-string (* 2 depth) ?\s) l))
+                        (gascity-dashboard--drawer (gascity-run--step-drawer shown))))
+           (and open
+                (mapcan (lambda (k) (gascity-run--step-lines k (1+ depth) ctx))
+                        (plist-get node :children)))))))
+
+(defun gascity-run-lines (ctx)
+  "Return every run detail line for render context CTX.
+CTX keys: :run-id :now :loads (:beads) :index :sessions :socket :convoy
+:view (:collapsed :drawers :expanded :control)."
+  (let* ((gascity-dashboard--view (plist-get ctx :view))
+         (id (plist-get ctx :run-id))
+         (index (plist-get ctx :index))
+         (load (plist-get (plist-get ctx :loads) :beads))
+         (root (seq-find (lambda (r) (equal (alist-get 'id r) id))
+                         (plist-get index :roots))))
+    (cond
+     (root
+      (let* ((run (gascity-runs-summary index root))
+             (control (plist-get (plist-get ctx :view) :control))
+             (tree (gascity-run-tree root (gascity-runs-graph index id) control)))
+        (append
+         (gascity-run--header-lines run root ctx)
+         (list "")
+         (gascity-dashboard--section-lines
+          "steps" "Steps" (plist-get run :progress)
+          (mapcan (lambda (n) (gascity-run--step-lines n 0 ctx)) tree)
+          ctx :loads '(:beads) :label "bd list"
+          :hint (if control "C hide control nodes" "C show control nodes")))))
+     ((gascity-dashboard--data load)
+      (list (concat (gascity-ui-glyph 'fail) " "
+                    (gascity-dashboard--dim
+                     (format "run %s not found in the city's stores   g retry" id)))))
+     (t
+      (append (list (concat (gascity-ui-glyph 'pending) " "
+                            (propertize id 'face 'gascity-header))
+                    "")
+              (gascity-dashboard--section-lines
+               "steps" "Steps" nil nil ctx :loads '(:beads) :label "bd list"))))))
+
+;;; Component
 
 (defun gascity-run--convoy-pair (payload)
-  "Return (CONVOY . PROGRESS) from a `gc convoy status' PAYLOAD, or nil.
-CONVOY is the payload's raw `convoy' object and PROGRESS its
-`{closed,total}' progress (falling back to the convoy row's own
-`progress', the shape the dashboard's `convoy list' rows carry).  A
-payload with no convoy object — a failed lookup, an empty fallback —
-yields nil."
+  "Return (CONVOY . PROGRESS) from a `gc convoy status' PAYLOAD, or nil."
   (let ((convoy (alist-get 'convoy payload)))
     (and convoy
          (cons convoy (or (alist-get 'progress payload)
                           (alist-get 'progress convoy))))))
 
-;;; Rendering (vnodes)
-
-(defun gascity-run--status-face (status)
-  "Return the face for a bead STATUS string, or nil for the default."
-  (pcase (downcase (or status ""))
-    ((or "closed" "deferred") 'gascity-dim)
-    ("in_progress" 'gascity-running)
-    ((or "blocked" "failed" "errored") 'gascity-failed)
-    (_ nil)))
-
-(defun gascity-run--header (run-id root progress)
-  "Return the run header vnodes for RUN-ID.
-ROOT is the run root row (nil until the bead list load lands);
-PROGRESS the `gascity-run--progress' pair.  The header shows phase,
-progress closed/total and formula; the title line is stamped with
-`gascity-section' so `N'/`P' land on it."
-  (let ((closed (car progress))
-        (total (cdr progress)))
-    (vui-vstack
-     (vui-text (format "Run %s — %s"
-                       run-id
-                       (or (and root (gascity-run--formula root)) "?"))
-               :face (if root 'gascity-header 'gascity-dim)
-               'gascity-section t)
-     (vui-text (format "phase %s · progress %s/%s"
-                       (or (and root (gascity-run--phase root)) "—")
-                       (or closed 0) (or total 0))
-               :face 'gascity-dim))))
-
-(defun gascity-run--step-vnode (step)
-  "Return the section vnode for one STEP row.
-The header carries the step id and title and is stamped with the bead
-id (`RET' opens it in beads.el, DESIGN.md §4.3); the body line carries
-kind (`gc.kind', else `gc.control_for'), status and assignee."
-  (let* ((id (gascity-tabulated--str (alist-get 'id step)))
-         (title (gascity-tabulated--str (alist-get 'title step)))
-         (kind (or (gascity-run--meta step 'gc.kind)
-                   (gascity-run--meta step 'gc.control_for)
-                   "—"))
-         (status (alist-get 'status step))
-         (assignee (gascity-tabulated--str (alist-get 'assignee step)))
-         (face (gascity-run--status-face status)))
-    (vui-vstack
-     (vui-text (format "▼ %s %s" id title)
-               :face (or face 'gascity-header)
-               'gascity-section t
-               'gascity-bead id)
-     (vui-text (format "  %s · %s · %s" kind status (or (and (not (string-empty-p assignee)) assignee) "—"))
-               :face (or face 'gascity-dim)
-               'gascity-bead id))))
-
-(defun gascity-run--convoy-vnode (convoy progress)
-  "Return the dim row vnode for the input CONVOY with PROGRESS."
-  (let ((id (gascity-tabulated--str (alist-get 'id convoy))))
-    (vui-text
-     (format "  input convoy %s %s %s/%s %s"
-             id
-             (gascity-tabulated--str (alist-get 'status convoy))
-             (or (alist-get 'closed progress) "?")
-             (or (alist-get 'total progress) "?")
-             (gascity-tabulated--str (alist-get 'title convoy)))
-     :face 'gascity-dim
-     'gascity-bead id)))
-
-;;; Component
-
-(vui-defcomponent gascity-run-app (run-id convoy rig)
-  "Root component of the run-detail view.
-RUN-ID is the run's root bead id.  CONVOY, when non-nil, is the raw
-input-convoy row the caller already loaded (the dashboard's
-`convoy list' payload) — the view then skips its own convoy read.
-Otherwise the convoy is joined from the run root's `gc.input_convoy_id'
-metadata with an independent async `gc convoy status' read.  RIG, when
-non-nil, is the dispatching rig's store name — the read scopes `bd
-list' to it with `--rig' (the dashboard's fan-out stamps the owning
-store on every row it hands the drill-in)."
-  ;; Every hook runs unconditionally, in order, every render.  The
-  ;; `bd list' load is keyed on the run id and the refresh tick; the
-  ;; convoy load is keyed on the convoy id the bead list resolved, so
-  ;; it fires only once the root's metadata is in hand — and stays an
-  ;; independent load whose failure never blanks the step graph.
-  :state ((refresh-tick 0))
+(vui-defcomponent gascity-run-app (run-id convoy city)
+  "Root component of the run detail for RUN-ID.
+CONVOY, when non-nil, is the input-convoy row the caller already holds
+\(no convoy read then).  CITY names the city (for the tmux socket)."
+  :state ((refresh-tick 0)
+          (collapsed nil)
+          (drawers nil)
+          (expanded nil)
+          (control nil))
   :render
-  (let* ((beads-res
-          (gascity-store-use `("bd" "list" "--status"
-                               "open,in_progress,blocked,deferred,closed"
-                               ,@(and rig (list "--rig" rig)))
-                             :tick refresh-tick))
+  (let* ((beads-res (gascity-runs-use-beads refresh-tick))
+         (sessions-res (gascity-store-use '("session" "list") :tick refresh-tick))
          (last-beads (vui-use-ref nil))
-         (beads-load (gascity-dashboard--effective-load beads-res last-beads))
-         (rows (and (memq (plist-get beads-load :state) '(ready stale))
-                    (gascity-section-beads (plist-get beads-load :data))))
-         (root (and rows (gascity-run--root-row run-id rows)))
-         (steps (and rows (gascity-run--steps run-id rows)))
-         (progress (gascity-run--progress steps))
-         (convoy-id (and root (gascity-run--input-convoy-id root)))
-         (convoy-res
-          (gascity-store-use (and convoy-id (not convoy)
-                                  (list "convoy" "status" convoy-id))
-                             :tick refresh-tick))
+         (last-sessions (vui-use-ref nil))
+         (beads-load (gascity-ui-effective-load beads-res last-beads))
+         (index (gascity-runs-index
+                 (plist-get (gascity-dashboard--data beads-load) :beads)))
+         (root (seq-find (lambda (r) (equal (alist-get 'id r) run-id))
+                         (plist-get index :roots)))
+         (convoy-id (and root (gascity-run--meta root 'gc.input_convoy_id)))
+         (convoy-res (gascity-store-use (and convoy-id (not convoy)
+                                             (list "convoy" "status" convoy-id))
+                                        :tick refresh-tick))
          (last-convoy (vui-use-ref nil))
-         (convoy-load (gascity-dashboard--effective-load convoy-res
-                                                          last-convoy))
-         (convoy-pair
-          (or (and convoy (cons convoy (alist-get 'progress convoy)))
-              (and (memq (plist-get convoy-load :state) '(ready stale))
-                   (gascity-run--convoy-pair (plist-get convoy-load
-                                                        :data))))))
-    (vui-vstack
-     :spacing 1
-     (gascity-run--header run-id root progress)
-     (gascity-dashboard--section
-      "steps" "Steps"
-      (list :state (plist-get beads-load :state)
-            :error (plist-get beads-load :error)
-            :data (or root steps))
-      nil
-      (lambda (data)
-        (if root
-            (mapcar #'gascity-run--step-vnode steps)
-          ;; Not in this store: the live check found runs in other rigs
-          ;; of the same city — render the affected list to climb to the
-          ;; owning store, never a bare "not found".
-          (append
-           (list (vui-text (format "  run %s not found in this store" run-id)
-                           :face 'gascity-dim))
-           (if (listp data)
-               (mapcar #'gascity-run--affected-row data)
-             nil)
-           (list (vui-text "  press g to retry" :face 'gascity-dim)))))
-      (lambda (_) (and root (length steps))))
-     (gascity-dashboard--section
-      "convoy" "Input convoy"
-      (list :state (if root (plist-get convoy-load :state) 'ready)
-            :error (plist-get convoy-load :error)
-            :data convoy-pair)
-      nil
-      (lambda (pair)
-        (if pair
-            (list (gascity-run--convoy-vnode (car pair) (cdr pair)))
-          (list (vui-text "  (no input convoy)" :face 'gascity-dim))))
-      (lambda (pair) (and pair 1))))))
+         (convoy-load (gascity-ui-effective-load convoy-res last-convoy))
+         (sessions-load (gascity-ui-effective-load sessions-res last-sessions))
+         (ctx (list :run-id run-id :now (float-time)
+                    :loads (list :beads beads-load)
+                    :index index
+                    :sessions (append (alist-get 'sessions (gascity-dashboard--data
+                                                            sessions-load))
+                                      nil)
+                    :socket (and city (gascity-resolve-tmux-socket city 'no-probe))
+                    :convoy (or (and convoy (cons convoy (alist-get 'progress convoy)))
+                                (gascity-run--convoy-pair
+                                 (gascity-dashboard--data convoy-load)))
+                    :view (list :collapsed collapsed :drawers drawers
+                                :expanded expanded :control control))))
+    (vui-text (string-join (gascity-run-lines ctx) "\n"))))
 
-(defun gascity-run--affected-row (run)
-  "Return a dim vnode for an affected RUN row (the not-found fallback).
-RUN is a raw bead row from the city's affected-list read; the row is
-stamped with the bead id so `RET' opens the run drill-in from here
-with the owning rig resolved from the row's `gascity-rig' stamp."
-  (let ((id (gascity-tabulated--str (alist-get 'id run))))
-    (vui-text
-     (format "  affected %s %s %s"
-             id
-             (gascity-tabulated--str (alist-get 'status run))
-             (gascity-tabulated--str (alist-get 'title run)))
-     :face 'gascity-dim
-     'gascity-bead id
-     'gascity-run-rig (alist-get 'gascity-rig run))))
+;;; Commands
+
+(defun gascity-run-refresh ()
+  "Re-read the run, keeping point, folds and drawers."
+  (interactive)
+  (unless (gascity-section-refresh-instance (current-buffer))
+    (user-error "No run detail to refresh here")))
+
+(defun gascity-run--store ()
+  "Return the bead store of this buffer's run."
+  (gascity-runs-store gascity-run--current-rig))
+
+(defun gascity-run-visit-file (path)
+  "Visit host-local PATH on the city's host (a plan file, the formula)."
+  (find-file (gascity-remote-localize-path path)))
+
+(defun gascity-run-activate ()
+  "Act on the thing at point: open a step's bead, visit a plan file.
+RET never folds (§5.4)."
+  (interactive)
+  (let ((file (get-text-property (point) 'gascity-run-file))
+        (bead (get-text-property (point) 'gascity-bead)))
+    (cond (file (gascity-run-visit-file file))
+          (bead (gascity-beads--show-in-store bead (gascity-run--store)))
+          (t (user-error "Nothing to act on here")))))
+
+(defun gascity-run-root-bead ()
+  "Show the run's root bead in beads.el (`b')."
+  (interactive)
+  (gascity-beads--show-in-store gascity-run--current-run (gascity-run--store)))
+
+(defun gascity-run-toggle-control ()
+  "Show or hide the control nodes (spec, scope check, finalize) (`C')."
+  (interactive)
+  (gascity-dashboard--set-state :control (not (gascity-dashboard--state :control))))
 
 ;;; Mode
 
@@ -301,112 +513,58 @@ with the owning rig resolved from the row's `gascity-rig' stamp."
   :doc "Keymap for `gascity-run-mode'."
   :parent gascity-section-mode-map
   "g"   #'gascity-run-refresh
-  "RET" #'gascity-run-activate)
+  "RET" #'gascity-run-activate
+  "b"   #'gascity-run-root-bead
+  "C"   #'gascity-run-toggle-control
+  "i"   #'gascity-runs-agent-detail
+  "v"   #'gascity-runs-agent-peek
+  "t"   #'gascity-runs-agent-tmux)
 
 (define-derived-mode gascity-run-mode gascity-section-mode "GC-Run"
-  "Major mode for the workflow run-detail view.
+  "Major mode for the run detail (dashboard-v3 §7.7).
+
+TAB/S-TAB move between steps, SPC folds a loop or opens a step's
+drawer, RET opens the step's bead or visits a plan file, `b' the root
+bead, `C' shows the control nodes, `i'/`v'/`t' reach a step's live
+worker.
 
 \\{gascity-run-mode-map}"
   :interactive nil
   :group 'gascity
   (setq truncate-lines t)
   (setq-local header-line-format
-              (concat " Run detail"
-                      (propertize "   ? help  j jump  g refresh" 'face 'gascity-dim))))
-
-;;; Commands
-
-(defun gascity-run--mount (buffer run-id convoy rig)
-  "Mount the run-detail component for RUN-ID in BUFFER.
-CONVOY is the optional pre-joined input-convoy row; RIG the optional
-owning rig store (see `gascity-run-app').  The buffer's run identity
-is recorded in `gascity-run--current-run' / `gascity-run--current-rig'."
-  (with-current-buffer buffer
-    (unless (derived-mode-p 'gascity-run-mode)
-      (gascity-run-mode)))
-  ;; vui-mount switches to the buffer internally; contain that so the
-  ;; buffer is displayed once, via `pop-to-buffer', by the caller.
-  (save-window-excursion
-    (vui-mount (vui-component 'gascity-run-app
-                              :run-id run-id :convoy convoy :rig rig)
-               (buffer-name buffer)))
-  (with-current-buffer buffer
-    (setq gascity-run--current-run run-id
-          gascity-run--current-rig rig)))
-
-(defun gascity-run-refresh ()
-  "Reload the run detail's data, preserving point."
-  (interactive)
-  (unless (gascity-section-refresh-instance (current-buffer))
-    (user-error "No run detail to refresh here")))
-
-(defun gascity-run-activate ()
-  "Open the thing at point.
-An affected-list row (the not-found fallback, stamped with its owning
-rig) re-drills into that run's detail scoped to the store; a plain bead
-id opens in beads.el scoped to its store."
-  (interactive)
-  (cond ((and (get-text-property (point) 'gascity-run-rig)
-              (gascity-bead-at-point))
-         (gascity-run-show (gascity-bead-at-point) nil
-                           (get-text-property (point) 'gascity-run-rig)))
-        ((gascity-bead-at-point)
-         (gascity-bead-show-at-point))
-        (t (gascity-section-activate))))
+              '(:eval (gascity-runs-header-line
+                       (concat "Run " (or gascity-run--current-run ""))
+                       gascity-run--city))))
 
 ;;;###autoload
 (defun gascity-run-show (run &optional convoy rig)
   "Show the workflow run whose root bead id is RUN.
-RUN is the run's root bead id, or the run row at point in the city
-dashboard's Runs section (a step id climbs to its run root).  The
-buffer is created through `gascity-view-get-buffer-create'
-\(host-qualified name, pinned `default-directory'), so local and TRAMP
-access modes coexist (REQ-011); the step graph renders from the view's
-own async `gc bd list' read, filtered client-side to the run.
-
-CONVOY, when non-nil, is the raw input-convoy row the caller already
-loaded (the dashboard's `convoy list' payload) — the view skips its
-own convoy read.  Without it, the input convoy is joined from the run
-root's `gc.input_convoy_id' metadata with the view's own async
-`gc convoy status <id> --json' read.
-
-RIG, when non-nil, scopes the bead-list read to that rig's store with
-`--rig' — the dashboard's fan-out stamps each run row with the store
-it came from (`gascity-run-rig' property), so `RET' at point opens the
-run against its owning store and never needs a second `rig list'.  A
-run opened without a rig reads the city store city-scoped; when the
-run is not there, the Steps section renders the city's affected-list
-rows (whose rows re-drill with their own rig stamp).  Re-opening the
-same run refreshes in place; a different run — or the same run with a
-newly resolved rig — remounts the buffer."
+CONVOY, when non-nil, is the input-convoy row the caller already
+loaded (no convoy read then).  RIG names the run's rig store (nil: the
+city store); RET and `b' open beads there.  The buffer
+`*gascity-run: RUN*' is created through `gascity-view-get-buffer-create'
+\(host-qualified, pinned to the city); showing the same run again
+refreshes it in place."
   (interactive
    (list (or (gascity-bead-at-point)
              (read-string "Run root bead id: "))))
   (setq run (and (stringp run) (string-trim run)))
   (unless (and run (not (string-empty-p run)))
     (user-error "No run root bead id"))
-  (let ((buf (gascity-view-get-buffer-create gascity-run-buffer-name)))
-    (cond
-     ;; Same run, same store: refresh in place when a component is live
-     ;; (cold-mount otherwise — the buffer may have lost it).
-     ((and (equal (buffer-local-value 'gascity-run--current-run buf) run)
-           (equal (buffer-local-value 'gascity-run--current-rig buf) rig))
-      (or (gascity-section-refresh-instance buf)
-          (gascity-run--mount buf run convoy rig)))
-     ;; A buffer never mounted for a run yet (fresh factory buffer or one
-      ;; whose instance died): mount it directly.
-     ((null (buffer-local-value 'gascity-run--current-run buf))
-      (gascity-run--mount buf run convoy rig))
-     ;; Same run re-opened with a resolved rig: remount so the read
-     ;; re-scopes to the owning store.
-     ((and (equal (buffer-local-value 'gascity-run--current-run buf) run)
-           (not (equal (buffer-local-value 'gascity-run--current-rig buf) rig)))
-      (gascity-run--mount buf run convoy rig))
-     (t
-      ;; A different run in this buffer: remount.
-      (kill-buffer buf)
-      (setq buf (gascity-view-get-buffer-create gascity-run-buffer-name))
-      (gascity-run--mount buf run convoy rig)))
+  (let* ((city (gascity-context-city-name))
+         (buf (gascity-view-get-buffer-create (format gascity-run-buffer-name run))))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'gascity-run-mode)
+        (gascity-run-mode))
+      (setq gascity-run--current-run run
+            gascity-run--current-rig rig
+            gascity-run--city city))
+    (unless (gascity-section-refresh-instance buf)
+      (save-window-excursion
+        (vui-mount (vui-component 'gascity-run-app
+                                  :run-id run :convoy convoy :city city)
+                   (buffer-name buf))))
     (pop-to-buffer buf)))
 
 (provide 'gascity-run)
