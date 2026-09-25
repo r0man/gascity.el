@@ -1,0 +1,76 @@
+{
+  "schema_version": "1",
+  "ok": true,
+  "city_name": "bright-lights",
+  "workspace": {
+    "name": "bright-lights",
+    "path": "/home/roman/bright-lights"
+  },
+  "city_path": "/home/roman/bright-lights",
+  "controller": {
+    "running": true,
+    "pid": 22262,
+    "mode": "supervisor"
+  },
+  "running": true,
+  "suspended": false,
+  "health": {
+    "usable": true,
+    "degraded": false
+  },
+  "beads": {
+    "beads_store": "NativeDoltStore",
+    "native_store_eligible": true
+  },
+  "agents": [
+    {
+      "name": "bd.dog-1",
+      "qualified_name": "bd.dog-1",
+      "scope": "city",
+      "running": false,
+      "suspended": false
+    },
+    {
+      "name": "bd.dog-2",
+      "qualified_name": "bd.dog-2",
+      "scope": "city",
+      "running": false,
+      "suspended": false
+    },
+    {
+      "name": "control-dispatcher",
+      "qualified_name": "core.control-dispatcher",
+      "scope": "city",
+      "running": true,
+      "suspended": false
+    },
+    {
+      "name": "control-dispatcher",
+      "qualified_name": "hello-world/core.control-dispatcher",
+      "scope": "rig",
+      "running": false,
+      "suspended": false
+    }
+  ],
+  "rigs": [
+    {
+      "name": "hello-world",
+      "path": "/home/roman/hello-world",
+      "prefix": "hw",
+      "suspended": false
+    }
+  ],
+  "summary": {
+    "total_agents": 4,
+    "running_agents": 1,
+    "active_sessions": 2,
+    "store_health": {
+      "path": "/home/roman/bright-lights/.beads/dolt",
+      "size_bytes": 150984066,
+      "live_rows": 0,
+      "ratio_mb_per_row": 0,
+      "warning": false,
+      "threshold_mb_per_row": 1
+    }
+  }
+}

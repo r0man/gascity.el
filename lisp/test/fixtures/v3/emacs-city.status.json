@@ -1,0 +1,89 @@
+{
+  "schema_version": "1",
+  "ok": true,
+  "city_name": "emacs-city",
+  "workspace": {
+    "name": "emacs-city",
+    "path": "/home/roman/emacs-city"
+  },
+  "city_path": "/home/roman/emacs-city",
+  "controller": {
+    "running": true,
+    "pid": 22262,
+    "mode": "supervisor"
+  },
+  "running": true,
+  "suspended": false,
+  "health": {
+    "usable": true,
+    "degraded": false
+  },
+  "beads": {
+    "beads_store": "NativeDoltStore",
+    "native_store_eligible": true
+  },
+  "agents": [
+    {
+      "name": "bd.dog-1",
+      "qualified_name": "bd.dog-1",
+      "scope": "city",
+      "running": false,
+      "suspended": false
+    },
+    {
+      "name": "bd.dog-2",
+      "qualified_name": "bd.dog-2",
+      "scope": "city",
+      "running": false,
+      "suspended": false
+    },
+    {
+      "name": "control-dispatcher",
+      "qualified_name": "core.control-dispatcher",
+      "scope": "city",
+      "running": false,
+      "suspended": false
+    },
+    {
+      "name": "control-dispatcher",
+      "qualified_name": "beads.el/core.control-dispatcher",
+      "scope": "rig",
+      "running": false,
+      "suspended": false
+    },
+    {
+      "name": "control-dispatcher",
+      "qualified_name": "gascity.el/core.control-dispatcher",
+      "scope": "rig",
+      "running": true,
+      "suspended": false
+    }
+  ],
+  "rigs": [
+    {
+      "name": "beads.el",
+      "path": "/home/roman/workspace/beads.el",
+      "prefix": "be",
+      "suspended": false
+    },
+    {
+      "name": "gascity.el",
+      "path": "/home/roman/workspace/gascity.el",
+      "prefix": "ga",
+      "suspended": false
+    }
+  ],
+  "summary": {
+    "total_agents": 5,
+    "running_agents": 1,
+    "active_sessions": 2,
+    "store_health": {
+      "path": "/home/roman/emacs-city/.beads/dolt",
+      "size_bytes": 168461758,
+      "live_rows": 0,
+      "ratio_mb_per_row": 0,
+      "warning": false,
+      "threshold_mb_per_row": 1
+    }
+  }
+}

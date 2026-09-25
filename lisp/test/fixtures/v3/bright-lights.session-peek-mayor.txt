@@ -1,0 +1,44 @@
+... (6 earlier lines, ctrl+o to expand)
+ --
+ Total: 19 issues (19 open, 0 in progress)
+
+ Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
+ Priority: P0–P4 (label only; not a status icon)
+
+ Took 3.3s
+
+
+ Thinking...
+
+
+ $ gc bd list 2>/dev/null | head -22 (timeout 30s)
+
+ ... (19 earlier lines, ctrl+o to expand)
+ ○ bl-vf5 P2 sling-bl-5ja
+
+ ------------------------------------------------------------------------------
+ --
+ Total: 19 issues (19 open, 0 in progress)
+
+ Took 0.6s
+
+
+ Thinking...
+
+ Afternoon check:
+
+ - Mail: no unread messages.
+ - Beads: 19 open, 0 in progress. Net change since yesterday: bl-0imf closed,
+   three new ones appeared (bl-5a5i, bl-oyl4, bl-pim1) — these look like
+   e2e/demo latch artifacts from test runs, not actionable tasks.
+ - bl-bdj (P1, formula v2 target resolution bug) is still the only real open
+   item, still undispatched.
+
+ Nothing needs my action right now. Standing by — and the offer holds: say the
+ word and I'll sling bl-bdj to bd.dog to get the P1 fixed.
+
+────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+~/bright-lights
+↑39k ↓1.1k R29k CH94.6% $0.006 0.8%/1.0M (auto)        z-ai/glm-5.3-flash • high

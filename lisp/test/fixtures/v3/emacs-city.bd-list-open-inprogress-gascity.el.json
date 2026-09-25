@@ -1,0 +1,149 @@
+[
+  {
+    "id": "ga-qcci",
+    "title": "input convoy for ga-7pq7",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "convoy",
+    "created_at": "2026-09-24T12:51:42Z",
+    "updated_at": "2026-09-24T12:51:42Z",
+    "metadata": {
+      "gc.synthetic": "true"
+    },
+    "dependencies": [
+      {
+        "issue_id": "ga-qcci",
+        "depends_on_id": "ga-7pq7",
+        "type": "tracks",
+        "created_at": "2026-09-24T12:51:42Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "ga-7pq7",
+    "title": "Dashboard v2: runs view from workflow beads, honest needs-you, activity feed via gc events JSONL, mail count — gc-CLI-only data plane",
+    "description": "Extend the vui city dashboard (`lisp/gascity-dashboard.el`, landed on main as\nbbd6091..5ae47af) toward feature parity with the Go web dashboard's run/\nactivity/cost surfaces — using ONLY gc CLI `--json`/JSONL reads. NO HTTP API\ncalls anywhere (user directive: data plane is the gc CLI, not the supervisor\nREST API). Continue the established conventions: async-first\n(vui-use-async / gascity-reader-read-async, per-section independent loads,\nno synchronous gc), TRAMP-safe via the reader plumbing, magit-grade inline\nerror surfacing.\n\nMayor's data reconnaissance (2026-09-24, all verified live in emacs-city):\n\n1. RUNS VIEW (user priority 1 — \"add the runs view as much as we can\").\n   There is NO `gc runs` CLI; the supervisor's /runs endpoint is off-limits.\n   The CLI-visible proxy for a \"run\" is the formula-v2 workflow, which is\n   fully represented in the rig bead stores:\n   - A workflow root is a bead whose metadata carries `gc.graphv2_root_key`\n     (and `gc.formula_name`, `gc.formula_contract: graph.v2`); its step\n     beads carry the same root key and `gc.input_convoy_id`.\n   - Discovery recipe (verified with `bd sql`): SELECT id, title, status,\n     json_extract(metadata,'$.gc.formula_name') … FROM issues WHERE\n     metadata LIKE '%graphv2-root%' — works in both rig stores. Note\n     `bd query` does NOT support metadata field filters; use bd sql (it\n     IS available and JSON-wrapped via `gc bd … --json`), or filter the\n     full `gc bd list --json` payload client-side (stores are small).\n   - Per-run progress: `gc bd show \u003croot\u003e` lists TRACKS/TRACKED BY (the\n     full step graph, 37 steps on be-j2b); step statuses give a progress\n     fraction. `gc convoy list --json` gives per-convoy progress\n     {closed,total}; `gc convoy status \u003cid\u003e` gives the tracked-bead table\n     with status/assignee columns. Implement the runs view from these:\n     - Runs section (replace/extend \"Work in flight\"): open workflow runs\n       = non-closed formula-bearing beads grouped by root key. Columns:\n       run id, formula name, phase (root status), progress (closed/total\n       steps via convoy progress or step-graph count), current step\n       (non-closed steps with an active assignee), updated.\n     - `RET` on a run: drill into a run-detail section (collapsible or\n       separate buffer) rendering the step graph: step id, title, kind,\n       status, assignee, from `gc bd show \u003croot\u003e` + the step beads.\n   - Also render the input convoys feeding each run (gc convoy list\n     --json, joined on gc.input_convoy_id).\n\n2. NEEDS-YOU pending interactions (user priority 2: only if the CLI can\n   supply the data, otherwise remove).\n   Verified: `gc session list --json` has NO pending field; there is no\n   pending-interaction CLI command (the SPA uses supervisor\n   /session/{id}/pending — off-limits). THE CLI CANNOT SUPPLY IT.\n   Therefore: REMOVE the `awaiting-input` plumbing? No — remove the\n   DISHONEST part: the dashboard currently hardcodes `pending nil`, so\n   `awaiting-input` can never fire. Replace with honest limitation:\n   keep the other three reasons (errored / rate-limited / stalled — all\n   derivable from `gc status` + `gc session list --json`), drop\n   awaiting-input from the selector with a code comment + doc note\n   ( Pending interactions need the supervisor API; out of scope by\n   user directive). No fake data, no dead code paths.\n\n3. TRANSCRIPT (user priority 3): tmux attach is the answer — do NOT\n   build a transcript pane. Keep/verify the existing `t` (tmux) and\n   attach paths on session rows. Nothing new beyond making sure the\n   tmux target works for live sessions from the dashboard (it should\n   already, via gascity-session plumbing — regression-test it).\n\n4. ACTIVITY FEED (user priority 4): `gc events` DOES emit JSON Lines\n   (verified: one DTO per line: actor, payload, run_id, seq, subject,\n   ts, type; --since filters; ~500 newest default). The ga-69kj dim\n   pointer stays correct for `gc event` (singular, still\n   json_unsupported) but the dashboard's Activity section should now\n   render real recent activity from `gc events --since \u003cwindow\u003e`\n   (JSONL parse — gascity-reader already does async JSONL for peek).\n   Design: last N events, columns ts/type/subject/first-line summary;\n   type filter (prefix filter is fine: bead., session., convoy.,\n   order.). Mind noise: order.fired/order.completed/bead.updated flood\n   (944+1195 events in 2h) — default filter should probably exclude\n   the chatty types or collapse them; make the filter a state var.\n\n5. USAGE/COSTS (user priority 5): `gc costs --json` returns\n   json_unsupported (verified) — so NO JSON surface for costs.\n   `gc usage` does not exist as a CLI command. The only JSON-native\n   option is computing per-session usage from… nothing the CLI\n   exposes. CONCLUSION: usage/costs CANNOT be rendered under the\n   gc-CLI-only directive. Add a dim pointer row in the cockpit\n   (\"costs — run `gc costs` in a shell; no JSON surface\") mirroring\n   the ga-69kj events-gap convention, and file a beads.el/gascity Go\n   request as a bead (do not implement it).\n\n6. MAIL unread count: `gc mail count --json` works (verified:\n   total/unread). Add a cockpit header line: \"mail N unread\" with a\n   key (`m`?) opening the existing mail reader. Provider readiness and\n   waits have no CLI JSON (`gc wait list --json` exists but always\n   empty in this city; readiness is HTTP-only) — skip both, note why\n   in code comments.\n\nHard rules:\n- gc CLI only. grep the new code for \"url\" / \"http\" — nothing may call\n  the supervisor API. TRAMP correctness: every new read goes through\n  gascity-reader async plumbing so remote works identically.\n- No synchronous gc in render paths.\n- Keep 380-test gate green; add ERT for new selectors (runs grouping,\n  events JSONL decode, mail-count integration) with fixture payloads.\n- Error surfacing: JSONL decode errors render dim inline, never blank.\n- Update the dashboard footer legend for new keys/sections.\n- Deliver a short report: sections added, exact CLI recipes used, and\n  the two documented CLI gaps (pending, costs) with the dim-pointer\n  treatment. Local commits to main; no upstream PRs; READ-ONLY on\n  ~/workspace/gascity. parenmedic CLI for elisp paren issues.\n",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "roman@burningswell.com",
+    "created_at": "2026-09-24T12:51:36Z",
+    "created_by": "mayor",
+    "updated_at": "2026-09-24T12:51:36Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "ga-lxam",
+    "title": "input convoy for ga-uc7y",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "convoy",
+    "created_at": "2026-09-24T10:14:41Z",
+    "updated_at": "2026-09-24T10:14:41Z",
+    "metadata": {
+      "gc.synthetic": "true"
+    },
+    "dependencies": [
+      {
+        "issue_id": "ga-lxam",
+        "depends_on_id": "ga-uc7y",
+        "type": "tracks",
+        "created_at": "2026-09-24T10:14:41Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "ga-uc7y",
+    "title": "City dashboard for gascity.el: vui.el, async-first, TRAMP — port the Go web dashboard's design to native Emacs",
+    "description": "Build a native Emacs city dashboard for gascity.el — the equivalent of the Go\ndashboard's web SPA (~/workspace/gascity, internal/api/dashboardspa), rendered\nwith vui.el instead of React, with gascity.el's established async gc-CLI\nplumbing instead of the supervisor HTTP API.\n\n## Research already done (mayor, 2026-09-24) — build on this\n\n### How the Go web dashboard works (~/workspace/gascity)\n\nThe dashboard is an embedded React SPA served same-origin by the supervisor\n(cmd/gc/cmd_dashboard.go; internal/api/dashboardbff = backend-for-frontend,\ninternal/api/dashboardspa = SPA). Its routes (web/frontend/src/routes/):\n\n- CockpitHome / AmbientHome — operator home views\n- Agents + AgentDetail — roster with a \"needs you\" projection and per-agent\n  detail with live output/transcript streaming\n- Beads — board with ready/in-progress/blocked views\n- Runs + FormulaRunDetail — workflow runs, run census, steps\n- Activity — events feed\n- Health — store/supervisor health\n- Mail — operator inbox\n\nData comes from the supervisor REST API (internal/api/openapi.json,\n/v0/city/{name}/...): status, health, agents, sessions (+transcript, +stream,\nrespond/wake/suspend), beads (+ready, +graph/{root}), convoys, runs (+census),\nformulas, mail, events (+SSE stream), rigs, services, usage.\n\nCross-cutting concepts worth porting (web/shared/src/):\n- work-in-flight.ts — ties in-progress beads to live worker sessions by\n  parsing the trailing session handle from bead assignees\n  (`\u003cworker-role\u003e-\u003csession-id\u003e`), powering a \"workers active\" section.\n- agents/needsYou.ts — a single pure projection of operator-blocking states\n  (awaiting-input | errored | rate-limited | stalled), each with one next\n  action (respond | reset | nudge). Badge counts and page counts read the\n  SAME selector so they cannot disagree. No clocks, no age thresholds —\n  nothing can flap.\n- dashboard-health.ts, alert.ts — health signals and alerts.\n- structured-transcript.ts — session transcripts rendered readably.\n\n### What gascity.el already has (reuse, don't reinvent)\n\n- vui is already a dependency (Package-Requires vui 1.0.0; eldev resolves\n  vui 1.4.0). gascity-rig.el is an EXISTING vui dashboard for one rig, with\n  per-section independent async gc reads via gascity-reader-read-async —\n  the exact pattern this task scales up to city level.\n- gascity-reader.el: async gc CLI reads (vui-use-async compatible; processes\n  auto-killed on key change), works over TRAMP.\n- gascity-status.el: current magit-section status dashboard; gascity-rig.el:\n  vui rig dashboard; gascity-session.el/gascity-action.el: session detail +\n  agent actions (nudge/wake/suspend/kill/drain); gascity-remote.el: TRAMP\n  plumbing.\n- Existing shared cell formatters in gascity-tabulated.el.\n\n## The task\n\nDesign and implement `gascity-dashboard.el` (name negotiable): a city-level\nvui.el dashboard buffer showing the whole city at a glance, in the spirit of\nthe Go dashboard but idiomatic Emacs.\n\n1. Study the Go dashboard sources under ~/workspace/gascity\n   (internal/api/dashboardspa/web/{frontend/src,shared/src}) AND this repo's\n   existing docs (DESIGN.md, docs/) before designing. Also read\n   ~/workspace/gastown.el/docs/vui-design.md — prior art on vui patterns\n   (use-async + refresh counter, actions plists via context, vui-table,\n   collapsible sections).\n2. City dashboard sections, each an independent async read so one slow or\n   failing `gc --json` call never blanks the others (same rule as\n   gascity-rig.el):\n   - Overview/cockpit: city header (name, controller state, API URL),\n     health summary, work-in-flight (in-progress beads joined to live\n     sessions via assignee→session parsing, port work-in-flight.ts), needs-\n     you projection for agents (port the needsYou selector's semantics:\n     one reason, one next action, no clocks).\n   - Agents roster (with needs-you badge/highlight) + drill into agent\n     detail (reuse gascity-session detail where possible).\n   - Sessions (named + live), run census / runs in flight.\n   - Beads: ready, in-progress, blocked (per rig or city-wide), drill into\n     bead detail; convoys.\n   - Activity: recent events (respect the ga-69kj decision — gc event has\n     no JSON; render the documented pointer, don't parse .gc/events.jsonl).\n   - Rigs with per-rig summary rows, drilling into the existing\n     gascity-rig.el dashboard.\n3. Async-first: all data loads via vui-use-async / gascity-reader-read-async;\n   no synchronous `gc` calls anywhere in the dashboard. Skeleton renders\n   immediately with per-section spinners, then fills in.\n4. TRAMP: must work on /ssh:localhost:/home/roman/bright-lights exactly as\n   locally. All gc invocations go through the existing remote-aware reader\n   plumbing (gascity-context pin-directory pattern like gascity-rig.el).\n   Never assume local file paths. Test both access modes live.\n5. Refresh: `g' refreshes in place preserving point (soft refresh);\n   per-section auto-refresh where cheap. Follow gascity-rig.el's keybinding\n   conventions and the shared agent-action keys (d/t/i/M/s/K/w/D/p, N/P\n   section jumps) so the dashboard feels like the rig dashboard scaled up.\n6. Magit-grade error surfacing: use gc's JSON error envelopes (ga-jhk9\n   landed); a failing section shows its error inline, dim, with a retry\n   hint — never a blank section or a swallowed error.\n\n## Testing live in ~/bright-lights\n\n~/bright-lights is a real, running city (supervisor-managed, mayor named\nsession, hello-world rig) — use it as the live target for both local and\nTRAMP access modes. Use the e2e harness with timeout(1) bounds for any\nbatch/emacs invocation (see ga-pf3c precedent and docs/qa/ dogfood report).\nManual interactive checks in your own emacs are fine too; capture what you\nverified in the report.\n\n## Constraints\n\n- gascity.el repo only. Do NOT touch ~/workspace/gascity (Go repo) except to\n  READ it. Local commits to main are fine (polecat contract); no upstream PRs.\n- Keep the existing status dashboard working; the vui dashboard is additive\n  (wire it as a new entry point, e.g. `gascity-dashboard` command / a key in\n  the status transient — follow existing conventions).\n- If paren issues arise in elisp editing, use the parenmedic CLI\n  (city-wide standing instruction).\n\n## Deliverables\n\n- New dashboard module(s) + tests (ERT, scripts/gate.sh green).\n- A short report: sections implemented, what was reused vs new, async/TRAMP\n  verification results for both access modes against ~/bright-lights,\n  and known gaps (candidates for follow-up beads).\n- Screenshots optional but welcome (doc/ has capture scripts).\n",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "roman@burningswell.com",
+    "created_at": "2026-09-24T10:14:36Z",
+    "created_by": "mayor",
+    "updated_at": "2026-09-24T10:14:36Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "ga-jcv1",
+    "title": "capability(gc): add a pending-interactions JSON surface (gc status/session list expose no pending field)",
+    "description": "Dashboard v2 (plans/dashboard-v2) had to delete the honest \"awaiting-input\"/needs-you selector from the Emacs city dashboard because the data is not derivable from the CLI:\n\n- `gc status --json` and `gc session list --json` expose no pending/awaiting-input field; pending interactions are only visible through the supervisor REST API (REST /session/{id}/pending), which gascity.el is forbidden to call by user directive.\n- The dashboard therefore renders only the derivable reasons (errored, rate-limited, stalled) and a code/doc note states the limitation: \"Pending interactions need the supervisor API; out of scope by user directive.\"\n\nRequest: add a machine-readable pending-interaction read to the gc CLI, e.g. `gc session pending --json` or a \"pending\" field on `gc session list --json` rows (interaction id, kind/prompt summary, session, age). Once it exists, gascity.el can restore a real needs-you section backed by CLI data instead of the current honest omission.\n\nRelated: ga-3dlf already tracks the needs-you \"pending\" information-model gap on the dashboard side; this bead is the CLI-side capability request. Filed by the dashboard-v2 build-basic workflow (S5, bead ga-gmbh).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "roman@burningswell.com",
+    "created_at": "2026-09-24T14:01:13Z",
+    "created_by": "gc__implementation-worker-ec-oyq3",
+    "updated_at": "2026-09-24T14:01:13Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "ga-ik26",
+    "title": "capability(gc): add a JSON surface for gc costs (gc costs --json currently returns json_unsupported)",
+    "description": "Dashboard v2 (plans/dashboard-v2) needs a costs view, but the gc CLI has no JSON surface for costs:\n\n- `gc costs --json` returns {\"ok\":false,\"error\":{\"code\":\"json_unsupported\",...}} (verified live in emacs-city during the dashboard-v2 workflow, root ga-uxhh).\n- `gc usage` does not exist.\n\nPer the user directive, gascity.el must not call the supervisor REST API, so the Emacs dashboard renders only a dim pointer row (\"costs — run `gc costs` in a shell; no JSON surface\") instead of a costs panel, and the gap is documented in the delivery report.\n\nRequest: add a machine-readable costs output to the gc CLI, e.g. `gc costs --json` returning per-session/per-agent token-and-cost totals (something shaped like {ok: true, sessions: [{session, agent, input_tokens, output_tokens, cost_usd}], total: {...}}). Once a JSON surface exists, gascity.el can replace the dim pointer with a real costs panel in the city dashboard.\n\nCapability requested by the dashboard-v2 build-basic workflow (S5, bead ga-gmbh).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "roman@burningswell.com",
+    "created_at": "2026-09-24T14:01:09Z",
+    "created_by": "gc__implementation-worker-ec-oyq3",
+    "updated_at": "2026-09-24T14:01:09Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "ga-1ekj",
+    "title": "sling-ga-rs12",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-24T09:35:23Z",
+    "updated_at": "2026-09-24T09:35:23Z",
+    "dependencies": [
+      {
+        "issue_id": "ga-1ekj",
+        "depends_on_id": "ga-rs12",
+        "type": "tracks",
+        "created_at": "2026-09-24T09:35:23Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "ga-3dlf",
+    "title": "City dashboard follow-ups from build-basic review (ga-ki0j): dedupe gascity-dashboard--bead-group vs --section-body; if-let → if-let* before Emacs 31.1 deprecation; dedupe key-legend footer string; information-model gaps — needs-you 'pending' interactions, cockpit '(api —)', unjoined work-in-flight rows for ec-… assignees",
+    "description": "Non-blocking findings from the ga-ki0j build-basic run (plans/city-dashboard/factory-run.md, Remaining Risks section). All four are small, self-contained polish items on the new gascity-dashboard.el. Gate.sh baseline is 380 tests on 5ae47af.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "roman@burningswell.com",
+    "created_at": "2026-09-24T12:21:53Z",
+    "created_by": "mayor",
+    "updated_at": "2026-09-24T12:21:53Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  }
+]

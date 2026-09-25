@@ -1,0 +1,497 @@
+[
+  {
+    "id": "bl-bdj",
+    "title": "Formula v2 step targets (gc.run-operator) fail to resolve from HQ scope: 'unknown formulas v2 target'",
+    "description": "REPRO (bright-lights, gc 1.4.1): sling build-basic onto an HQ bead\n(e.g. bl-5zi) with an HQ-scoped target -\u003e\n\n  instantiating formula \"build-basic\" on bl-5zi: step build-basic.prepare:\n  unknown formulas v2 target \"gc.run-operator\"\n\nSame sling with a rig-scoped target (hello-world/gc.run-operator) works,\nbecause the default route then supplies the ambient rig context.\n\nROOT CAUSE (source: internal/graphroute + cmd/gc/cmd_agent.go):\n- Roles-pack agents resolve to config Agent{name: \"run-operator\", dir:\n  \"hello-world\", binding: \"gc\"} -\u003e QualifiedName \"hello-world/gc.run-operator\".\n- build-basic's step metadata gc.run_target = \"gc.run-operator\" (bare,\n  binding-qualified).\n- ResolveGraphStepBindingWithVars derives executionRigContext from the\n  default route (graphroute.go:519). For an HQ target there is no slash -\u003e\n  rigContext \"\" -\u003e ambient step skipped.\n- resolveAgentIdentity (cmd_agent.go:348) then tries: literal qualified\n  (no match), pool instances (no), bare scan `a.Name == input` (config\n  Name is \"run-operator\", never equals \"gc.run-operator\") -\u003e unknown.\n\nMINIMAL FIX: in the step-3 bare-name scans (cmd/gc/cmd_agent.go\nresolveAgentIdentity AND internal/agentutil/resolve.go ResolveAgent),\nalso accept the binding-qualified bare form:\n\n  if a.Name == input || a.BindingQualifiedName() == input {\n\nThis matches the documented identity form \"gastown.mayor\" (dot/binding-\nqualified bare name) and makes pack-prefixed role targets resolvable\nwhenever unambiguous.\n\nFOLLOW-UPS (design questions, not blocking):\n- Multi-rig cities (\u003e=2 rigs with the roles pack): a bare\n  \"gc.run-operator\" step target will become ambiguous (N matches) when\n  routed from HQ scope. Better error than today, but consider falling\n  back to the store-owning rig context (rootStoreRef ScopeRigContext,\n  already computed for controlRigContext) when the default route has no\n  rig context.\n- gascity.el transient could hint when a formula path is chosen from HQ\n  scope with rig-only targets.\n\nVerified: repro'd on scratch bead bl-ab8 (closed no-op) in\nbright-lights; dry-run alone does NOT exercise this path (routing plan\nonly) — instantiation does.",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "roman@burningswell.com",
+    "created_at": "2026-09-16T12:20:21Z",
+    "created_by": "mayor",
+    "updated_at": "2026-09-16T12:20:21Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-5a5i",
+    "title": "core.control-dispatcher",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "session",
+    "created_at": "2026-09-25T07:28:54Z",
+    "updated_at": "2026-09-25T07:28:55Z",
+    "metadata": {
+      "agent_name": "core.control-dispatcher",
+      "alias": "core.control-dispatcher",
+      "awake_started_at": "2026-09-25T07:28:54.070391161Z",
+      "canonical_instance_name": "core.control-dispatcher",
+      "command": "sh -c 'export GC_WORKFLOW_TRACE=\"${GC_WORKFLOW_TRACE:-${GC_CONTROL_DISPATCHER_TRACE_DEFAULT:-${GC_CITY}/.gc/runtime/control-dispatcher-trace.log}}\"; trace_dir=\"${GC_WORKFLOW_TRACE%/*}\"; if [ \"$trace_dir\" = \"$GC_WORKFLOW_TRACE\" ]; then trace_dir=\".\"; elif [ -z \"$trace_dir\" ]; then trace_dir=\"/\"; fi; mkdir -p \"$trace_dir\"; exec \"${GC_BIN:-gc}\" convoy control --serve --follow core.control-dispatcher'",
+      "continuation_epoch": "1",
+      "continuation_reset_pending": "",
+      "core_hash_breakdown": "{\"version\":\"v5\",\"fields\":{\"AcceptStartupDialogs\":\"38482e6af46cf75b\",\"Command\":\"e02226d9b105f04b\",\"CopyFiles\":\"82053d4c67eac2dd\",\"Env\":\"eef9c0cb6be25b3e\",\"FPExtra\":\"730fa5bc1a6062f2\",\"Lifecycle\":\"e3b0c44298fc1c14\",\"MCPServers\":\"e3b0c44298fc1c14\",\"MouseOn\":\"b1865da277ec01c2\",\"OverlayDir\":\"e3b0c44298fc1c14\",\"OverlayProviders\":\"e3b0c44298fc1c14\",\"PreStart\":\"e3b0c44298fc1c14\",\"SessionSetup\":\"e3b0c44298fc1c14\",\"SessionSetupScript\":\"e3b0c44298fc1c14\"},\"copy_files\":[{\"rel_dst\":\".gc/settings.json\",\"src\":\"/home/roman/bright-lights/.gc/settings.json\",\"probed\":false}]}",
+      "creation_complete_at": "2026-09-25T07:28:54Z",
+      "detached_at": "",
+      "effective_sleep_after_idle": "off",
+      "generation": "2",
+      "instance_token": "d40d2b4886efab8cff6b3a4a3470bbb1",
+      "last_woke_at": "2026-09-25T07:28:53Z",
+      "live_hash": "v5:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+      "pending_create_claim": "",
+      "pending_create_started_at": "",
+      "pool_managed": "true",
+      "requested_sleep_after_idle": "off",
+      "reset_committed_at": "",
+      "session_name": "core__control-dispatcher-bl-5a5i",
+      "session_origin": "ephemeral",
+      "sleep_capability": "full",
+      "sleep_intent": "",
+      "sleep_policy_fingerprint": "value=off|class=interactive_resume|source=legacy_off|wake=resume|cap=full|deps=|template=core.control-dispatcher",
+      "sleep_policy_source": "legacy_off",
+      "sleep_reason": "",
+      "started_config_hash": "v5:2a7b509764572dc6a907a99e28ce28429c76de61a01cc1ebed575f98f4b2a916",
+      "started_launch_hash": "v5:a7879408b2ee2eb6a168930363f7cdef22738e9bd96dfad464b4e9a55bd9df41",
+      "started_live_hash": "v5:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+      "started_provision_hash": "v5:ee90af5e0206622b3db8ab2fb9a034b04871b0f236951959e78cff7c40936d72",
+      "state": "awake",
+      "state_reason": "creation_complete",
+      "synced_at": "2026-09-25T07:28:53Z",
+      "template": "core.control-dispatcher",
+      "wake_request": "",
+      "wake_requested_at": "",
+      "work_dir": "/home/roman/bright-lights"
+    },
+    "labels": [
+      "agent:core.control-dispatcher",
+      "gc:session"
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-oyl4",
+    "title": "e2e demo latch — dogfood-ga-pf3c-formula",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-24T07:47:00Z",
+    "updated_at": "2026-09-24T07:47:00Z",
+    "metadata": {
+      "gc.kind": "workflow",
+      "gc.root_bead_id": "bl-lyxw",
+      "gc.root_store_ref": "city:bright-lights",
+      "gc.step_ref": "e2e-demo.latch"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bl-oyl4",
+        "depends_on_id": "bl-lyxw",
+        "type": "tracks",
+        "created_at": "2026-09-24T07:47:00Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-pim1",
+    "title": "Finalize workflow",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-24T07:47:00Z",
+    "updated_at": "2026-09-24T07:47:00Z",
+    "metadata": {
+      "gc.execution_routed_to": "mayor",
+      "gc.kind": "workflow-finalize",
+      "gc.root_bead_id": "bl-lyxw",
+      "gc.root_store_ref": "city:bright-lights",
+      "gc.routed_to": "core.control-dispatcher",
+      "gc.step_ref": "e2e-demo.workflow-finalize"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bl-pim1",
+        "depends_on_id": "bl-oyl4",
+        "type": "blocks",
+        "created_at": "2026-09-24T07:47:00Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-0q8w",
+    "title": "e2e-demo",
+    "description": "Disposable end-to-end demo formula for the gascity.el formula-sling e2e pass\n(WI-4, ga-4ef). Single workflow-latch step: dispatch creates the workflow root\nand its latch step in the store; the workflow-control lane advances the latch\nwithout spawning any agent session. Safe to sling and delete.\n\nLaunch inputs:\n- note: gce-e2e demo\n",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-23T21:21:16Z",
+    "updated_at": "2026-09-24T07:33:50Z",
+    "started_at": "2026-09-23T21:21:17Z",
+    "metadata": {
+      "gc.formula_contract": "graph.v2",
+      "gc.formula_hash": "3c14eaeb753438e9f187c9c47edc3e222bfcf12a6b3a65a05093a4ed0392d279",
+      "gc.formula_name": "e2e-demo",
+      "gc.formula_source": "/home/roman/bright-lights/formulas/e2e-demo.formula.toml",
+      "gc.kind": "workflow",
+      "gc.root_store_ref": "city:bright-lights",
+      "gc.routed_to": "mayor",
+      "gc.var.note": "gce-e2e demo"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bl-0q8w",
+        "depends_on_id": "bl-doyt",
+        "type": "tracks",
+        "created_at": "2026-09-23T21:21:17Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-70ac",
+    "title": "e2e demo latch — gce-e2e demo",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-23T21:21:16Z",
+    "updated_at": "2026-09-23T21:21:16Z",
+    "metadata": {
+      "gc.kind": "workflow",
+      "gc.root_bead_id": "bl-0q8w",
+      "gc.root_store_ref": "city:bright-lights",
+      "gc.step_ref": "e2e-demo.latch"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bl-70ac",
+        "depends_on_id": "bl-0q8w",
+        "type": "tracks",
+        "created_at": "2026-09-23T21:21:17Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-doyt",
+    "title": "Finalize workflow",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-23T21:21:16Z",
+    "updated_at": "2026-09-23T21:21:17Z",
+    "metadata": {
+      "gc.execution_routed_to": "mayor",
+      "gc.kind": "workflow-finalize",
+      "gc.root_bead_id": "bl-0q8w",
+      "gc.root_store_ref": "city:bright-lights",
+      "gc.routed_to": "core.control-dispatcher",
+      "gc.step_ref": "e2e-demo.workflow-finalize"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bl-doyt",
+        "depends_on_id": "bl-70ac",
+        "type": "blocks",
+        "created_at": "2026-09-23T21:21:17Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-rpq",
+    "title": "mayor",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "session",
+    "created_at": "2026-09-21T20:23:32Z",
+    "updated_at": "2026-09-25T14:54:02Z",
+    "metadata": {
+      "agent_name": "mayor",
+      "alias": "mayor",
+      "awake_started_at": "2026-09-25T14:54:00.956689039Z",
+      "canonical_instance_name": "mayor",
+      "command": "pi -e .pi/extensions/gc-hooks.js",
+      "configured_named_identity": "mayor",
+      "configured_named_mode": "always",
+      "configured_named_session": "true",
+      "continuation_epoch": "2",
+      "continuation_reset_pending": "",
+      "core_hash_breakdown": "{\"version\":\"v5\",\"fields\":{\"AcceptStartupDialogs\":\"e3b0c44298fc1c14\",\"Command\":\"f66ab41069add5db\",\"CopyFiles\":\"761a60c4ddb15efb\",\"Env\":\"e8106d0a440d30d1\",\"FPExtra\":\"e3b0c44298fc1c14\",\"Lifecycle\":\"e3b0c44298fc1c14\",\"MCPServers\":\"e3b0c44298fc1c14\",\"MouseOn\":\"b1865da277ec01c2\",\"OverlayDir\":\"e3b0c44298fc1c14\",\"OverlayProviders\":\"1a4afc630c78e3ed\",\"PreStart\":\"e3b0c44298fc1c14\",\"SessionSetup\":\"e3b0c44298fc1c14\",\"SessionSetupScript\":\"e3b0c44298fc1c14\"},\"copy_files\":[{\"rel_dst\":\".pi/extensions/gc-hooks.js\",\"src\":\"/home/roman/bright-lights/.pi/extensions/gc-hooks.js\",\"probed\":true,\"content_hash\":\"8bd7ed5ebdc1168cbd0c429ef33c107778051fa89c5cf36b1500900ed88c71d6\"},{\"rel_dst\":\".gc/settings.json\",\"src\":\"/home/roman/bright-lights/.gc/settings.json\",\"probed\":false}]}",
+      "creation_complete_at": "2026-09-25T14:54:00Z",
+      "detached_at": "",
+      "effective_sleep_after_idle": "off",
+      "generation": "7",
+      "instance_token": "a1a40e8baec2afbcf82089caf9d2c482",
+      "last_nudge_delivered_at": "2026-09-24T07:38:04Z",
+      "last_woke_at": "2026-09-25T14:53:43Z",
+      "live_hash": "v5:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+      "pending_create_claim": "",
+      "pending_create_started_at": "",
+      "primed_at": "2026-09-24T07:35:14Z",
+      "priming_attempted_at": "",
+      "prompt_hash": "e84cf560414da56980f0b9d3338331b091d67356f9582cd5f86d4ede6e0196d5",
+      "provider": "pi",
+      "requested_sleep_after_idle": "off",
+      "reset_committed_at": "",
+      "resume_flag": "--session",
+      "resume_style": "flag",
+      "session_key": "01a0d256-cfec-76fe-aa4e-22ad185d6895",
+      "session_name": "mayor",
+      "session_origin": "named",
+      "sleep_capability": "full",
+      "sleep_intent": "",
+      "sleep_policy_fingerprint": "value=off|class=interactive_resume|source=legacy_off|wake=resume|cap=full|deps=|template=mayor",
+      "sleep_policy_source": "legacy_off",
+      "sleep_reason": "",
+      "started_config_hash": "v5:2b94fa5ab49b64cb19d15c950c8fceaa4e5af6c29ccba83dea91465122edde22",
+      "started_launch_hash": "v5:42705be32c2264742f6f2fb273b71214912537187381eef29ef20db0aa21ba0e",
+      "started_live_hash": "v5:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+      "started_provision_hash": "v5:195079c8a9856de033ac6eead93b57829f9017ebebf5656fe4ffb3abe8298ed9",
+      "state": "awake",
+      "state_reason": "creation_complete",
+      "synced_at": "2026-09-21T20:23:31Z",
+      "template": "mayor",
+      "wake_attempts": "0",
+      "wake_request": "",
+      "wake_requested_at": "",
+      "work_dir": "/home/roman/bright-lights"
+    },
+    "labels": [
+      "agent:mayor",
+      "gc:session"
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-m8d",
+    "title": "input convoy for bl-ab8",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-16T12:19:17Z",
+    "updated_at": "2026-09-16T12:19:17Z",
+    "metadata": {
+      "gc.synthetic": "true"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bl-m8d",
+        "depends_on_id": "bl-ab8",
+        "type": "tracks",
+        "created_at": "2026-09-16T14:19:17Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-106",
+    "title": "input convoy for bl-5zi",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-16T12:06:08Z",
+    "updated_at": "2026-09-16T12:06:08Z",
+    "metadata": {
+      "gc.synthetic": "true"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bl-106",
+        "depends_on_id": "bl-5zi",
+        "type": "tracks",
+        "created_at": "2026-09-16T14:06:08Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-5zi",
+    "title": "write a hello world program in python",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-16T12:06:08Z",
+    "updated_at": "2026-09-16T12:06:08Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-5x3",
+    "title": "sling-bl-m0s",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-15T15:20:04Z",
+    "updated_at": "2026-09-15T15:20:04Z",
+    "dependencies": [
+      {
+        "issue_id": "bl-5x3",
+        "depends_on_id": "bl-m0s",
+        "type": "tracks",
+        "created_at": "2026-09-15T17:20:04Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-m0s",
+    "title": "hello",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-15T15:20:04Z",
+    "updated_at": "2026-09-15T15:20:04Z",
+    "metadata": {
+      "gc.routed_to": "mayor"
+    },
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-5ja",
+    "title": "e2e sling-v2: verify unified plain sling over TRAMP",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-15T13:07:57Z",
+    "updated_at": "2026-09-15T13:07:57Z",
+    "metadata": {
+      "gc.routed_to": "mayor"
+    },
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-vf5",
+    "title": "sling-bl-5ja",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-15T13:07:57Z",
+    "updated_at": "2026-09-15T13:07:57Z",
+    "dependencies": [
+      {
+        "issue_id": "bl-vf5",
+        "depends_on_id": "bl-5ja",
+        "type": "tracks",
+        "created_at": "2026-09-15T15:07:57Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-b9u",
+    "title": "sling-bl-pa2",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-13T09:57:16Z",
+    "updated_at": "2026-09-13T09:57:16Z",
+    "dependencies": [
+      {
+        "issue_id": "bl-b9u",
+        "depends_on_id": "bl-pa2",
+        "type": "tracks",
+        "created_at": "2026-09-13T11:57:15Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-pa2",
+    "title": "hello",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-09-13T09:57:15Z",
+    "updated_at": "2026-09-13T09:57:16Z",
+    "metadata": {
+      "gc.routed_to": "mayor"
+    },
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-ohb",
+    "title": "sling-bl-c3x",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-12T15:56:46Z",
+    "updated_at": "2026-09-12T15:56:46Z",
+    "dependencies": [
+      {
+        "issue_id": "bl-ohb",
+        "depends_on_id": "bl-c3x",
+        "type": "tracks",
+        "created_at": "2026-09-12T17:56:46Z",
+        "created_by": "gascity",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bl-35p",
+    "title": "gce-e2e-demo",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "convoy",
+    "created_at": "2026-09-12T14:53:51Z",
+    "updated_at": "2026-09-12T14:53:51Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  }
+]
