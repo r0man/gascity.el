@@ -1602,53 +1602,60 @@ worker drawn under its run (not a top-level row of the section)."
   '("bd" "list" "--status" "in_progress,open,blocked" "-n" "0")
   "The per-store work read: split client-side into Moving, Work, runs.")
 
+(defun gascity-dashboard--read-work-stores (names dir resolve reject)
+  "Read the work beads of the city store and the rig stores NAMES in DIR.
+See `gascity-dashboard--read-work' for RESOLVE and REJECT."
+  (let* ((default-directory dir)
+         (stores (cons nil names))
+         (pending (length stores))
+         (batches (make-hash-table :test 'equal))
+         (errors nil)
+         (settle
+          (lambda ()
+            (setq pending (1- pending))
+            (when (zerop pending)
+              (if (= (length errors) (length stores))
+                  (funcall reject (car errors))
+                (funcall resolve
+                         (list :beads (apply #'append
+                                             (mapcar (lambda (n) (gethash n batches))
+                                                     stores))
+                               :errors errors)))))))
+    (dolist (name stores)
+      (gascity-reader-read-async
+       (append gascity-dashboard--work-args (and name (list "--rig" name)))
+       (lambda (payload)
+         (puthash name
+                  (mapcar (lambda (b) (append b (list (cons 'gascity-rig name))))
+                          (gascity-section-beads payload))
+                  batches)
+         (funcall settle))
+       (lambda (err)
+         (push (format "%s: %s" (or name "city") err) errors)
+         (funcall settle))))))
+
 (defun gascity-dashboard--read-work (resolve reject)
   "Read the work beads of the city store and every rig store.
 One `bd list --status in_progress,open,blocked' read per store, all
 async; RESOLVE gets (:beads BEADS :errors ERRORS), BEADS stamped with
 `(gascity-rig . NAME)' (nil for the city store), ERRORS the failures of
 the stores that did not answer.  REJECT only when every store failed.
-The rigs come from the rig memo, else one `gc rig list' read."
-  (let ((fan-out
-         (lambda (names)
-           (let* ((stores (cons nil names))
-                  (pending (length stores))
-                  (batches (make-hash-table :test 'equal))
-                  (errors nil))
-             (dolist (name stores)
-               (let ((settle
-                      (lambda ()
-                        (setq pending (1- pending))
-                        (when (zerop pending)
-                          (if (= (length errors) (length stores))
-                              (funcall reject (car errors))
-                            (funcall resolve
-                                     (list :beads (apply #'append
-                                                         (mapcar (lambda (n) (gethash n batches))
-                                                                 stores))
-                                           :errors errors)))))))
-                 (gascity-reader-read-async
-                  (append gascity-dashboard--work-args (and name (list "--rig" name)))
-                  (lambda (payload)
-                    (puthash name
-                             (mapcar (lambda (b) (append b (list (cons 'gascity-rig name))))
-                                     (gascity-section-beads payload))
-                             batches)
-                    (funcall settle))
-                  (lambda (err)
-                    (push (format "%s: %s" (or name "city") err) errors)
-                    (funcall settle)))))))))
-    (let ((cached (gascity-rigs-cached)))
-      (if cached
-          (funcall fan-out (gascity-dashboard--rig-store-names cached))
-        (gascity-reader-read-async
-         '("rig" "list")
-         (lambda (payload)
-           (funcall fan-out
-                    (gascity-dashboard--rig-store-names
-                     (gascity-domain-decode-list 'gascity-rig
-                                                 (alist-get 'rigs payload)))))
-         reject)))))
+The rigs come from the rig memo, else one `gc rig list' read.  Reads
+started from a callback run in the loader's directory: a sentinel's
+current buffer is arbitrary, and the city must not be lost."
+  (let ((dir default-directory)
+        (cached (gascity-rigs-cached)))
+    (if cached
+        (gascity-dashboard--read-work-stores
+         (gascity-dashboard--rig-store-names cached) dir resolve reject)
+      (gascity-reader-read-async
+       '("rig" "list")
+       (lambda (payload)
+         (gascity-dashboard--read-work-stores
+          (gascity-dashboard--rig-store-names
+           (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload)))
+          dir resolve reject))
+       reject))))
 
 (defun gascity-dashboard--rig-store-names (rigs)
   "Return the names of RIGS that are rig stores (the city HQ excluded)."
