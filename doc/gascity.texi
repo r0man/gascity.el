@@ -1810,8 +1810,15 @@ one while TRAMP waits on another channel: under load that shows as
 seconds-long freezes and ``Process has died'' errors.  With
 direct-async processes (connection-local
 @code{tramp-direct-async-process}), which have no pty, the setting is
-left alone.  The default @code{ssh} transport avoids TRAMP processes
-altogether and stays the recommended choice.
+left alone.
+
+@code{tramp} is a @emph{fallback}, without the responsiveness
+guarantees the rest of this chapter describes: every TRAMP process start
+blocks Emacs while TRAMP sets up a remote shell (about 0.7 seconds each,
+several seconds when many views refresh at once).  For an ssh-family
+host use @code{ssh} (the default), or TRAMP direct-async processes
+(connection-local @code{tramp-direct-async-process} set to @code{t}),
+which start without that setup.
 
 @noindent
 The live event stream (@pxref{Live Refresh}) runs the same way, as one

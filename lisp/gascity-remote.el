@@ -505,7 +505,15 @@ processes then run with `tramp-use-connection-share' bound to
 connection, because a ControlMaster mux session writes into a pty and
 blocks when it fills while TRAMP waits on another channel — the
 seconds-long stalls and \"Process has died\" of a tramp-sh city
-under load.  Direct-async processes (no pty) are left alone."
+under load.  Direct-async processes (no pty) are left alone.
+
+`tramp' is a fallback without the responsiveness guarantees of
+dashboard-v3 §8.3 R9: every tramp-sh spawn still blocks Emacs while
+TRAMP starts a remote shell (about 0.7 s each, several seconds when
+many views refresh at once).  For an ssh-family host use `ssh' (the
+default), or TRAMP direct-async (connection-local
+`tramp-direct-async-process'), which starts processes without that
+setup."
   :type '(choice (const :tag "Local ssh pipe" ssh)
                  (const :tag "TRAMP make-process" tramp))
   :group 'gascity)
