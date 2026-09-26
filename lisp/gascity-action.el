@@ -435,18 +435,33 @@ orders across rigs (`gc order run --rig', DESIGN-write-actions.md §11 #9)."
   (gascity-command-execute-interactive
    (gascity-command-order-run :name name :rig rig)))
 
+(defun gascity-action--city-label (&optional dir)
+  "Return the city DIR governs as confirm prompts name it: NAME[@HOST].
+The city root's name (memoized, else found by walking up: this runs
+while gathering input), plus `@host' for a remote city, so a prompt
+never leaves open which of several open cities it acts on."
+  (let* ((dir (or dir default-directory))
+         (root (or (gascity-context-city-root-cached dir)
+                   (gascity-context-city-root dir)))
+         (host (file-remote-p dir 'host)))
+    (concat (if root
+                (file-name-nondirectory (directory-file-name (file-local-name root)))
+              "this city")
+            (if host (concat "@" host) ""))))
+
 ;;;###autoload
 (defun gascity-start ()
   "Start the Gas City under the machine-wide supervisor (streams output)."
   (interactive)
-  (when (gascity-action--confirm "Start the Gas City under the supervisor? ")
+  (when (gascity-action--confirm "Start %s under the supervisor? "
+                                 (gascity-action--city-label))
     (gascity-command-execute-interactive (gascity-command-start))))
 
 ;;;###autoload
 (defun gascity-stop (&optional force)
   "Stop all agent sessions in the city.  With prefix arg FORCE, force-kill."
   (interactive "P")
-  (when (gascity-action--confirm "Stop the Gas City%s? "
+  (when (gascity-action--confirm "Stop %s%s? " (gascity-action--city-label)
                                  (if force " (force-kill, no grace)" ""))
     (gascity-command-execute-interactive (gascity-command-stop :force (and force t)))))
 
@@ -934,7 +949,8 @@ suspended).  City-wide, so confirm first."
   (let ((before (and (stringp before) (not (string-empty-p before)) before))
         (state (and (stringp state) (not (string-empty-p state)) state)))
     (when (gascity-action--confirm
-           "Prune dormant sessions%s%s? "
+           "Prune dormant sessions of %s%s%s? "
+           (gascity-action--city-label)
            (if before (format " older than %s" before) "")
            (if state (format " in state %s" state) ""))
       (gascity-command-execute-interactive

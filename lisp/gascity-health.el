@@ -50,6 +50,7 @@
 (require 'gascity-pulse)
 
 (declare-function gascity-action--confirm "gascity-action")
+(declare-function gascity-action--city-label "gascity-action")
 (declare-function gascity-rig-dashboard "gascity-rig")
 (declare-function gascity-rig-list "gascity-tabulated")
 (declare-function gascity-dolt-list "gascity-tabulated")
@@ -652,8 +653,7 @@ Returns at once; the Doctor section shows `running…' until it ends."
   "Run `gc doctor --fix' after confirmation (`F'), in the background."
   (interactive)
   (when (gascity-action--confirm "Run gc doctor --fix in %s? "
-                                 (or gascity-health--city
-                                     (gascity-context-city-name) "this city"))
+                                 (gascity-action--city-label))
     (gascity-health--doctor-start t)))
 
 (defconst gascity-health--section-targets

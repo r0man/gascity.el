@@ -161,5 +161,33 @@ the agent as not running (the action's follow-up re-reads repaint it)."
     (should (eq (plist-get (funcall row "active") :state) 'running))
     (should-not (eq (plist-get (funcall row "asleep") :state) 'running))))
 
+;;; D-4: city-wide prompts name the city
+
+(defun gascity-verbs-test--prompts (dir)
+  "Return the confirm prompts of the city-wide verbs run in city DIR."
+  (let ((default-directory dir) prompts)
+    (cl-letf (((symbol-function 'gascity-context-city-root-cached) (lambda (&rest _) dir))
+              ((symbol-function 'gascity-action--confirm)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) prompts) nil)))
+      (gascity-start)
+      (gascity-stop)
+      (gascity-stop t)
+      (gascity-session-prune "" "")
+      (gascity-health-doctor-fix))
+    (nreverse prompts)))
+
+(ert-deftest gascity-test-verbs-city-prompts-name-the-city ()
+  "Start, stop, prune and doctor --fix name the city, `@host' when remote
+\(QA D-4: \"Stop the Gas City?\" with several cities open)."
+  (should (equal (gascity-verbs-test--prompts "/home/roman/bright-lights/")
+                 '("Start bright-lights under the supervisor? "
+                   "Stop bright-lights? "
+                   "Stop bright-lights (force-kill, no grace)? "
+                   "Prune dormant sessions of bright-lights? "
+                   "Run gc doctor --fix in bright-lights? ")))
+  (should (equal (car (gascity-verbs-test--prompts
+                       "/ssh:gascity@burningswell.com:/home/gascity/burningswell/"))
+                 "Start burningswell@burningswell.com under the supervisor? ")))
+
 (provide 'gascity-verbs-test)
 ;;; gascity-verbs-test.el ends here
