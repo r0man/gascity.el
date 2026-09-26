@@ -99,3 +99,29 @@ beads.el 82b86f6, remote bright-lights:
 - emacs-city: read only; nothing was changed.
 - v3qa: running on 87612b4, `gascity-remote-transport` back to `'ssh`,
   no views open. No QA background processes remain.
+
+## Addendum (2026-09-26): `'tramp` confirmation after connection-share suppression — PASS
+
+gascity.el `main` @ **dde8454** · v3qa restarted ·
+`gascity-remote-transport 'tramp` · TRAMP-wait watchdog armed (dumps a
+backtrace from any `tramp-wait-for-regexp` older than 10 s) · 8 cold opens
+(`tramp-cleanup-all-connections`, Dired on the city, then
+`M-x gascity-agents`) of the emacs-city Agents view that froze 60.8 s in
+item 3. Data: `qa/out/finalpass/tramp-confirm.txt`,
+`tramp-ssh-argv.txt`.
+
+| Measure | Result |
+|---|---|
+| Wedges / watchdog dumps | **0 / 8**, none |
+| View command (`gascity-agents`) | **2296 / 2353 / 2316 ms** (3 extra tries measured with `qa-cmd-last`). It still blocks input for about 2.3 s: the tramp-sh connection setups for the Agents reads run inside the command. Unchanged from item 3 (2047–2282 ms) |
+| Worst main-loop gap | **241 ms** (per-try max: 210, 176, 198, 241, 198, 4, 186, 206) |
+| Settle | 0.6–13.2 s, all settled |
+| TRAMP round-trip time per open (tracer) | 0.8–7.8 s. Connection setups run from timers, so input can still wait on them. This is expected in fallback mode; the README now says `'tramp` has no responsiveness budget |
+| Connection sharing | per-read connections: `ssh -q … -o ControlMaster=no -o ControlPath=none` — **unshared** (sampled during an open). Only the main TRAMP connection (Dired) keeps TRAMP's default `ControlMaster=auto` / `tramp.%C` |
+
+Verdict: the F8 ControlMaster-deadlock path is closed for gascity's reads
+in `'tramp` mode, and the 60.8 s freeze did not recur. The worst timer gap
+is ~200–240 ms, but opening a view in this mode still blocks input for
+about 2.3 s. That is acceptable only because `'tramp` is the documented
+fallback without a responsiveness budget; `'ssh` (the default) opens in
+2–49 ms. v3qa is back on `'ssh`, idle.
