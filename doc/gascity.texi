@@ -435,7 +435,8 @@ The view's filter menu (@pxref{Filter menus}).
 Show more (fewer) rows of the capped section at point, resolved from
 its header, any of its rows or its @samp{@dots{} N more} line:
 @code{gascity-dashboard-section-batch} rows (ten) at a time, never
-fewer than the cap.  This works in the cockpit's sections, an unfolded
+fewer than the cap.  On a section with no hidden rows, @kbd{+} echoes
+@samp{No section with more rows here}.  This works in the cockpit's sections, an unfolded
 churn row, and the rig dashboard's bead sections; in the Runs view
 @kbd{+}/@kbd{-} page the history.  The rows are already loaded, so no
 @command{gc} call runs.  The expansion is view state: it survives
@@ -688,7 +689,10 @@ warnings --- @samp{■} before @samp{▲}.
 @item Moving
 Active runs with their step ladder (@samp{◆} done, @samp{⬣} active,
 @samp{·} pending, @samp{✕} failed) and their live workers; in-progress
-work outside a run is listed flat.
+work outside a run is listed flat.  A drain step (one that fans out
+into member runs) is active while one of its members is in progress.
+An in-progress bead with no assignee reads @samp{unassigned} and counts
+as no worker.
 @item Agents
 Running agents by recent activity, then idle ones; stopped agents fold
 into one @samp{▸ stopped} line.  Named sessions such as the mayor are

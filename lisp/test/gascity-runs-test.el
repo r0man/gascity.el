@@ -135,6 +135,47 @@ under requirements-planner-1, everything else open."
     (should (equal (mapcar (lambda (s) (plist-get s :name)) (plist-get passed :ladder))
                    '("prepare-worktree" "implement" "close-source-anchor")))))
 
+(defun gascity-runs-test--drain-beads (member-status)
+  "Return a run whose drain step `implement' has members in MEMBER-STATUS.
+Shaped after burningswell's bs-8jif: the drain step stays open while
+its member runs (roots naming it in `gc.drain_control_id') work."
+  (let ((step (lambda (id ref status &optional kind deps)
+                `((id . ,id) (status . ,status) (issue_type . "task")
+                  (metadata . ((gc.root_bead_id . "bs-8jif") (gc.step_ref . ,ref)
+                               ,@(and kind `((gc.kind . ,kind)))))
+                  (dependencies . ,(vconcat
+                                    (mapcar (lambda (d) `((type . "blocks")
+                                                          (depends_on_id . ,d)))
+                                            deps))))))
+        (member (lambda (id status)
+                  `((id . ,id) (status . ,status) (issue_type . "task")
+                    (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")
+                                 (gc.drain_control_id . "bs-q2el")))))))
+    (list `((id . "bs-8jif") (status . "in_progress") (issue_type . "task")
+            (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic"))))
+          (funcall step "bs-4yih" "build-basic.decompose" "closed")
+          (funcall step "bs-q2el" "build-basic.implement" "open" "drain"
+                   '("bs-4yih" "bs-0c3f" "bs-b1o1"))
+          (funcall step "bs-k89n" "build-basic.summarize" "open" nil '("bs-q2el"))
+          (funcall member "bs-0c3f" member-status)
+          (funcall member "bs-b1o1" "closed"))))
+
+(ert-deftest gascity-test-runs-drain-step-active-while-members-run ()
+  "An open drain step with a member run in progress is the active step
+(`⬣'), in the shared ladder; with every member closed it is pending."
+  (let* ((runs (gascity-runs-test--summaries (gascity-runs-test--drain-beads "in_progress")))
+         (run (gascity-runs-test--by-id runs "bs-8jif")))
+    (should (equal (substring-no-properties
+                    (gascity-dashboard--ladder-string (plist-get run :ladder)))
+                   "◆⬣·"))
+    (should (equal (plist-get run :label) "implement"))
+    (should (equal (plist-get run :progress) "1/3")))
+  (let* ((runs (gascity-runs-test--summaries (gascity-runs-test--drain-beads "closed")))
+         (run (gascity-runs-test--by-id runs "bs-8jif")))
+    (should (equal (substring-no-properties
+                    (gascity-dashboard--ladder-string (plist-get run :ladder)))
+                   "◆··"))))
+
 (ert-deftest gascity-test-runs-active-run-worker ()
   "An active run's label is its active step; its worker is the live session."
   (let* ((runs (gascity-runs-test--summaries (gascity-runs-test--active-beads)))

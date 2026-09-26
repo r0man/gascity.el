@@ -767,6 +767,21 @@ the closed steps)."
     (should (string-match-p "⬣ be-52m5 +build-basic +… " text))
     (should-not (string-match-p "0/" text))))
 
+;; An in-progress bead with no assignee outside any run
+;; (burningswell's bs-bidj.1): it stays in Moving, labelled.
+(ert-deftest gascity-test-cockpit-moving-unassigned-bead ()
+  "An in-progress bead nobody holds reads `unassigned', never a blank
+name, and is no worker."
+  (let* ((bead `((id . "bs-bidj.1") (status . "in_progress") (issue_type . "task")
+                 (title . "OIDC 1a: Hydra infrastructure")
+                 (updated_at . ,(gascity-cockpit-test--ts 3600))))
+         (ctx (gascity-cockpit-test--ctx :beads (list bead)))
+         (text (gascity-cockpit-test--text
+                (let ((gascity-dashboard--view nil))
+                  (gascity-dashboard--moving-lines ctx)))))
+    (should (string-match-p "^Moving  0 runs · 0 workers" text))
+    (should (string-match-p "^  ○ unassigned +bs-bidj.1 +OIDC 1a" text))))
+
 ;;; QA cockpit pass: #6, #7, #10
 
 (ert-deftest gascity-test-cockpit-needs-you-groups-pool-restarts ()

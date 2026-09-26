@@ -110,6 +110,17 @@ never below the cap; no gc read is triggered."
     (goto-char (point-min))
     (should-error (gascity-section-more) :type 'user-error)))
 
+(ert-deftest gascity-test-expand-cockpit-section-that-fits ()
+  "`+' on a section whose rows all fit says so, as off any section, and
+changes nothing (QA: silent on Rigs, echoed on Agents)."
+  (gascity-expand-test--with-cockpit _reads
+    (gascity-expand-test--goto "^Rigs  ")
+    (should (get-text-property (point) 'gascity-expand-key))
+    (let ((before (buffer-string)))
+      (should (equal (cadr (should-error (gascity-section-more) :type 'user-error))
+                     "No section with more rows here"))
+      (should (equal (buffer-string) before)))))
+
 (ert-deftest gascity-test-expand-churn-unfold ()
   "`+' inside an unfolded churn row shows a batch more of its events."
   (gascity-expand-test--with-cockpit _reads

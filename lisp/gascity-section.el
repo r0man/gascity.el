@@ -301,17 +301,31 @@ this many fewer, never below the cap."
   (let ((pos (text-property-any (point-min) (point-max) 'gascity-expand-key key)))
     (when pos (goto-char pos) (beginning-of-line))))
 
+(defun gascity-section--has-more-p (key)
+  "Return non-nil when section KEY shows a `… N more' line.
+That line carries `gascity-expand-more'; a section whose rows all fit
+has none, so `+' there has nothing to show."
+  (let ((pos (point-min)) found)
+    (while (and (not found)
+                (setq pos (text-property-any pos (point-max) 'gascity-expand-more t)))
+      (if (equal (get-text-property pos 'gascity-expand-key) key)
+          (setq found t)
+        (setq pos (or (next-single-property-change pos 'gascity-expand-more)
+                      (point-max)))))
+    found))
+
 (defun gascity-section--expand (delta)
   "Add DELTA rows to the capped section at point (root state :extra).
-The count never drops below the section's cap.  View state: it
-survives `g', `C-u g' resets it.  Point stays on its row, else on the
-section's first line."
+The count never drops below the section's cap, and `+' needs rows left
+to show.  View state: it survives `g', `C-u g' resets it.  Point stays
+on its row, else on the section's first line."
   (let ((key (or (gascity-section--expand-key)
                  (user-error "No section with more rows here")))
         (root (and (boundp 'vui--root-instance) vui--root-instance))
         (id (gascity-section--line-id))
         (col (current-column)))
-    (unless root (user-error "No section with more rows here"))
+    (unless (and root (or (< delta 0) (gascity-section--has-more-p key)))
+      (user-error "No section with more rows here"))
     (let* ((state (vui-instance-state root))
            (extra (plist-get state :extra))
            (old (gascity-section-extra key extra))

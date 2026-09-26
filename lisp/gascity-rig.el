@@ -202,6 +202,7 @@ messages), as the cockpit's Work does (D4)."
              (propertize (format "  … %d more" n) 'face 'gascity-dim)
              (propertize "+ more  b beads" 'face 'gascity-dim) 78)
             'gascity-rig-more t
+            'gascity-expand-more t
             'gascity-expand-key (downcase title)
             'beads-thing (list :kind 'more :id (concat "more:" title))))
 

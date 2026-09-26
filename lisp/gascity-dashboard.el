@@ -475,7 +475,7 @@ its step done).  The ladder and the run detail both read it."
   "Return non-nil when a path in FAILED-PATHS lies beneath step PATH."
   (seq-some (lambda (p) (string-prefix-p (concat path ".") p)) failed-paths))
 
-(defun gascity-dashboard--ladder (root graph)
+(defun gascity-dashboard--ladder (root graph &optional drains)
   "Return the step ladder of run ROOT from its GRAPH beads.
 GRAPH is every bead anchored to ROOT (`gc.root_bead_id'), any status.
 Returns a list of plists (:name :id :state), one per top-level step, in
@@ -483,7 +483,10 @@ formula order (by blocks-dependency depth).  A step's state is its
 latest iteration bead's (`gc.logical_bead_id' → step, max
 `gc.attempt'), else its own.  In a failed run (root `gc.outcome'
 fail) a closed step with a failed bead beneath it (a nested loop that
-failed) is the failed step."
+failed) is the failed step.  A drain step stays open while its member
+runs work, outside GRAPH: DRAINS maps a drain step id to its member run
+roots (`gc.drain_control_id'), and an open drain with a member in
+progress is active."
   (let* ((formula (alist-get 'gc.formula_name (gascity-dashboard--meta root)))
          (failed-paths (gascity-dashboard--failed-paths root graph))
          (steps (seq-filter (lambda (b)
@@ -513,6 +516,10 @@ failed) is the failed step."
                 (when (and (eq state 'done)
                            (gascity-dashboard--failed-beneath-p name failed-paths))
                   (setq state 'failed))
+                (when (and (eq state 'pending) drains
+                           (seq-some (lambda (m) (equal (alist-get 'status m) "in_progress"))
+                                     (gethash id drains)))
+                  (setq state 'active))
                 (list :name name :id id :state state)))
             (sort steps (lambda (a b)
                           (let ((da (gethash (alist-get 'id a) depth 0))
@@ -961,6 +968,7 @@ expands the section in place instead of leaving it."
                      (gascity-dashboard--dim
                       (concat "+ more  " (gascity-dashboard--target-hint target)))
                      'gascity-dashboard-target target
+                     'gascity-expand-more t
                      'beads-thing (gascity-dashboard--thing
                                    'more id
                                    (and fold
@@ -1226,14 +1234,16 @@ what the worker does now."
 (defun gascity-dashboard--worker-row (bead sessions ctx indent &optional nested)
   "Return the lines of in-progress BEAD's worker, joined to SESSIONS.
 CTX is the render context; INDENT prefixes the row.  NESTED marks a
-worker drawn under its run (not a top-level row of the section)."
+worker drawn under its run (not a top-level row of the section).  An
+in-progress bead nobody holds (no assignee) reads `unassigned' (dim):
+it stays in Moving, since Work lists only ready beads, but counts as
+no worker."
   (let* ((session (gascity-dashboard--session-for-assignee
                    (alist-get 'assignee bead) sessions))
          (id (alist-get 'id bead))
-         (name (if session (alist-get 'agent_name session)
-                 (or (car (gascity-dashboard--parse-assignee
-                           (alist-get 'assignee bead)))
-                     "unassigned")))
+         (role (car (gascity-dashboard--parse-assignee (alist-get 'assignee bead))))
+         (name (cond (session (alist-get 'agent_name session))
+                     ((and role (not (string-empty-p role))) role)))
          (agent (and session (gascity-dashboard--agent-object
                               name session (plist-get ctx :socket)))))
     (apply #'gascity-dashboard--object-row
@@ -1241,7 +1251,10 @@ worker drawn under its run (not a top-level row of the section)."
            (concat indent (gascity-ui-pending-glyph
                            name (gascity-ui-glyph (if session 'ok 'idle)))
                    " "
-                   (gascity-ui-fit (gascity-dashboard--short-agent name) 24) " "
+                   (if name
+                       (gascity-ui-fit (gascity-dashboard--short-agent name) 24)
+                     (gascity-dashboard--dim (gascity-ui-fit "unassigned" 24)))
+                   " "
                    (gascity-ui-fit id 9) " "
                    (gascity-ui-fit (or (alist-get 'title bead) "") 26) " "
                    (gascity-ui-time (or (and session (alist-get 'last_active session))
@@ -1539,6 +1552,7 @@ does not refold 1.5k events."
                                (gascity-dashboard--dim (format "      … %d more" more))
                                (gascity-dashboard--dim "+ more  RET j e events")
                                'gascity-dashboard-target target
+                               'gascity-expand-more t
                                'beads-thing (gascity-dashboard--thing
                                              'more (concat id ":more")))))))))))))
 

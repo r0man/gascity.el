@@ -116,14 +116,16 @@ TICK is the component's refresh counter."
   "(BEADS . INDEX): the index of the last bead list, reused by identity.")
 
 (defun gascity-runs-index (beads)
-  "Return the run index of BEADS: a plist (:roots ROOTS :graphs HASH).
+  "Return the run index of BEADS: a plist (:roots ROOTS :graphs HASH ...).
 ROOTS are the run root beads, HASH maps a root id to its graph beads
-\(every bead whose `gc.root_bead_id' names it).  The last result is
+\(every bead whose `gc.root_bead_id' names it), :drains maps a drain
+step id to its member run roots (`gc.drain_control_id').  The last result is
 reused while BEADS is the same list (every render of one payload), so
 the grouping and ladders are computed once per read."
   (if (and beads (eq (car gascity-runs--index-cache) beads))
       (cdr gascity-runs--index-cache)
     (let ((graphs (make-hash-table :test 'equal))
+          (drains (make-hash-table :test 'equal))
           (seen (make-hash-table :test 'equal))
           (roots nil))
       (dolist (b beads)
@@ -132,10 +134,13 @@ the grouping and ladders are computed once per read."
           ;; must not double a bead.
           (unless (gethash id seen)
             (puthash id t seen)
-            (cond ((gascity-dashboard--run-root-p b) (push b roots))
+            (cond ((gascity-dashboard--run-root-p b)
+                   (push b roots)
+                   (let ((drain (gascity-runs--meta b 'gc.drain_control_id)))
+                     (when drain (push b (gethash drain drains)))))
                   ((gascity-dashboard--root-of b)
                    (push b (gethash (gascity-dashboard--root-of b) graphs)))))))
-      (let ((index (list :roots (nreverse roots) :graphs graphs
+      (let ((index (list :roots (nreverse roots) :graphs graphs :drains drains
                          :ladders (make-hash-table :test 'equal))))
         (setq gascity-runs--index-cache (cons beads index))
         index))))
@@ -149,7 +154,8 @@ the grouping and ladders are computed once per read."
   (let ((id (alist-get 'id root))
         (ladders (plist-get index :ladders)))
     (or (gethash id ladders)
-        (puthash id (gascity-dashboard--ladder root (gascity-runs-graph index id))
+        (puthash id (gascity-dashboard--ladder root (gascity-runs-graph index id)
+                                               (plist-get index :drains))
                  ladders))))
 
 (defun gascity-runs-state (root)
