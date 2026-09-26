@@ -80,8 +80,9 @@
   "The city name this inbox shows.")
 
 (defvar-local gascity-mail-inbox--filter nil
-  "The inbox filter plist: `:unread' (unread only), `:from', `:window'
-\(a duration: only mail newer than that) and `:search'.")
+  "The inbox filter plist.
+Keys: `:unread' (unread only), `:from', `:window' (a duration: only
+mail newer than that) and `:search'.")
 
 (defvar-local gascity-mail--messages nil
   "The messages of the last `gc mail inbox' payload.")

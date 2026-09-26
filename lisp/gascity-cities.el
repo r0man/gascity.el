@@ -310,8 +310,9 @@ the event router) updates the row without a read of our own."
           gascity-cities--subs)))
 
 (defun gascity-cities--read-city (key force)
-  "Subscribe row KEY to its city's `gc status' and `gc mail count' entries
-and request them.  FORCE re-reads even a fresh store entry."
+  "Subscribe row KEY to its city's status and mail entries; request them.
+The entries are `gc status' and `gc mail count'.  FORCE re-reads even a
+fresh store entry."
   (let ((dir (gascity-cities--city-dir (car key) (cdr key))))
     (gascity-cities--subscribe
      key '("status")

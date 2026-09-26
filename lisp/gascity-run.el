@@ -587,8 +587,8 @@ RET never folds (§5.4)."
 
 TAB/S-TAB move between steps, SPC folds a loop or opens a step's
 drawer, RET opens the step's bead or visits a plan file, `b' the root
-bead, `C' shows the control nodes, `i'/`v'/`t' reach a step's live
-worker.
+bead, `C' shows the control nodes, and the i, v and t keys reach a
+step's live worker.
 
 \\{gascity-run-mode-map}"
   :interactive nil

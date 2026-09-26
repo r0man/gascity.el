@@ -149,7 +149,7 @@ city first instead, healing the dispatch for exactly this read."
                   (concat (directory-file-name root) "/.gc/runtime"))))))
 
 (defconst gascity-reader-supervisor-subcommands '("cities")
-  "gc subcommands that act at supervisor scope, never on one city.
+  "The gc subcommands that act at supervisor scope, never on one city.
 They take no `--city', so the reader neither adds the tokens nor walks
 up for a city root to compute them — over TRAMP that walk is
 synchronous I/O (the Cities view reads `gc cities' from a host's `/').")
@@ -1262,7 +1262,7 @@ none was started (CALLBACK has then already been called)."
 The local counterpart of the remote capture wrapper in
 `gascity-reader--command' (same /bin/sh script, no PATH assignment):
 stdout, then \"\\nDELIMITER\\n\", then the command's stderr, exiting
-with the command's own status."
+with the command's own status.  DELIMITER separates the two streams."
   (append (list "/bin/sh" "-c"
                 (concat "t=$(mktemp) || exec \"$0\" \"$@\" 2>/dev/null; "
                         "\"$0\" \"$@\" 2>\"$t\"; rc=$?; "

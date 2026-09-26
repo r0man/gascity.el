@@ -70,17 +70,20 @@
   (gascity-store-fetch '("status") resolve reject :force gascity-agents--force))
 
 (defun gascity-agents--read-sessions (resolve reject)
-  "Read `gc session list' for the Agents view."
+  "Read `gc session list' for the Agents view.
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch '("session" "list") resolve reject
                        :force gascity-agents--force))
 
 (defun gascity-agents--read-agents (resolve reject)
-  "Read `gc agent list' (providers, pool bounds) for the Agents view."
+  "Read `gc agent list' (providers, pool bounds) for the Agents view.
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch '("agent" "list") resolve reject
                        :force gascity-agents--force))
 
 (defun gascity-agents--read-work (resolve reject)
-  "Read the work beads (for each agent's hooked bead), as the cockpit does."
+  "Read the work beads (for each agent's hooked bead), as the cockpit does.
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch '("bd" "list" :work-stores) resolve reject
                        :loader #'gascity-dashboard--read-work
                        :force gascity-agents--force))

@@ -151,7 +151,7 @@ are left alone; nothing here reads gc or touches a file."
   "The timestamp shape gc prints: RFC 3339, `Z' or a `±HH:MM' offset.")
 
 (defun gascity-ui--days-from-civil (year month day)
-  "Return the days from 1970-01-01 to the proleptic Gregorian YEAR-MONTH-DAY."
+  "Return the days from 1970-01-01 to YEAR, MONTH, DAY (proleptic Gregorian)."
   (let* ((y (if (<= month 2) (1- year) year))
          (era (floor y 400))
          (yoe (- y (* era 400)))
@@ -226,7 +226,8 @@ renders as the empty string."
       (propertize rel 'help-echo ts))))
 
 (defun gascity-ui-ago (ts &optional now)
-  "Return TS as `3m ago' / `2h ago', or `yesterday' / `Sep 22' as is."
+  "Return TS as `3m ago' / `2h ago', or `yesterday' / `Sep 22' as is.
+NOW as for `gascity-ui-time'."
   (let ((rel (gascity-ui-time ts now)))
     (cond ((string-empty-p rel) rel)
           ((string-match-p "\\`[0-9]+[smhd]\\'" rel) (concat rel " ago"))

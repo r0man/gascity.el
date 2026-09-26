@@ -151,7 +151,7 @@ activity renders as a relative time; the row carries the action
               'gascity-agent obj)))
 
 (defun gascity-rig--agents-summary (agents)
-  "Return the Agents header summary: `1 running · 1 stopped'."
+  "Return the Agents header summary of AGENTS: `1 running · 1 stopped'."
   (let ((running (seq-count (lambda (a) (alist-get 'running a)) agents)))
     (string-join (delq nil (list (and (> running 0) (format "%d running" running))
                                  (and (> (- (length agents) running) 0)

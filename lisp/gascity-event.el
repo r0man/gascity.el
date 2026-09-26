@@ -71,9 +71,9 @@ under Work's convoys, never a work row)."
 ;;; Events
 
 (defvar gascity-event--levels nil
-  "Memo of `gascity-event-level': (TABLE . HASH), HASH mapping an event
-type to its level (or `none'), valid while TABLE is still the value of
-`gascity-event-levels'.")
+  "Memo of `gascity-event-level': (TABLE . HASH).
+HASH maps an event type to its level (or `none'); it is valid while
+TABLE is still the value of `gascity-event-levels'.")
 
 (defun gascity-event-level (event)
   "Return EVENT's signal level: `attention', `watch' or nil.

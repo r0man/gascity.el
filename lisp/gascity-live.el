@@ -279,8 +279,8 @@ hides that noise (D4), so the router re-reads for what the bead IS:
           (t (list type)))))
 
 (defun gascity-live--deliver (stream events)
-  "Hand EVENTS to STREAM's subscribers, append them to the store's event
-feeds, and queue their invalidation."
+  "Hand EVENTS to STREAM's subscribers and queue their invalidation.
+They are also appended to the store's event feeds."
   (gascity-store-append-events (gascity-live--stream-root stream) events)
   (dolist (event events)
     (let ((seq (alist-get 'seq event)))
@@ -923,7 +923,7 @@ buffer that is not its view."
   (clrhash gascity-live--streams))
 
 (defun gascity-live--host-state-changed (host state _reason)
-  "Reconnect the streams on HOST at once when the store sees it online again.
+  "Reconnect the streams on HOST at once when its STATE is online again.
 Runs from `gascity-store-host-state-functions': a store read that
 succeeds after an outage is news the stream's backoff should not wait
 out."

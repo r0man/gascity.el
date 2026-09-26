@@ -342,7 +342,8 @@ of the old signature (an empty section reads `none', §6.1)."
    (lambda (rows) (mapcar #'gascity-session--bead-row rows))))
 
 (defun gascity-session--work-vnode (hook others status)
-  "Return the Work section: HOOK beads (⬣) then the OTHERS assigned."
+  "Return the Work section: HOOK beads (⬣) then the OTHERS assigned.
+STATUS is the load state of the reads behind them."
   (gascity-ui-section
    "work" "Work"
    (pcase status

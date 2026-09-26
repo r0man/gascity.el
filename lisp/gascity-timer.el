@@ -93,9 +93,9 @@ sentinel or filter: see the commentary.  Returns a handle for
       (cancel-timer (gascity-timer--item-timer handle)))))
 
 (defun gascity-timer-pending-p (handle)
-  "Return non-nil while the deferred call HANDLE has neither run nor been
-cancelled.  The guard to use where code tested `timerp' on a timer
-that could have been lost."
+  "Return non-nil while the deferred call HANDLE is still pending.
+Pending: neither run nor cancelled.  The guard to use where code
+tested `timerp' on a timer that could have been lost."
   (and (gascity-timer--item-p handle) (not (gascity-timer--item-done handle))))
 
 (defun gascity-timer-suspended-p ()

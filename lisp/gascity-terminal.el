@@ -499,7 +499,8 @@ Read on every redisplay; the value is refreshed out-of-band by
 
 (defun gascity-terminal--status-script (session socket)
   "Return the sh script querying tmux SESSION's windows and status-left.
-It exits 3 when the session is gone (`list-windows' fails)."
+SOCKET is the tmux server socket.  It exits 3 when the session is gone
+\(`list-windows' fails)."
   (concat (gascity-terminal--tmux-sh
            socket "list-windows" "-t" session "-F"
            "#{window_active}\t#{window_index}:#{window_name}#{window_flags}")
@@ -884,8 +885,9 @@ terminal buffer when one was raised, else nil."
 (defun gascity-terminal--attach-finish (result session socket dir store remote
                                                buf-name term host-dir status-off)
   "Open the attach terminal after the pre-step answered RESULT.
-RESULT is (EXIT . STDOUT) of `gascity-terminal--attach-script'; the other
-arguments are the attach's, see `gascity-terminal-attach-tmux'.  Runs
+RESULT is (EXIT . STDOUT) of `gascity-terminal--attach-script'.
+SESSION, SOCKET, DIR, STORE, REMOTE, BUF-NAME, TERM, HOST-DIR and
+STATUS-OFF are the attach's, see `gascity-terminal-attach-tmux'.  Runs
 from a timer: reports problems in the echo area, never signals."
   (let ((lines (gascity-terminal--lines (cdr result))))
     (cond
@@ -953,7 +955,7 @@ from a timer: reports problems in the echo area, never signals."
 ;; comms agent's first-cockpit profile: 240 ms locally, 380 ms remote.)
 
 (defvar gascity-terminal--preload-state nil
-  "nil (not scheduled), `scheduled', or `done'.")
+  "The backend preload's state: nil (not scheduled), `scheduled', `done'.")
 
 (defun gascity-terminal--backend-loaded-p ()
   "Return non-nil when the configured backend's library is already loaded.

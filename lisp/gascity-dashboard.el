@@ -539,8 +539,9 @@ failed) is the failed step."
 ;;; Needs you (§7.1)
 
 (defun gascity-dashboard--session-id-of (event)
-  "Return the session id an EVENT is about: its `session_id', else the
-trailing handle of its `subject' (a tmux session name)."
+  "Return the session id an EVENT is about.
+Its `session_id', else the trailing handle of its `subject' (a tmux
+session name)."
   (or (alist-get 'session_id event)
       (cdr (gascity-dashboard--parse-assignee (alist-get 'subject event)))))
 
@@ -1336,7 +1337,8 @@ worker drawn under its run (not a top-level row of the section)."
                        (state (format "%s, no session" state))))))))
 
 (defun gascity-dashboard--stopped-fold (asleep ctx)
-  "Return the `▸ stopped' fold row for ASLEEP agents (expanded in place)."
+  "Return the `▸ stopped' fold row for ASLEEP agents (expanded in place).
+CTX is the render context."
   (let* ((id "fold:stopped")
          (open (member id (plist-get gascity-dashboard--view :expanded)))
          (toggle (lambda () (gascity-dashboard--flip :expanded id))))
@@ -1587,25 +1589,30 @@ The Events window follows the cockpit's (CTX's filters)."
   (gascity-store-fetch '("status") resolve reject))
 
 (defun gascity-dashboard--read-sessions (resolve reject)
-  "Read `gc session list' for the cockpit."
+  "Read `gc session list' for the cockpit.
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch '("session" "list") resolve reject))
 
 (defun gascity-dashboard--read-mail (resolve reject)
-  "Read `gc mail count' for the cockpit."
+  "Read `gc mail count' for the cockpit.
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch '("mail" "count") resolve reject))
 
 (defun gascity-dashboard--read-events (window resolve reject)
-  "Read `gc events --since WINDOW' (JSON Lines) for the cockpit."
+  "Read `gc events --since WINDOW' (JSON Lines) for the cockpit.
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch (list "events" "--since" (gascity-event-since-arg window))
                        resolve reject
                        :lines t))
 
 (defun gascity-dashboard--read-convoys (resolve reject)
-  "Read `gc convoy list' for the cockpit."
+  "Read `gc convoy list' for the cockpit.
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch '("convoy" "list") resolve reject))
 
 (defun gascity-dashboard--read-escalations (resolve reject)
-  "Read the city store's escalated and held beads (one label-regex read)."
+  "Read the city store's escalated and held beads (one label-regex read).
+RESOLVE gets the payload, REJECT the failure text."
   (gascity-store-fetch
    '("bd" "list" "--label-regex" "^(gc:escalation|hold:.*)$" "-n" "0")
    resolve reject))
@@ -1690,7 +1697,8 @@ its run roots and step beads this way)."
   "Read the full step graph of each active run in RUNS.
 RUNS is a list of (ID . RIG); one `bd list --all --metadata-field
 gc.root_bead_id=ID' read per run.  RESOLVE gets a hash ID → beads; a
-failed read leaves its run on the partial ladder the work read gives."
+failed read leaves its run on the partial ladder the work read gives,
+so REJECT is never called."
   (let ((table (make-hash-table :test 'equal))
         (force gascity-store-loader-force)
         (pending (length runs)))

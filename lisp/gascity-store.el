@@ -826,8 +826,9 @@ loader."
   "Make sure ENTRY is fresh: join its read in flight or schedule one.
 FORCE re-reads even a fresh entry (joining one in flight all the
 same); MAX-AGE overrides the TTL; BUFFER is the requesting buffer
-\(visible buffers are served first).  Returns non-nil when a read is
-in flight afterwards."
+\(visible buffers are served first); DEFERRABLE marks a background
+re-read that yields to foreground ones.  Returns non-nil when a read is in
+flight afterwards."
   (gascity-store--rescue)
   (let ((job (gascity-store-entry-job entry)))
     (cond
@@ -858,8 +859,8 @@ in flight afterwards."
 
 (cl-defun gascity-store-request (args &key dir lines loader force max-age buffer)
   "Refresh the ARGS entry read in DIR as needed, without a callback.
-Keys as for `gascity-store-fetch'.  Returns non-nil when a read is in
-flight afterwards."
+LINES, LOADER, FORCE, MAX-AGE and BUFFER as for `gascity-store-fetch'.
+Returns non-nil when a read is in flight afterwards."
   (gascity-store--request
    (gascity-store--entry (gascity-store--dir dir) args lines loader)
    :force force :max-age max-age :buffer (or buffer (current-buffer))))

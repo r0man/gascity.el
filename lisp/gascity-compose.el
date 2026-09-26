@@ -90,7 +90,8 @@ read-only but rear-non-sticky, so the body that follows stays editable."
     (point-max))))
 
 (defun gascity-compose--help (notify)
-  "Return the dim help trailer shown below the body; NOTIFY adds C-c C-n."
+  "Return the dim help trailer shown below the body.
+NOTIFY adds the line for \\<gascity-compose-mode-map>\\[gascity-compose-toggle-notify]."
   (propertize
    (substitute-command-keys
     (concat "\n# Write the message body above.  \\<gascity-compose-mode-map>\

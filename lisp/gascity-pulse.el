@@ -204,8 +204,8 @@ The range min..max maps onto the eight levels; a flat series is all
 (defun gascity-mode-line--stream-segment (root status)
   "Return the lighter segment of city ROOT known only by its live STATUS.
 A city with a stream but no open cockpit (its Agents, Runs, a list…):
-`●' while live, `○' otherwise, `@host' when remote (§7.12).  mouse-1
-opens its cockpit."
+`●' while live, `○' otherwise, `@host' when remote (§7.12).  Clicking
+it opens its cockpit."
   (let* ((host (and (gascity-remote-prefix root) (file-remote-p root 'host)))
          (state (plist-get status :state))
          (label (concat (gascity-pulse-abbrev (or (plist-get status :name) "city"))
@@ -260,7 +260,7 @@ operation): the pulse and stream tables only."
 (define-minor-mode gascity-mode-line-mode
   "Show the open cities' Needs you totals in the mode line (§7.12).
 One segment per open cockpit: `GC[ec ■1▲2 · bl ▲1]', `●' when a city
-needs nothing.  mouse-1 on a segment shows that city's cockpit.  The
+needs nothing.  Clicking a segment shows that city's cockpit.  The
 figures come from what the cockpits already read; the lighter never
 runs gc or touches a remote host at redisplay."
   :global t

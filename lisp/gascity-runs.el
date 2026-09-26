@@ -587,7 +587,7 @@ Never blocks: a cold rig memo is filled through the store first
   (gascity-runs--agent-command #'gascity-session-peek-at-point))
 
 (defun gascity-runs-agent-tmux ()
-  "Attach the live worker at point (`t')."
+  "Attach the live worker at point (the t key)."
   (interactive)
   (gascity-runs--agent-command #'gascity-tmux-at-point))
 

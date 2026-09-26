@@ -771,7 +771,8 @@ The list keeps focus, like `C-o' in occur, compilation and Dired."
     (gascity-tabulated-detail-show)))
 
 (define-minor-mode gascity-tabulated-detail-follow-mode
-  "Make the `*gascity-detail*' window follow point in this list (`C-c C-f').
+  "Make the `*gascity-detail*' window follow point in this list.
+Bound to \\<gascity-tabulated-base-map>\\[gascity-tabulated-detail-follow-mode] in every list.
 The counterpart of `next-error-follow-minor-mode'."
   :lighter " Fol"
   (if gascity-tabulated-detail-follow-mode
