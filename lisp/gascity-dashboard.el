@@ -85,6 +85,7 @@
 (declare-function gascity-runs-index "gascity-runs")
 (declare-function gascity-runs-ladder "gascity-runs")
 (declare-function gascity-runs-last-activity "gascity-runs")
+(declare-function gascity-runs-parent-id "gascity-runs")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -1166,7 +1167,11 @@ properties.  The row is a thing whose SPC toggles the drawer."
           (t (list (format "%s  %s" (plist-get item :kind) (plist-get item :text)))))))
 
 (defun gascity-dashboard--moving-lines (ctx)
-  "Return the Moving section lines for CTX: runs with their workers."
+  "Return the Moving section lines for CTX: runs with their workers.
+A drain member run (`gascity-runs-parent-id') nests under the run it
+drains for when that run is active here too, recursively; workers nest
+under the run they work for.  The cap, `+'/`-' and `… N more' count the
+top-level runs; a member whose parent is not shown stays top-level."
   (let* ((beads (seq-filter (lambda (b) (gascity-dashboard--in-rig-p b ctx))
                             (plist-get ctx :beads)))
          (runs (gascity-dashboard--active-runs beads))
@@ -1183,52 +1188,76 @@ properties.  The row is a thing whose SPC toggles the drawer."
          (run-ids (mapcar (lambda (r) (alist-get 'id r)) runs))
          (flat (seq-remove (lambda (b) (member (gascity-dashboard--root-of b) run-ids))
                            in-progress))
+         (children (make-hash-table :test 'equal))
+         (top nil)
+         (sub-runs 0)
          (workers 0)
          (items nil))
+    ;; Nest each member under its parent when the parent is shown.
     (dolist (root runs)
-      (let* ((id (alist-get 'id root))
-             ;; The Runs view's ladder for this run (same entry, same
-             ;; rule); `…' until that read lands — never a partial one.
-             (ladder (and index (gascity-runs-ladder index root)))
-             (label (if index (gascity-dashboard--ladder-label ladder) (cons "" "")))
-             (rig (alist-get 'gascity-rig root))
-             (nested (gascity-dashboard--one-per-worker
-                      (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) id))
-                                  in-progress))))
-        (push (append
-               (gascity-dashboard--object-row
-                (concat "run:" id)
-                (concat "  " (gascity-ui-glyph 'active) " "
-                        (gascity-ui-fit id 9) " "
-                        (gascity-ui-fit (or (alist-get 'gc.formula_name
-                                                       (gascity-dashboard--meta root))
-                                            (alist-get 'title root) "")
-                                        12)
-                        " " (if index (gascity-dashboard--ladder-string ladder)
-                              (gascity-dashboard--dim "…"))
-                        "  " (gascity-ui-fit (car label) 14)
-                        " " (gascity-ui-fit (cdr label) 6)
-                        " " (gascity-ui-time (alist-get 'created_at root) now))
-                (gascity-dashboard--dim (or rig "city"))
-                (lambda () (gascity-dashboard--run-drawer ladder))
-                'gascity-bead id 'gascity-run-rig (or rig ""))
-               (mapcan (lambda (b)
-                         (setq workers (1+ workers))
-                         (gascity-dashboard--worker-row b sessions ctx "    └ " t))
-                       (seq-take nested 3)))
-              items)))
+      (let ((parent (and index (gascity-runs-parent-id index root))))
+        (if (and parent (member parent run-ids)
+                 (not (equal parent (alist-get 'id root))))
+            (push root (gethash parent children))
+          (push root top))))
+    (cl-labels
+        ((group (root depth seen)
+           (let* ((id (alist-get 'id root))
+                  ;; The Runs view's ladder for this run (same entry, same
+                  ;; rule); `…' until that read lands — never a partial one.
+                  (ladder (and index (gascity-runs-ladder index root)))
+                  (label (if index (gascity-dashboard--ladder-label ladder) (cons "" "")))
+                  (rig (alist-get 'gascity-rig root))
+                  (under (concat (make-string (* 4 (1+ depth)) ?\s) "└ "))
+                  (nested (gascity-dashboard--one-per-worker
+                           (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) id))
+                                       in-progress))))
+             (append
+              (gascity-dashboard--object-row
+               (concat "run:" id)
+               (concat (if (zerop depth) "  "
+                         (concat (make-string (* 4 depth) ?\s) "└ "))
+                       (gascity-ui-glyph 'active) " "
+                       (gascity-ui-fit id 9) " "
+                       (gascity-ui-fit (or (alist-get 'gc.formula_name
+                                                      (gascity-dashboard--meta root))
+                                           (alist-get 'title root) "")
+                                       12)
+                       " " (if index (gascity-dashboard--ladder-string ladder)
+                             (gascity-dashboard--dim "…"))
+                       "  " (gascity-ui-fit (car label) 14)
+                       " " (gascity-ui-fit (cdr label) 6)
+                       " " (gascity-ui-time (alist-get 'created_at root) now))
+               (gascity-dashboard--dim (or rig "city"))
+               (lambda () (gascity-dashboard--run-drawer ladder))
+               'gascity-bead id 'gascity-run-rig (or rig ""))
+              (mapcan (lambda (b)
+                        (setq workers (1+ workers))
+                        (gascity-dashboard--worker-row b sessions ctx under t))
+                      (seq-take nested 3))
+              (mapcan (lambda (member)
+                        (unless (member (alist-get 'id member) seen)
+                          (setq sub-runs (1+ sub-runs))
+                          (group member (1+ depth) (cons id seen))))
+                      (reverse (gethash id children)))))))
+      (dolist (root (nreverse top))
+        (push (group root 0 nil) items)))
     (dolist (b flat)
       (when (gascity-dashboard--session-for-assignee (alist-get 'assignee b) sessions)
         (setq workers (1+ workers)))
       (push (gascity-dashboard--worker-row b sessions ctx "  ") items))
     (setq items (nreverse items))
-    (gascity-dashboard--section-lines
-     "moving" "Moving"
-     (and items
-          (format "%d run%s · %d worker%s" (length runs) (if (= (length runs) 1) "" "s")
-                  workers (if (= workers 1) "" "s")))
-     (gascity-dashboard--cap-groups items "moving" #'gascity-jump-runs)
-     ctx :loads '(:work :runs) :label "bd list")))
+    (let ((top-runs (- (length runs) sub-runs)))
+      (gascity-dashboard--section-lines
+       "moving" "Moving"
+       (and items
+            (concat (format "%d run%s" top-runs (if (= top-runs 1) "" "s"))
+                    (if (> sub-runs 0)
+                        (format " · %d sub-run%s" sub-runs (if (= sub-runs 1) "" "s"))
+                      "")
+                    (format " · %d worker%s" workers (if (= workers 1) "" "s"))))
+       (gascity-dashboard--cap-groups items "moving" #'gascity-jump-runs)
+       ctx :loads '(:work :runs) :label "bd list"))))
 
 (defun gascity-dashboard--one-per-worker (beads)
   "Return BEADS with one bead per assignee, the most specific kept.

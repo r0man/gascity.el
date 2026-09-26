@@ -118,13 +118,15 @@ TICK is the component's refresh counter."
 (defun gascity-runs-index (beads)
   "Return the run index of BEADS: a plist (:roots ROOTS :graphs HASH ...).
 ROOTS are the run root beads, HASH maps a root id to its graph beads
-\(every bead whose `gc.root_bead_id' names it), :drains maps a drain
-step id to its member run roots (`gc.drain_control_id').  The last result is
+\(every bead whose `gc.root_bead_id' names it), :owners maps a graph
+bead id to its run's id, :drains maps a drain step id to its member
+run roots (`gc.drain_control_id').  The last result is
 reused while BEADS is the same list (every render of one payload), so
 the grouping and ladders are computed once per read."
   (if (and beads (eq (car gascity-runs--index-cache) beads))
       (cdr gascity-runs--index-cache)
     (let ((graphs (make-hash-table :test 'equal))
+          (owners (make-hash-table :test 'equal))
           (drains (make-hash-table :test 'equal))
           (seen (make-hash-table :test 'equal))
           (roots nil))
@@ -139,8 +141,10 @@ the grouping and ladders are computed once per read."
                    (let ((drain (gascity-runs--meta b 'gc.drain_control_id)))
                      (when drain (push b (gethash drain drains)))))
                   ((gascity-dashboard--root-of b)
+                   (puthash id (gascity-dashboard--root-of b) owners)
                    (push b (gethash (gascity-dashboard--root-of b) graphs)))))))
       (let ((index (list :roots (nreverse roots) :graphs graphs :drains drains
+                         :owners owners
                          :ladders (make-hash-table :test 'equal))))
         (setq gascity-runs--index-cache (cons beads index))
         index))))
@@ -148,6 +152,14 @@ the grouping and ladders are computed once per read."
 (defun gascity-runs-graph (index id)
   "Return the graph beads of run ID in INDEX."
   (reverse (gethash id (plist-get index :graphs))))
+
+(defun gascity-runs-parent-id (index root)
+  "Return the id of the run ROOT drains for, or nil for a top-level run.
+A member run's `gc.drain_control_id' names a drain step; the run that
+step belongs to (its `gc.root_bead_id', found in INDEX's graphs) is the
+parent.  Nil when ROOT is no member, or its drain step is not in INDEX."
+  (let ((drain (gascity-runs--meta root 'gc.drain_control_id)))
+    (and drain (gethash drain (plist-get index :owners)))))
 
 (defun gascity-runs-ladder (index root)
   "Return the step ladder of ROOT (memoized in INDEX)."
@@ -227,7 +239,7 @@ The first failed bead's `gc.failure_reason', else its close reason."
 (defun gascity-runs-summary (index root)
   "Return the summary plist of run ROOT from INDEX.
 Keys: :id :root :rig :formula :state :ladder :label :progress :time
-:outcome :failure :worker-bead."
+:outcome :failure :worker-bead :parent (the run it drains for, or nil)."
   (let* ((id (alist-get 'id root))
          (graph (gascity-runs-graph index id))
          (ladder (gascity-runs-ladder index root))
@@ -242,7 +254,8 @@ Keys: :id :root :rig :formula :state :ladder :label :progress :time
           :time (gascity-runs--time root)
           :outcome (gascity-runs--meta root 'gc.outcome)
           :failure (and (eq state 'failed) (gascity-runs--failure graph))
-          :worker-bead (and (eq state 'active) (gascity-runs--worker-bead graph)))))
+          :worker-bead (and (eq state 'active) (gascity-runs--worker-bead graph))
+          :parent (gascity-runs-parent-id index root))))
 
 (defun gascity-runs-window-seconds (window)
   "Return WINDOW (\"24h\", \"7d\", \"90m\", \"2w\") in seconds, or nil."
@@ -342,9 +355,31 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                   (gascity-dashboard--dim (alist-get 'id bead)))
           (and session (gascity-dashboard--agent-object name session socket)))))
 
-(defun gascity-runs--card (run ctx)
-  "Return the lines of RUN's two-line card (and its open drawer) in CTX."
-  (let* ((id (plist-get run :id))
+(defun gascity-runs--nest (runs)
+  "Return RUNS as a list of (RUN . DEPTH), each member under its parent.
+A member run (:parent) follows the run it drains for when that run is
+in RUNS, recursively, one level deeper; one whose parent is not in RUNS
+stays at depth 0 where it was."
+  (let* ((ids (mapcar (lambda (r) (plist-get r :id)) runs))
+         (nested-p (lambda (r) (let ((p (plist-get r :parent)))
+                                 (and p (member p ids) (not (equal p (plist-get r :id)))))))
+         (out nil))
+    (cl-labels ((walk (run depth seen)
+                  (push (cons run depth) out)
+                  (dolist (m runs)
+                    (when (and (equal (plist-get m :parent) (plist-get run :id))
+                               (funcall nested-p m)
+                               (not (member (plist-get m :id) seen)))
+                      (walk m (1+ depth) (cons (plist-get run :id) seen))))))
+      (dolist (r runs)
+        (unless (funcall nested-p r) (walk r 0 nil))))
+    (nreverse out)))
+
+(defun gascity-runs--card (run ctx &optional depth)
+  "Return the lines of RUN's two-line card (and its open drawer) in CTX.
+DEPTH nests a member run's card under its parent's (`└', indented)."
+  (let* ((depth (or depth 0))
+         (id (plist-get run :id))
          (state (plist-get run :state))
          (now (plist-get ctx :now))
          (worker (and (plist-get run :worker-bead)
@@ -352,7 +387,9 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                                             (plist-get ctx :sessions)
                                             (plist-get ctx :socket))))
          (line1 (gascity-dashboard--row
-                 (concat "  " (gascity-runs--state-glyph state) " "
+                 (concat (if (zerop depth) "  "
+                           (concat (make-string (* 4 depth) ?\s) "└ "))
+                         (gascity-runs--state-glyph state) " "
                          (gascity-ui-fit id 9) " "
                          (gascity-ui-truncate (plist-get run :formula) 40))
                  (concat (gascity-dashboard--dim
@@ -365,7 +402,7 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                  ('failed (gascity-dashboard--dim
                            (or (plist-get run :failure) "outcome: fail")))
                  (_ (gascity-dashboard--dim (or (plist-get run :outcome) "")))))
-         (line2 (concat "     "
+         (line2 (concat (make-string (+ 5 (* 4 depth)) ?\s)
                         (if (plist-get run :ladder)
                             (concat (gascity-dashboard--ladder-string
                                      (plist-get run :ladder))
@@ -454,10 +491,16 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
             (append lines (list "")
                     (gascity-dashboard--section-lines
                      "active" "Active"
-                     (and (plist-get parts :active)
-                          (number-to-string (length (plist-get parts :active))))
-                     (mapcan (lambda (r) (gascity-runs--card r ctx))
-                             (plist-get parts :active))
+                     (let* ((nest (gascity-runs--nest (plist-get parts :active)))
+                            (subs (seq-count (lambda (n) (> (cdr n) 0)) nest)))
+                       (and nest
+                            (concat (number-to-string (- (length nest) subs))
+                                    (if (> subs 0)
+                                        (format " · %d sub-run%s" subs
+                                                (if (= subs 1) "" "s"))
+                                      ""))))
+                     (mapcan (lambda (n) (gascity-runs--card (car n) ctx (cdr n)))
+                             (gascity-runs--nest (plist-get parts :active)))
                      ctx :loads '(:beads) :label "bd list"))))
     (when (funcall show "failed")
       (setq lines

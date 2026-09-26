@@ -370,6 +370,30 @@ failure are what the worker is on, so they come from it when present."
                 (and (alist-get 'title bead)
                      (concat "title    " (alist-get 'title bead)))))))
 
+(defun gascity-run--member-lines (step depth ctx)
+  "Return the rows of the member runs drain STEP at DEPTH fans out to.
+A drain step stays open while its member runs (roots naming it in
+`gc.drain_control_id', the :drains of CTX's :index) work outside this
+run's graph: each gets a row with its ladder, RET opens its run detail."
+  (let ((index (plist-get ctx :index)))
+    (mapcar
+     (lambda (member)
+       (let* ((run (gascity-runs-summary index member))
+              (id (plist-get run :id)))
+         (gascity-dashboard--row
+          (concat (make-string (+ 4 (* 2 depth)) ?\s) "└ "
+                  (gascity-runs--state-glyph (plist-get run :state)) " "
+                  (gascity-ui-fit id 9) " "
+                  (gascity-ui-fit (plist-get run :formula) 10) " "
+                  (gascity-dashboard--ladder-string (plist-get run :ladder)) "  "
+                  (gascity-ui-fit (plist-get run :label) 14) " "
+                  (plist-get run :progress))
+          (gascity-dashboard--dim "RET run")
+          'gascity-run-member id
+          'gascity-run-member-rig (plist-get run :rig)
+          'beads-thing (gascity-dashboard--thing 'row (concat "sub:" id)))))
+     (reverse (gethash (alist-get 'id step) (plist-get index :drains))))))
+
 (defun gascity-run--step-lines (node depth ctx)
   "Return the lines of step NODE at DEPTH (and its children) in CTX."
   (let* ((view (plist-get ctx :view))
@@ -436,6 +460,7 @@ failure are what the worker is on, so they come from it when present."
                      (and agent (list 'gascity-agent agent)))))
     (cons row
           (append
+           (gascity-run--member-lines (plist-get node :bead) depth ctx)
            (and (not fold) (gascity-dashboard--drawer-open-p thing-id)
                 (mapcar (lambda (l) (concat (make-string (* 2 depth) ?\s) l))
                         (gascity-dashboard--drawer
@@ -545,11 +570,15 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
 
 (defun gascity-run-activate ()
   "Act on the thing at point: open a step's bead, visit a plan file.
-RET never folds (§5.4)."
+On a drain step's member run, open that run's detail.  RET never folds
+\(§5.4)."
   (interactive)
   (let ((file (get-text-property (point) 'gascity-run-file))
+        (member (get-text-property (point) 'gascity-run-member))
         (bead (get-text-property (point) 'gascity-bead)))
     (cond (file (gascity-run-visit-file file))
+          (member (gascity-run-show member nil
+                                    (get-text-property (point) 'gascity-run-member-rig)))
           (bead (gascity-runs-call-with-store
                  gascity-run--current-rig
                  (lambda (store) (gascity-beads--show-in-store bead store))))

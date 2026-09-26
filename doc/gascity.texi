@@ -691,9 +691,23 @@ warnings --- @samp{■} before @samp{▲}.
 Active runs with their step ladder (@samp{◆} done, @samp{⬣} active,
 @samp{·} pending, @samp{✕} failed) and their live workers; in-progress
 work outside a run is listed flat.  A drain step (one that fans out
-into member runs) is active while one of its members is in progress.
-An in-progress bead with no assignee reads @samp{unassigned} and counts
-as no worker.
+into member runs) is active while one of its members is in progress,
+and each member run nests under the run it drains for, with its own
+workers under it:
+
+@example
+Moving  2 runs · 2 sub-runs · 2 workers
+  ⬣ bs-f0ay   build-basic  ◆◆◆◆◆⬣····  implement      5/10   1h
+    └ ⬣ bs-rj3o  do-work  ◆⬣·  implement  1/3   18m
+        └ ● implementation-worker-1  bs-8qj7  Implement owned work  14s
+@end example
+
+@noindent
+The header counts the top-level runs, then the sub-runs and workers;
+the row cap, @kbd{+}/@kbd{-} and @samp{@dots{} N more} count top-level
+runs.  A member whose parent is not active stays at the top level.  An
+in-progress bead with no assignee reads @samp{unassigned} and counts as
+no worker.
 @item Agents
 Running agents by recent activity, then idle ones; stopped agents fold
 into one @samp{▸ stopped} line.  Named sessions such as the mayor are
@@ -1215,7 +1229,8 @@ summary (@pxref{Capability Gaps}), so a run is derived from its bead
 graph: the root bead of kind @code{workflow} and every bead that names
 it as @code{gc.root_bead_id}, read from the city store and every rig
 store.  The cockpit's Moving section uses the same ladder, so the two
-always agree.
+always agree.  A drain member run's card nests under its parent's in
+Active (@samp{└}, indented), and the section counts it as a sub-run.
 
 @table @kbd
 @item @key{RET}
@@ -1271,8 +1286,10 @@ The steps are the run's beads arranged by step: iterations hang under
 their step, nested steps under theirs.  A step whose children are
 plain iterations shows its latest one inline (@samp{iter N}); any other
 step with children is a fold row, open while something beneath it is
-active or failed.  The @samp{plans} line lists the run's plan files;
-@key{RET} on one visits it, on the city's host.
+active or failed.  Under a drain step, its member runs are listed
+with their ladders (@samp{└ ⬣ bs-0c3f  do-work  ◆⬣·  implement 1/3});
+@key{RET} on one opens that run's detail.  The @samp{plans} line lists
+the run's plan files; @key{RET} on one visits it, on the city's host.
 
 @table @kbd
 @item @key{RET}
