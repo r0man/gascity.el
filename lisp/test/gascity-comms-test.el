@@ -544,6 +544,45 @@ SPEC is (READS ACTIONS), recorded by `gascity-test-with-store-stubs'."
                 (should (string-search "Latency:" (with-current-buffer buf (buffer-string)))))
             (kill-buffer buf)))))))
 
+(ert-deftest gascity-test-comms-inbox-ret-preview-hint ()
+  "RET on an unread message says it is still unread (and how to read
+it); on a read one it says nothing; it never replaces another echo.
+The preview's footer offers `r read' while the message is unread."
+  (gascity-comms-test--with-inbox (_reads actions)
+    (let (echoed shown)
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b))
+                ((symbol-function 'current-message) (lambda () shown))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq echoed (apply #'format fmt args)))))
+        (goto-char (point-min))
+        (forward-line 1)
+        (let* ((m (tabulated-list-get-id))
+               (buf (gascity-mail-inbox-show)))
+          (unwind-protect
+              (progn
+                (should (equal echoed "Previewed; still unread (r reads it)"))
+                (should (gascity-mail--unread-p m))
+                (should (string-search "r read  R reply  a archive  u unread  q quit"
+                                       (with-current-buffer buf (buffer-string))))
+                (should (eq (keymap-lookup gascity-mail-thread-mode-map "r")
+                            #'gascity-mail-read-at-point))
+                ;; Another message is showing: left alone.
+                (setq echoed nil shown "Archived 2 messages")
+                (gascity-mail-inbox-show)
+                (should-not echoed)
+                ;; Read here: no hint, and the footer drops `r read'.
+                (setq shown nil)
+                (gascity-mail-mark-read-at-point)
+                (gascity-comms-test--finish (car actions))
+                (goto-char (point-min))
+                (forward-line 1)
+                (setq echoed nil)
+                (gascity-mail-inbox-show)
+                (should-not (equal echoed "Previewed; still unread (r reads it)"))
+                (should-not (string-search "r read" (with-current-buffer buf
+                                                      (buffer-string)))))
+            (kill-buffer buf)))))))
+
 (ert-deftest gascity-test-comms-inbox-read-opens-thread ()
   "`r' opens the thread at once with `…', fills it from `gc mail
 thread', and marks the message read with a separate async call."

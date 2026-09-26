@@ -1398,8 +1398,11 @@ bold with @samp{●}.
 
 @table @kbd
 @item @key{RET}
-Show the message in its thread buffer from the data already loaded ---
-no @command{gc} call, and the message stays unread.
+Preview the message in its thread buffer from the data already loaded
+--- no @command{gc} call, and the message stays unread.  For an unread
+message the echo area says @samp{Previewed; still unread (r reads
+it)}, and the thread's key line offers @kbd{r read}: @kbd{r} in the
+thread reads it, as in the inbox.
 @item r
 Read: fetch the whole thread and mark it read.
 @item R
@@ -1563,8 +1566,8 @@ Filter by enabled-only and by type.
 
 @file{*gascity-mail*}, in @code{gascity-mail-inbox-mode}: columns
 @emph{From}, @emph{Subject}, @emph{Date}, @emph{New} (@code{●} for
-unread).  @key{RET} shows the message in a read-only view buffer;
-@kbd{/} filters to unread only.
+unread).  @key{RET} previews the message in its thread buffer without
+marking it read (@pxref{Mail View}); @kbd{/} filters to unread only.
 
 @quotation Note
 Agents prefer ephemeral @dfn{nudges} (@pxref{Actions}) to mail for

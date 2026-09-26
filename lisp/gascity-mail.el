@@ -555,13 +555,25 @@ Confirmed first; then one async call per message."
                                      (gascity-mail-id (car messages))))
       (gascity-mail--bulk 'archive messages))))
 
+(defconst gascity-mail--preview-hint "Previewed; still unread (r reads it)"
+  "The echo after RET shows an unread message without marking it read.")
+
 (defun gascity-mail-inbox-show ()
   "Show the message at point without marking it read (RET).
-No gc call: the inbox payload carries the body."
+No gc call: the inbox payload carries the body.  An unread message
+stays unread, which the echo area says (`r' reads it), unless another
+message is showing there already.  Returns the thread buffer."
   (interactive)
   (let ((message (tabulated-list-get-id)))
     (unless (gascity-mail-message-p message) (user-error "No message at point"))
-    (gascity-mail-thread-show message (current-buffer) t)))
+    (let* ((unread (gascity-mail--unread-p message))
+           (shown (current-message))
+           (buf (gascity-mail-thread-show message (current-buffer) t)))
+      (when (and unread
+                 (or (null shown) (equal shown gascity-mail--preview-hint)))
+        (let ((message-log-max nil))
+          (message "%s" gascity-mail--preview-hint)))
+      buf)))
 
 (cl-defmethod gascity-at-point-visit ((message gascity-mail-message))
   "Visit MESSAGE: show it in its thread buffer, without a gc call."
@@ -637,12 +649,24 @@ No gc call: the inbox payload carries the body."
         (setq first nil)
         (insert (gascity-mail-thread--message-text m))))
     (insert (propertize
-             (concat (make-string (- gascity-mail--width 36) ?\s)
-                     "R reply  a archive  u unread  q quit\n")
+             (concat (gascity-ui-right-align "" (gascity-mail-thread--footer messages)
+                                             gascity-mail--width)
+                     "\n")
              'face 'gascity-dim
              'gascity-mail-message latest))
     (goto-char (point-min))
     (forward-line (1- line))))
+
+(defun gascity-mail-thread--footer (messages)
+  "Return the thread's key hint line for MESSAGES.
+While one of them is unread (as the inbox sees it: RET previews
+without marking read) it offers `r read' first."
+  (concat (if (seq-some (lambda (m) (gascity-mail--unread-p-in
+                                     gascity-mail-thread--inbox m))
+                        messages)
+              "r read  "
+            "")
+          "R reply  a archive  u unread  q quit"))
 
 (defun gascity-mail-thread-show (message &optional inbox cached)
   "Show MESSAGE's thread; INBOX is the inbox it was opened from.
@@ -698,6 +722,7 @@ Scoped to its store from the rig memo, as the Events view does."
   :doc "Keymap for `gascity-mail-thread-mode'."
   :parent special-mode-map
   "g" #'gascity-mail-thread-refresh
+  "r" #'gascity-mail-read-at-point
   "RET" #'gascity-mail-thread-visit
   "S" #'gascity-sling-dispatch
   "R" #'gascity-mail-reply-at-point
