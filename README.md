@@ -39,8 +39,8 @@ with window-sized pagination and per-list `/` filters; and at-point actions
 (nudge/suspend/kill/wake/drain/reset, rig suspend/resume/restart, sling, order
 run, city lifecycle) that run in the background. Views refresh from one live
 `gc events --follow` stream per city, never on a timer, and every view works
-on a remote city over TRAMP. Still in progress (dashboard v3): the Events view
-and the Mail view.
+on a remote city over TRAMP. Events (churn folded) and Mail (inbox, threads,
+compose) round out the views.
 
 ## Requirements
 
@@ -78,7 +78,8 @@ With the dependencies on your `load-path`:
 | `M-x gascity-rig-list` | Rigs |
 | `M-x gascity-session-list` | Agent sessions |
 | `M-x gascity-convoy-list` | Convoys |
-| `M-x gascity-mail-inbox` | Mail inbox |
+| `M-x gascity-events` | Event feed, churn folded into `×N` rows |
+| `M-x gascity-mail` | Mail inbox; `r` opens the thread, `c` composes |
 | `M-x gascity-order-list` | Orders |
 | `M-x gascity-dolt-list` | Dolt databases |
 | `M-x gascity-mode-line-mode` | Global lighter: `GC[ec ■1▲2 · bl ▲1]` |
