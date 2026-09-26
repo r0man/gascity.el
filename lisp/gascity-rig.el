@@ -62,6 +62,9 @@
 (declare-function gascity-session-kill-at-point "gascity-action")
 (declare-function gascity-session-wake-at-point "gascity-action")
 (declare-function gascity-session-drain-at-point "gascity-action")
+(declare-function gascity-dashboard-suspend "gascity-dashboard")
+(declare-function gascity-dashboard-reset "gascity-dashboard")
+(declare-function gascity-rig-resume-at-point "gascity-action")
 ;; Write verbs (DESIGN-write-actions.md phase 1/2) bound in the keymap:
 ;; reset/undrain the agent at point, the bead-dispatch (`c') and sling
 ;; (`S') menus on a bead reference.
@@ -402,7 +405,10 @@ rig path is host-qualified first, so a remote rig logs on its host."
   ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections
   ;; and `n'/`p' move by line (all inherited).  Peek moves off `p' to `v'.
   "M"   #'gascity-session-nudge-at-point
-  "s"   #'gascity-session-suspend-at-point
+  ;; The title line is the rig's row (§5.3): `s'/`R' act on the agent
+  ;; at point, else on the rig; `r' resumes the rig.
+  "s"   #'gascity-dashboard-suspend
+  "r"   #'gascity-rig-resume-at-point
   "K"   #'gascity-session-kill-at-point
   "w"   #'gascity-session-wake-at-point
   "D"   #'gascity-session-drain-at-point
@@ -410,7 +416,7 @@ rig path is host-qualified first, so a remote rig logs on its host."
   ;; Write verbs: reset/undrain the agent at point.  Phase 2 promotes `c'
   ;; to the bead-dispatch menu (note moved to its `o') and adds `S' for the
   ;; sling/route flag transient on a ready/in-progress bead reference.
-  "R"   #'gascity-session-reset-at-point
+  "R"   #'gascity-dashboard-reset
   "U"   #'gascity-session-undrain-at-point
   "c"   #'gascity-bead-dispatch
   "S"   #'gascity-sling-dispatch

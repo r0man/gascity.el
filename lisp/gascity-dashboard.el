@@ -1370,6 +1370,8 @@ no worker."
                 (and (not session)
                      (pcase (plist-get agent :state)
                        ('stalled "gc says running; no live session backs it")
+                       ((guard (gascity-agent-sessionless-p (plist-get agent :name)))
+                        (gascity-agent-sessionless-hint (plist-get agent :name)))
                        (state (format "%s, no session" state))))))))
 
 (defun gascity-dashboard--stopped-fold (asleep ctx)
@@ -1908,22 +1910,17 @@ beads.el; an event opens its bead."
      (rig (gascity-rig-dashboard rig))
      (t (user-error "Nothing to act on here")))))
 
-(defun gascity-dashboard--rig-row-p ()
-  "Return non-nil when point is on a Rigs row (not an agent)."
-  (and (get-text-property (point) 'gascity-rig)
-       (not (get-text-property (point) 'gascity-agent))))
-
 (defun gascity-dashboard-suspend ()
   "Suspend the agent or rig at point (`s', §5.3)."
   (interactive)
-  (if (gascity-dashboard--rig-row-p)
+  (if (gascity-rig-row-p)
       (gascity-rig-suspend-at-point)
     (gascity-session-suspend-at-point)))
 
 (defun gascity-dashboard-reset ()
   "Reset the agent, or restart the rig, at point (`R', confirmed)."
   (interactive)
-  (if (gascity-dashboard--rig-row-p)
+  (if (gascity-rig-row-p)
       (gascity-rig-restart-at-point)
     (gascity-session-reset-at-point)))
 

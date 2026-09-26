@@ -680,12 +680,57 @@ recorded directory (it no-ops gracefully)."
                          (get-text-property (point) 'gascity-rig-dir)))
      (t (user-error "No agent or rig at point")))))
 
+(defun gascity-rig-row-p ()
+  "Return non-nil when point is on a rig row of a vui view (not an agent).
+The cockpit's Rigs rows and the rig dashboard's title line carry the
+rig name as `gascity-rig'; agent rows carry a `gascity-agent' too."
+  (and (get-text-property (point) 'gascity-rig)
+       (not (get-text-property (point) 'gascity-agent))))
+
+;;; Agents with no session (pool slots)
+
+(defun gascity-agent-sessionless-p (name &optional dir)
+  "Return non-nil when agent NAME is known to have no gc session.
+A pool slot (`bd.dog-1') is configured in `gc status' but has no
+session until work arrives, so the session verbs (wake, nudge, kill,
+…) have nothing to act on.  Known means the store holds DIR's `gc
+session list' and no open row names NAME (alias, agent name, tmux
+session name or id); with no list in hand this returns nil and the
+verb runs.  Pure: a store lookup."
+  (let ((snap (gascity-store-get '("session" "list") dir)))
+    (and (stringp name)
+         (eq (plist-get snap :status) 'ready)
+         (not (seq-some
+               (lambda (s)
+                 (and (not (alist-get 'closed s))
+                      (not (equal (alist-get 'state s) "closed"))
+                      (member name (list (alist-get 'alias s) (alist-get 'agent_name s)
+                                         (alist-get 'session_name s) (alist-get 'id s)))))
+               (alist-get 'sessions (plist-get snap :data)))))))
+
+(defun gascity-agent-sessionless-hint (name)
+  "Return how session-less agent NAME gets a session, for drawers and help."
+  (if (string-match-p "-[0-9]+\\'" name)
+      "no session; pool slots start when work arrives"
+    "no session"))
+
+(defun gascity-agent-sessionless-message (name)
+  "Return why the session verbs do not apply to session-less agent NAME."
+  (format "%s has %s" name (gascity-agent-sessionless-hint name)))
+
+(defun gascity-agent-check-session (name)
+  "Signal a `user-error' when agent NAME has no session; return NAME."
+  (when (gascity-agent-sessionless-p name)
+    (user-error "%s" (gascity-agent-sessionless-message name)))
+  name)
+
 ;;;###autoload
 (defun gascity-tmux-at-point ()
   "Attach to the tmux session of the agent at point."
   (interactive)
   (let ((agent (gascity-agent-at-point)))
     (unless agent (user-error "No agent at point"))
+    (gascity-agent-check-session (gascity-agent-name agent))
     (gascity-agent-attach-tmux agent)))
 
 ;;; Bead at point — delegate display to beads.el (DESIGN.md §4.3)

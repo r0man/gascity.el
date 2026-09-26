@@ -293,9 +293,14 @@ common case of acting on the bead already under point."
   (read-string prompt nil nil (gascity-bead-at-point)))
 
 (defun gascity-action--rig-at-point ()
-  "Return the name of the rig at point, or signal a `user-error'."
+  "Return the name of the rig at point, or signal a `user-error'.
+A rig list row, else a rig row of a vui view: a line carrying a
+`gascity-rig' name and no agent (the cockpit's Rigs rows, the rig
+dashboard's title line).  An agent row's rig is not the rig at point:
+the verbs there act on the agent."
   (let* ((rig (and (derived-mode-p 'tabulated-list-mode) (tabulated-list-get-id)))
-         (name (and (gascity-rig-p rig) (gascity-rig-name rig))))
+         (name (cond ((gascity-rig-p rig) (gascity-rig-name rig))
+                     ((gascity-rig-row-p) (get-text-property (point) 'gascity-rig)))))
     (or name (user-error "No rig at point"))))
 
 (defun gascity-action--order-at-point ()
@@ -308,9 +313,14 @@ display-oriented `scoped-name'."
     (or name (user-error "No order at point"))))
 
 (defun gascity-action--session-at-point ()
-  "Return the session alias at point, or signal a `user-error'."
-  (or (gascity-action--agent-at-point-name)
-      (user-error "No session at point")))
+  "Return the session alias at point, or signal a `user-error'.
+Every session verb (nudge, suspend, kill, wake, drain, reset, undrain,
+peek) resolves its target here, so an agent with no session (a pool
+slot, `gascity-agent-sessionless-p') is refused with the reason rather
+than sent to gc to fail with \"session not found\"."
+  (gascity-agent-check-session
+   (or (gascity-action--agent-at-point-name)
+       (user-error "No session at point"))))
 
 (defun gascity--refresh-current-view ()
   "Refresh the current gascity list, dashboard, or detail view after a mutation."

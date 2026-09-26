@@ -292,8 +292,12 @@ that, the most common first segment of the two-segment step refs."
                              78)
                             'gascity-section t)
                   (funcall row "session"
-                           (and session (format "%s  %s" (or (alist-get 'id session) "")
-                                                (or (alist-get 'session_name session) "")))
+                           (cond (session
+                                  (format "%s  %s" (or (alist-get 'id session) "")
+                                          (or (alist-get 'session_name session) "")))
+                                 ((gascity-agent-sessionless-p name)
+                                  (propertize (gascity-agent-sessionless-hint name)
+                                              'face 'gascity-dim)))
                            (and (gascity-agent-socket agent)
                                 (propertize (concat "tmux " (gascity-agent-socket agent))
                                             'face 'gascity-dim)))

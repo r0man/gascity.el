@@ -926,8 +926,8 @@ The rig's Dolt commit count.
 @section Keys
 
 The rig dashboard shares the cockpit's agent keys (@kbd{i}, @kbd{d},
-@kbd{t}, @kbd{M}, @kbd{s}, @kbd{K}, @kbd{w}, @kbd{D}) and adds @kbd{l},
-the rig repository's git log, and:
+@kbd{t}, @kbd{M}, @kbd{s}, @kbd{K}, @kbd{w}, @kbd{D}, @kbd{R}) and adds
+@kbd{l}, the rig repository's git log, and:
 
 @table @kbd
 @item g
@@ -943,6 +943,12 @@ On a bead, open it in beads.el; on an agent, attach its terminal.
 @findex gascity-rig-dashboard-beads
 Open the @emph{whole rig's} bead board (acts on the dashboard's rig, not
 point).
+@item s
+@itemx r
+@itemx R
+@kindex r @r{(rig dashboard)}
+On the title line (the rig's row), suspend, resume and restart the rig
+(@kbd{R} confirms); on an agent row @kbd{s} and @kbd{R} act on the agent.
 @item v
 @kindex v @r{(rig dashboard)}
 @findex gascity-session-peek-at-point
@@ -1660,6 +1666,12 @@ its current task, then exits.  Distinct from suspend and kill.
 @code{gc session peek}: show the agent's recent terminal output in a
 read-only buffer.
 @end table
+
+@cindex pool slot
+These verbs, and @kbd{t}, act on the agent's session.  A pool slot
+(@samp{bd.dog-1}) has none until work arrives and gc starts it, so on
+such a row they say so (@samp{bd.dog-1 has no session; pool slots start
+when work arrives}) instead of failing in gc; its drawer says the same.
 
 @section Rig actions
 

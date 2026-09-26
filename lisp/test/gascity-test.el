@@ -4444,10 +4444,11 @@ dashboard only); mail verbs live in the inbox.  Phase 2: `c' on the three
 bead-bearing vui views opens `gascity-bead-dispatch' (note moved to its
 `o'), `S' opens the sling/route transient, and the inbox gains `R' reply
 and `c' mail-dispatch."
-  ;; The cockpit's `R' resets an agent or restarts a rig (the row decides).
-  (should (eq (keymap-lookup gascity-dashboard-mode-map "R") #'gascity-dashboard-reset))
-  (dolist (map (list gascity-rig-dashboard-mode-map
-                     gascity-session-detail-mode-map gascity-session-list-mode-map))
+  ;; The cockpit's and rig dashboard's `R' resets an agent or restarts a
+  ;; rig (the row decides).
+  (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map))
+    (should (eq (keymap-lookup map "R") #'gascity-dashboard-reset)))
+  (dolist (map (list gascity-session-detail-mode-map gascity-session-list-mode-map))
     (should (eq (keymap-lookup map "R") #'gascity-session-reset-at-point)))
   (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
                      gascity-session-detail-mode-map gascity-session-list-mode-map))
