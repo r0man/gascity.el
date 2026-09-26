@@ -850,10 +850,13 @@ tree is a vui view with the section keys.
 Glyph, name, state and last activity; the session id and tmux name,
 pool template and provider, worktree, and when the session was created.
 @item Work
-The bead on the hook (@samp{⬣}, with its run) and the agent's other
-open beads.
+Every bead the agent has in progress (@samp{⬣}, with its run), the one
+gc records as the session's current bead first; then the beads assigned
+to it but not started (@samp{·}).  gc assigns a run's later steps to its
+worker up front, so those read @samp{not started}, never as the work at
+hand.
 @item Run
-The hooked bead's run: its step ladder, active step and progress.
+The current bead's run: its step ladder, active step and progress.
 @item Transcript
 The last ten entries of the agent's session log.
 @item Mail

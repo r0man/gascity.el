@@ -277,6 +277,96 @@ stopped agents take their template's provider from `gc agent list'."
                 (should (equal shown '("be-52m5" "beads.el"))))))
         (kill-buffer buf)))))
 
+;; QA R-1 (docs/qa/2026-09-26-dashboard-v3-extended.md): a do-work
+;; run assigns its later steps to the run operator up front, so while
+;; it ran prepare-worktree its close-source-anchor step was assigned to
+;; it too, still open — and read as the agent's Work.
+
+(defun gascity-agents-test--do-work-beads (states)
+  "Return run be-qrpg's steps (fixture) for a live run.
+STATES maps a step ref suffix to (STATUS . ASSIGNEE); the rest stay open
+and unassigned."
+  (mapcar (lambda (b)
+            (let* ((ref (alist-get 'gc.step_ref (alist-get 'metadata b)))
+                   (state (cdr (seq-find (lambda (s) (string-suffix-p (car s) ref)) states))))
+              (append `((status . ,(or (car state) "open"))
+                        (assignee . ,(cdr state)))
+                      b)))
+          (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) "be-qrpg"))
+                      (append (gascity-cockpit-test--json
+                               "emacs-city.bd-list-all-beads.el-runs.json")
+                              nil))))
+
+(defun gascity-agents-test--mount-detail (beads session-bead)
+  "Mount the run operator's detail over BEADS; return its text.
+SESSION-BEAD is the `gc bd show' payload of its session bead."
+  (let* ((vui-render-delay nil)
+         (op "gc__run-operator-ec-op1")
+         (agent (make-instance 'gascity-agent :name "beads.el/gc.run-operator-1"
+                               :rig "beads.el" :session-name op :socket "emacs-city"))
+         (buf (get-buffer-create "*gascity-agent-test*")))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args cb &optional _eb &rest _)
+                 (funcall cb
+                          (pcase args
+                            (`("session" "list")
+                             `((sessions . [((id . "ec-op1") (state . "active")
+                                             (agent_name . "beads.el/gc.run-operator-1")
+                                             (session_name . ,op))])))
+                            (`("bd" "list" "--assignee" ,key . ,_)
+                             (vconcat (seq-filter (lambda (b) (equal (alist-get 'assignee b) key))
+                                                  beads)))
+                            (`("bd" "show" "ec-op1") session-bead)
+                            (`("bd" . ,_) [])
+                            (_ nil)))
+                 nil)))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer buf
+              (gascity-session-detail-mode)
+              (setq-local gascity-section--agent agent))
+            (vui-mount (vui-component 'gascity-session-detail-app :agent agent)
+                       (buffer-name buf))
+            (with-current-buffer buf
+              (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+                (and (string-match "^Work.*\n\\(?:  .*\n\\)*" text)
+                     (match-string 0 text)))))
+        (kill-buffer buf)))))
+
+(ert-deftest gascity-test-agent-detail-work-is-the-bead-in-progress ()
+  "Work leads with the bead in progress (⬣); a pre-assigned later step of
+the run reads `not started', never as the current work (QA R-1)."
+  (let ((work (gascity-agents-test--mount-detail
+               (gascity-agents-test--do-work-beads
+                '(("prepare-worktree" "in_progress" . "gc__run-operator-ec-op1")
+                  ("close-source-anchor" "open" . "gc__run-operator-ec-op1")))
+               [])))
+    (should (string-match-p "^Work  1 in progress · 1 not started" work))
+    (should (string-match-p
+             "\\`Work.*\n  ⬣ be-pr6j +Prepare item worktree +in_progress +run be-qrpg"
+             work))
+    (should (string-match-p "\n  · be-j571 +Close owned source anchor +not started" work))))
+
+(ert-deftest gascity-test-agent-detail-work-current-bead-first ()
+  "With several beads in progress all show (⬣), the one gc says the
+session is processing (its session bead's currently_processing_bead_id)
+first; a stale pointer to a bead not in progress changes nothing."
+  (let ((beads (gascity-agents-test--do-work-beads
+                '(("prepare-worktree" "in_progress" . "gc__run-operator-ec-op1")
+                  ("close-source-anchor" "in_progress" . "gc__run-operator-ec-op1")))))
+    (let ((work (gascity-agents-test--mount-detail
+                 beads
+                 [((id . "ec-op1") (issue_type . "session")
+                   (metadata . ((currently_processing_bead_id . "be-j571"))))])))
+      (should (string-match-p "^Work  2 in progress" work))
+      (should (string-match-p "\\`Work.*\n  ⬣ be-j571 .*\n  ⬣ be-pr6j " work)))
+    (let ((work (gascity-agents-test--mount-detail
+                 beads
+                 [((id . "ec-op1") (issue_type . "session")
+                   (metadata . ((currently_processing_bead_id . "be-3rij"))))])))
+      (should (string-match-p "\\`Work.*\n  ⬣ be-j571 .*\n  ⬣ be-pr6j " work))
+      (should-not (string-match-p "be-3rij" work)))))
+
 (ert-deftest gascity-test-agent-detail-log-argv ()
   "`f' follows locally with gc; remotely through a no-pty ssh whose command
 runs gc under the host watcher and keeps stdin open, so killing the

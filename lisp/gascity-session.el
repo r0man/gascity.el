@@ -11,8 +11,8 @@
 ;;
 ;;   header      glyph, name, state and last activity; the session id and
 ;;               tmux name, pool template and provider, worktree, created
-;;   Work        the bead on the hook (⬣, with its run) and the agent's
-;;               other open beads
+;;   Work        the beads in progress (⬣; gc's current one first, its run
+;;               below), then the ones assigned but not started
 ;;   Run         the hooked bead's run: ladder, active step, progress
 ;;   Transcript  the last ten entries of `gc session logs --json --tail 10'
 ;;   Mail        the operator's mail from or to this agent
@@ -169,9 +169,29 @@ the merge defensive."
   "Return non-nil when BEAD's status is in progress."
   (equal (gascity-tabulated--str (alist-get 'status bead)) "in_progress"))
 
-(defun gascity-session--hook-beads (beads)
-  "Return the in-progress BEADS — the work on the agent's hook."
-  (seq-filter #'gascity-session--in-progress-p beads))
+(defun gascity-session--hook-beads (beads &optional current)
+  "Return the in-progress BEADS — the work the agent is on now.
+CURRENT, the bead id gc records on the session bead
+\(`currently_processing_bead_id'), comes first when it is one of them;
+gc's pointer can be stale, so it only orders, never adds a bead."
+  (let ((hook (seq-filter #'gascity-session--in-progress-p beads)))
+    (append (seq-filter (lambda (b) (equal (alist-get 'id b) current)) hook)
+            (seq-remove (lambda (b) (equal (alist-get 'id b) current)) hook))))
+
+(defun gascity-session--queued-beads (beads)
+  "Return the BEADS assigned to the agent but not started.
+Open, blocked or deferred: gc assigns a run's later steps to the worker
+up front, so these are its queue, never what it works on now."
+  (seq-filter (lambda (b) (member (alist-get 'status b) '("open" "blocked" "deferred")))
+              beads))
+
+(defun gascity-session--current-bead-id (session-bead)
+  "Return the bead id gc says SESSION-BEAD's session is processing, or nil.
+SESSION-BEAD is a `gc bd show SESSION-ID' payload (the session's own
+bead); gc keeps `metadata.currently_processing_bead_id' there."
+  (let* ((bead (car (gascity-section-beads session-bead)))
+         (id (alist-get 'currently_processing_bead_id (alist-get 'metadata bead))))
+    (and (stringp id) (not (string-empty-p id)) id)))
 
 (defun gascity-session--history-beads (beads &optional limit)
   "Return the non-in-progress BEADS, newest first, capped at LIMIT."
@@ -346,8 +366,11 @@ of the old signature (an empty section reads `none', §6.1)."
    (lambda (rows) (mapcar #'gascity-session--bead-row rows))))
 
 (defun gascity-session--work-vnode (hook others status)
-  "Return the Work section: HOOK beads (⬣) then the OTHERS assigned.
-STATUS is the load state of the reads behind them."
+  "Return the Work section: HOOK beads (⬣, in progress) then OTHERS.
+OTHERS are assigned but not started (`gascity-session--queued-beads'):
+their status reads `not started', so a run's pre-assigned later step
+never reads as the current work.  STATUS is the load state of the reads
+behind them."
   (gascity-ui-section
    "work" "Work"
    (pcase status
@@ -358,7 +381,17 @@ STATUS is the load state of the reads behind them."
    (lambda (_)
      (append (mapcar (lambda (b) (gascity-session--bead-row b (gascity-ui-glyph 'active)))
                      hook)
-             (mapcar #'gascity-session--bead-row others)))))
+             (mapcar (lambda (b)
+                       (gascity-session--bead-row
+                        (if (equal (alist-get 'status b) "open")
+                            (cons '(status . "not started") b)
+                          b)))
+                     others)))
+   (lambda (_)
+     (let ((parts (delq nil (list (and hook (format "%d in progress" (length hook)))
+                                  (and others (format "%d not started"
+                                                      (length others)))))))
+       (if parts (string-join parts " · ") 0)))))
 
 (defun gascity-session--run-vnode (root rig graph-load)
   "Return the Run section of run ROOT in RIG from GRAPH-LOAD, or nil."
@@ -468,10 +501,15 @@ capped per host, bounded by its deadline, stale-while-revalidate."
                                                 b work-dir shared))
                                    (gascity-section-beads
                                     (plist-get beads2-res :data))))))))
-         (hook (gascity-session--hook-beads agent-beads))
-         (others (seq-filter (lambda (b) (member (alist-get 'status b)
-                                                 '("open" "blocked" "deferred")))
-                             agent-beads))
+         ;; The session's own bead names the bead gc is processing.
+         (session-bead (gascity-ui-store-load
+                        (gascity-store-use (and (alist-get 'id session)
+                                                (list "bd" "show" (alist-get 'id session)))
+                                           :tick refresh-tick)))
+         (hook (gascity-session--hook-beads
+                agent-beads
+                (gascity-session--current-bead-id (plist-get session-bead :data))))
+         (others (gascity-session--queued-beads agent-beads))
          (history (seq-take (seq-filter (lambda (b) (equal (alist-get 'status b) "closed"))
                                         agent-beads)
                             5))
