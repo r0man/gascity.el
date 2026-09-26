@@ -135,6 +135,8 @@ the Runs history pages), never below the cap; `g` keeps the expansion and
   one, `gascity-remote-hosts`, and every remote host visited this session.
 - **Lighter:** `gascity-mode-line-mode` shows each open cockpit's Needs you
   totals; `mouse-1` opens the cockpit. It never runs `gc` at redisplay.
+- **Bookmarks:** `C-x r m` bookmarks any view (city, local or remote, its
+  object and filters); `C-x r b` reopens it in its city, `…` while it loads.
 
 ### Actions never block
 

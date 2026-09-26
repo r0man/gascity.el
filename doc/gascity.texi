@@ -93,6 +93,7 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 * Events and Mail::         The event log, inbox, threads, compose.
 * The Lists::               Tabulated rigs, sessions, convoys, orders, mail, Dolt.
 * Actions::                 Mutating commands, run asynchronously.
+* Bookmarks::               Every view as an Emacs bookmark.
 * Remote Cities::           Cities on other hosts, over TRAMP and ssh.
 * Customization::           Variables and faces.
 * Contributing::            Hacking on gascity.el and this manual.
@@ -1761,6 +1762,42 @@ history only where the city's tmux server runs with @code{mouse on}
 (@code{set -g mouse on}), which is not the default.  How far back you can
 scroll is tmux's @code{history-limit} --- 2000 lines unless the city says
 otherwise.
+
+@c ====================================================================
+@node Bookmarks
+@chapter Bookmarks
+@cindex bookmarks
+
+Every gascity view is an Emacs bookmark: @kbd{C-x r m}
+(@code{bookmark-set}) in the cockpit, a rig dashboard, the Agents table
+or tree, an agent's detail, Runs, a run's detail, Events, the mail inbox
+or a thread, Health, Cities, costs, or any of the lists, and @kbd{C-x r
+b} (@code{bookmark-jump}), @code{bookmark-bmenu-list} or
+@code{consult-bookmark} opens it again.
+
+The default name says what the view shows and where:
+
+@example
+gascity: bright-lights
+gascity: burningswell@@burningswell.com
+gascity-runs: bright-lights
+gascity-run: bs-8jif@@burningswell.com
+gascity-rig: hello-world
+@end example
+
+@noindent
+The record keeps the view, the city directory the view is pinned to
+(local, or its TRAMP name for a remote city), the view's object (rig,
+run, agent, thread) and its filters.  Making it reads buffer state
+only; nothing runs, locally or on the host.  A thread's bookmark keeps
+its first message's headers, never a body.
+
+@findex gascity-bookmark-jump
+A jump opens the view the usual way, in its city: at once, @samp{…}
+while its reads run, the offline state when the host is unreachable
+(@pxref{Scheduling}).  The recorded city root is remembered first, so
+even the first jump to a remote city walks nothing over TRAMP.  The
+view's filters are then set as they were recorded.
 
 @c ====================================================================
 @node Remote Cities

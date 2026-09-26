@@ -78,6 +78,7 @@
 (require 'gascity-session)
 (require 'gascity-events)
 (require 'gascity-mail)
+(require 'gascity-bookmark)
 
 ;;; City targeting
 
