@@ -277,6 +277,76 @@ commands (see `beads-thing-define-keys'), `?' opens the dispatch and
 ;; gascity-action, resolved at key time.
 (keymap-set gascity-section-mode-map "S" 'gascity-sling-dispatch)
 
+;;; `+' / `-': more or fewer rows in a capped section
+
+(defcustom gascity-dashboard-section-batch 10
+  "Rows `+' adds to (and `-' takes from) a capped section at point.
+The cockpit's sections, the rig dashboard's bead sections and an
+unfolded churn row start at their cap (`gascity-dashboard-section-rows',
+`gascity-dashboard-churn-unfold-rows'); `+' shows this many more, `-'
+this many fewer, never below the cap."
+  :type 'natnum
+  :group 'gascity)
+
+(defun gascity-section-extra (key extra)
+  "Return the rows added to section KEY in the EXTRA alist (0 when none)."
+  (or (cdr (assoc key extra)) 0))
+
+(defun gascity-section--expand-key ()
+  "Return the expandable section at point (the line's `gascity-expand-key')."
+  (gascity-section--line-property 'gascity-expand-key))
+
+(defun gascity-section--goto-section (key)
+  "Move point to the first line of expandable section KEY, if any."
+  (let ((pos (text-property-any (point-min) (point-max) 'gascity-expand-key key)))
+    (when pos (goto-char pos) (beginning-of-line))))
+
+(defun gascity-section--expand (delta)
+  "Add DELTA rows to the capped section at point (root state :extra).
+The count never drops below the section's cap.  View state: it
+survives `g', `C-u g' resets it.  Point stays on its row, else on the
+section's first line."
+  (let ((key (or (gascity-section--expand-key)
+                 (user-error "No section with more rows here")))
+        (root (and (boundp 'vui--root-instance) vui--root-instance))
+        (id (gascity-section--line-id))
+        (col (current-column)))
+    (unless root (user-error "No section with more rows here"))
+    (let* ((state (vui-instance-state root))
+           (extra (plist-get state :extra))
+           (old (gascity-section-extra key extra))
+           (new (max 0 (+ old delta))))
+      (if (= new old)
+          (message "Already at the default size")
+        (setf (vui-instance-state root)
+              (plist-put state :extra
+                         (if (zerop new)
+                             (assoc-delete-all key (copy-sequence extra))
+                           (cons (cons key new) (assoc-delete-all key (copy-sequence extra))))))
+        (vui-flush-sync)
+        (unless (and id (progn (gascity-section--restore-cursor-to-id id col)
+                               (equal (gascity-section--line-id) id)))
+          (gascity-section--goto-section key))))))
+
+(defun gascity-section-more ()
+  "Show `gascity-dashboard-section-batch' more rows of the section at point (`+')."
+  (interactive)
+  (gascity-section--expand gascity-dashboard-section-batch))
+
+(defun gascity-section-less ()
+  "Show `gascity-dashboard-section-batch' fewer rows, down to the cap (`-')."
+  (interactive)
+  (gascity-section--expand (- gascity-dashboard-section-batch)))
+
+(defun gascity-section-reset-extra ()
+  "Forget every `+' expansion of this view (root state :extra)."
+  (when-let* ((root (and (boundp 'vui--root-instance) vui--root-instance)))
+    (setf (vui-instance-state root)
+          (plist-put (vui-instance-state root) :extra nil))))
+
+(keymap-set gascity-section-mode-map "+" #'gascity-section-more)
+(keymap-set gascity-section-mode-map "-" #'gascity-section-less)
+
 (define-derived-mode gascity-section-mode beads-section-mode "GasCity"
   "Base major mode for gascity vui section buffers.
 Derives from `beads-section-mode' for the vui reconciler and widget

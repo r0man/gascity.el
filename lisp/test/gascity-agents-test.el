@@ -484,7 +484,7 @@ RET opens the rig's beads (QA re-check)."
                    (while (string-match "task [0-9]" text start)
                      (setq n (1+ n) start (match-end 0)))
                    n)))
-    (should (string-match-p "… 3 more +b beads" text))
+    (should (string-match-p "… 3 more +\\+ more  b beads" text))
     (should-not (string-match-p "be-c1\\|be-s1" text)))
   ;; RET on the more line opens the rig's beads.
   (with-temp-buffer

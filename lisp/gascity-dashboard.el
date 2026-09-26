@@ -909,7 +909,9 @@ A folded section (root state) shows only its header, `▸'-marked."
                   'beads-thing (gascity-dashboard--thing
                                 'section name
                                 (lambda () (gascity-dashboard--flip :collapsed name))))))
-    (cons header
+    (gascity-dashboard--expand-stamp
+     name
+     (cons header
           (cond (folded nil)
                 (pending nil)
                 ((and dataless errors)
@@ -920,14 +922,25 @@ A folded section (root state) shows only its header, `▸'-marked."
                                          (or (plist-get opts :label) name)
                                          (or (gascity-ui-first-line (car errors))
                                              "failed")))))))
-                (t body)))))
+                (t body))))))
+
+(defun gascity-dashboard--expand-stamp (key lines)
+  "Mark LINES as part of the `+'/`-' expandable section KEY.
+Lines already marked (an unfolded churn row's own) keep theirs."
+  (mapcar (lambda (line)
+            (if (or (string-empty-p line)
+                    (text-property-not-all 0 (length line) 'gascity-expand-key nil line))
+                line
+              (gascity-dashboard--line line 'gascity-expand-key key)))
+          lines))
 
 (defun gascity-dashboard--cap-groups (groups name target &optional fold)
   "Flatten GROUPS (the lines of one item each), capped for section NAME.
 Shows at most `gascity-dashboard-section-rows' items, then a `… N more'
 line whose RET runs TARGET (§4.2).  With FOLD, SPC on the more line
 expands the section in place instead of leaving it."
-  (let* ((max gascity-dashboard-section-rows)
+  (let* ((max (+ gascity-dashboard-section-rows
+                 (gascity-section-extra name (plist-get gascity-dashboard--view :extra))))
          (total (length groups))
          (id (concat "more:" name))
          (expanded (and fold (member id (plist-get gascity-dashboard--view
@@ -937,7 +950,8 @@ expands the section in place instead of leaving it."
       (append (apply #'append (seq-take groups max))
               (list (gascity-dashboard--row
                      (gascity-dashboard--dim (format "  … %d more" (- total max)))
-                     (gascity-dashboard--dim (gascity-dashboard--target-hint target))
+                     (gascity-dashboard--dim
+                      (concat "+ more  " (gascity-dashboard--target-hint target)))
                      'gascity-dashboard-target target
                      'beads-thing (gascity-dashboard--thing
                                    'more id
@@ -1491,9 +1505,13 @@ does not refold 1.5k events."
                       (plist-get (plist-get ctx :filters) :unfold)))
             ;; RET: the Events view narrowed to this churn group (§7.8).
             (target (gascity-dashboard--events-target group ctx))
-            (shown (seq-take events gascity-dashboard-churn-unfold-rows))
+            (shown (seq-take events (+ gascity-dashboard-churn-unfold-rows
+                                       (gascity-section-extra
+                                        id (plist-get gascity-dashboard--view :extra)))))
             (more (- (length events) (length shown))))
-       (cons (gascity-dashboard--row
+       (funcall
+        (if open (lambda (lines) (gascity-dashboard--expand-stamp id lines)) #'identity)
+        (cons (gascity-dashboard--row
               (concat "  " (format-time-string "%H:%M" time) "   "
                       (gascity-dashboard--dim (format "×%-3d" (length events)))
                       " " (gascity-ui-fit group 28)
@@ -1510,10 +1528,10 @@ does not refold 1.5k events."
                    (and (> more 0)
                         (list (gascity-dashboard--row
                                (gascity-dashboard--dim (format "      … %d more" more))
-                               (gascity-dashboard--dim "RET j e events")
+                               (gascity-dashboard--dim "+ more  RET j e events")
                                'gascity-dashboard-target target
                                'beads-thing (gascity-dashboard--thing
-                                             'more (concat id ":more"))))))))))))
+                                             'more (concat id ":more")))))))))))))
 
 (defun gascity-dashboard--events-target (group ctx)
   "Return the command opening the Events view narrowed to churn GROUP.
@@ -1738,6 +1756,7 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
           (collapsed nil)
           (drawers nil)
           (expanded nil)
+          (extra nil)
           (filters (copy-sequence initial-filters)))
   :render
   ;; Every async hook runs unconditionally, in order, every render.
@@ -1808,7 +1827,7 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
        (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status)))
       (gascity-dashboard--publish ctx))
     (setq ctx (plist-put ctx :view (list :collapsed collapsed :drawers drawers
-                                         :expanded expanded)))
+                                         :expanded expanded :extra extra)))
     ;; One text vnode: the lines are plain propertized strings (blank
     ;; separator lines included, which vui would drop as empty vnodes).
     (vui-text (string-join (gascity-dashboard--lines ctx) "\n"))))
@@ -1856,10 +1875,12 @@ The mode-line lighter and the Cities view read them from
 
 ;;; Commands
 
-(defun gascity-dashboard-refresh ()
+(defun gascity-dashboard-refresh (&optional reset)
   "Re-read every cockpit section, keeping point, folds and drawers.
-Also reconnects the city's live stream when it is down."
-  (interactive)
+Also reconnects the city's live stream when it is down.  With a prefix
+argument RESET (`C-u g'), sections expanded with `+' return to their cap."
+  (interactive "P")
+  (when reset (gascity-section-reset-extra))
   (gascity-live-reconnect)
   (unless (gascity-section-refresh-instance (current-buffer))
     (user-error "No cockpit to refresh here")))
@@ -2176,6 +2197,8 @@ teaches the view keys."
     ("C" "lifecycle…" gascity-lifecycle-dispatch)
     ("O" "run order…" gascity-order-run)
     ("W" "toggle live" gascity-live-toggle)
+    ("+" "more rows" gascity-section-more)
+    ("-" "fewer rows" gascity-section-less)
     ("g" "refresh" gascity-dispatch-refresh)
     ("/" "filter…" gascity-dispatch-filter)]])
 

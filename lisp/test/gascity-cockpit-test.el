@@ -330,7 +330,7 @@ the id is its trailing `ec-…' handle."
                  (gascity-cockpit-test--ctx :beads beads)))
          (text (gascity-cockpit-test--text lines)))
     (should (= (length lines) 7))       ; header + 5 rows + more
-    (should (string-match-p "… 7 more +j b beads" text))
+    (should (string-match-p "… 7 more +\\+ more  j b beads" text))
     (should (string-prefix-p "Work  12 ready" (car lines)))))
 
 (ert-deftest gascity-test-cockpit-ladder-from-real-run ()

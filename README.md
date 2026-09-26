@@ -96,9 +96,13 @@ at point: it folds a section, expands a fold row, or opens a row's inline
 detail. In the tabulated lists `SPC` shows the row in a `*gascity-detail*` side
 window (`C-o` shows it without selecting, `C-c C-f` makes it follow point, `q`
 closes it first); `]`/`[`/`G` page, and sorting is a header click or `/ -S`.
+`+`/`-` show ten more or fewer rows of the capped section at point (the
+cockpit's sections, an unfolded churn row, the rig dashboard's bead sections;
+the Runs history pages), never below the cap; `g` keeps the expansion and
+`C-u g` resets it.
 
 - **Cockpit:** at most five rows per section with a `… N more` line into the
-  full view; noise (wisps, nudge beads, order churn, message beads) is hidden
+  full view (`+` expands in place); noise (wisps, nudge beads, order churn, message beads) is hidden
   with a `(N hidden)` count and shown again from `/`; churn events fold into
   `×N` rows. On an agent row `RET` attaches its terminal, `i` opens its detail,
   `d`/`t`/`v` Dired/tmux/peek, `M`/`s`/`K`/`w`/`D`/`R`/`U`

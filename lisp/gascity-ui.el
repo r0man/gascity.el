@@ -398,7 +398,7 @@ over a good snapshot rides along in `:error'."
           (t (list :state 'pending)))))
 
 (defun gascity-ui-section (name label load collapsed rows-fn
-                           &optional count-fn)
+                           &optional count-fn expand-key)
   "Return a section vnode in the §6.1 style, for the vui detail views.
 NAME is the section's identity, LABEL its title, LOAD an
 `gascity-ui-effective-load' plist, COLLAPSED whether it is
@@ -406,7 +406,8 @@ folded, ROWS-FN the body builder over the load's data and COUNT-FN
 the summary count (default: `length'), or a summary string.  First
 load: `…' in the summary; error with no data: a `■ gc …' line; error
 over data: `◐ stale' or `◐ timed out' on the header
-\(`gascity-ui-stale-mark'); empty: `none'."
+\(`gascity-ui-stale-mark'); empty: `none'.  EXPAND-KEY, when non-nil,
+stamps the header as part of that `+'/`-' expandable section."
   (let* ((state (plist-get load :state))
          (data (plist-get load :data))
          (usable (memq state '(ready stale)))
@@ -422,7 +423,8 @@ over data: `◐ stale' or `◐ timed out' on the header
                   (concat (or summary "")
                           (gascity-ui-stale-mark
                            (and (eq state 'stale) (list load))))
-                  'gascity-dashboard-section name)))
+                  'gascity-dashboard-section name
+                  'gascity-expand-key expand-key)))
     (apply #'vui-vstack
            header
            (unless collapsed

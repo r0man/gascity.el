@@ -72,8 +72,18 @@ agent detail is already the agent's detail: no `i').")
 
 (defconst gascity-consistency--section-keys
   '(("N" gascity-section-next)
-    ("P" gascity-section-previous))
-  "Section jumps: every sectioned (vui) view.")
+    ("P" gascity-section-previous)
+    ("+" gascity-section-more gascity-runs-more)
+    ("-" gascity-section-less gascity-runs-less))
+  "Section keys of every sectioned (vui) view: `N'/`P' jump sections,
+`+'/`-' show more or fewer rows of a capped section (Runs: history
+pages).")
+
+(defconst gascity-consistency--list-keys
+  '(("+")
+    ("-" negative-argument))
+  "The lists have no capped sections: `+' is unbound and `-' keeps
+Emacs's inherited negative argument — never another verb.")
 
 (defconst gascity-consistency--agent-keys
   '(("t" gascity-tmux-at-point)
@@ -119,10 +129,14 @@ confirmed reset/restart; the run views reach a step's live worker).")
           (ert-info ((format "%s: %s → %S" (car view) key cmd))
             (should cmd)
             (when allowed (should (memq cmd allowed))))))
-      (when (eq (nth 2 view) 'vui)
-        (pcase-dolist (`(,key . ,allowed) gascity-consistency--section-keys)
-          (ert-info ((format "%s: %s" (car view) key))
-            (should (memq (gascity-consistency--lookup map key) allowed))))))))
+      (if (eq (nth 2 view) 'vui)
+          (pcase-dolist (`(,key . ,allowed) gascity-consistency--section-keys)
+            (ert-info ((format "%s: %s" (car view) key))
+              (should (memq (gascity-consistency--lookup map key) allowed))))
+        (pcase-dolist (`(,key . ,allowed) gascity-consistency--list-keys)
+          (let ((cmd (gascity-consistency--lookup map key)))
+            (ert-info ((format "%s: %s → %S" (car view) key cmd))
+              (should (or (null cmd) (memq cmd allowed))))))))))
 
 (ert-deftest gascity-test-consistency-agent-keys ()
   "§5.3: the agent keys mean the same command in every view with agents."
@@ -146,8 +160,11 @@ confirmed reset/restart; the run views reach a step's live worker).")
             (ert-info ((format "%s: %s → %S" (car view) key cmd))
               (should (memq cmd (append allowed
                                         (cdr (assoc key gascity-consistency--verb-families)))))))))
-      ;; Section jumps never mean anything else where they are bound.
-      (pcase-dolist (`(,key . ,allowed) gascity-consistency--section-keys)
+      ;; Section keys never mean anything else where they are bound
+      ;; (the lists' inherited keys are `--list-keys'' business).
+      (pcase-dolist (`(,key . ,allowed) (if (eq (nth 2 view) 'vui)
+                                            gascity-consistency--section-keys
+                                          gascity-consistency--list-keys))
         (let ((cmd (gascity-consistency--lookup map key)))
           (when cmd
             (ert-info ((format "%s: %s → %S" (car view) key cmd))
@@ -193,7 +210,7 @@ views; the dispatch's keys are unique."
         (keys nil))
     (dolist (key '("j j" "j a" "j r" "j b" "j m" "j e" "j h" "j c" "j o" "j v"
                    "j d" "j g" "j $" "M" "s" "w" "K" "D" "R" "U" "t" "S" "c" "m" "L"
-                   "C" "O" "W" "g" "/"))
+                   "C" "O" "W" "g" "/" "+" "-"))
       (let* ((suffix (transient-get-suffix 'gascity-dispatch key))
              (cmd (plist-get (cdr suffix) :command))
              (allowed (cdr (assoc key table))))

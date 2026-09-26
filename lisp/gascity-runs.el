@@ -570,6 +570,16 @@ Never blocks: a cold rig memo is filled through the store first
     (gascity-dashboard--set-state :pages (1+ (or (gascity-dashboard--state :pages) 1)))
     (goto-char (min pos (point-max)))))
 
+(defun gascity-runs-less ()
+  "Show one history page fewer (`-'), down to one page."
+  (interactive)
+  (let ((pos (point))
+        (pages (or (gascity-dashboard--state :pages) 1)))
+    (if (<= pages 1)
+        (message "Already at the default size")
+      (gascity-dashboard--set-state :pages (1- pages))
+      (goto-char (min pos (point-max))))))
+
 (defun gascity-runs--agent-command (command)
   "Call COMMAND on the live worker at point, or explain there is none."
   (if (get-text-property (point) 'gascity-agent)
@@ -652,6 +662,7 @@ The shared `gascity-ui-header-line'.  Pure (§8.3 R2)."
   "b"   #'gascity-runs-root-bead
   "H"   #'gascity-runs-history
   "+"   #'gascity-runs-more
+  "-"   #'gascity-runs-less
   "/"   #'gascity-runs-filter
   "i"   #'gascity-runs-agent-detail
   "v"   #'gascity-runs-agent-peek

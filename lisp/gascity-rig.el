@@ -169,14 +169,16 @@ SESSION-MAP and SOCKET join each row to its live session."
                      (gascity-rig--agent-row a rig-name session-map socket))
                    agents))))
 
-(defun gascity-rig--bead-row (bead)
-  "Return a vnode for BEAD (an alist), stamped with its id for `RET'."
+(defun gascity-rig--bead-row (bead &optional key)
+  "Return a vnode for BEAD (an alist), stamped with its id for `RET'.
+KEY names the `+'/`-' expandable section the row belongs to."
   (let ((id (gascity-tabulated--str (alist-get 'id bead))))
     (vui-text (concat "  " (gascity-ui-fit id 10)
                       " " (gascity-ui-fit (format "P%s" (or (alist-get 'priority bead) "?")) 3)
                       " " (gascity-ui-fit (gascity-tabulated--str (alist-get 'title bead)) 48)
                       " " (gascity-ui-time (alist-get 'updated_at bead)))
-              'gascity-bead id)))
+              'gascity-bead id
+              'gascity-expand-key key)))
 
 (defun gascity-rig--beads-model (data)
   "Return (SHOWN . HIDDEN) for a `gc bd …' payload DATA.
@@ -191,12 +193,16 @@ messages), as the cockpit's Work does (D4)."
           (push b shown))))
     (cons (nreverse shown) (nreverse hidden))))
 
+(defvar gascity-rig--extra nil
+  "The rig dashboard's `+' expansions while it renders: (SECTION . ROWS).")
+
 (defun gascity-rig--more-row (n title)
   "Return the `… N more' row of section TITLE; RET opens the rig's beads."
   (vui-text (gascity-ui-right-align
              (propertize (format "  … %d more" n) 'face 'gascity-dim)
-             (propertize "b beads" 'face 'gascity-dim) 78)
+             (propertize "+ more  b beads" 'face 'gascity-dim) 78)
             'gascity-rig-more t
+            'gascity-expand-key (downcase title)
             'beads-thing (list :kind 'more :id (concat "more:" title))))
 
 (defun gascity-rig--beads-section (title load)
@@ -204,12 +210,14 @@ messages), as the cockpit's Work does (D4)."
 The load's data is the raw `gc bd …' payload.  Noise is hidden with a
 `(N hidden)' tally, and at most `gascity-dashboard-section-rows' rows
 show; a `… N more' line opens the rig's beads in beads.el (§4.2)."
-  (let ((max (or (bound-and-true-p gascity-dashboard-section-rows) 5)))
+  (let* ((key (downcase title))
+         (max (+ (or (bound-and-true-p gascity-dashboard-section-rows) 5)
+                 (gascity-section-extra key gascity-rig--extra))))
     (gascity-ui-section
-     (downcase title) title load nil
+     key title load nil
      (lambda (data)
        (let ((shown (car (gascity-rig--beads-model data))))
-         (append (mapcar #'gascity-rig--bead-row (seq-take shown max))
+         (append (mapcar (lambda (b) (gascity-rig--bead-row b key)) (seq-take shown max))
                  (and (> (length shown) max)
                       (list (gascity-rig--more-row (- (length shown) max) title))))))
      (lambda (data)
@@ -218,7 +226,8 @@ show; a `… N more' line opens the rig's beads in beads.el (§4.2)."
               (hidden (gascity-ui-hidden-label (cdr model))))
          (cond ((and (zerop n) (null hidden)) 0)
                (hidden (format "%s  %s" (if (zerop n) "none" n) hidden))
-               (t n)))))))
+               (t n))))
+     key)))
 
 (defun gascity-rig--orders-vnode (rig-name load)
   "Return the Orders section for RIG-NAME from the `gc order list' LOAD."
@@ -258,7 +267,7 @@ database in practice, contradicting the bead sections (gce-ziz)."
   "Root component of the rig dashboard for RIG-NAME.
 Each section reads independently and refreshes stale-while-revalidate:
 the last payload keeps rendering while a reload is in flight."
-  :state ((refresh-tick 0))
+  :state ((refresh-tick 0) (extra nil))
   :render
   ;; All store hooks run unconditionally, in order, every render.
   (let* ((status-res
@@ -301,8 +310,10 @@ the last payload keeps rendering while a reload is in flight."
           (gascity-rig--header-vnode rig city-name)
           (gascity-rig--agents-vnode (alist-get 'agents data) rig-name
                                      session-map socket)
-          (gascity-rig--beads-section "Ready" ready)
-          (gascity-rig--beads-section "In progress" inprog)
+          (let ((gascity-rig--extra extra))
+            (gascity-rig--beads-section "Ready" ready))
+          (let ((gascity-rig--extra extra))
+            (gascity-rig--beads-section "In progress" inprog))
           (gascity-rig--orders-vnode rig-name orders)
           (gascity-rig--dolt-vnode (alist-get 'prefix rig) dolt)))))))
 
@@ -322,9 +333,12 @@ is nothing to open."
      ((widget-at (point)) (widget-button-press (point)))
      (t (user-error "Nothing to open here")))))
 
-(defun gascity-rig-dashboard-refresh ()
-  "Reload the rig dashboard's data, preserving point."
-  (interactive)
+(defun gascity-rig-dashboard-refresh (&optional reset)
+  "Reload the rig dashboard's data, preserving point.
+With a prefix argument RESET (`C-u g'), sections expanded with `+'
+return to their cap."
+  (interactive "P")
+  (when reset (gascity-section-reset-extra))
   (unless (gascity-section-refresh-instance (current-buffer))
     (user-error "No rig dashboard to refresh here")))
 

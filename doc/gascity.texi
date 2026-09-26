@@ -425,6 +425,21 @@ The jump prefix (@pxref{The jump prefix}).
 @item /
 @kindex /
 The view's filter menu (@pxref{Filter menus}).
+@item +
+@itemx -
+@kindex +
+@kindex -
+@findex gascity-section-more
+@findex gascity-section-less
+@vindex gascity-dashboard-section-batch
+Show more (fewer) rows of the capped section at point, resolved from
+its header, any of its rows or its @samp{@dots{} N more} line:
+@code{gascity-dashboard-section-batch} rows (ten) at a time, never
+fewer than the cap.  This works in the cockpit's sections, an unfolded
+churn row, and the rig dashboard's bead sections; in the Runs view
+@kbd{+}/@kbd{-} page the history.  The rows are already loaded, so no
+@command{gc} call runs.  The expansion is view state: it survives
+@kbd{g}, and @kbd{C-u g} resets it.
 @end table
 
 @noindent
@@ -647,7 +662,8 @@ tooltip carrying the full value.
 bottom, what needs you, what is moving, who is working, what is queued
 and what just happened.  No section shows more than
 @code{gascity-dashboard-section-rows} rows (five); the rest is a
-@samp{@dots{} N more} line whose @key{RET} opens the full view.
+@samp{@dots{} N more} line whose @key{RET} opens the full view, and
+@kbd{+}/@kbd{-} show more or fewer rows in place.
 
 @shot{cockpit-dark, The cockpit of emacs-city (ef-elea-dark)}
 
