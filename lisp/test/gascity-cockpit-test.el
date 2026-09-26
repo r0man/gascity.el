@@ -218,10 +218,65 @@ the id is its trailing `ec-…' handle."
     (should (equal (gascity-cockpit-test--kinds items) '((fail "run"))))
     (should (string-match-p "be-52m5 build-basic  idle 42m"
                             (plist-get (car items) :text)))
+    ;; The Runs read in hand changes nothing for a run with no drain.
+    (require 'gascity-runs)
+    (should (equal (gascity-cockpit-test--idle-runs (list root step) (list root step))
+                   '("be-52m5")))
     ;; Fresh step progress: not idle.
     (setf (alist-get 'updated_at step) (gascity-cockpit-test--ts 60))
     (should-not (gascity-dashboard--needs-you
                  (gascity-cockpit-test--ctx :beads (list root step))))))
+
+;; A drain step stays open while its member runs work outside the
+;; parent's graph (burningswell's bs-8jif: `implement' bs-q2el drains
+;; into bs-0c3f, whose worker step moves).
+(defun gascity-cockpit-test--drain-run (member-step-age)
+  "Return (PARENT . BEADS): a run draining into one member run.
+The member's in-progress step was updated MEMBER-STEP-AGE seconds ago;
+everything else two hours ago."
+  (let* ((old (gascity-cockpit-test--ts 7200))
+         (parent `((id . "bs-8jif") (status . "in_progress") (updated_at . ,old)
+                   (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))))
+         (drain `((id . "bs-q2el") (status . "open") (updated_at . ,old)
+                  (metadata . ((gc.kind . "drain") (gc.root_bead_id . "bs-8jif")
+                               (gc.step_ref . "build-basic.implement")))))
+         (member `((id . "bs-0c3f") (status . "in_progress") (updated_at . ,old)
+                   (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")
+                                (gc.drain_control_id . "bs-q2el")))))
+         (step `((id . "bs-9z5v") (status . "in_progress")
+                 (updated_at . ,(gascity-cockpit-test--ts member-step-age))
+                 (metadata . ((gc.root_bead_id . "bs-0c3f")
+                              (gc.step_ref . "do-work.implement"))))))
+    (cons parent (list parent drain member step))))
+
+(defun gascity-cockpit-test--idle-runs (beads &optional run-beads)
+  "Return the ids of the runs Needs you flags idle over work BEADS."
+  (setq gascity-runs--index-cache (cons nil nil))
+  (let ((ctx (gascity-cockpit-test--ctx :beads beads)))
+    (when run-beads (setq ctx (plist-put ctx :run-beads run-beads)))
+    (delq nil (mapcar (lambda (i) (and (equal (plist-get i :kind) "run")
+                                       (car (split-string (plist-get i :text)))))
+                      (gascity-dashboard--needs-you ctx)))))
+
+(ert-deftest gascity-test-cockpit-needs-you-drain-parent-not-idle ()
+  "A run whose open drain step has an active member run is not idle."
+  (require 'gascity-runs)
+  (let ((beads (cdr (gascity-cockpit-test--drain-run 60))))
+    (should-not (gascity-cockpit-test--idle-runs beads beads))))
+
+(ert-deftest gascity-test-cockpit-needs-you-drain-parent-idle-when-members-quiet ()
+  "With every member quiet past the threshold the drain parent is idle
+\(and so is the member run itself)."
+  (require 'gascity-runs)
+  (let ((beads (cdr (gascity-cockpit-test--drain-run 3600))))
+    (should (equal (sort (gascity-cockpit-test--idle-runs beads beads) #'string<)
+                   '("bs-0c3f" "bs-8jif")))))
+
+(ert-deftest gascity-test-cockpit-needs-you-drain-parent-waits-for-runs-read ()
+  "Before the Runs read lands a draining run is not judged: on its own
+steps alone it would read idle while its members work."
+  (let ((beads (cdr (gascity-cockpit-test--drain-run 60))))
+    (should-not (member "bs-8jif" (gascity-cockpit-test--idle-runs beads)))))
 
 (ert-deftest gascity-test-cockpit-needs-you-failed-run ()
   "■ run failed: a workflow root closed with gc.outcome fail in the window."

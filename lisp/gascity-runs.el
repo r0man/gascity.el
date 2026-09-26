@@ -158,6 +158,40 @@ the grouping and ladders are computed once per read."
                                                (plist-get index :drains))
                  ladders))))
 
+(defun gascity-runs-last-activity (index root)
+  "Return when run ROOT's live work was last touched, in seconds (0: never).
+The latest `updated_at' of ROOT itself, its in-progress beads, and —
+since a drain step stays open while its member runs work outside
+ROOT's graph — every in-progress member run of an open drain step
+\(INDEX's :drains, `gc.drain_control_id'), recursively.  The cockpit's
+\"run idle\" rule reads it (§7.1), so a run whose drain members are busy
+is never idle."
+  (let ((drains (plist-get index :drains))
+        (seen (make-hash-table :test 'equal)))
+    (cl-labels ((time (b) (or (gascity-ui-parse-time (alist-get 'updated_at b)) 0))
+                (run (root)
+                  (let ((id (alist-get 'id root)))
+                    (if (gethash id seen)
+                        0
+                      (puthash id t seen)
+                      (apply #'max (time root)
+                             (mapcar
+                              (lambda (b)
+                                (max (if (equal (alist-get 'status b) "in_progress")
+                                         (time b)
+                                       0)
+                                     (if (equal (alist-get 'status b) "closed")
+                                         0
+                                       (apply #'max 0
+                                              (mapcar (lambda (m)
+                                                        (if (equal (alist-get 'status m)
+                                                                   "in_progress")
+                                                            (run m)
+                                                          0))
+                                                      (gethash (alist-get 'id b) drains))))))
+                              (gascity-runs-graph index id)))))))
+      (run root))))
+
 (defun gascity-runs-state (root)
   "Return the state of run ROOT: `active' `waiting' `failed' or `done'."
   (let ((status (alist-get 'status root)))

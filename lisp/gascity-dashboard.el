@@ -84,6 +84,7 @@
 (declare-function gascity-runs-read-beads "gascity-runs")
 (declare-function gascity-runs-index "gascity-runs")
 (declare-function gascity-runs-ladder "gascity-runs")
+(declare-function gascity-runs-last-activity "gascity-runs")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -595,6 +596,8 @@ reopened beads, escalated/held beads, unread mail, store health."
   (let* ((now (plist-get ctx :now))
          (events (plist-get ctx :events))
          (beads (plist-get ctx :beads))
+         (run-beads (plist-get ctx :run-beads))
+         (run-index (and run-beads (gascity-runs-index run-beads)))
          (items nil))
     (cl-flet ((add (&rest item) (push item items)))
       ;; ■ stalled agents: gc says running, no live session.
@@ -653,22 +656,34 @@ reopened beads, escalated/held beads, unread mail, store health."
                                     (lambda () (interactive)
                                       (gascity-polecat-detail obj)))
                                 #'gascity-jump-agents))))))
-      ;; ■ idle runs: no in-progress step touched within the threshold.
+      ;; ■ idle runs: no in-progress step touched within the threshold —
+      ;; nor, behind an open drain step, any in-progress member run
+      ;; (`gascity-runs-last-activity' over the Runs view's index).  A
+      ;; run with an open drain step waits for that index: judged on
+      ;; its own steps alone it would look idle while its members work.
       (dolist (root (gascity-dashboard--active-runs beads))
         (let* ((id (alist-get 'id root))
                (steps (seq-filter (lambda (b)
                                     (and (equal (gascity-dashboard--root-of b) id)
-                                         (equal (alist-get 'status b) "in_progress")))
+                                         (not (equal (alist-get 'status b) "closed"))))
                                   beads))
+               (draining (seq-some (lambda (b) (equal (alist-get 'gc.kind
+                                                                 (gascity-dashboard--meta b))
+                                                      "drain"))
+                                   steps))
                (last (apply #'max
                             (or (gascity-ui-parse-time (alist-get 'updated_at root)) 0)
+                            (if run-index (gascity-runs-last-activity run-index root) 0)
                             (mapcar (lambda (b)
-                                      (or (gascity-ui-parse-time
-                                           (alist-get 'updated_at b))
-                                          0))
+                                      (if (equal (alist-get 'status b) "in_progress")
+                                          (or (gascity-ui-parse-time
+                                               (alist-get 'updated_at b))
+                                              0)
+                                        0))
                                     steps)))
                (idle (- now last)))
-          (when (and (> last 0) (> idle gascity-dashboard-run-idle-threshold))
+          (when (and (> last 0) (> idle gascity-dashboard-run-idle-threshold)
+                     (or run-index (not draining)))
             (add :level 'fail :kind "run" :id (concat "run:" id)
                  :text (format "%s %s  idle %s" id
                                (or (alist-get 'gc.formula_name
@@ -1140,7 +1155,7 @@ properties.  The row is a thing whose SPC toggles the drawer."
      "needs-you" "Needs you"
      (and items (number-to-string (length items)))
      (gascity-dashboard--cap-groups groups "needs-you" #'gascity-jump-events t)
-     ctx :loads '(:status :sessions :events :work :mail :escalations)
+     ctx :loads '(:status :sessions :events :work :runs :mail :escalations)
      :label "status")))
 
 (defun gascity-dashboard--needs-you-drawer (item)
