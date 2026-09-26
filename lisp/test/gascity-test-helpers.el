@@ -133,6 +133,20 @@ a new repeating timer behind fails (`gascity-test-leak-check')."
 ;; (`gascity-test-store-render-dispatch-is-deferred').
 (setq gascity-store-inline-render-dispatch t)
 
+;;; Fixture home
+
+(defmacro gascity-test-with-fixture-home (&rest body)
+  "Run BODY as the user the v3 fixtures were captured by (/home/roman).
+The fixtures carry that user's absolute paths, and the views show a
+path under home as `~/': locally from HOME, remotely as `/home/USER/'
+of `user-login-name'.  CI runs as another user, so tests asserting on
+`~/' pin both."
+  (declare (indent 0) (debug t))
+  `(let ((process-environment (cons "HOME=/home/roman" process-environment))
+         (user-login-name "roman")
+         (abbreviated-home-dir nil))
+     ,@body))
+
 ;;; TRAMP mock method
 
 (defconst gascity-test-mock-directory

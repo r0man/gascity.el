@@ -108,24 +108,25 @@ Calls CALLBACK synchronously; ERRBACK for an unknown read."
 
 (ert-deftest gascity-test-health-renders-sections ()
   "The health view renders every section from real payloads, in order."
-  (gascity-health-test--with-health "/tmp/"
-    (let ((text (buffer-string)))
-      (should (string-match-p "\\`Health  emacs-city" text))
-      (let ((pos (mapcar (lambda (title) (string-match (concat "^" title) text))
-                         '("Supervisor" "Versions" "Store" "Rig stores" "Doctor"))))
-        (should (seq-every-p #'numberp pos))
-        (should (equal pos (sort (copy-sequence pos) #'<))))
-      (should (gascity-health-test--line "pid 22262 · supervisor · health ok · not suspended"))
-      (should (gascity-health-test--line "gc 1.4\\.2 · store NativeDoltStore"))
-      (should (gascity-health-test--line "~/emacs-city/\\.beads/dolt +168 MB"))
-      (should (gascity-health-test--line "● dolt :37081 · pid 3146 · [0-9]+ ms · 3 databases"))
-      (should (gascity-health-test--line "● beads\\.el .*dolt ok"))
-      (should (gascity-health-test--line "● gascity\\.el .*dolt ok"))
-      ;; Doctor never runs on open.
-      (should (null gascity-health-test--doctor-calls))
-      (should (gascity-health-test--line "^Doctor  not run.*! run  F run --fix"))
-      ;; No apology line.
-      (should-not (string-match-p "not exposed\\|no JSON\\|unavailable" text)))))
+  (gascity-test-with-fixture-home
+    (gascity-health-test--with-health "/tmp/"
+				      (let ((text (buffer-string)))
+					(should (string-match-p "\\`Health  emacs-city" text))
+					(let ((pos (mapcar (lambda (title) (string-match (concat "^" title) text))
+							   '("Supervisor" "Versions" "Store" "Rig stores" "Doctor"))))
+					  (should (seq-every-p #'numberp pos))
+					  (should (equal pos (sort (copy-sequence pos) #'<))))
+					(should (gascity-health-test--line "pid 22262 · supervisor · health ok · not suspended"))
+					(should (gascity-health-test--line "gc 1.4\\.2 · store NativeDoltStore"))
+					(should (gascity-health-test--line "~/emacs-city/\\.beads/dolt +168 MB"))
+					(should (gascity-health-test--line "● dolt :37081 · pid 3146 · [0-9]+ ms · 3 databases"))
+					(should (gascity-health-test--line "● beads\\.el .*dolt ok"))
+					(should (gascity-health-test--line "● gascity\\.el .*dolt ok"))
+					;; Doctor never runs on open.
+					(should (null gascity-health-test--doctor-calls))
+					(should (gascity-health-test--line "^Doctor  not run.*! run  F run --fix"))
+					;; No apology line.
+					(should-not (string-match-p "not exposed\\|no JSON\\|unavailable" text))))))
 
 (ert-deftest gascity-test-health-doctor-on-demand ()
   "`!' starts doctor async: header `running…', then the cached report with
@@ -460,51 +461,53 @@ whose cockpit is killed."
 
 (ert-deftest gascity-test-cities-local ()
   "Local cities come from `gc cities', each filled by its own status read."
-  (let ((gascity-remote-hosts nil))
-    (gascity-health-test--with-cities
-      (let ((rows (gascity-health-test--rows)))
-        (should (= (length rows) 2))
-        (should (equal (mapcar #'car rows) '("● bright-lights" "● emacs-city")))
-        (should (equal (nth 1 (car rows)) "~/bright-lights/"))
-        ;; The cockpit's own count (QA A2): the two fixture sessions are
-        ;; idle, the mayor joins the roster → 0 of 6, not gc's 1/5.
-        (should (equal (nth 2 (cadr rows)) (let ((c (gascity-dashboard-city-agent-counts
+  (gascity-test-with-fixture-home
+    (let ((gascity-remote-hosts nil))
+      (gascity-health-test--with-cities
+       (let ((rows (gascity-health-test--rows)))
+         (should (= (length rows) 2))
+         (should (equal (mapcar #'car rows) '("● bright-lights" "● emacs-city")))
+         (should (equal (nth 1 (car rows)) "~/bright-lights/"))
+         ;; The cockpit's own count (QA A2): the two fixture sessions are
+         ;; idle, the mayor joins the roster → 0 of 6, not gc's 1/5.
+         (should (equal (nth 2 (cadr rows)) (let ((c (gascity-dashboard-city-agent-counts
                                                       (gascity-health-test--json
                                                        "emacs-city.status.json")
                                                       (gascity-health-test--json
                                                        "emacs-city.session-list.json"))))
                                               (format "%d/%d" (car c) (cdr c)))))
-        (should (equal (nth 2 (cadr rows)) "0/6"))
-        ;; No run count known anywhere: the Runs column is hidden.
-        (should-not (seq-find (lambda (c) (equal (car c) "Runs")) tabulated-list-format))
-        (should (string-match-p "▲" (nth 3 (cadr rows))))
-        (should (equal (nth 4 (cadr rows)) "●"))))))
+         (should (equal (nth 2 (cadr rows)) "0/6"))
+         ;; No run count known anywhere: the Runs column is hidden.
+         (should-not (seq-find (lambda (c) (equal (car c) "Runs")) tabulated-list-format))
+         (should (string-match-p "▲" (nth 3 (cadr rows))))
+         (should (equal (nth 4 (cadr rows)) "●")))))))
 
 (ert-deftest gascity-test-cities-remote-hosts ()
   "Configured and visited hosts add host-qualified rows; RET targets the
 host-qualified city directory."
-  (gascity-test-ensure-mock-method)
-  (let* ((gascity-remote-hosts '("/mock::"))
-         (tramp-verbose 0)
-         (host (substring-no-properties (file-remote-p "/mock::")))
-         (visited nil))
-    (setf (gascity-store--host-primed (gascity-store--host host)) t)
-    (should (equal (gascity-cities-hosts) (list "" host)))
-    (gascity-health-test--with-cities
-      (let ((rows (gascity-health-test--rows)))
-        (should (= (length rows) 4))
-        (should (seq-find (lambda (r) (equal (nth 1 r) (concat host "~/bright-lights/")))
-                          rows))
-        (should (string-match-p "4 · 2 remote" gascity-tabulated--base-name)))
-      (goto-char (point-min))
-      (while (and (not (eobp))
-                  (not (equal (alist-get 'dir (tabulated-list-get-id))
-                              (concat host "/home/roman/emacs-city/"))))
-        (forward-line 1))
-      (cl-letf (((symbol-function 'gascity-dashboard)
-                 (lambda () (setq visited default-directory))))
-        (gascity-cities-visit))
-      (should (equal visited (concat host "/home/roman/emacs-city/"))))))
+  (gascity-test-with-fixture-home
+    (gascity-test-ensure-mock-method)
+    (let* ((gascity-remote-hosts '("/mock::"))
+           (tramp-verbose 0)
+           (host (substring-no-properties (file-remote-p "/mock::")))
+           (visited nil))
+      (setf (gascity-store--host-primed (gascity-store--host host)) t)
+      (should (equal (gascity-cities-hosts) (list "" host)))
+      (gascity-health-test--with-cities
+       (let ((rows (gascity-health-test--rows)))
+         (should (= (length rows) 4))
+         (should (seq-find (lambda (r) (equal (nth 1 r) (concat host "~/bright-lights/")))
+                           rows))
+         (should (string-match-p "4 · 2 remote" gascity-tabulated--base-name)))
+       (goto-char (point-min))
+       (while (and (not (eobp))
+                   (not (equal (alist-get 'dir (tabulated-list-get-id))
+                               (concat host "/home/roman/emacs-city/"))))
+         (forward-line 1))
+       (cl-letf (((symbol-function 'gascity-dashboard)
+                  (lambda () (setq visited default-directory))))
+         (gascity-cities-visit))
+       (should (equal visited (concat host "/home/roman/emacs-city/")))))))
 
 (ert-deftest gascity-test-cities-host-failure-row ()
   "A host whose `gc cities' fails gets one `■' row; the others still list."

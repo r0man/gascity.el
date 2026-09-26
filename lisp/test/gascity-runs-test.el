@@ -554,40 +554,41 @@ under the drain step, and hides control nodes until asked."
 (ert-deftest gascity-test-run-detail-renders-active-run ()
   "The detail shows the header, plans, convoy and the step list with the
 active step's live worker; loops fold."
-  (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
-    (let ((text (buffer-string)))
-      (should (string-match-p "^⬣ be-52m5  build-basic +beads.el · started 2h$" text))
-      (should (string-match-p "^  formula  build-basic (graph.v2)   source ~/.gc/cache/…/build-basic.formula.toml$"
-                              (replace-regexp-in-string
-                               "/home/[^/]+/" "~/" text)))
-      (should (string-match-p "^  plans    decomposition.md · factory-run.md" text))
-      (should (string-match-p "^  convoy   be-93dg  closed 7/7  input$" text))
-      (should (string-match-p "^Steps  1/10 +C show control nodes$" text))
-      (should (string-match-p "^  ◆ prepare +be-5aht +pass +run-operator" text))
-      (should (string-match-p
-               "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1 +3m$" text))
-      ;; Quiet loops start folded.
-      (should (string-match-p "^  ▸ review +be-mqhp +· loop" text))
-      (should-not (string-match-p "setup-build-basic-review" text)))
-    ;; SPC on a fold row expands it in place; state survives a refresh.
-    (goto-char (point-min))
-    (re-search-forward "^  ▸ review")
-    (gascity-thing-toggle)
-    (should (string-match-p "^  ▾ review" (buffer-string)))
-    (should (string-match-p "^    · setup-build-basic-review" (buffer-string)))
-    (gascity-run-refresh)
-    (should (string-match-p "^  ▾ review" (buffer-string)))
-    ;; SPC on a step row opens its drawer.
-    (goto-char (point-min))
-    (re-search-forward "^  ⬣ requirements")
-    (gascity-thing-toggle)
-    (should (string-match-p "│ ref      requirements.iteration.1" (buffer-string)))
-    (should (string-match-p "│ iteration be-bcb5 (attempt 1) of step be-fy7m"
-                            (buffer-string)))
-    ;; C shows the control nodes.
-    (gascity-run-toggle-control)
-    (should (string-match-p "C hide control nodes" (buffer-string)))
-    (should (string-match-p "workflow-finalize" (buffer-string)))))
+  (gascity-test-with-fixture-home
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+				    (let ((text (buffer-string)))
+				      (should (string-match-p "^⬣ be-52m5  build-basic +beads.el · started 2h$" text))
+				      (should (string-match-p "^  formula  build-basic (graph.v2)   source ~/.gc/cache/…/build-basic.formula.toml$"
+							      (replace-regexp-in-string
+							       "/home/[^/]+/" "~/" text)))
+				      (should (string-match-p "^  plans    decomposition.md · factory-run.md" text))
+				      (should (string-match-p "^  convoy   be-93dg  closed 7/7  input$" text))
+				      (should (string-match-p "^Steps  1/10 +C show control nodes$" text))
+				      (should (string-match-p "^  ◆ prepare +be-5aht +pass +run-operator" text))
+				      (should (string-match-p
+					       "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1 +3m$" text))
+				      ;; Quiet loops start folded.
+				      (should (string-match-p "^  ▸ review +be-mqhp +· loop" text))
+				      (should-not (string-match-p "setup-build-basic-review" text)))
+				    ;; SPC on a fold row expands it in place; state survives a refresh.
+				    (goto-char (point-min))
+				    (re-search-forward "^  ▸ review")
+				    (gascity-thing-toggle)
+				    (should (string-match-p "^  ▾ review" (buffer-string)))
+				    (should (string-match-p "^    · setup-build-basic-review" (buffer-string)))
+				    (gascity-run-refresh)
+				    (should (string-match-p "^  ▾ review" (buffer-string)))
+				    ;; SPC on a step row opens its drawer.
+				    (goto-char (point-min))
+				    (re-search-forward "^  ⬣ requirements")
+				    (gascity-thing-toggle)
+				    (should (string-match-p "│ ref      requirements.iteration.1" (buffer-string)))
+				    (should (string-match-p "│ iteration be-bcb5 (attempt 1) of step be-fy7m"
+							    (buffer-string)))
+				    ;; C shows the control nodes.
+				    (gascity-run-toggle-control)
+				    (should (string-match-p "C hide control nodes" (buffer-string)))
+				    (should (string-match-p "workflow-finalize" (buffer-string))))))
 
 (ert-deftest gascity-test-run-detail-keys-act ()
   "RET on a step opens its bead in the run's store, on a plan visits it on
