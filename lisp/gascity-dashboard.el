@@ -81,6 +81,9 @@
 (declare-function gascity-polecat-detail "gascity-session")
 (declare-function gascity-rig-dashboard "gascity-rig")
 (declare-function gascity-run-show "gascity-run")
+(declare-function gascity-runs-read-beads "gascity-runs")
+(declare-function gascity-runs-index "gascity-runs")
+(declare-function gascity-runs-ladder "gascity-runs")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -152,6 +155,10 @@ churn).  See `gascity-dashboard-filter'.")
 
 (defconst gascity-dashboard-buffer-name "*gascity: %s*"
   "Format of the cockpit buffer's base name; %s is the city name.")
+
+(defconst gascity-dashboard--runs-key '("bd" "list" :runs)
+  "Store key of the run beads, shared with the Runs view.
+The same entry as `gascity-runs-read-key', read by `gascity-runs-read-beads'.")
 
 (defconst gascity-dashboard--width 78
   "Column where right-aligned cockpit hints end.")
@@ -814,7 +821,7 @@ PROPS are the row's text properties (its thing and object)."
 (defun gascity-dashboard--context (loads filters now)
   "Return the render context from the section LOADS under FILTERS at NOW.
 LOADS is a plist of `gascity-dashboard--effective-load' results keyed
-:status :sessions :mail :events :work :convoys :escalations :graphs."
+:status :sessions :mail :events :work :convoys :escalations :runs."
   (let* ((status (gascity-dashboard--data (plist-get loads :status)))
          (sessions (append (alist-get 'sessions
                                       (gascity-dashboard--data
@@ -845,7 +852,8 @@ LOADS is a plist of `gascity-dashboard--effective-load' results keyed
           :escalations (append (gascity-dashboard--data
                                 (plist-get loads :escalations))
                                nil)
-          :graphs (gascity-dashboard--data (plist-get loads :graphs))
+          :run-beads (plist-get (gascity-dashboard--data (plist-get loads :runs))
+                                :beads)
           :rigs rigs
           :rig-prefixes (mapcar (lambda (r) (cons (alist-get 'name r)
                                                   (alist-get 'prefix r)))
@@ -1140,7 +1148,8 @@ properties.  The row is a thing whose SPC toggles the drawer."
                             (plist-get ctx :beads)))
          (runs (gascity-dashboard--active-runs beads))
          (sessions (plist-get ctx :sessions))
-         (graphs (plist-get ctx :graphs))
+         (run-beads (plist-get ctx :run-beads))
+         (index (and run-beads (gascity-runs-index run-beads)))
          (now (plist-get ctx :now))
          (in-progress (seq-filter
                        (lambda (b)
@@ -1155,11 +1164,10 @@ properties.  The row is a thing whose SPC toggles the drawer."
          (items nil))
     (dolist (root runs)
       (let* ((id (alist-get 'id root))
-             (graph (or (gethash id (or graphs (make-hash-table)))
-                        (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) id))
-                                    beads)))
-             (ladder (gascity-dashboard--ladder root graph))
-             (label (gascity-dashboard--ladder-label ladder))
+             ;; The Runs view's ladder for this run (same entry, same
+             ;; rule); `…' until that read lands — never a partial one.
+             (ladder (and index (gascity-runs-ladder index root)))
+             (label (if index (gascity-dashboard--ladder-label ladder) (cons "" "")))
              (rig (alist-get 'gascity-rig root))
              (nested (gascity-dashboard--one-per-worker
                       (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) id))
@@ -1173,7 +1181,8 @@ properties.  The row is a thing whose SPC toggles the drawer."
                                                        (gascity-dashboard--meta root))
                                             (alist-get 'title root) "")
                                         12)
-                        " " (gascity-dashboard--ladder-string ladder)
+                        " " (if index (gascity-dashboard--ladder-string ladder)
+                              (gascity-dashboard--dim "…"))
                         "  " (gascity-ui-fit (car label) 14)
                         " " (gascity-ui-fit (cdr label) 6)
                         " " (gascity-ui-time (alist-get 'created_at root) now))
@@ -1196,7 +1205,7 @@ properties.  The row is a thing whose SPC toggles the drawer."
           (format "%d run%s · %d worker%s" (length runs) (if (= (length runs) 1) "" "s")
                   workers (if (= workers 1) "" "s")))
      (gascity-dashboard--cap-groups items "moving" #'gascity-jump-runs)
-     ctx :loads '(:work) :label "bd list")))
+     ctx :loads '(:work :runs) :label "bd list")))
 
 (defun gascity-dashboard--one-per-worker (beads)
   "Return BEADS with one bead per assignee, the most specific kept.
@@ -1711,32 +1720,6 @@ its run roots and step beads this way)."
   (delq nil (mapcar (lambda (r) (and (not (gascity-rig-hq r)) (gascity-rig-name r)))
                     rigs)))
 
-(defun gascity-dashboard--read-graphs (runs resolve reject)
-  "Read the full step graph of each active run in RUNS.
-RUNS is a list of (ID . RIG); one `bd list --all --metadata-field
-gc.root_bead_id=ID' read per run.  RESOLVE gets a hash ID → beads; a
-failed read leaves its run on the partial ladder the work read gives,
-so REJECT is never called."
-  (let ((table (make-hash-table :test 'equal))
-        (force gascity-store-loader-force)
-        (pending (length runs)))
-    (if (null runs)
-        (funcall resolve table)
-      (dolist (run runs)
-        (let ((settle (lambda ()
-                        (setq pending (1- pending))
-                        (when (zerop pending) (funcall resolve table)))))
-          (gascity-store-fetch
-           (append (list "bd" "list" "--all" "-n" "0" "--brief"
-                         "--metadata-field" (concat "gc.root_bead_id=" (car run)))
-                   (and (cdr run) (list "--rig" (cdr run))))
-           (lambda (payload)
-             (puthash (car run) (gascity-section-beads payload) table)
-             (funcall settle))
-           (lambda (_err) (funcall settle))
-           :force force)))
-      (ignore reject))))
-
 ;;; Component
 
 (defalias 'gascity-dashboard--effective-load #'gascity-ui-effective-load
@@ -1784,19 +1767,14 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
          (last-work (vui-use-ref nil))
          (last-convoys (vui-use-ref nil))
          (last-escalations (vui-use-ref nil))
-         (last-graphs (vui-use-ref nil))
+         (last-runs (vui-use-ref nil))
          (work (gascity-dashboard--effective-load work-res last-work))
-         ;; The active runs' full graphs: keyed on the run set, so a new
-         ;; or finished run re-reads, a refresh re-reads too.
-         (runs (mapcar (lambda (r) (cons (alist-get 'id r) (alist-get 'gascity-rig r)))
-                       (seq-take (gascity-dashboard--active-runs
-                                  (plist-get (gascity-dashboard--data work) :beads))
-                                 gascity-dashboard-section-rows)))
-         (graphs-res (gascity-store-use (list "bd" "list" :graphs runs)
-                                        :tick refresh-tick
-                                        :loader (lambda (resolve reject)
-                                                  (gascity-dashboard--read-graphs
-                                                   runs resolve reject))))
+         ;; Every run bead, the Runs view's own store entry: the Moving
+         ;; ladders are computed from the very data the Runs view shows
+         ;; (§3.2 one ladder rule), and share its read.
+         (runs-res (gascity-store-use gascity-dashboard--runs-key
+                                      :tick refresh-tick
+                                      :loader #'gascity-runs-read-beads))
          (loads (list :status (gascity-dashboard--effective-load status-res last-status)
                       :sessions (gascity-dashboard--effective-load sessions-res
                                                                    last-sessions)
@@ -1807,8 +1785,8 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
                                                                   last-convoys)
                       :escalations (gascity-dashboard--effective-load escalations-res
                                                                       last-escalations)
-                      :graphs (gascity-dashboard--effective-load graphs-res
-                                                                 last-graphs)))
+                      :runs (gascity-dashboard--effective-load runs-res
+                                                               last-runs)))
          (ctx (gascity-dashboard--context loads filters (float-time))))
     ;; Once per render: the section and the pulse both read them.
     (setq ctx (plist-put ctx :needs-you (gascity-dashboard--needs-you ctx)))

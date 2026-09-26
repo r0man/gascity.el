@@ -156,7 +156,7 @@
                     :convoys (gascity-cockpit-test--load
                               `((convoys . ,(vconcat convoys))))
                     :escalations (gascity-cockpit-test--load (vconcat escalations))
-                    :graphs (gascity-cockpit-test--load nil))
+                    :runs (gascity-cockpit-test--load nil))
               filters (float-time))))
     (plist-put ctx :view view)))
 
@@ -689,15 +689,13 @@ live worker nested once (a looping step and its iteration share a worker)."
          (beads (cons root (seq-filter (lambda (b) (equal (alist-get 'status b)
                                                           "in_progress"))
                                        graph)))
-         (graphs (let ((h (make-hash-table :test 'equal)))
-                   (puthash "be-52m5" graph h) h))
          (sessions (list `((id . "ec-fl8o")
                            (agent_name . "beads.el/gc.requirements-planner-1")
                            (state . "active")
                            (session_name . "gc__requirements-planner-ec-fl8o")
                            (last_active . ,(gascity-cockpit-test--ts 180)))))
          (ctx (plist-put (gascity-cockpit-test--ctx :beads beads :sessions sessions)
-                         :graphs graphs))
+                         :run-beads (cons root graph)))
          (text (gascity-cockpit-test--text
                 (let ((gascity-dashboard--view nil))
                   (gascity-dashboard--moving-lines ctx)))))
@@ -708,6 +706,66 @@ live worker nested once (a looping step and its iteration share a worker)."
     (should (string-match-p "└ ● requirements-planner-1 +be-bcb5 +Generate requirements"
                             text))
     (should (= 1 (cl-count ?└ text)))))
+
+(ert-deftest gascity-test-cockpit-moving-ladder-matches-runs-view ()
+  "Moving shows the same ladder, label and count as the Runs view for one
+run, from the same payload: closed steps count (burningswell showed
+`0/5' in the cockpit for `5/10' in Runs — the cockpit's graph lacked
+the closed steps)."
+  (require 'gascity-runs)
+  (let* ((graph (mapcar
+                 (lambda (b)
+                   (let ((ref (alist-get 'gc.step_ref (alist-get 'metadata b))))
+                     (cond ((member ref '("build-basic.prepare" "build-basic.requirements"
+                                          "requirements.iteration.1" "build-basic.plan"
+                                          "plan.iteration.1"))
+                            (cons '(status . "closed") b))
+                           ((member ref '("build-basic.plan-review"))
+                            (append `((status . "in_progress")
+                                      (updated_at . ,(gascity-cockpit-test--ts 60)))
+                                    b))
+                           (t (cons '(status . "open") b)))))
+                 (seq-filter (lambda (b) (equal (gascity-dashboard--root-of b) "be-52m5"))
+                             (append (gascity-cockpit-test--json
+                                      "emacs-city.bd-list-all-beads.el-runs.json")
+                                     nil))))
+         (root `((id . "be-52m5") (status . "in_progress") (title . "build-basic")
+                 (created_at . ,(gascity-cockpit-test--ts 7200))
+                 (updated_at . ,(gascity-cockpit-test--ts 60))
+                 (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+                 (gascity-rig . "beads.el")))
+         ;; The work read: open and in-progress beads only.
+         (work (cons root (seq-remove (lambda (b) (equal (alist-get 'status b) "closed"))
+                                      graph)))
+         ;; The Runs entry: every run bead, closed steps included.
+         (run-beads (cons root graph))
+         (index (gascity-runs-index run-beads))
+         (summary (gascity-runs-summary index root))
+         (ladder (substring-no-properties
+                  (gascity-dashboard--ladder-string (plist-get summary :ladder))))
+         (label (gascity-dashboard--ladder-label (plist-get summary :ladder)))
+         (ctx (plist-put (gascity-cockpit-test--ctx :beads work) :run-beads run-beads))
+         (text (gascity-cockpit-test--text
+                (let ((gascity-dashboard--view nil))
+                  (gascity-dashboard--moving-lines ctx)))))
+    (should (equal (cdr label) "3/10"))
+    (should (string-prefix-p "◆◆◆⬣" ladder))
+    (should (string-match-p (concat "⬣ be-52m5 +build-basic +" (regexp-quote ladder)
+                                    " +" (regexp-quote (car label))
+                                    " +" (regexp-quote (cdr label)))
+                            text))))
+
+(ert-deftest gascity-test-cockpit-moving-ladder-pending-until-runs-read ()
+  "Before the Runs entry lands the ladder reads `…', never a partial one."
+  (let* ((root `((id . "be-52m5") (status . "in_progress") (title . "build-basic")
+                 (created_at . ,(gascity-cockpit-test--ts 7200))
+                 (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))))
+         (ctx (gascity-cockpit-test--ctx :beads (list root)))
+         (text (gascity-cockpit-test--text
+                (let ((gascity-dashboard--view nil))
+                  (gascity-dashboard--moving-lines ctx)))))
+    (should (string-match-p "⬣ be-52m5 +build-basic +… " text))
+    (should-not (string-match-p "0/" text))))
 
 ;;; QA cockpit pass: #6, #7, #10
 
