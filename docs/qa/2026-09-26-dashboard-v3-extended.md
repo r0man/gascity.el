@@ -110,16 +110,22 @@ Cities, costs, rig dashboard.
 | +121 | 62 MB | 10 | 3 | 20 | bs 63260 · bl 91480 | **520 ms**² |
 | +131 | 62 MB | 10 | 6 | 20 | bs 63379 · bl 91581 | 113 ms |
 
-¹ Transient reads caught in flight plus the three stream stderr pipes after
-a respawn; back to 10 at the next sample. Not a leak.
+¹ 6 extra processes (3 more ssh children, 1 stderr buffer) held across
+**two** consecutive samples (15:53 and 16:03), so these weren't reads
+caught in flight. They were gone at 16:14, but the 16:03 network-trouble
+step (masters exited, stream clients killed) came in between and may be
+what cleared them. The cause wasn't identified, and a slow ssh-child leak
+is **not ruled out**. Worth a targeted re-check without the
+network-trouble step. **Resolved by the follow-up below:** not a leak.
+It was a saturated burningswell read queue caught in flight twice.
 ² One isolated gap in the 16:54–17:04 window, cause not captured (no
 profiler was running). Every other window is 81–125 ms.
 
 - **No growth or leak:**
   - RSS falls from 100 MB and stays flat at 62–65 MB after 20 min.
   - Processes, buffers and timers return to baseline; 0 stderr buffers.
-  - The only gc child is the local stream; 4 ssh children (2 streams,
-    2 TRAMP).
+  - Exactly 1 gc child (the local stream) and 4 ssh children at every
+    baseline sample (7 during the footnote-1 window).
   - burningswell host: 8–11 gc processes, 6 `events --follow` (including
     the user's own).
 - **Samples +40/+50** overlap with item 3's run in the separate v3qa-b
@@ -132,11 +138,15 @@ profiler was running). Every other window is 81–125 ms.
 
 1. `ssh -O exit` on both private masters: burningswell
    `reconnecting` at +5 s → `live` at +10 s. Both bright-lights streams
-   were live again within the 5 s sample.
+   showed `live` at every 5 s sample. No drop was observed, so this step
+   didn't really exercise their reconnect.
 2. Killed all three stream clients: the local `gc events --follow`, and
    the ssh processes of the TRAMP bright-lights and burningswell streams.
-   The host-side-gc heuristic found nothing to kill once the clients were
-   gone. All three were back to `live` within 5 s, and seqs kept
+   **Deviation:** the requested "kill the host-side gc stream" did not
+   happen. My selector (a bright-lights `gc events --follow` younger than
+   40 s) matched nothing, because it ran before the streams had
+   reconnected. The burningswell host side was deliberately left alone
+   (read only). So this was a client-side kill, not a server-side one. All three were back to `live` within 5 s, and seqs kept
    advancing (bs 62569 → 62579, bl 90902 → 90912 over 60 s).
 
 ## 3. An active run end to end on bright-lights — PARTIAL PASS (the run failed for an environment reason; gascity behaved correctly)
@@ -313,11 +323,14 @@ Findings (low):
 **Start:**
 - `C` → `S` "Start the Gas City under the supervisor? (y or n)" → `y`.
   "gc start: finished." at +18 s.
-- Cockpit header back to `▲ degraded (no_agents_running)` at +21 s.
+- The cockpit header returned to `▲ degraded (no_agents_running)` by
+  itself shortly after the finish echo (timing not recorded).
 - 17:20: mayor `active` with the **same session_key** (conversation
   resumed), control-dispatcher active, both tmux sessions recreated,
-  controller running under 22262, health and rig states **identical to
-  before**.
+  controller running under 22262, health and rig states the same as
+  before. Expected differences: the control-dispatcher came back on a new
+  session bead (`bl-wedp`, was `bl-bbo2`), and the dolt sql-server was
+  restarted by its watchdog during the stop (new pid 6926, was 23571).
 
 Finding (low): **D-4.** The stop/start prompts say "the Gas City" and
 don't name the city. With several cities open (as here), they should say
@@ -329,3 +342,127 @@ don't name the city. With several cities open (as here), they should say
 - hello-world has the new `origin` (kept by request) and nothing else
   from the runs.
 - All QA beads (hw-7pm, hw-aus and both runs' beads) are closed.
+
+## Follow-up A: leak re-check (35 min, no network trouble) — PASS, no leak; 1 new bug (L-1)
+
+**Setup:**
+- Ran on **fe95873**. That is main after 7cf867e plus the D-4 prompt fix
+  (commit hash only; the fix itself wasn't exercised).
+- A separate harness Emacs, `v3qa-c`. `v3qa` was **not** restarted: a
+  client was attached to it (pts/28, focused) showing a burningswell Dired
+  buffer I hadn't opened, so the user appears to be using it.
+- The same three live cockpits as item 6 (bright-lights local,
+  bright-lights over TRAMP, burningswell over TRAMP), with private
+  masters on `/tmp/v3qac/%C`.
+- `qa/leak-check.sh` takes a full sample every 5 min, plus a process
+  count every 20 s. If the count stays above baseline for 2 polls in a
+  row, it dumps everything: `(process-list)` with names, commands,
+  buffers, pids and ages; `gascity-store-host-status` for each city;
+  `gascity-live-cities`; and `ps` of the Emacs's children. Data is in
+  `qa/out/leak/`.
+
+| t | RSS | procs | timers | buffers | stderr buffers | children | streams |
+|---|---|---|---|---|---|---|---|
+| +0 | 101 MB | 10 | 2 | 20 | 0 | 1 gc, 4 ssh | all `live` |
+| +5 | 71 MB | 10 | 2 | 20 | 0 | 1 gc, 4 ssh | live, seqs advancing |
+| +15 | 72 MB | 10 | 4 | 20 | 0 | 1 gc, 4 ssh | live |
+| +25 | 72 MB | **11** | 3 | 20 | 0 | 1 gc, **5 ssh** | live |
+| +30 | 74 MB | 10 | 4 | 20 | 0 | 1 gc, 4 ssh | live |
+
+Max stall per window was 78–117 ms. RSS drifted 71 → 74 MB over 30 min,
+too little over too short a run to call a trend.
+
+**The 15:53 signature reappeared at 17:50–17:51** and was caught in the
+dumps: 16 processes, 3 extra ssh children, 1 stderr buffer, 21 buffers,
+5–6 timers. That is exactly item 6's shape.
+- burningswell's store was saturated: `:reads 3 :queued 5–8`, with 3
+  in-flight `gc … bd list …` reads over the ssh pipe.
+- Each read is an ssh process plus its `gascity-gc-stderr` pipe, so 3
+  reads account for all 6 extra processes.
+- Every ssh read was 0–1 s old (ELAPSED 0/1), so these were fresh reads
+  in a burst, not stuck ones. burningswell's seq jumped +148 in that
+  window (63738 → 63886, against about +60 in a normal 5-min window).
+- By the next full sample the count was back to 10.
+
+**Verdict:** no leak. Item 6's two high samples were the same queue
+burst, caught in flight on a busy burningswell. The scheduler caps it at
+`gascity-remote-max-inflight` (3), as designed.
+
+### L-1 (medium, new): concurrent ssh-pipe reads share one stderr buffer, so one read's completion discards the others' stderr
+
+`gascity-reader--spawn-ssh` creates its stderr pipe with
+`(make-pipe-process :name "gascity-gc-stderr" …)` and no `:buffer`.
+Emacs uniquifies the process names (`<1>`, `<2>`) but gives every one of
+them the **same** buffer, `gascity-gc-stderr`. That is why item 6 and
+this run show 3 pipes but only 1 stderr buffer.
+
+When the first read finishes, `gascity-reader--kill-pipe` kills that
+shared buffer. `kill-buffer` then also closes the stderr pipes of every
+other in-flight read.
+
+**Reproduced with the real function** (batch Emacs, over ssh to
+localhost, `gascity-executable` = `sh`):
+- Read A: `sleep 3; echo A-stderr-line >&2; exit 3`.
+- Read B: a fast `echo`, started second and finishing first.
+
+| Run | Read A's result |
+|---|---|
+| A with B | `(:exit-code 3 :stdout "A-out\n" :stderr "")` — **stderr lost** |
+| A alone (control) | `(:exit-code 3 :stdout "A-out\n" :stderr "A-stderr-line\n")` |
+
+**Impact:** on an ssh-transport city, a read or action that fails while
+another request is in flight loses its stderr. The failure echo (the
+first stderr line, per D9) and the `*gascity-log*` entry then have no
+reason. This is common whenever the lanes are busy, which is exactly the
+burst seen above.
+
+**Fix:** give each pipe its own buffer, for example
+`:buffer (generate-new-buffer " *gascity-gc-stderr*")`, or use the
+filter only with a unique buffer that `kill-pipe` owns.
+
+## Follow-up B: host-side stream kill on bright-lights — PASS
+
+Same `v3qa-c` Emacs on fe95873.
+- Setup: every state change, spawn and delivered seq was recorded through
+  advice (`qa/kill-lib.el`).
+- To match "its current pid after reconnect": the TRAMP stream was first
+  restarted (harness setup), so its host gc carries a unique
+  `--after N`. The host gc is then the process whose comm is `gc` and
+  whose argv contains that `--after N --city /home/roman/bright-lights/`.
+- Each trial also created a probe bead in hello-world to force events.
+  The probes are hw-vju, hw-6vz and hw-xo0, all closed afterwards.
+- Script: `qa/kill-test.sh`; data: `qa/out/kill/`.
+
+| Trial | What was killed | Transitions (from the recorded state changes) | Resume | Leftovers |
+|---|---|---|---|---|
+| B1 local | the stream's own `gc events --follow` (pid 21464) | `○ live: reconnecting` → respawn at +2.0 s → `● live` at +3.1 s | new gc has `--after 92068`. Event 92069 happened **inside the gap** and was replayed | old gc gone |
+| B2 TRAMP, host side | host gc 8724 (`--after 92069`, child of wrapper sh 8723, watcher 8725) | `○ live: reconnecting` "gc exited 143" (the wrapper reported the exit, so it was correctly **not** classified offline) → respawn at +2.0 s → `● live` at +5.0 s | new host gc with `--after 92070` | old gc, wrapper, `cat` watcher and local ssh client 8721 all gone |
+| B3 TRAMP, `ssh -O exit` on the private master (pid 23357) | the mux master | `○ offline @localhost` "connection lost (ssh exit 255)" → respawn at +5.1 s (backoff step 2, because the stream had been up <15 s) → `● live` at +8.1 s; new master 13116 | new host gc with `--after 92076` | old host gc 9804, wrapper 9803 and client 9800 all gone when checked 20 s later. I didn't observe which of the watcher or SIGHUP ended it |
+| B4 TRAMP, 3 host kills in a row | host gcs 13121, 22220, 22975 | reconnecting ×3 with backoff 2 s → 5 s → 15 s, then `● live` at +24 s | every respawn used `--after 92086`. Events **92087 and 92088 happened inside the 23 s gap** and were replayed | none |
+
+**Seq continuity:** each stream's delivered seqs were compared with
+`gc events --since` for the same range.
+- Local and TRAMP streams over B1–B3: 92069…92080, 12 each, no missing
+  seq, no duplicates, in order.
+- B4: 92087…92095, 9 delivered, no missing seq, no duplicates.
+
+**Orphans:** after all trials, the only bright-lights followers on the
+host were the current ones. That is the local gc, plus one wrapper sh,
+its gc, its watcher sh and `cat` for the TRAMP stream. No stale wrapper,
+`cat` or gc was left from any killed stream. `*Messages*` showed no
+errors.
+
+**Notes:**
+- A dropped master reads `○ offline @localhost` for about 5 s although
+  the host is up. That follows the design: no exit report means the
+  connection was lost. Once the respawn succeeds it clears on its own.
+- The B2 and B3 probe events weren't emitted by gc until 18–38 s after
+  `bd create`, so they missed those gaps. B1 and B4 cover replay inside
+  a gap for the local and TRAMP streams.
+
+**Cleanup:**
+- `v3qa-c` stopped; its private masters exited and `/tmp/v3qac`
+  removed.
+- Probe beads closed.
+- bright-lights is unchanged apart from 3 closed hello-world beads.
+- `v3qa` (attached by the user) was left untouched.
