@@ -239,6 +239,31 @@ invalidation."
               (should (= 1 (length reads)))))
         (kill-buffer buf)))))
 
+(ert-deftest gascity-test-store-ssh-concurrent-reads-keep-their-stderr ()
+  "Two ssh-transport reads in flight at once each keep their own stderr:
+the fast one finishing does not take the slow one's stderr pipe with it
+\(QA L-1: a shared \"gascity-gc-stderr\" buffer, killed by the first)."
+  (let* ((default-directory "/ssh:u@example.invalid:/c/")
+         (gascity-reader-city-args-function nil)
+         (stderr-bufs (lambda ()
+                        (seq-filter (lambda (buf) (string-match-p "gascity-gc-stderr"
+                                                                  (buffer-name buf)))
+                                    (buffer-list))))
+         (before (funcall stderr-bufs))
+         a b)
+    (cl-letf (((symbol-function 'gascity-reader--ssh-command)
+               (lambda (_exe args _env) (list "sh" "-c" (car args)))))
+      (gascity-reader--spawn-ssh '("sleep 1; echo A-stderr-line >&2; exit 3") nil
+                                 (lambda (r) (setq a r)))
+      (gascity-reader--spawn-ssh '("echo B-out; echo B-err >&2") nil
+                                 (lambda (r) (setq b r)))
+      (should (gascity-test-store--wait (lambda () (and a b)) 10)))
+    (should (equal (plist-get b :stderr) "B-err\n"))
+    (should (eql (plist-get a :exit-code) 3))
+    (should (equal (plist-get a :stderr) "A-stderr-line\n"))
+    ;; Both pipes took their own buffers with them.
+    (should (equal (funcall stderr-bufs) before))))
+
 (ert-deftest gascity-test-store-ssh-pipe-leaves-no-stderr-buffer ()
   "A finished ssh-transport process leaves no `gascity-gc-stderr' buffer."
   (let ((default-directory "/ssh:u@example.invalid:/c/")

@@ -743,8 +743,13 @@ the process, or nil when none was started."
       (let* ((command (gascity-reader--ssh-command executable args city-env))
              (default-directory temporary-file-directory)
              (out nil) (err nil)
+             ;; Its OWN buffer: by default a pipe's buffer is named
+             ;; after the process, so concurrent reads shared one
+             ;; "gascity-gc-stderr" buffer — and the first to finish
+             ;; killed it, with every other read's stderr pipe (QA L-1).
              (stderr-proc (make-pipe-process
                            :name "gascity-gc-stderr" :noquery t
+                           :buffer (generate-new-buffer " *gascity-gc-stderr*")
                            :filter (lambda (_p chunk) (push chunk err)))))
         (when (fboundp 'gascity--log)
           (gascity--log 'info "Running over ssh: %s" (mapconcat #'identity command " ")))
@@ -778,10 +783,10 @@ the process, or nil when none was started."
            nil))))))
 
 (defun gascity-reader--kill-pipe (proc)
-  "Delete pipe process PROC and the buffer `make-pipe-process' gave it.
-A pipe process always gets a buffer named after it, which outlives
-the process: without this, one \"gascity-gc-stderr\" buffer stayed
-behind (QA #11)."
+  "Delete pipe process PROC and its own buffer.
+The buffer outlives the process otherwise (QA #11).  Each pipe has a
+buffer of its own (`gascity-reader--spawn-ssh'), so this never touches
+another read's pipe (QA L-1)."
   (when (processp proc)
     (let ((buf (process-buffer proc)))
       (when (process-live-p proc) (delete-process proc))
