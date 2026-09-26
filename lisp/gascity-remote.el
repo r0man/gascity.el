@@ -518,11 +518,22 @@ setup."
                  (const :tag "TRAMP make-process" tramp))
   :group 'gascity)
 
-(defvar tramp-use-connection-share)     ; tramp-sh
 (declare-function tramp-direct-async-process-p "tramp")
 
+(defun gascity-remote--share-variable ()
+  "Return the TRAMP option controlling ssh connection sharing.
+`tramp-use-connection-share' from Emacs 30 on; in Emacs 29 it was
+`tramp-use-ssh-controlmaster-options' (same values, `suppress'
+included), which later Emacsen keep as an obsolete alias."
+  (require 'tramp-sh)
+  (if (boundp 'tramp-use-connection-share)
+      'tramp-use-connection-share
+    'tramp-use-ssh-controlmaster-options))
+
 (defun gascity-remote-connection-share (&optional dir)
-  "Return the `tramp-use-connection-share' gascity spawns with in DIR.
+  "Return the connection-share value gascity spawns with in DIR.
+The value of TRAMP's `tramp-use-connection-share' (see
+`gascity-remote--share-variable').
 `suppress' for an ssh-family TRAMP DIR (default `default-directory')
 that is not in direct-async mode: every tramp-sh process then gets its
 own ssh connection instead of a ControlMaster mux session with a pty,
@@ -535,13 +546,15 @@ user's value, unchanged — direct-async processes have no pty."
              (not (let ((default-directory dir))
                     (ignore-errors (tramp-direct-async-process-p)))))
         'suppress
-      tramp-use-connection-share)))
+      (symbol-value (gascity-remote--share-variable)))))
 
 (defun gascity-remote-call-unshared (fn &rest args)
   "Call FN with ARGS, TRAMP connection sharing suppressed where needed.
 FN is `make-process' or `process-file' as gascity calls them over TRAMP;
-`tramp-use-connection-share' is bound per `gascity-remote-connection-share'."
-  (let ((tramp-use-connection-share (gascity-remote-connection-share)))
+TRAMP's connection-share option (`gascity-remote--share-variable') is
+bound per `gascity-remote-connection-share'."
+  (cl-progv (list (gascity-remote--share-variable))
+      (list (gascity-remote-connection-share))
     (apply fn args)))
 
 (defun gascity-remote-ssh-transport-p (&optional dir)
