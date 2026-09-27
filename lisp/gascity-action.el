@@ -69,6 +69,7 @@
 (declare-function gascity-sling-formula--dispatch "gascity-formula")
 (declare-function gascity-sling-formula--show-recipe "gascity-formula")
 (declare-function gascity-sling-formula--var-children "gascity-formula")
+(declare-function gascity-sling-formula--work-title-at-point "gascity-formula")
 (declare-function gascity-formula-recipe-cached "gascity-formula")
 (declare-function gascity-formula-invalidate "gascity-formula")
 (declare-function gascity-formula-refresh-async "gascity-formula")
@@ -1295,7 +1296,7 @@ the header (ga-4ia4)."
               '("x" "Reset (clear formula, target, vars)" gascity-sling-dispatch-reset)
               '("q" "Quit" transient-quit-one)))
      (when-let* ((group (gascity-sling-formula--var-children
-                         recipe gascity-sling--reserved-keys)))
+                         recipe gascity-sling--reserved-keys scope)))
        (list group)))))
 
 (defun gascity-sling--setup-children (_children)
@@ -1420,14 +1421,23 @@ catalog/recipe read and dispatch on the entered-from city
   [ :class transient-subgroups :setup-children gascity-sling--setup-children ]
   (interactive)
   (let* ((at-point (gascity-sling-formula--bead-or-convoy-at-point))
+         (at-point-title (and at-point
+                              (gascity-sling-formula--work-title-at-point)))
          (saved (cdr (assoc default-directory gascity-sling--remembered)))
          ;; The city's last menu state (after a preview, say) comes
-         ;; back; a bead or convoy at point still names the arg.
+         ;; back; a bead or convoy at point still names the arg — and
+         ;; its title seeds the artifact_root convention default
+         ;; (REQ-006, `gascity-sling-formula--var-seed').
          (scope (if saved
-                    (plist-put (copy-sequence (car saved)) :arg
-                               (or at-point (plist-get (car saved) :arg)))
+                    (let ((scope (copy-sequence (car saved))))
+                      (when at-point
+                        (setq scope (plist-put scope :arg at-point)))
+                      (when at-point-title
+                        (setq scope (plist-put scope :work-title at-point-title)))
+                      scope)
                   (list :city default-directory
-                        :formula nil :target nil :arg at-point))))
+                        :formula nil :target nil :arg at-point
+                        :work-title at-point-title))))
     ;; Warm the formula caches (catalog + `gc formula list') through the
     ;; store so `-f' answers from memory (bug S-1, D9).
     (let ((default-directory (plist-get scope :city)))

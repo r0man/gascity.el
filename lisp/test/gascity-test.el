@@ -1219,20 +1219,32 @@ renders no Variables section."
                    (eq (plist-get (nthcdr 3 spec) :class)
                        'gascity-sling-formula--bool-option))
                  specs))
-        ;; The plain var is a string option carrying the var's payload,
-        ;; with a required mark, its description and default (REQ-007/008).
+        ;; A *_path var is a typed file option (REQ-006), its
+        ;; description tagged with the mockups' [file] marker.
+        (let ((file-spec (seq-find
+                          (lambda (spec)
+                            (equal (plist-get (nthcdr 3 spec) :var-name)
+                                   "summary_path"))
+                          specs)))
+          (should file-spec)
+          (should (eq (plist-get (nthcdr 3 file-spec) :class)
+                      'gascity-sling-formula--file-option))
+          (should (string-match-p "\\[file\\]" (nth 1 file-spec)))
+          (should (equal (plist-get (nthcdr 3 file-spec) :var-required) t))
+          (should (string-match-p "(required)" (nth 1 file-spec)))
+          (should (string-match-p "Where the summary goes" (nth 1 file-spec)))
+          (should (string-match-p "default: build/summary.md" (nth 1 file-spec))))
+        ;; The patterned var without a typed convention is still a plain
+        ;; string option (REQ-006 fail-soft, REQ-009 pattern).
         (let ((string-spec (seq-find
                             (lambda (spec)
                               (equal (plist-get (nthcdr 3 spec) :var-name)
-                                     "summary_path"))
+                                     "branch"))
                             specs)))
           (should string-spec)
           (should (eq (plist-get (nthcdr 3 string-spec) :class)
                       'gascity-sling-formula--string-option))
-          (should (equal (plist-get (nthcdr 3 string-spec) :var-required) t))
-          (should (string-match-p "(required)" (nth 1 string-spec)))
-          (should (string-match-p "Where the summary goes" (nth 1 string-spec)))
-          (should (string-match-p "default: build/summary.md" (nth 1 string-spec)))))))
+          (should-not (string-match-p "\\[" (nth 1 string-spec)))))))
   ;; A formula without vars renders no Variables section (REQ-004).
   (should-not (gascity-sling-formula--var-children
                (gascity-test--formula-with-steps nil)
@@ -1245,6 +1257,283 @@ founded in the tmux-Emacs TRAMP e2e pass: `-f' from the sling dispatch
 opened the transient with scope :formula nil and signalled\n`No applicable method: gascity-formula-vars, nil')."
   (should-not (gascity-sling-formula--var-children
                nil gascity-sling--reserved-keys)))
+
+;;; gascity-sling-formula typed vars (formula sling, plan WI-5, REQ-006)
+
+(ert-deftest gascity-test-sling-var-class-naming-conventions
+    ()
+  "The class heuristic (REQ-006): *_path a file option, artifact_root a
+ directory option, *_target an agent option, numeric vars (all-digit
+ default, max_* prefix, *_iterations suffix) a numeric option, enum
+ and true/false-declared shapes still their own classes, and anything
+ unrecognized fails soft to the string option (REQ-016)."
+  (let* ((formula (gascity-test--formula-with-vars
+                   (vector '((name . "context_path"))
+                           '((name . "notes_path"))
+                           '((name . "artifact_root") (default . "plans/x/"))
+                           '((name . "impl_target"))
+                           '((name . "max_attempts") (default . ""))
+                           '((name . "attempt_iterations"))
+                           '((name . "count") (default . "3"))
+                           '((name . "rig_name"))
+                           '((name . "mystery")))))
+         (vars (gascity-formula-vars formula))
+         (class (lambda (name)
+                  (gascity-sling-formula--var-class
+                   (seq-find (lambda (v)
+                               (equal (gascity-formula-var-name v) name))
+                             vars)
+                   formula))))
+    (should (eq (funcall class "context_path")
+                'gascity-sling-formula--file-option))
+    (should (eq (funcall class "notes_path")
+                'gascity-sling-formula--file-option))
+    (should (eq (funcall class "artifact_root")
+                'gascity-sling-formula--directory-option))
+    (should (eq (funcall class "impl_target")
+                'gascity-sling-formula--agent-option))
+    (should (eq (funcall class "max_attempts")
+                'gascity-sling-formula--numeric-option))
+    (should (eq (funcall class "attempt_iterations")
+                'gascity-sling-formula--numeric-option))
+    (should (eq (funcall class "count")
+                'gascity-sling-formula--numeric-option))
+    ;; rig_name reads as a plain string — its "auto-derive from the
+    ;; chosen target's rig" behavior is the SEED (var-seed), not the
+    ;; read class.
+    (should (eq (funcall class "rig_name")
+                'gascity-sling-formula--string-option))
+    (should (eq (funcall class "mystery")
+                'gascity-sling-formula--string-option))))
+
+(ert-deftest gascity-test-sling-var-class-override-alist-wins
+    ()
+  "`gascity-sling-var-readers' overrides the heuristic (REQ-006): a var
+ mapped to one of the typed readers reads as that type no matter what
+ any naming convention says; a mapped infix class passes through; any
+ other function wraps as the custom reader class; an unmatched var
+ falls through to the conventions."
+  (let* ((formula (gascity-test--formula-with-vars
+                   (vector '((name . "context_path")
+                             (enum . ["a" "b"]))
+                           '((name . "notes_path"))
+                           '((name . "mystery")))))
+         (vars (gascity-formula-vars formula))
+         (class (lambda (name)
+                  (gascity-sling-formula--var-class
+                   (seq-find (lambda (v)
+                               (equal (gascity-formula-var-name v) name))
+                             vars)
+                   formula))))
+    ;; A typed reader wins even over a declared enum.
+    (let ((gascity-sling-var-readers
+           '(("context_path" . gascity-sling-formula--read-string))))
+      (should (eq (funcall class "context_path")
+                  'gascity-sling-formula--string-option)))
+    ;; An infix class symbol passes through.
+    (let ((gascity-sling-var-readers
+           '(("notes_path" . gascity-sling-formula--directory-option))))
+      (should (eq (funcall class "notes_path")
+                  'gascity-sling-formula--directory-option)))
+    ;; Any other function wraps as the var's custom reader.
+    (let ((gascity-sling-var-readers
+           '(("mystery" . (lambda (_obj) "custom")))))
+      (should (eq (funcall class "mystery")
+                  'gascity-sling-formula--function-option))
+      ;; …and the infix spec carries the reader for the custom class.
+      (let ((spec (gascity-sling-formula--var-infix-spec
+                   (seq-find (lambda (v)
+                               (equal (gascity-formula-var-name v)
+                                      "mystery"))
+                             vars)
+                   "v1" formula)))
+        (should (functionp (plist-get (nthcdr 3 spec) :var-reader)))))
+    ;; Nothing overridden: the conventions answer.
+    (let (gascity-sling-var-readers)
+      (should (eq (funcall class "notes_path")
+                  'gascity-sling-formula--file-option)))))
+
+(ert-deftest gascity-test-sling-numeric-read-refuses-non-digits
+    ()
+  "The numeric read refuses any non-digit entry with `Var %s must be
+ numeric (got %s)' BEFORE any gc call could run (REQ-006); digits
+ return as-is; an empty answer unsets."
+  (let ((obj (gascity-sling-formula--numeric-option
+              :var-name "count" :var-default "3")))
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work")))
+              ((symbol-function 'read-from-minibuffer)
+               (lambda (_prompt _init &rest _) "abc")))
+      (should (string-match-p
+               "Var count must be numeric (got abc)"
+               (error-message-string
+                (should-error (gascity-sling-formula--read-numeric obj)
+                              :type 'user-error)))))
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work")))
+              ((symbol-function 'read-from-minibuffer)
+               (lambda (_prompt _init &rest _) "42")))
+      (should (equal (gascity-sling-formula--read-numeric obj) "42")))
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work")))
+              ((symbol-function 'read-from-minibuffer)
+               (lambda (_prompt _init &rest _) "")))
+      (should-not (gascity-sling-formula--read-numeric obj)))))
+
+(ert-deftest gascity-test-sling-title-slug-derivation-and-fallbacks
+    ()
+  "`gascity-sling--title-slug' seeds `plans/<slug>/' from the work
+ bead's TITLE (REQ-006): downcase, non-alphanumeric runs collapsed to
+ one `-'; freeform task text and the formula name are the fallbacks;
+ a bare bead id is NEVER the slug; nothing derivable yields nil
+ (REQ-016 fail-soft)."
+  ;; The title wins and slugs.
+  (should (equal (gascity-sling--title-slug
+                  "ga-x1y2" "do-work"
+                  "Dashboard v3: cockpit + views")
+                 "plans/dashboard-v3-cockpit-views/"))
+  ;; No title: freeform work text (not an id) is the next source.
+  (should (equal (gascity-sling--title-slug "Fix the big bug" nil nil)
+                 "plans/fix-the-big-bug/"))
+  ;; An id-shaped work is skipped — the id names nothing under plans/.
+  (should (equal (gascity-sling--title-slug "ga-x1y2" "do-work" nil)
+                 "plans/do-work/"))
+  ;; Nothing derivable: nil, the var keeps its declared default.
+  (should-not (gascity-sling--title-slug "ga-x1y2" nil nil))
+  ;; The slug helper itself: edge dashes trimmed.
+  (should (equal (gascity-sling--slug "WI-5 — Typed How vars")
+                 "wi-5-typed-how-vars")))
+
+(ert-deftest gascity-test-sling-var-seed-conventions
+    ()
+  "The scope-derived seeds (REQ-006): artifact_root seeds
+ `plans/<slug>/' from the work title, rig_name the chosen target's
+ rig, a *_target var the chosen target itself; other vars and a nil
+ scope seed nothing."
+  (let* ((scope (list :target "hello-world/gc.implementation-worker"
+                      :work "ga-x1y2" :formula "do-work"
+                      :work-title "Dashboard v3: cockpit + views"))
+         (seed (lambda (name)
+                 (gascity-sling-formula--var-seed
+                  (gascity-formula-var :name name) scope))))
+    (should (equal (funcall seed "artifact_root")
+                   "plans/dashboard-v3-cockpit-views/"))
+    (should (equal (funcall seed "rig_name") "hello-world"))
+    (should (equal (funcall seed "impl_target")
+                   "hello-world/gc.implementation-worker"))
+    (should-not (funcall seed "context_path"))
+    ;; A bare session target (no rig) seeds nothing target-derived.
+    (should-not (gascity-sling-formula--var-seed
+                 (gascity-formula-var :name "rig_name")
+                 (list :target "sess-1")))
+    (should-not (gascity-sling-formula--var-seed
+                 (gascity-formula-var :name "artifact_root") nil))))
+
+(ert-deftest gascity-test-sling-var-infix-spec-carries-seed-and-tag
+    ()
+  "The generated infix spec (REQ-006) carries the scope-derived seed in
+ :var-seed — which overrides the declared default at setup — and the
+ typed reader's [dir]-style tag in the description."
+  (let* ((formula (gascity-test--formula-with-vars
+                   (vector '((name . "artifact_root")
+                             (default . "plans/declared/"))
+                           '((name . "context_path")))))
+         (vars (gascity-formula-vars formula))
+         (scope (list :work-title "Dashboard v3")))
+    (let ((spec (gascity-sling-formula--var-infix-spec
+                 (nth 0 vars) "a" formula scope)))
+      (should (equal (plist-get (nthcdr 3 spec) :var-seed)
+                     "plans/dashboard-v3/"))
+      (should (string-match-p "\\[dir\\]" (nth 1 spec))))
+    (let ((spec (gascity-sling-formula--var-infix-spec
+                 (nth 1 vars) "c" formula scope)))
+      (should-not (plist-get (nthcdr 3 spec) :var-seed))
+      (should (string-match-p "\\[file\\]" (nth 1 spec))))))
+
+(ert-deftest gascity-test-sling-file-dir-reads-pin-rig-workdir
+    ()
+  "The file and directory reads complete against the target rig's
+ workdir with `default-directory' PINNED to it for the read (REQ-006,
+ TRAMP-safe), never the menu buffer's directory; a cold rig memo
+ degrades to the entered-from city; an empty answer unsets the var."
+  (let ((file (gascity-sling-formula--file-option :var-name "context_path"))
+        (dir (gascity-sling-formula--directory-option
+              :var-name "artifact_root"))
+        (scope (list :city "/city/entered/"
+                     :target "hello-world/gc.implementation-worker"))
+        seen)
+    (cl-letf (((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'gascity-beads--rig-path)
+               (lambda (rig)
+                 (and (equal rig "hello-world") "/rigs/hello-world/")))
+              ((symbol-function 'read-file-name)
+               (lambda (_prompt _dir &rest _)
+                 (push (cons 'file default-directory) seen)
+                 "plans/x.md"))
+              ((symbol-function 'read-directory-name)
+               (lambda (_prompt _dir &rest _)
+                 (push (cons 'dir default-directory) seen)
+                 "")))
+      (with-temp-buffer
+        (setq default-directory "/city/entered/")
+        ;; The file read runs with default-directory pinned to the rig
+        ;; workdir and returns its answer.
+        (should (equal (gascity-sling-formula--read-file file) "plans/x.md"))
+        (should (equal seen '((file . "/rigs/hello-world/"))))
+        ;; The directory read answers empty: the var is unset.
+        (should-not (gascity-sling-formula--read-directory dir))
+        (should (equal seen '((dir . "/rigs/hello-world/")
+                              (file . "/rigs/hello-world/"))))))
+    ;; A cold rig memo (no resolvable rig) degrades to the entered-from
+    ;; city — never a foreign buffer's directory.
+    (setq seen nil)
+    (cl-letf (((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'gascity-beads--rig-path) (lambda (_rig) nil))
+              ((symbol-function 'read-file-name)
+               (lambda (_prompt _dir &rest _)
+                 (push (cons 'file default-directory) seen)
+                 "x")))
+      (with-temp-buffer
+        (setq default-directory "/elsewhere/menu/")
+        (should (gascity-sling-formula--read-file file))
+        (should (equal seen '((file . "/city/entered/"))))))))
+
+(ert-deftest gascity-test-sling-dispatch-seeds-work-title
+    ()
+  "Entering the sling menu records the work bead's title at point in the
+ scope (:work-title, REQ-006) — the artifact_root seed's source — both
+ into a fresh scope and into a remembered one."
+  (let (captured)
+    (cl-letf (((symbol-function 'transient-setup)
+               (lambda (_name _l _s &rest args) (setq captured args)))
+              ((symbol-function 'gascity-formula-refresh-async) #'ignore)
+              ((symbol-function 'gascity-sling-formula--bead-or-convoy-at-point)
+               (lambda () "ga-x1y2"))
+              ((symbol-function 'gascity-sling-formula--work-title-at-point)
+               (lambda () "Dashboard v3: cockpit + views")))
+      (let ((default-directory gascity-sling-test--city))
+        (gascity-sling-dispatch))
+      (let ((scope (plist-get captured :scope)))
+        (should (equal (plist-get scope :arg) "ga-x1y2"))
+        (should (equal (plist-get scope :work-title)
+                       "Dashboard v3: cockpit + views"))))
+    ;; A remembered scope keeps its state; the at-point title only
+    ;; updates when one is actually under point.
+    (let ((gascity-sling--remembered
+           (list (cons gascity-sling-test--city
+                       (cons (list :city gascity-sling-test--city
+                                   :formula "e2e-demo")
+                             nil)))))
+      (cl-letf (((symbol-function 'transient-setup)
+                 (lambda (_name _l _s &rest args) (setq captured args)))
+                ((symbol-function 'gascity-formula-refresh-async) #'ignore)
+                ((symbol-function 'gascity-sling-formula--bead-or-convoy-at-point)
+                 (lambda () nil)))
+        (let ((default-directory gascity-sling-test--city))
+          (gascity-sling-dispatch))
+        (let ((scope (plist-get captured :scope)))
+          (should (equal (plist-get scope :formula) "e2e-demo"))
+          (should-not (plist-get scope :work-title)))))))
 
 (ert-deftest gascity-test-sling-var-key-deterministic ()
   "REQ-D: per-formula keys are deterministic and collision-free —
