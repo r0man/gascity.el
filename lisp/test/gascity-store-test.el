@@ -1226,7 +1226,24 @@ City start/stop keep their streaming `async-shell-command' buffer.")
                                                 (gascity-context-scope-key)))
                 (goto-char (point-max))
                 (insert "body")
-                (gascity-compose-finish))))))))
+                (gascity-compose-finish)))))
+      ;; The redesign's `P' full preview (plans/sling-command WI-7): an
+      ;; input-free suffix that paints its buffer client-side and starts
+      ;; the dry-run on the action lane.  It joins the guard when the
+      ;; redesigned layout is loaded (`gascity-test-sling-redesign-p').
+      ,@(when (and (fboundp 'gascity-sling-dispatch-preview)
+                   (gascity-test-sling-redesign-p))
+          `((gascity-sling-dispatch-preview
+             . ,(lambda ()
+                  (cl-letf (((symbol-function 'transient-args)
+                             (lambda (_prefix) nil))
+                            ((symbol-function 'transient-scope)
+                             (lambda () (list :city "/tmp/city/" :formula nil
+                                              :target "r/a" :work "task text")))
+                            ((symbol-function 'gascity-view-get-buffer-create)
+                             (lambda (&rest _)
+                               (get-buffer-create " *gc-sling-preview*"))))
+                    (call-interactively #'gascity-sling-dispatch-preview)))))))))
 
 (ert-deftest gascity-test-store-non-blocking-guard ()
   "Every input-free action verb returns having only started a process (D9).
