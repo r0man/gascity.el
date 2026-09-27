@@ -1254,9 +1254,9 @@ RESERVED is inherited by the per-var key assignment; SCOPE (optional)
 grows the per-var seeds (REQ-006: the `plans/<slug>/' artifact_root
 seed from the work bead's title, the chosen target's rig for
 `rig_name', the chosen target for `*_target' vars).  The group is
-titled with the picked formula's name so a re-pick is
+titled `How — <formula> vars' (mockup §4) so a re-pick is
 visible in the section heading.  A formula without vars renders no
-Variables section (REQ-004).
+How section (REQ-004).
 A var set that exhausts the natural key candidates — the deterministic
 assignment falls to its positional `<char><digit>' stage — renders
 those vars grouped under a `…  (N more vars)' subgroup instead of
@@ -1273,11 +1273,11 @@ groups."
                                       assignments))))
       (if (null overflow)
           (apply #'vector
-                 (format "Variables — %s"
+                 (format "How — %s vars"
                          (or (gascity-formula-name formula) "formula"))
                  main)
         (apply #'vector
-               (format "Variables — %s"
+               (format "How — %s vars"
                        (or (gascity-formula-name formula) "formula"))
                :class 'transient-subgroups
                (list (apply #'vector main)

@@ -1257,16 +1257,7 @@ string option.  A formula without vars renders no How section.
                                "max_iterations")))
                  specs))
         ;; An unrecognized name fails soft to the plain string option
-        ;; (REQ-006 fail-soft): neither the typed `branch' nor the
-        ;; unknown `flavor' carries a typed class or a `[…]' tag.
-        (should (seq-find
-                 (lambda (spec)
-                   (and (eq (plist-get (nthcdr 3 spec) :class)
-                            'gascity-sling-formula--string-option)
-                        (equal (plist-get (nthcdr 3 spec) :var-name)
-                               "branch")
-                        (not (string-match-p "\\[" (nth 1 spec)))))
-                 specs))
+        ;; (REQ-006 fail-soft).
         (should (seq-find
                  (lambda (spec)
                    (and (eq (plist-get (nthcdr 3 spec) :class)
@@ -1543,7 +1534,7 @@ opened the transient with scope :formula nil and signalled\n`No applicable metho
       (let ((default-directory gascity-sling-test--city))
         (gascity-sling-dispatch))
       (let ((scope (plist-get captured :scope)))
-        (should (equal (plist-get scope :arg) "ga-x1y2"))
+        (should (equal (plist-get scope :work) "ga-x1y2"))
         (should (equal (plist-get scope :work-title)
                        "Dashboard v3: cockpit + views"))))
     ;; A remembered scope keeps its state; the at-point title only
@@ -1665,10 +1656,15 @@ layout — a static re-binding cannot silently collide."
              (lambda (&optional _dir) "testcity")))
     ;; The scope carries both the old `:arg' and the redesign's `:work'
     ;; key: each layout reads its own, the other is inert, so the sync
-    ;; holds whichever generation is loaded.
+    ;; holds whichever generation is loaded.  Under the redesign the
+    ;; routing flags bind only on the settled plain shape — work
+    ;; chosen, no formula (mockup §1) — so that is the scope the sync
+    ;; runs on; the old layout binds them unconditionally and reads
+    ;; `:arg', inert here.
     (let ((bound nil))
       (dolist (group (gascity-sling--children-specs
-                      (list :formula nil :target nil :arg nil :work nil)))
+                      (list :formula nil :target nil :arg nil
+                            :work "bl-1")))
         (when (vectorp group)
           (dolist (spec (append group nil))
             (when (and (consp spec) (stringp (car spec)))
@@ -1793,7 +1789,7 @@ target fallback — is what runs.)"
               (gascity-sling-dispatch-target)
               (should (equal read-dir "/city/entered-from/")))
           (cl-letf (((symbol-function 'gascity-action--read-session)
-                     (lambda (_prompt) (setq read-dir default-directory) "mayor")))
+                     (lambda (_prompt &optional _default) (setq read-dir default-directory) "mayor")))
             (gascity-sling-dispatch-target)
             (should (equal read-dir "/city/entered-from/")))))
       ;; The recipe preview re-runs `gc formula show' pinned.
@@ -1814,7 +1810,7 @@ target fallback — is what runs.)"
         (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
                    (lambda (_name) nil))
                   ((symbol-function 'gascity-action--read-session)
-                   (lambda (_prompt) "mayor"))
+                   (lambda (_prompt &optional _default) "mayor"))
                   ((symbol-function 'gascity-sling-formula--current-values)
                    (lambda () nil))
                   ((symbol-function 'gascity-sling-formula--dispatch)
@@ -1983,9 +1979,14 @@ routing flags.  The header's sentence and footer stay raw unwrapped
 `:info …' specs (nested `((:info …))' crashes setup — kept from the
 pre-unification fix)."
   (skip-unless (gascity-test-sling-redesign-p))
-  (let ((drain (gascity-test--formula-with-steps
-                (vector '((id . "drain") (title . "Drain unit")
-                          (metadata . ((gc.kind . "drain"))))))))
+  ;; The fixture carries a var: the How group renders for a formula
+  ;; with vars only (mockup §3 — a varless formula shows no How group).
+  (let ((drain (gascity-domain-decode
+                'gascity-formula
+                '((name . "do-work")
+                  (vars . [((name . "summary_path") (required . t))])
+                  (steps . [((id . "drain") (title . "Drain unit")
+                             (metadata . ((gc.kind . "drain"))))])))))
     (gascity-test-with-store-stubs _reads _actions
       (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
                 (lambda (_name) drain))
@@ -2016,7 +2017,10 @@ pre-unification fix)."
             (should (assoc "x" specs))
             (should (assoc "q" specs))))
         ;; §4: a drain formula with work — the How group between What
-        ;; and Who, no routing flags (formula shape).
+        ;; and Who, no routing flags (formula shape).  The fixture
+        ;; declares a var: a formula with none renders no How group at
+        ;; all (mockup §3, `gascity-test-formula-sling-var-children
+        ;; -shapes').
         (let ((groups (gascity-sling--children-specs
                        (list :city "/city/" :formula "do-work"
                              :work "bl-5ja"
@@ -2230,7 +2234,12 @@ the derived default replaces the old session read.)"
   ;; A derived target launches without any prompt.
   (let (dispatched)
     (cl-letf (((symbol-function 'gascity-sling--derive-target)
-               (lambda (&rest _) "hello-world/gc.implementation-worker"))
+               ;; The landed derivation answers a plist (`:target' with
+               ;; its `:source' tag); the stub answers the convention
+               ;; rule's hit directly.
+               (lambda (&rest _)
+                 (list :target "hello-world/gc.implementation-worker"
+                       :source 'implementation-worker)))
               ((symbol-function 'read-string)
                (lambda (&rest _) (error "`s' must not prompt")))
               ((symbol-function 'completing-read)

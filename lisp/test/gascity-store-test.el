@@ -1242,7 +1242,14 @@ City start/stop keep their streaming `async-shell-command' buffer.")
                                               :target "r/a" :work "task text")))
                             ((symbol-function 'gascity-view-get-buffer-create)
                              (lambda (&rest _)
-                               (get-buffer-create " *gc-sling-preview*"))))
+                               (get-buffer-create " *gc-sling-preview*")))
+                            ;; The re-setup renders the live menu, whose
+                            ;; footer peeks the roster (TTL-gated reads
+                            ;; covered by the footer tests) and leaves a
+                            ;; transient active — the verb's own gc call
+                            ;; is the dry run; the render is parked.
+                            ((symbol-function 'transient-setup)
+                             (lambda (&rest _))))
                     (call-interactively #'gascity-sling-dispatch-preview)))))))))
 
 (ert-deftest gascity-test-store-non-blocking-guard ()

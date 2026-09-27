@@ -77,6 +77,9 @@
 (declare-function gascity-formula-recipe-cached "gascity-formula")
 (declare-function gascity-formula--needs-convoy "gascity-formula")
 (declare-function gascity-formula--blank "gascity-formula")
+(declare-function gascity-agents-roster "gascity-agents")
+(declare-function gascity-agents-roster-candidates "gascity-agents")
+(declare-function gascity-agents--roster "gascity-agents")
 (declare-function gascity-formula-invalidate "gascity-formula")
 (declare-function gascity-formula-refresh-async "gascity-formula")
 (declare-function gascity-mail-inbox-refresh "gascity-mail")
@@ -1106,18 +1109,20 @@ With a prefix argument, capture that many trailing LINES instead of the
 ;;; ============================================================
 ;;
 ;; Sling is the lone flag-heavy verb, so it gets one transient
-;; (`gascity-sling-dispatch', DESIGN-write-actions §10): sections stack
-;; vertically — header (scope info plus the live footer), Formula,
-;; Destination, Routing flags, Actions, then the picked formula's
-;; full-width Variables section.  `-f' picks a
-;; formula in place (the same prefix re-setups with the new scope); `-T'
-;; sets a visible target session; `A' edits the sling arg (bead id or
-;; task text) in place; `s'/`p' sling or preview.  With a
-;; formula picked the formula path runs (validated vars, shape via
-;; `gascity-formula--needs-convoy', routing flags ignored — they are
-;; consumed only by the plain path); without one the plain flag path
-;; runs as before.  The generated variable keys avoid the single-letter
-;; static bindings collected in `gascity-sling--reserved-keys'.
+;; (`gascity-sling-dispatch', DESIGN-write-actions §10): the staged
+;; mockup layout — header (scope sentence plus the live footer), What
+;; (`A' the work picker, `f' pick), the picked formula's full-width
+;; How vars group, Who (`T'), the Routing flags (settled plain shape
+;; only), then Actions (`s P r g x q').  `f' picks a
+;; formula in place (the same prefix re-setups with the new scope); `T'
+;; sets a visible target agent (roster completion, §6c); `A' picks the
+;; work (bead/convoy or text) in place; `s'/`P' sling or open the
+;; full preview.  With a formula picked the formula path runs
+;; (validated vars, shape via `gascity-formula--needs-convoy', routing
+;; flags ignored — they are consumed only by the plain path); without
+;; one the plain flag path runs as before.  The generated variable
+;; keys avoid the single-letter static bindings collected in
+;; `gascity-sling--reserved-keys' (mockup §10).
 
 (defun gascity-sling--parse-transient-args (args)
   "Parse flat transient ARGS into a `gascity-command-sling' initarg plist.
@@ -1319,6 +1324,7 @@ this function never consults it."
       (when-let* ((target (gascity-sling--implementation-worker-target roster)))
         (list :target target :source 'implementation-worker))))
 
+
 (defun gascity-sling--roster (&optional city)
   "Return CITY's agent roster for the Who derivation, or nil when cold.
 One plist per configured agent of the `gc agent list' payload — `:name'
@@ -1327,11 +1333,13 @@ agent.  Those names are the sling targets (a singleton agent or a
 pool template, `mayor', `gascity.el/gc.implementation-worker'), so
 they are the convention rule's roster; live sessions carry instance
 suffixes (`…/gc.implementation-worker-18') and name no config, so the
-session join is deliberately not read here.  Read from the store's
-cache only (`gascity-store-get': never a spawn, never a block — the
-header renders through this, D9); a cold or failed read is an empty
-roster and the roster rule skips fail-soft.  CITY defaults to the
-live scope's city."
+session join is deliberately not read here — unlike the Who picker
+and the footer, whose joined list (`gascity-agents--roster', review
+R3/S1) classifies live targets too.  Read from the store's cache only
+\(`gascity-store-get': never a spawn, never a block — the header
+renders through this, D9); a cold or failed read is an empty roster
+and the roster rule skips fail-soft.  CITY defaults to the live
+scope's city."
   (let* ((dir (or city (gascity-sling--city-dir)))
          (data (plist-get (gascity-store-get '("agent" "list") dir) :data)))
     (delq nil
@@ -1348,13 +1356,13 @@ Gathers the derivation's inputs from session state — the roster from
 the cached `gc agent list' payload (`gascity-sling--roster'), the
 memory from `gascity-sling--target-memory' — and runs
 `gascity-sling--derive-target' over them.  See that function for the
-answer's shape and the rule order."
+answer's shape and the rule order.  Pure over cached data, never a
+gc read (D9): the header and footer render through this."
   (let ((scope (or scope (ignore-errors (transient-scope)))))
     (when scope
       (gascity-sling--derive-target
        scope (gascity-sling--roster (gascity-sling--city-dir scope))
        gascity-sling--target-memory))))
-
 (defun gascity-sling--resetup (scope)
   "Set the sling menu up again with SCOPE and the current values; remember both."
   (let ((value (transient-args 'gascity-sling-dispatch)))
@@ -1375,12 +1383,15 @@ With a formula picked in the scope, the formula path runs: the
 collected var values are validated client-side and the sling shape
 `gascity-formula--needs-convoy' detects is chosen; the routing flags
 are ignored there — they are consumed only by the plain path (F-5).
-Otherwise the plain path runs unchanged: prompt bead/text (seeded from
-the bead at point) then target, parse the flags and act or preview.
-A target set through `-T' wins; with none set, the Who default
+Otherwise the plain path runs on the redesign's What → Who order: the
+work — what the scope holds, else the smart picker (the `A'
+completion, mockup §6a, with the freeform fallthrough) — then the
+target, parse the flags and act or preview.  A target set through
+`T' wins; with none set, the Who default
 is derived (WI-3: the rig default, the (city, formula) launch
 memory, then the implementation-worker convention), and only when
-nothing derives does the read run (`gascity-action--read-session').
+nothing derives does the agent completion run (mockup §6c, over the
+roster's cached peek).
 With PREVIEW non-nil, force `--dry-run' and show gc's
 routing plan instead of executing.  A real launch — plain or
 formula — records its target as the (city, formula) pair's launch
@@ -1389,22 +1400,29 @@ records under FORMULA nil); a preview records nothing."
   (let ((default-directory (gascity-sling--city-dir)))
     (let* ((scope (transient-scope))
            (formula (plist-get scope :formula))
-           ;; The plain path's arg: what the scope holds (seeded at
-           ;; point, edited with `A', or read by a preview), else read.
+           ;; The plain path's work: what the scope holds (seeded at
+           ;; point, picked with `A'), else the smart picker (mockup
+           ;; §6a) — the What answer before the Who one.  `:arg' is
+           ;; the legacy name; `gascity-sling--work' reads both.
            (arg (if formula
-                    (plist-get scope :arg)
-                  (or (plist-get scope :arg)
-                      (read-string "Bead id or task text: " (gascity-bead-at-point)))))
+                    (gascity-sling--work scope)
+                  (or (gascity-sling--work scope)
+                      (gascity-sling--read-work))))
            ;; The work just read belongs to the scope the derivation
-           ;; sees: a bead id typed here can still rig-default its
+           ;; sees: a bead id picked here can still rig-default its
            ;; target (rule 1 keys off the work bead).
-           (scope (plist-put (copy-sequence scope) :arg arg))
+           (scope (plist-put (copy-sequence scope) :work arg))
            (target (or (plist-get scope :target)
                        ;; The derived Who default (WI-3): a derivable
                        ;; target is used without prompting (REQ-005);
-                       ;; only when nothing derives does the read run.
+                       ;; only when nothing derives does the agent
+                       ;; completion run (mockup §6c, the roster's
+                       ;; cached peek — no spawn on the dispatch path).
                        (plist-get (gascity-sling--derived-target scope) :target)
-                       (gascity-action--read-session "Sling to target: "))))
+                       (gascity-sling--read-agent
+                        "Target agent: " nil
+                        (gascity-sling--roster-cached
+                         (gascity-sling--city-dir scope))))))
       (if formula
           (progn
             (gascity-sling-formula--dispatch
@@ -1432,8 +1450,105 @@ records under FORMULA nil); a preview records nothing."
          (gascity-sling--city-dir scope) formula target))
       ;; What was read goes into the scope: a preview keeps the menu
       ;; open showing it, and the `s' that follows slings exactly it.
-      ;; SCOPE is already the arg-updated copy; the target lands on it.
+      ;; SCOPE is already the work-updated copy; the target lands on it.
       (plist-put scope :target target))))
+
+;;; The work picker's read (mockup §6a) — WI-4
+;;
+;; `A' (and a cold `s') complete over the city's work: the open,
+;; in-progress and blocked beads of every store — the dashboard's own
+;; per-store read, no new gc call site — plus the city's convoys,
+;; each row annotated `title · status · store'.
+
+(defconst gascity-sling--work-choices-key
+  '("bd" "list" :sling-work-choices)
+  "Store key of the work picker's composite read (kind `bd').")
+
+(defun gascity-sling--read-work-choices (resolve reject)
+  "Load the work picker's candidates; RESOLVE gets the combined payload.
+The beads are every store's `bd list --status in_progress,open,blocked'
+\(`gascity-dashboard--read-work', each row stamped with its
+\`(gascity-rig . NAME)' store); the convoys are the city store's
+`gc convoy list'.  REJECT only when every read failed — a partial
+answer is still completion candidates."
+  (let* ((dir (gascity-sling--city-dir))
+         beads convoys errors
+         (pending 2)
+         (settle (lambda ()
+                   (when (zerop (setq pending (1- pending)))
+                     (if (and (null beads) (null convoys)
+                              (= (length errors) 2))
+                         (funcall reject (car errors))
+                       (funcall resolve
+                                (list :beads beads :convoys convoys
+                                      :errors errors)))))))
+    (let ((default-directory dir))
+      (gascity-dashboard--read-work
+       (lambda (payload)
+         (setq beads (plist-get payload :beads))
+         (setq errors (append errors (plist-get payload :errors)))
+         (funcall settle))
+       (lambda (err)
+         (setq errors (append errors (list err)))
+         (funcall settle)))
+      (gascity-store-fetch
+       '("convoy" "list")
+       (lambda (payload)
+         (setq convoys (append (alist-get 'convoys payload) nil))
+         (funcall settle))
+       (lambda (err)
+         (setq errors (append errors (list err)))
+         (funcall settle))))))
+
+(defun gascity-sling--work-choices (payload)
+  "Return the work picker's completion candidates from PAYLOAD.
+The mockup §6a rows: (ID . \"title · status · store\") — the open
+beads of every store first, then the convoys (`convoy' in the
+status's place: `gc convoy list' reports none).  A row without an id
+is skipped, never guessed at.  Pure."
+  (let ((store (lambda (row)
+                 (or (cdr (assq 'gascity-rig row)) "city"))))
+    (delq nil
+          (append
+           (mapcar
+            (lambda (b)
+              (and (alist-get 'id b)
+                   (cons (alist-get 'id b)
+                         (format "%s · %s · %s"
+                                 (or (alist-get 'title b) (alist-get 'id b))
+                                 (or (alist-get 'status b) "?")
+                                 (funcall store b)))))
+            (plist-get payload :beads))
+           (mapcar
+            (lambda (c)
+              (and (alist-get 'id c)
+                   (cons (alist-get 'id c)
+                         (format "%s · convoy · %s"
+                                 (or (alist-get 'title c) (alist-get 'id c))
+                                 (funcall store c)))))
+            (plist-get payload :convoys))))))
+
+(defun gascity-sling--work-choices-wait ()
+  "Return the work picker's candidates, reading through the store first.
+Input collection (D9): the entry prefetch usually answered; when the
+store is cold, wait for the composite read — deadline-bounded,
+`C-g' quits — rather than read gc synchronously.  Nothing answered
+is nil: the picker falls through to freeform text (never a dead
+end)."
+  (let ((done nil) (payload nil)
+        (deadline (+ (float-time)
+                     (if (numberp gascity-remote-async-timeout)
+                         (1+ gascity-remote-async-timeout)
+                       31))))
+    (gascity-store-fetch
+     gascity-sling--work-choices-key
+     (lambda (p) (setq payload p done t))
+     (lambda (_err) (setq done t))
+     :loader #'gascity-sling--read-work-choices)
+    (with-local-quit
+      (while (and (not done) (< (float-time) deadline))
+        (accept-process-output nil 0.05)))
+    (and payload (gascity-sling--work-choices payload))))
 
 ;;; The launch follow offer (plans/sling-command WI-8, REQ-009)
 ;;
@@ -1691,7 +1806,7 @@ sling redesign's own sentence renderer (WI-1) owns the final
 wording; this stays close to it so the buffer reads as the menu's
 fuller twin.  Missing pieces read as their mockup §2 hints."
   (let ((formula (plist-get scope :formula))
-        (work (plist-get scope :arg))
+        (work (gascity-sling--work scope))
         (target (plist-get scope :target)))
     (cond
      ((and formula recipe (gascity-formula--needs-convoy recipe))
@@ -1720,7 +1835,7 @@ before any gc call.  Pure, cached data only, and never a gate
 (REQ-008): `s' stays available whatever this says.  Further checks
 join through `gascity-sling-preview-validation-functions'."
   (let ((formula (plist-get scope :formula))
-        (work (plist-get scope :arg))
+        (work (gascity-sling--work scope))
         (target (plist-get scope :target))
         (lines nil))
     (setq lines
@@ -1889,7 +2004,7 @@ S-2), so a later `S s' slings exactly what was previewed."
          (recipe (and formula (gascity-formula-recipe-cached formula)))
          (values (and formula (gascity-sling-formula--current-values)))
          (target (plist-get scope :target))
-         (arg (plist-get scope :arg))
+         (arg (gascity-sling--work scope))
          (buf (gascity-view-get-buffer-create
                gascity-sling-preview-buffer-name)))
     (with-current-buffer buf
@@ -1904,7 +2019,10 @@ S-2), so a later `S s' slings exactly what was previewed."
                                 (gascity-sling-formula--dispatch
                                  recipe
                                  (or target
-                                     (gascity-action--read-session "Sling to target: "))
+                                     (gascity-sling--read-agent
+                                      "Target agent: " nil
+                                      (gascity-sling--roster-cached
+                                       (gascity-sling--city-dir scope))))
                                  arg values))
                             ;; The plain path, exactly `gascity-sling--run':
                             ;; the city pin travels with the launch (the
@@ -1914,13 +2032,15 @@ S-2), so a later `S s' slings exactly what was previewed."
                               (let* ((default-directory
                                       (gascity-sling--city-dir scope))
                                      (arg (or arg
-                                              (read-string "Bead id or task text: "
-                                                           (gascity-bead-at-point))))
+                                              (gascity-sling--read-work)))
                                      (command
                                       (apply #'gascity-command-sling
                                              :target
                                              (or target
-                                                 (gascity-action--read-session "Sling to target: "))
+                                                 (gascity-sling--read-agent
+                                                  "Target agent: " nil
+                                                  (gascity-sling--roster-cached
+                                                   (gascity-sling--city-dir scope))))
                                              :arg arg
                                              (gascity-sling--parse-transient-args args))))
                                 (oset command json t)
@@ -1996,12 +2116,14 @@ menu's `s' (a real launch forgets, bug S-2)."
                                   :formula nil :target nil :arg nil))))
 
 (defconst gascity-sling--reserved-keys
-  '("f" "g" "T" "A" "c" "a" "n" "m" "t" "s" "p" "P" "r" "x" "q")
-  "Every single letter statically bound in `gascity-sling-dispatch':
-the Formula group (`-f' pick, `g' refresh), the Destination `-T' and
-`A' (arg edit), the routing flags `-c -a -n -m -t' and the Actions
-\(`s', `p', `P' the full preview, `r', `x', `q').
-The generated variable infix keys avoid exactly this list; it lives
+  '("A" "f" "T" "c" "a" "n" "m" "t" "s" "P" "r" "g" "x" "q")
+  "Every single letter statically bound in `gascity-sling-dispatch'
+— exactly the mockup §10 key summary: the What stage (`A' work
+picker, `f' formula pick), the Who stage (`T' target), the routing
+flags `-c -a -n -m -t' (rendered on the settled plain shape only)
+and the Actions (`s', `P' the full preview, `r', `g', `x', `q').  The
+old `p' dry-run suffix is freed — `P' previews everything.  The
+generated variable infix keys avoid exactly this list; it lives
 beside the layout it keys so a re-binding cannot silently collide
 \(OQ-2), and a test asserts the two stay in sync.")
 
@@ -2139,16 +2261,22 @@ gc answers at launch.  Warnings never block `s'."
               (gascity-sling--footer--target-word target target-scope)
               (gascity-sling--footer--vars-word recipe values)))))
 
+
 (defun gascity-sling--roster-cached (&optional city)
   "Return CITY's agent roster from the store's cache, or nil when cold.
-The footer's render path (REQ-007): peeks the roster's store entries —
-`gc status', `gc session list', `gc agent list' — returning whatever
-the store holds and scheduling background refreshes when stale
-(`gascity-store-peek', §8.5): never blocking, never a synchronous gc
-(D9).  The join is WI-2's `gascity-agents--roster' over the peeks —
-the work-bead read stays out: the footer classifies targets, it does
-not link beads.  A cold store degrades to a nil roster: the
-scope-dependent checks stay silent and free entry keeps working.
+The Who surface's one list for input-gathering paths (review R3/S1):
+peeks the store's entries — `gc status', `gc session list', `gc agent
+list' — and joins them with WI-2's single builder
+`gascity-agents--roster'; the Who picker and the footer answer from
+this list, and `gascity-store-peek' schedules background refreshes
+when stale (§8.5): never blocking, never a synchronous gc (D9).  The
+render path's derivation answers from its own config-only snapshot
+(`gascity-sling--roster') — pool instances never name configs.  The
+work-bead read
+stays out: the Who surface classifies targets, it does not link
+beads.  A cold store degrades to a nil roster: the scope-dependent
+checks stay silent, free entry keeps working and the Who picker falls
+back to the blocking accessor.
 CITY defaults to the live scope's pin (`gascity-sling--city-dir')."
   (let ((dir (or city (gascity-sling--city-dir))))
     (gascity-agents--roster
@@ -2177,20 +2305,25 @@ argument and breaks setup)."
            recipe))))
 
 (defun gascity-sling--children-specs (scope)
-  "Return the raw stacked layout specs for SCOPE (REQ-C).
-The sections are sibling groups — no `transient-columns' anywhere, so
-each renders full width and stacks vertically: the header info line
-plus the live footer (`gascity-sling--footer-info', WI-6), Formula,
-Destination, Routing flags, Actions, then the picked
-formula's Variables section last (absent until a formula with vars is
-picked, REQ-A/REQ-B).  The generated infix keys avoid
-`gascity-sling--reserved-keys' (REQ-D).  The recipe read and the
-header's city name run pinned to the scope's `:city'
+  "Return the raw stacked layout specs for SCOPE (REQ-A, mockup §1–§4).
+The staged mockup layout: sibling groups — no `transient-columns'
+anywhere, so each renders full width and stacks vertically — the
+header group (city title, the one-sentence shape header and the live
+footer, WI-6), What (`A' the work picker, `f' the formula picker),
+the picked formula's full-width `How — <formula> vars' group (absent
+until a formula with vars is picked, REQ-A/REQ-B), Who (`T' the
+target), the Routing flags — rendered only on the settled plain
+shape, work chosen and no formula, the only path that consumes them
+\(F-5) — and Actions (`s P r g x q', mockup §10).  The generated
+infix keys avoid `gascity-sling--reserved-keys' (REQ-D).  The recipe
+read and the header's city name run pinned to the scope's `:city'
 \(`gascity-sling--city-dir'): transient can run setup with the menu
 buffer current, whose directory must not key the recipe cache nor name
 the header (ga-4ia4)."
   (let* ((default-directory (gascity-sling--city-dir scope))
-         (recipe (and (plist-get scope :formula)
+         (formula (plist-get scope :formula))
+         (work (gascity-sling--work scope))
+         (recipe (and formula
                       (gascity-formula-recipe-cached
                        (plist-get scope :formula)))))
     (append
@@ -2198,28 +2331,41 @@ the header (ga-4ia4)."
       (vector (format "Sling — %s" (gascity-context-city-name))
               (gascity-sling--scope-info scope recipe)
               (gascity-sling--footer-info scope recipe))
-      (vector "Formula"
-              '("-f" "Pick formula…" gascity-sling-dispatch-pick)
-              '("g" "Refresh catalog" gascity-sling-dispatch-refresh))
-      (vector "Destination"
-              '("-T" "Target session…" gascity-sling-dispatch-target)
-              '("A" "Edit arg (bead/text)…" gascity-sling-dispatch-arg))
-      (vector "Routing flags"
-              '("-c" "Skip auto-convoy" "--no-convoy")
-              '("-a" "Reassign (clear human assignee)" "--reassign")
-              '("-n" "Nudge target after routing" "--nudge")
-              '("-m" "Merge strategy" "--merge=" :choices ("direct" "mr" "local"))
-              '("-t" "Wisp root title" "--title="))
-      (vector "Actions"
-              '("s" "Sling…" gascity-sling-dispatch-run)
-              '("p" "Preview (dry-run)…" gascity-sling-dispatch-preview)
-              '("P" "Full preview…" gascity-sling-dispatch-full-preview)
-              '("r" "Preview recipe…" gascity-sling-dispatch-recipe)
-              '("x" "Reset (clear formula, target, vars)" gascity-sling-dispatch-reset)
-              '("q" "Quit" transient-quit-one)))
+      ;; The What stage (mockup §2): the work picker on `A' and the
+      ;; formula picker on `f'.
+      (vector "What"
+              '("A" "Work (bead/convoy or text; C-u freeform)…"
+                gascity-sling-dispatch-work)
+              '("f" "Formula…" gascity-sling-dispatch-pick)))
+     ;; The picked formula's full-width How group (mockup §4), between
+     ;; What and Who; absent until a formula with vars is picked
+     ;; (REQ-A/REQ-B).
      (when-let* ((group (gascity-sling-formula--var-children
                          recipe gascity-sling--reserved-keys scope)))
-       (list group)))))
+       (list group))
+     (list
+      ;; The Who stage (mockup §1): one target line.
+      (vector "Who"
+              '("T" "Target agent…" gascity-sling-dispatch-target)))
+     ;; Routing flags render only on the settled plain shape — work
+     ;; chosen, no formula — the only path that consumes them (F-5,
+     ;; mockup §1 vs §2).
+     (when (and (gascity-formula--nonblank work) (not formula))
+       (list
+        (vector "Routing flags"
+                '("-c" "Skip auto-convoy" "--no-convoy")
+                '("-a" "Reassign (clear human assignee)" "--reassign")
+                '("-n" "Nudge target after routing" "--nudge")
+                '("-m" "Merge strategy" "--merge=" :choices ("direct" "mr" "local"))
+                '("-t" "Wisp root title" "--title="))))
+     (list
+      (vector "Actions"
+              '("s" "Sling…" gascity-sling-dispatch-run)
+              '("P" "Full preview…" gascity-sling-dispatch-full-preview)
+              '("r" "Preview recipe…" gascity-sling-dispatch-recipe)
+              '("g" "Refresh catalog" gascity-sling-dispatch-refresh)
+              '("x" "Reset (clear work, formula, target)" gascity-sling-dispatch-reset)
+              '("q" "Quit" transient-quit-one))))))
 
 (defun gascity-sling--setup-children (_children)
   "Parse `gascity-sling--children-specs' for the live scope."
@@ -2277,38 +2423,88 @@ meanwhile."
               (error nil)))
           (message "Formulas refreshed")))))))
 
-(transient-define-suffix gascity-sling-dispatch-arg ()
-  "Read the bead id / task text; show it in the header.
-The sling arg is seeded once at entry from the bead or convoy at
-point and is often nil (empty area under point) — this suffix sets it
-in place, so a formula dispatch can use the edited arg without
-quitting and re-invoking on the right row.  The set arg lives in the
-scope, so it also survives a formula re-pick; set var values carry
-across the re-setup like re-pick/refresh.  The plain path keeps its
-own read-string fallback — this is purely scope editing, not
-dispatch."
+(transient-define-suffix gascity-sling-dispatch-work (&optional freeform)
+  "Read the work — the smart picker (mockup §6a) — and show it in the
+header.  A completing-read over the city's open/in-progress/blocked
+beads and its convoys, each row annotated `title · status · store'
+\(`gascity-sling--work-choices-wait'); an empty RET falls through to
+the freeform `Bead id or task text' prompt, and `C-u' goes straight
+to freeform.  The answer lives in the scope's `:work' — the slot the
+derivation, the header sentence and the dispatch read (`:arg' is the
+legacy name, still read) — so it survives a formula re-pick; set var
+values carry across the re-setup like re-pick/refresh.  The plain
+path keeps its own picker fallback — this is purely scope editing,
+not dispatch."
   :transient t
-  (interactive)
-  (let ((arg (read-string "Bead id or task text: "
-                          (plist-get (transient-scope) :arg))))
-    (gascity-sling--resetup
-     (plist-put (copy-sequence (transient-scope)) :arg arg))))
+  (interactive "P")
+  (let ((default-directory (gascity-sling--city-dir)))
+    (let* ((picked (and (not freeform)
+                        (condition-case nil
+                            (completing-read
+                             "Work (bead or convoy; RET-empty or C-u for freeform text): "
+                             (gascity-sling--work-choices-wait)
+                             nil nil (gascity-sling--work (transient-scope)))
+                          (error nil))))
+           (work (if (and picked (not (string-empty-p picked)))
+                     picked
+                   (read-string "Bead id or task text: "
+                                (plist-get (transient-scope) :work)))))
+      (gascity-sling--resetup
+       (plist-put (copy-sequence (transient-scope)) :work work)))))
+
+(defun gascity-sling--read-work (&optional initial)
+  "Read the What answer at dispatch (mockup §6a): the work picker.
+A completing-read over the city's open beads and convoys — the same
+smart picker `A' edits the scope with; an empty pick falls through to
+the freeform `Bead id or task text' prompt, seeded from the bead at
+point or INITIAL.  A cold choices read degrades to the freeform
+prompt (never a dead end); the dispatch is input collection (D9)."
+  (let* ((choices (condition-case nil
+                     (gascity-sling--work-choices-wait)
+                   (error nil)))
+         (picked (completing-read
+                  "Work (bead or convoy; RET-empty or C-u for freeform text): "
+                  choices nil nil initial)))
+    (if (and picked (not (string-empty-p picked)))
+        picked
+      (read-string "Bead id or task text: " (gascity-bead-at-point)))))
 
 (transient-define-suffix gascity-sling-dispatch-target ()
-  "Read the sling target with session completion; the header shows it.
-The read is synchronous but strictly user-initiated — it runs only on
-this binding press (OQ-1, F-4), never during setup or redisplay.  The
-set target wins at dispatch; an unset one is used from the derivation
-or read once there (WI-3).  The derived Who default seeds the read —
-RET keeps it — so a derivable target costs no typing."
+  "Read the sling target — completion over the agent roster (§6c).
+Agents, not sessions: city agents first then per rig, each candidate
+annotated with its scope and live state (`gascity-agents-roster-
+candidates', WI-2's accessor — the same joined roster the footer and
+the derivation answer from).  The derived Who default seeds the read —
+RET keeps it — so a derivable target costs no typing; free entry
+still works (a cold roster is never a dead end, REQ-005).  The set
+target wins at dispatch.  The read is synchronous but strictly
+user-initiated — it runs only on this binding press (OQ-1, F-4)."
   :transient t
   (interactive)
   (let ((default-directory (gascity-sling--city-dir)))
-    (let ((target (gascity-action--read-session
-                   "Sling to target: "
-                   (plist-get (gascity-sling--derived-target) :target))))
+    (let* ((roster (or (gascity-sling--roster-cached)
+                       (gascity-agents-roster 'cached)))
+           (target (gascity-sling--read-agent
+                    "Target agent: "
+                    (plist-get (gascity-sling--derived-target) :target)
+                    roster)))
       (gascity-sling--resetup
        (plist-put (copy-sequence (transient-scope)) :target target)))))
+
+(defun gascity-sling--read-agent (prompt &optional initial roster)
+  "Read the Who answer with PROMPT over the agent roster (mockup §6c).
+The candidates annotate scope and live state
+\(`gascity-agents-roster-candidates'); INITIAL — the derived Who
+default, when one derives — seeds the read and RET keeps it; free
+entry (require-match nil) uses a typed name verbatim, and a cold
+roster (ROSTER nil) completes over nothing, never a dead end.
+When ROSTER is nil the blocking accessor answers (input collection,
+D9)."
+  (completing-read
+   prompt
+   (gascity-agents-roster-candidates
+    (or roster (gascity-agents-roster 'cached)))
+   nil nil initial))
 
 (transient-define-suffix gascity-sling-dispatch-recipe ()
   "Preview the picked formula's recipe with the current var values.
@@ -2351,28 +2547,32 @@ catalog/recipe read and dispatch on the entered-from city
                               (gascity-sling-formula--work-title-at-point)))
          (saved (cdr (assoc default-directory gascity-sling--remembered)))
          ;; The city's last menu state (after a preview, say) comes
-         ;; back; a bead or convoy at point still names the arg — and
+         ;; back; a bead or convoy at point still names the work — and
          ;; its title seeds the artifact_root convention default
          ;; (REQ-006, `gascity-sling-formula--var-seed').
          (scope (if saved
                     (let ((scope (copy-sequence (car saved))))
                       (when at-point
-                        (setq scope (plist-put scope :arg at-point)))
+                        (setq scope (plist-put scope :work at-point)))
                       (when at-point-title
                         (setq scope (plist-put scope :work-title at-point-title)))
                       scope)
                   (list :city default-directory
-                        :formula nil :target nil :arg at-point
+                        :formula nil :target nil :work at-point
                         :work-title at-point-title))))
     ;; Warm the formula caches (catalog + `gc formula list') through the
     ;; store so `-f' answers from memory (bug S-1, D9), and `gc agent
     ;; list' the same way — the derived Who default's convention rule
     ;; (WI-3) reads it from the store's cache, so a cold session
     ;; requests the entry once, here (async, TTL-gated; a warm entry
-    ;; is free).
+    ;; is free).  The work picker's composite read (the `A'
+    ;; candidates, WI-4) warms the same way.
     (let ((default-directory (plist-get scope :city)))
       (ignore-errors (gascity-formula-refresh-async nil #'ignore 'cached))
-      (ignore-errors (gascity-store-request '("agent" "list"))))
+      (ignore-errors (gascity-store-request '("agent" "list")))
+      (ignore-errors (gascity-store-request
+                      gascity-sling--work-choices-key
+                      :loader #'gascity-sling--read-work-choices)))
     (transient-setup 'gascity-sling-dispatch nil nil
                      :scope scope :value (cdr saved))))
 
