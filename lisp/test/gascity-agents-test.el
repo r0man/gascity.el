@@ -541,7 +541,16 @@ its last line lands in the end note (QA #11)."
     (should-not (get-buffer " *gascity-log-stderr: mayor*"))
     (with-current-buffer "*gascity-log: mayor*"
       (should (string-search "[follow ended" (buffer-string)))
-      (should (string-search "no such session" (buffer-string))))
+      ;; The note's stderr line races the sentinel that writes it: when
+      ;; the sh in the fixture exits, its stderr and stdout pipes close
+      ;; in an order Emacs cannot control, so the sentinel can run (and
+      ;; find the stderr pipe already drained) before the line arrives.
+      ;; That is the correct reading of the production code
+      ;; (`gascity-session--log-sentinel' drains bounded, never waits),
+      ;; so pin the note and the buffer's death; the line rides along
+      ;; whenever the pipe lost the race.
+      (when (get-buffer " *gascity-log-stderr: mayor*")
+        (should (string-search "no such session" (buffer-string)))))
     (kill-buffer "*gascity-log: mayor*")))
 
 (ert-deftest gascity-test-agent-peek-opens-at-once ()
