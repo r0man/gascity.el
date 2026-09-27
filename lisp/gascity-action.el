@@ -1305,10 +1305,10 @@ Duplicate entries of the same agent are one."
 
 (defun gascity-sling--derive-target (scope roster memory)
   "Return the derived Who target for SCOPE, ROSTER and MEMORY, or nil.
-The design's order (REQ-005): (1) the work bead's rig
+The design's order (REQ-005): \(1) the work bead's rig
 `default_sling_target'/`default_sling_targets', fail-soft when the
-rig data carries none; (2) the per-(city, formula) target memory;
-(3) the implementation-worker convention — ROSTER's exactly one
+rig data carries none; \(2) the per-(city, formula) target memory;
+\(3) the implementation-worker convention — ROSTER's exactly one
 rig-scoped `gc.implementation-worker' when unambiguous.  Pure over
 its inputs: SCOPE is the menu's scope plist, ROSTER a list of agent
 plists (`:name' `:rig'), MEMORY the `gascity-sling--target-memory'
@@ -1567,9 +1567,10 @@ end)."
 (defconst gascity-sling--run-roots-argv
   '("bd" "list" "--all" "-n" "0" "--brief"
     "--metadata-field" "gc.kind=workflow")
-  "The per-store read behind `gascity-sling--run-roots-key': every run
-root bead of a store — the Runs view's own roots argv (all statuses,
-no row limit, no free text).")
+  "List every run root bead of a store, unfiltered and unbounded.
+This is the per-store argv behind `gascity-sling--run-roots-key',
+the Runs view's own roots argv: all statuses, no row limit, and no
+free text.")
 
 (defun gascity-sling--read-run-roots (resolve reject)
   "Read the run roots of the city store and each rig store.
@@ -1641,12 +1642,13 @@ at.  Nil when nothing was created since SINCE."
 
 (defun gascity-sling--follow-offer (root formula work &optional rig)
   "Echo the launch of the workflow ROOT and offer to follow it (`F').
-`Launched workflow <id> (<formula> on <work>) — F: run view' in the
-echo area, then a momentary keymap: the next `F' jumps to
-`gascity-run-show' on ROOT — RIG, when non-nil, the owning rig
-store, so `b'/RET open its beads in the right one — and any other
-key dismisses the map and runs its own binding: the user stays put
-(REQ-009).  No map is installed over an active minibuffer, whose
+FORMULA and WORK name what was slung; RIG, when non-nil, is the
+owning rig store.  Echoes `Launched workflow <id> (<formula> on
+<work>) — F: run view' in the echo area, then a momentary keymap:
+the next `F' jumps to `gascity-run-show' on ROOT — RIG is its store,
+so `b'/RET open its beads in the right one — and any other key
+dismisses the map and runs its own binding: the user stays put
+\(REQ-009).  No map is installed over an active minibuffer, whose
 input it would hijack."
   (message "Launched workflow %s (%s on %s) — F: run view" root formula work)
   (unless (active-minibuffer-window)
@@ -1685,11 +1687,11 @@ COMMAND is the sling being acted on, FORMULA its name, ARG the
 bead/convoy it was slung on.  When gc answers, the workflow root the
 launch created — named by the payload (`gascity-sling--launched-root')
 — is echoed with the momentary `F' follow offer
-(`gascity-sling--follow-offer'); a payload without it resolves the
+\(`gascity-sling--follow-offer'); a payload without it resolves the
 newest run root through the store first, and a launch that resolves
 no root at all keeps the plain success echo.  The launch itself
 never blocks: this handler runs only once the action has answered
-(D9)."
+\(D9)."
   (let* ((target (gascity-action--command-target command))
          (dir default-directory)
          (started (float-time)))
@@ -1800,7 +1802,7 @@ coexist, and the launch keeps hitting the entered-from city.
   "Return the preview buffer's header sentence for the SCOPE dispatch.
 The one-sentence summary, mockup §1–§4 wording: plain (`Sling WORK to
 TARGET'), formula (`Run FORMULA (formula) on TARGET'), targeted
-(`Run FORMULA against bead WORK, drained by TARGET' — the drain
+\(`Run FORMULA against bead WORK, drained by TARGET' — the drain
 clause consults `gascity-formula--needs-convoy' on RECIPE).  The
 sling redesign's own sentence renderer (WI-1) owns the final
 wording; this stays close to it so the buffer reads as the menu's
@@ -1832,7 +1834,7 @@ dispatch needs, the work a convoy-requiring formula needs, and
 required vars and patterns — the same rules
 `gascity-sling-formula--command' enforces at dispatch, spelled out
 before any gc call.  Pure, cached data only, and never a gate
-(REQ-008): `s' stays available whatever this says.  Further checks
+\(REQ-008): `s' stays available whatever this says.  Further checks
 join through `gascity-sling-preview-validation-functions'."
   (let ((formula (plist-get scope :formula))
         (work (gascity-sling--work scope))
@@ -1896,7 +1898,7 @@ join through `gascity-sling-preview-validation-functions'."
 
 (defun gascity-sling--preview-recipe-lines (scope recipe)
   "Return the Recipe section's `steps → needs' lines for the SCOPE dispatch.
-The step/dependency data of the CACHED recipe — the same payload
+RECIPE is the CACHED one.  Its step/dependency data — the same payload
 `gascity-sling-formula--render-recipe' renders — straight from gc's
 compiled recipe, never re-substituted (REQ-012): one line per step,
 the steps it depends on behind `needs'.  Without a formula the plain
@@ -1964,11 +1966,12 @@ answers (D9: first paint never waited for it)."
 
 (defun gascity-sling--preview-paint (buf scope recipe values)
   "Paint BUF's client-side sections for the SCOPE dispatch; return BUF.
-The header sentence, Validation, the cached recipe's steps → needs
-DAG and the Routing plan heading with its `…' placeholder —
-everything gascity can compute without gc, so the first paint never
-blocks (REQ-008, D9).  The plan marker is left where the dry run's
-answer will replace from."
+RECIPE is the cached recipe and VALUES the gathered var values.  The
+header sentence, Validation, the recipe's steps → needs DAG and the
+Routing plan heading with its `…' placeholder — everything gascity
+can compute without gc, so the first paint never blocks
+\(REQ-008, D9).  The plan marker is left where the dry run's answer
+will replace from."
   (with-current-buffer buf
     (let ((inhibit-read-only t))
       (erase-buffer)
@@ -2117,9 +2120,10 @@ menu's `s' (a real launch forgets, bug S-2)."
 
 (defconst gascity-sling--reserved-keys
   '("A" "f" "T" "c" "a" "n" "m" "t" "s" "P" "r" "g" "x" "q")
-  "Every single letter statically bound in `gascity-sling-dispatch'
-— exactly the mockup §10 key summary: the What stage (`A' work
-picker, `f' formula pick), the Who stage (`T' target), the routing
+  "Every single letter statically bound in `gascity-sling-dispatch'.
+The list is exactly the mockup §10 key summary: the What stage
+\(`A' work picker, `f' formula pick), the Who stage (`T' target),
+the routing
 flags `-c -a -n -m -t' (rendered on the settled plain shape only)
 and the Actions (`s', `P' the full preview, `r', `g', `x', `q').  The
 old `p' dry-run suffix is freed — `P' previews everything.  The
@@ -2131,14 +2135,14 @@ beside the layout it keys so a re-binding cannot silently collide
   "Return the raw info spec describing SCOPE — the menu's header line.
 One sentence, the inferred shape (REQ-002): no field list, no shape
 flag — the shape is inferred from the scope's work + formula and the
-wording is the signed-off mockup §1–§4 (e.g. \='Sling bead bl-5ja to
-mayor\=', \='Run pancakes (formula) on mayor\', \='Run build-basic
-against bead bl-5ja, drained by …\').  RECIPE is the picked formula's
-cached recipe — the \='drained by\=' clause consults
+wording is the signed-off mockup §1–§4 (e.g. \"Sling bead bl-5ja to
+mayor\", \"Run pancakes (formula) on mayor\", \"Run build-basic
+against bead bl-5ja, drained by …\").  RECIPE is the picked formula's
+cached recipe — the \"drained by\" clause consults
 `gascity-formula--needs-convoy' on it; nil (or a formula-less scope)
 degrades without reading gc (D9).  A target only DERIVED — not set
 with `-T' — renders in the sentence from the Who default derivation
-(WI-3, REQ-005): what `s' would launch, no tag in the sentence.  The
+\(WI-3, REQ-005): what `s' would launch, no tag in the sentence.  The
 `(:info …)' suffix form is passed unwrapped; nesting it as
 `((:info …))' parses as an argument spec and crashes setup (founded in
 the tmux-Emacs TRAMP e2e pass).  A leading `(:info …)' as the FIRST
@@ -2171,7 +2175,7 @@ the work items land as their own commits.")
 (defun gascity-sling--footer-rig (roster)
   "Return the scope of ROSTER's first rig-scoped agent, or nil.
 The bl-bdj trap's suggestion names a rig the city actually has agents
-for (mockup §5a: \='pick a hello-world/* agent with T\='): the first
+for (mockup §5a: \"pick a hello-world/* agent with T\"): the first
 rig-scoped row of WI-2's roster order.  A cold roster or an all-city
 one degrades to nil — `gascity-sling--v2-trap-warning' then stays
 generic.  Pure."
@@ -2218,7 +2222,7 @@ the cross-store route (§5b, work bead and target in different stores,
 the rig memo `gascity-rigs-cached' resolving the prefix), then §5c's
 missing pieces — missing work for a drain formula, missing required
 vars, missing target.  Each degrades silently when its input is cold
-(free entry, a cold roster or memo): a cold roster never dead-ends,
+\(free entry, a cold roster or memo): a cold roster never dead-ends,
 gc answers at launch.  Warnings never block `s'."
   (let* ((work (or (plist-get scope :work) (plist-get scope :arg)))
          ;; What `s' would launch: the set target wins, the Who
@@ -2271,7 +2275,7 @@ list' — and joins them with WI-2's single builder
 this list, and `gascity-store-peek' schedules background refreshes
 when stale (§8.5): never blocking, never a synchronous gc (D9).  The
 render path's derivation answers from its own config-only snapshot
-(`gascity-sling--roster') — pool instances never name configs.  The
+\(`gascity-sling--roster') — pool instances never name configs.  The
 work-bead read
 stays out: the Who surface classifies targets, it does not link
 beads.  A cold store degrades to a nil roster: the scope-dependent
@@ -2454,8 +2458,9 @@ not dispatch."
 
 (defun gascity-sling--read-work (&optional initial)
   "Read the What answer at dispatch (mockup §6a): the work picker.
-A completing-read over the city's open beads and convoys — the same
-smart picker `A' edits the scope with; an empty pick falls through to
+A `completing-read' over the city's open beads and convoys — the
+same smart picker `A' edits the scope with; an empty pick falls
+through to
 the freeform `Bead id or task text' prompt, seeded from the bead at
 point or INITIAL.  A cold choices read degrades to the freeform
 prompt (never a dead end); the dispatch is input collection (D9)."

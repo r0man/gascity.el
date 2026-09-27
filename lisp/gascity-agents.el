@@ -259,9 +259,9 @@ scope in row order.  Pure."
                       (nreverse scopes)))))))
 
 (defun gascity-agents-roster-candidates (roster)
-  "Return ROSTER's completion candidates: (name . \"<rig|city> · state\").
+  "Return ROSTER's completion candidates: \\(name . \"<rig|city> · state\").
 The `T' picker annotates each agent with its scope and live state
-(mockup §6c) — the state through `gascity-agents--state-label'.
+\\(mockup §6c) — the state through `gascity-agents--state-label'.
 Pure over the roster plists."
   (mapcar (lambda (agent)
             (cons (plist-get agent :name)
@@ -272,10 +272,11 @@ Pure over the roster plists."
 
 (defun gascity-agents-roster-scope (target roster)
   "Return the scope of the roster agent named TARGET, or nil.
-A roster row named TARGET classifies through `gascity-agents-scope'.
-Without one, a TARGET that names a rig itself — a slash prefix — is
-rig-scoped on its own: the pool instances the joined roster carries
-(`…/gc.implementation-worker-1') never match a config-name target
+ROSTER is `gascity-agents--roster''s joined list.  A roster row named
+TARGET classifies through `gascity-agents-scope'.  Without one, a
+TARGET that names a rig itself — a slash prefix — is rig-scoped on
+its own: the pool instances the joined roster carries
+\\(`…/gc.implementation-worker-1') never match a config-name target
 exactly, and the Who default names configs, so the classifier falls
 back to the name's own prefix (the plan's scope classifier: roster
 `:rig', or the name's slash prefix).  Free entry — a typed name no

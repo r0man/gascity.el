@@ -424,7 +424,7 @@ only — dispatch re-derives the shape through
   "Return non-nil when WORK reads as a bead or convoy id.
 The scope's work slot holds either a bead/convoy id (pre-seeded from
 point or picked) or freeform task text.  A bare id — one dash joining
-two alphanumeric runs, e.g. `bl-5ja', `hw-conv' — gets the \='bead\='
+two alphanumeric runs, e.g. `bl-5ja', `hw-conv' — gets the \"bead\"
 qualifier in the header sentence; anything else (task text usually has
 spaces) is rendered as the text itself.  A display heuristic only."
   (and (stringp work)
@@ -459,10 +459,10 @@ The agent name, or the mockup §2 no-target hint when blank."
   "Return the one-sentence header for the sling scope (REQ-002).
 WORK is the bead/convoy id or freeform task text, FORMULA the picked
 formula name (nil for the plain path), TARGET the chosen agent, and
-RECIPE the picked formula's cached recipe — the \='drained by\=' clause
+RECIPE the picked formula's cached recipe — the \"drained by\" clause
 consults `gascity-formula--needs-convoy' on it (mockup §4/§5a); a
-non-convoy formula's target renders as \='on <target>\=' like the
-`--formula' shape.  With RECIPE nil the \='on\=' shape degrades to the
+non-convoy formula's target renders as \"on <target>\" like the
+`--formula' shape.  With RECIPE nil the \"on\" shape degrades to the
 non-convoy wording rather than reading gc — nothing on a render path
 may run a synchronous read (D9).  The exact wordings are mockup
 §1–§4:
@@ -508,7 +508,7 @@ absent or null field, REQ-016) never does."
 (defun gascity-sling--binding-targets-p (recipe)
   "Return non-nil when any step of RECIPE carries a binding-qualified run target.
 A step `metadata[\"gc.run_target\"]' whose value qualifies
-(`gascity-sling--binding-qualified-target-p') — build-basic's
+\(`gascity-sling--binding-qualified-target-p') — build-basic's
 \"gc.run-operator\" steps (23 of 38 against bright-lights).  Pure
 over the cached recipe; a nil RECIPE (no formula picked) is no."
   (and recipe
@@ -575,9 +575,11 @@ freeform work, a cold memo, free entry — degrades to no warning."
 
 (defun gascity-sling--cross-store-warning (work scope rigs)
   "Return the cross-store route's footer warning (mockup §5b wording).
-The message names the bead, its store and the target's, and suggests
-a city agent or one of the bead's store.  nil when the route is not
-cross-store (`gascity-sling--cross-store-p')."
+WORK is the slung bead; SCOPE the menu's scope plist; RIGS the rig
+list the store split comes from.  The message names the bead, its
+store and the target's, and suggests a city agent or one of the
+bead's store.  nil when the route is not cross-store
+\(`gascity-sling--cross-store-p')."
   (when (gascity-sling--cross-store-p work scope rigs)
     (let ((store (gascity-sling--bead-store work rigs)))
       (format "cross-store route: bead %s lives in the %s store but the target reads the %s store — gc will refuse (pick a city agent or a %s agent)"
@@ -594,7 +596,8 @@ is its work."
        (gascity-formula--blank work)))
 
 (defun gascity-sling--missing-work-warning (recipe)
-  "Return the missing-work footer warning (mockup §5c wording)."
+  "Return the missing-work footer warning (mockup §5c wording).
+RECIPE names the drain formula the warning is about."
   (format "%s drains a bead — pick work with A (or point at one)"
           (or (gascity-formula-name recipe) "formula")))
 
@@ -613,7 +616,8 @@ from it counts as empty."
                 (or (and recipe (gascity-formula-vars recipe)) '()))))
 
 (defun gascity-sling--missing-vars-warning (names)
-  "Return the missing-vars footer warning (mockup §5c wording), or nil."
+  "Return the missing-vars footer warning (mockup §5c wording), or nil.
+NAMES are the missing required vars."
   (and names
        (format "Missing required vars: %s" (mapconcat #'identity names ", "))))
 
@@ -639,7 +643,7 @@ missing var (the same list `gascity-sling--missing-required-vars'
 collects for the live footer's ⚠); a value that fails its var's
 `pattern' signals `user-error' naming the var and the pattern.
 Nothing here runs gc — the point is to fail fast, client-side
-(REQ-008/009)."
+\(REQ-008/009)."
   (let ((missing (gascity-sling--missing-required-vars formula values)))
     (when missing
       (user-error "Missing required formula vars: %s"
@@ -775,14 +779,14 @@ answer unsets the var.")
   :documentation "A var naming a directory (REQ-006:
 `artifact_root'): `read-directory-name' over the target rig's workdir;
 the artifact root seeds `plans/<slug>/' from the work bead's title
-(`gascity-sling--title-slug'), editable like any value.")
+\(`gascity-sling--title-slug'), editable like any value.")
 
 (defclass gascity-sling-formula--agent-option (gascity-sling-formula--var-option)
   ()
   :documentation "A var naming a sling target agent (REQ-006: any
 `*_target'): the roster completion the Who picker shares, free entry
 always possible — the roster is a convenience, gc the authority
-(REQ-016).")
+\(REQ-016).")
 
 (defclass gascity-sling-formula--numeric-option (gascity-sling-formula--var-option)
   ()
@@ -806,13 +810,13 @@ A var without a description degrades to a generic prompt (REQ-016)."
               (format "Formula var %s" (oref obj var-name)))))
 
 (cl-defmethod transient-init-value ((obj gascity-sling-formula--var-option))
-  "Seed OBJ's value from the transient value, else the var's seed,
-else its default.
-`cl-call-next-method' extracts a value the user already set in this
-transient (it survives the re-setup a formula re-pick performs); an
-unset var falls back to its scope-derived seed first — the convention
-defaults the How group shows (REQ-006) — then to its declared default
-(REQ-007)."
+  "Seed OBJ's value from the most specific fallback available.
+The order is the transient value, else the var's seed, else its
+default.  The next method extracts a value the user already set in
+this transient \(it survives the re-setup a formula re-pick
+performs\); an unset var falls back to its scope-derived seed first
+— the convention defaults the How group shows (REQ-006) — then to
+its declared default \(REQ-007\)."
   (cl-call-next-method)
   (when (null (oref obj value))
     (oset obj value (or (oref obj var-seed)
@@ -858,7 +862,7 @@ Nothing is read: illegal values are unrepresentable by construction."
   "Read OBJ's var through its override reader (REQ-006).
 The reader is `gascity-sling-var-readers' entry for this var's name,
 called with OBJ itself; an absent reader degrades to the string read
-(REQ-016)."
+\(REQ-016)."
   (if (functionp (oref obj var-reader))
       (funcall (oref obj var-reader) obj)
     (gascity-sling-formula--read-string obj)))
@@ -872,10 +876,11 @@ called with OBJ itself; an absent reader degrades to the string read
 ;; the value or nil to unset.
 
 (defun gascity-sling-formula--var-initial (obj)
-  "Return OBJ's read-time initial input: its current value, else the
-declared default, else the scope-derived seed (REQ-006/007).
-The current value already carries the seed at setup
-(`transient-init-value'); the later fallbacks cover objects built
+  "Return OBJ's read-time initial input, its most specific fallback.
+That is the current value, else the declared default, else the
+scope-derived seed (REQ-006/007).  The current value already carries
+the seed at setup
+\\(`transient-init-value'); the later fallbacks cover objects built
 without one."
   (or (oref obj value)
       (and (gascity-formula--nonblank (oref obj var-default))
@@ -898,7 +903,7 @@ required check stays with dispatch.  History is per (formula, var)."
 (defun gascity-sling-formula--read-file (obj)
   "Read the file var of OBJ relative to the target rig's workdir (REQ-006).
 `read-file-name' completes against the workdir
-(`gascity-sling-formula--rig-workdir'), which is also the read's
+\(`gascity-sling-formula--rig-workdir'), which is also the read's
 pinned `default-directory' — over TRAMP that is the rig's host-local
 path re-prefixed (`gascity-remote-localize-path' through the store
 helper), so completion never touches the menu buffer's directory.
@@ -930,7 +935,7 @@ empty-answer rules as the file read (`gascity-sling-formula--read-file')."
 (defun gascity-sling-formula--read-agent (obj)
   "Read the agent var of OBJ with the roster completion (REQ-006).
 Candidates are the sling city's qualified agent names
-(`gascity-sling-formula--agent-candidates'); free entry always works
+\(`gascity-sling-formula--agent-candidates'); free entry always works
 — the roster is a convenience, gc the authority (REQ-016).  History is
 per (formula, var)."
   (let ((value (completing-read
@@ -946,7 +951,7 @@ per (formula, var)."
 An all-digit entry returns; any other non-empty entry signals a
 `user-error' — \"Var %s must be numeric (got %s)\" — before any gc
 call could run.  An empty answer unsets the var.  History is per
-(formula, var)."
+\(formula, var)."
   (let ((value (read-from-minibuffer
                 (transient-prompt obj)
                 (gascity-sling-formula--var-initial obj)
@@ -998,7 +1003,7 @@ any other function of one infix object (wrapped as the var's custom
 reader), or an infix class symbol (a subclass of
 `gascity-sling-formula--var-option') for a direct class pick.  An
 unmatched var simply falls through to the heuristic, fail-soft
-(REQ-016)."
+\(REQ-016)."
   :type '(alist :key-type (string :tag "Var name")
                 :value-type (choice (function :tag "Reader function")
                                     (symbol :tag "Infix class")))
@@ -1107,7 +1112,7 @@ combination of the name's own characters (positionally: 1+2, 1+3,
 unrepresentable prefix chain).  Nil when neither exists: the caller
 falls to the positional `<char><digit>' stage, and the How group
 renders those vars grouped in the mockups' `…' overflow
-(`gascity-sling-formula--var-children').  Pure."
+\(`gascity-sling-formula--var-children').  Pure."
   (let* ((chars (seq-filter
                  (lambda (char)
                    (string-match-p "[[:alnum:]]" (string char)))
@@ -1164,7 +1169,7 @@ deterministic contract — with NATURAL-P marking a key drawn from the
 name's own characters (`gascity-sling-formula--var-key-natural'); a
 nil NATURAL-P marks the positional `<char><digit>' stage, whose vars
 the How group renders in the mockups' grouped `…' overflow
-(REQ-006)."
+\(REQ-006)."
   (let ((used (copy-sequence reserved))
         assigned)
     (dolist (var vars)
@@ -1192,7 +1197,7 @@ with a static binding or an earlier var's key."
   "Return the raw transient infix spec for VAR bound to KEY.
 FORMULA supplies the methodology mapping enum resolution consults;
 SCOPE (optional — data, never live transient state) the derived seeds
-(REQ-006).  The infix class follows `gascity-sling-formula--var-class'
+\(REQ-006).  The infix class follows `gascity-sling-formula--var-class'
 and the description carries the typed reader's tag (REQ-006: the
 mockups' `[file]'-style markers)."
   (let* ((name (gascity-formula-var-name var))
@@ -1220,9 +1225,10 @@ mockups' `[file]'-style markers)."
 (defun gascity-sling-formula--var-infix-assignments (formula reserved
                                                            &optional scope)
   "Return one (KEY INFIX-SPEC NATURAL-P) per var of FORMULA, or nil.
-The shared workhorse of the flat infix list
-(`gascity-sling-formula--var-infixes') and the overflow-split group
-(`gascity-sling-formula--var-children'); NATURAL-P marks the natural
+RESERVED is the statically bound letter list; SCOPE, when non-nil,
+the menu's scope plist.  The shared workhorse of the flat infix list
+\(`gascity-sling-formula--var-infixes') and the overflow-split group
+\(`gascity-sling-formula--var-children'); NATURAL-P marks the natural
 key stage, the vars the `…' overflow groups when the natural
 candidates run out (REQ-006, mockup §4)."
   (let ((vars (and formula (gascity-formula-vars formula))))
@@ -1238,7 +1244,8 @@ candidates run out (REQ-006, mockup §4)."
 (defun gascity-sling-formula--var-infixes (formula reserved &optional scope)
   "Return the raw transient infix specs for FORMULA's vars, or nil.
 Pure: no transient state, no gc.  One infix per declared var (REQ-004);
-keys avoid RESERVED (the unified prefix's static bindings); a var
+keys avoid RESERVED (the unified prefix's static bindings); SCOPE
+feeds the var seeds.  A var
 whose natural candidates are exhausted renders through the `…'
 overflow group of `gascity-sling-formula--var-children' (REQ-006).  A
 nil FORMULA (no formula picked yet — the transient's initial setup)
@@ -1289,12 +1296,14 @@ groups."
 
 (defconst gascity-sling--bead-id-regexp
   "\\`[a-zA-Z][a-zA-Z0-9._-]*-[0-9a-z]+\\(\\.[0-9]+\\)*\\'"
-  "Regexp matching a whole bead id: PREFIX-HASH with optional numeric
-child suffixes (beads.el's `beads-issue-id-regexp' anchored; HASH is
-lowercase base-36, PREFIX letters/digits/dots/underscores/hyphens).
-The artifact-root slug never derives from the bare id — it names
-nothing a human would recognize under `plans/' (REQ-006) — so an
-id-shaped work waits for its title or falls back further.")
+  "Match a whole bead id with its optional numeric child suffixes.
+The shape is PREFIX-HASH: this is beads.el's `beads-issue-id-regexp',
+anchored;
+HASH is lowercase base-36 and PREFIX is letters, digits, dots,
+underscores or hyphens.  The artifact-root slug never derives from
+the bare id — it names nothing a human would recognize under
+`plans/' (REQ-006) — so an id-shaped work waits for its title or
+falls back further.")
 
 (defun gascity-sling--slug (text)
   "Return TEXT's repo-practice slug (REQ-006).
@@ -1335,16 +1344,16 @@ name, a nil target — yields nil, fail-soft."
        (match-string 1 target)))
 
 (defun gascity-sling-formula--rig-workdir (&optional scope)
-  "Return the directory file and directory vars complete in (REQ-006).
-The target rig's workdir — the repo the chosen target agent works in:
+  "Return SCOPE's completion workdir: the target rig's repo (REQ-006).
+The workdir is the repo the chosen target agent works in:
 the target's rig when it names one (`gascity-sling-formula--target-rig'),
 else the work bead's owning rig (the id-prefix routing the bd verbs
 use), each resolved I/O-free through the rig memo
-(`gascity-beads--rig-path' / `gascity-beads--bead-path-cached') and
+\(`gascity-beads--rig-path' / `gascity-beads--bead-path-cached') and
 re-prefixed for a remote city.  Neither resolves — no target, a
 city-scoped target, a cold rig memo — and completion degrades to the
 city directory the transient was entered from
-(`gascity-sling--city-dir'): it stays on the entered city, never a
+\(`gascity-sling--city-dir'): it stays on the entered city, never a
 foreign buffer's directory (REQ-016).  The memo reads run pinned to
 that city, so the memo key is the entered city's host."
   (let* ((city (gascity-sling--city-dir scope))
@@ -1381,7 +1390,7 @@ yields nil and free entry still answers (REQ-016)."
   "Return VAR's scope-derived initial value, or nil (REQ-006).
 The convention defaults the How group shows: `artifact_root' seeds
 `plans/<slug>/' from the work bead's title
-(`gascity-sling--title-slug'), `rig_name' the chosen target's rig,
+\(`gascity-sling--title-slug'), `rig_name' the chosen target's rig,
 and any `*_target' var the chosen target itself when it is a
 qualified agent name.  A seed overrides the var's declared default —
 the convention IS the default — and stays editable like any value;
@@ -1408,7 +1417,7 @@ A convoy row carries its typed `gascity-convoy' whose title is the
 work bead's title — the artifact_root seed's source; a bare bead-id
 string names nothing readable without a store read (forbidden on the
 setup path), so it yields nil and the seed falls back fail-soft
-(REQ-016)."
+\(REQ-016)."
   (let ((obj (gascity-object-at-point)))
     (and (gascity-convoy-p obj) (gascity-convoy-title obj))))
 
@@ -1473,8 +1482,9 @@ the store (`gascity-formula-choices-wait'); nothing to offer is a clear
                      nil t nil 'gascity-sling-formula-picker-history)))
 
 (defun gascity-sling-formula--command (recipe target arg values &optional dry-run)
-  "Validate RECIPE's VALUES and return the `gascity-command-sling' to act on.
-The one command builder behind the dispatch and the full preview
+  "Validate RECIPE's VALUES against TARGET and ARG; return the command.
+The result is a `gascity-command-sling' to act on.  The one command
+builder behind the dispatch and the full preview
 buffer's routing plan (sling-command WI-7): exactly the command
 `gascity-sling-formula--dispatch' starts, with `--dry-run' when
 DRY-RUN is non-nil.  Validation runs first — a missing required var
@@ -1513,7 +1523,7 @@ Validation and the command shape live in
 through `gascity-command-act-async' (D9) and the originating view
 refreshes once gc answers, and the launch handler echoes the created
 workflow root with the momentary `F' follow jump
-(`gascity-sling--launch-handler', REQ-009).
+\(`gascity-sling--launch-handler', REQ-009).
 With DRY-RUN non-nil the same command carries `--dry-run' and gc's
 routing plan is shown instead of acting."
   (let* ((name (gascity-formula-name recipe))
