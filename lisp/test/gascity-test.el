@@ -1459,7 +1459,8 @@ gc invocation reads where `default-directory' points."
       ;; The target read completes over the entered-from city's sessions.
       (let ((read-dir nil))
         (cl-letf (((symbol-function 'gascity-action--read-session)
-                   (lambda (_prompt) (setq read-dir default-directory) "mayor")))
+                   (lambda (_prompt &optional _default)
+                     (setq read-dir default-directory) "mayor")))
           (gascity-sling-dispatch-target)
           (should (equal read-dir "/city/entered-from/"))))
       ;; The recipe preview re-runs `gc formula show' pinned.
@@ -1748,7 +1749,8 @@ shows it; an unset target renders the mockup §2 no-target hint."
   ;; Pressing -T re-settles with the read target in the scope.
   (let (reads setup)
     (cl-letf (((symbol-function 'gascity-action--read-session)
-               (lambda (_prompt) (setq reads (1+ (or reads 0))) "sess-7"))
+               (lambda (_prompt &optional _default)
+                 (setq reads (1+ (or reads 0))) "sess-7"))
               ((symbol-function 'transient-setup)
                (lambda (prefix _sfx _lay &rest args)
                  (setq setup (cons prefix args))))
