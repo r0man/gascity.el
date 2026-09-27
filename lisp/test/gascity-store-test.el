@@ -1187,6 +1187,27 @@ City start/stop keep their streaming `async-shell-command' buffer.")
             (gascity-sling-formula--dispatch
              (gascity-domain-decode 'gascity-formula '((name . "do-work")))
              "r/a" nil nil)))
+      (gascity-sling-dispatch-full-preview
+       . ,(lambda ()
+            (gascity-sling--full-preview
+             (list :city "/tmp/city/" :formula nil
+                   :target "r/a" :arg "task text")
+             nil)))
+      (gascity-sling-preview-launch
+       . ,(lambda ()
+            (with-current-buffer
+                (gascity-view-get-buffer-create "*gc-sling: preview*")
+              (gascity-sling-preview-mode)
+              (setq gascity-sling-preview--data
+                    (list :city "/tmp/city/"
+                          :launch (lambda ()
+                                    (let ((command (gascity-command-sling
+                                                    :target "r/a"
+                                                    :arg "task text")))
+                                      (oset command json t)
+                                      (gascity-command-act-async command)))))
+              (cl-letf (((symbol-function 'quit-window) #'ignore))
+                (gascity-sling-preview-launch)))))
       (gascity-mail-send
        . ,(lambda ()
             (gascity-mail-send "mayor" "subject")
@@ -1257,7 +1278,9 @@ exceptions (city start/stop) are exempt by name."
                 ;; still pending.
                 (should (gascity-store-pending-targets))))))))
     (dolist (b (buffer-list))
-      (when (string-match-p "\\`\\*\\(gc-\\(mail\\|peek\\)\\|gascity-mail-thread\\)" (buffer-name b))
+      (when (string-match-p
+             "\\`\\*\\(gc-\\(mail\\|peek\\|sling\\)\\|gascity-mail-thread\\)"
+             (buffer-name b))
         (kill-buffer b)))))
 
 (provide 'gascity-store-test)

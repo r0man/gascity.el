@@ -1908,6 +1908,7 @@ unified prefix carries the formula suffixes in place."
   (should (commandp 'gascity-sling-dispatch-recipe))
   (should (commandp 'gascity-sling-dispatch-run))
   (should (commandp 'gascity-sling-dispatch-preview))
+  (should (commandp 'gascity-sling-dispatch-full-preview))
   (should-not (fboundp 'gascity-sling-formula))
   (should-not (fboundp 'gascity-sling-formula-dispatch))
   (should-not (fboundp 'gascity-sling-formula-pick))
@@ -6982,6 +6983,48 @@ remotely pinned buffer (gc itself is stubbed — no live reads)."
                                 (buffer-local-value 'default-directory buf))
                                remote-prefix))))
           (when (get-buffer name) (kill-buffer name)))))))
+
+(ert-deftest gascity-test-remote-sling-full-preview ()
+  "The full preview buffer from a remote view is host-qualified and
+remotely pinned (REQ-008/REQ-014): a local and a remote preview
+coexist, the dry run fills its plan section, and the launch from the
+buffer starts its gc call on the entered-from city (gc stubbed — no
+live reads)."
+  (gascity-test--with-mock-remote
+    (let* ((remote-prefix (file-remote-p default-directory))
+           (name (format "*gc-sling: preview@%s*" remote-prefix)))
+      (cl-letf (((symbol-function 'gascity-store-action)
+                 (lambda (_args &rest keys)
+                   (funcall (plist-get keys :on-success) "plan")))
+                ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+        (unwind-protect
+            (progn
+              (gascity-sling--full-preview
+               (list :city default-directory :formula nil
+                     :target "t" :arg "a")
+               nil)
+              (let ((buf (get-buffer name)))
+                (should buf)
+                (should (equal (file-remote-p
+                                (buffer-local-value 'default-directory buf))
+                               remote-prefix))
+                (with-current-buffer buf
+                  (should (eq major-mode 'gascity-sling-preview-mode))
+                  (should (string-search "Validation" (buffer-string)))
+                  (should (string-search "plan" (buffer-string))))
+                ;; The launch from the buffer spawns gc where the buffer
+                ;; points — the entered-from remote city.
+                (let ((spawn-dir nil))
+                  (cl-letf (((symbol-function 'gascity-store-action)
+                             (lambda (_args &rest keys)
+                               (setq spawn-dir (plist-get keys :dir))
+                               nil))
+                            ((symbol-function 'quit-window) #'ignore))
+                    (with-current-buffer buf
+                      (gascity-sling-preview-launch)))
+                  (should (equal (file-remote-p spawn-dir) remote-prefix))))
+          (let ((buf (get-buffer name)))
+            (when buf (kill-buffer buf)))))))))
 
 (ert-deftest gascity-test-remote-compose-view ()
   "A compose draft opened from a remote view is host-qualified and

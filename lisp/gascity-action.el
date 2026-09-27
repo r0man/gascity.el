@@ -69,11 +69,14 @@
 (declare-function gascity-sling-formula--read-formula "gascity-formula")
 (declare-function gascity-sling-formula--current-values "gascity-formula")
 (declare-function gascity-sling-formula--dispatch "gascity-formula")
+(declare-function gascity-sling-formula--command "gascity-formula")
 (declare-function gascity-sling-formula--show-recipe "gascity-formula")
 (declare-function gascity-sling-formula--var-children "gascity-formula")
 (declare-function gascity-formula--nonblank "gascity-formula")
 (declare-function gascity-sling-formula--work-title-at-point "gascity-formula")
 (declare-function gascity-formula-recipe-cached "gascity-formula")
+(declare-function gascity-formula--needs-convoy "gascity-formula")
+(declare-function gascity-formula--blank "gascity-formula")
 (declare-function gascity-formula-invalidate "gascity-formula")
 (declare-function gascity-formula-refresh-async "gascity-formula")
 (declare-function gascity-mail-inbox-refresh "gascity-mail")
@@ -216,6 +219,7 @@ rig, order, message or bead the action serializes on (§8.5)."
 
 (cl-defun gascity-command-act-async (command &key target on-success on-error
                                              (origin (current-buffer))
+                                             (dir default-directory)
                                              (invalidate t))
   "Start mutating COMMAND and return at once; report when it finishes.
 The D9 runner behind every input-free verb: COMMAND is validated here
@@ -243,6 +247,7 @@ Returns nil."
       (gascity-store-action
        (gascity-command-arguments command)
        :target target
+       :dir dir
        :json (and (slot-exists-p command 'json) (slot-value command 'json))
        :invalidate invalidate
        :on-success (lambda (result)
@@ -259,7 +264,10 @@ Returns nil."
 The interactive backend of the quick mutations (dashboard-v3 D9): input
 was gathered by the caller, the gc call now runs in the background and
 reports in the echo area.  City start/stop keep the streaming
-`async-shell-command' base method."
+`async-shell-command' base method.  DIR (default the calling buffer's
+directory) pins the call to the city it must hit — a buffer whose
+`default-directory' may have moved (a preview filled from anywhere)
+passes its own pin."
   (gascity-command-act-async command))
 
 (defun gascity-action--bead-store (id)
@@ -1607,6 +1615,376 @@ city, so re-entering `S' after leaving restores it."
   (interactive (list (transient-args 'gascity-sling-dispatch)))
   (gascity-sling--resetup (gascity-sling--run args t)))
 
+;;; ============================================================
+;;; Sling — the full preview buffer (`P', REQ-008, mockup §8)
+;;; ============================================================
+;;
+;; `p' shows gc's `--dry-run' routing plan alone; `P' opens the whole
+;; picture in one city-pinned buffer: the header sentence, every
+;; client-side validation check with its full text, the cached
+;; recipe's step DAG (steps → needs), and the routing plan filling in
+;; when the async dry run answers — the first paint is client-side and
+;; never blocks on the dry run (D9).  Nothing is read or prompted to
+;; open it: a missing target or work is a validation warning, and the
+;; routing plan section keeps its reason.  `s' launches directly from
+;; the buffer (completing a missing piece the way the menu's `s'
+;; would); `q' quits; the menu's `r' keeps the server-substituted
+;; recipe preview.  The preview is never a gate: the menu's `s' works
+;; anytime, with or without `P'.  The menu exits on `P' — the buffer
+;; is the interactive surface — but its state is remembered per city
+;; (bug S-2), so a later `S s' slings exactly what was previewed.
+
+(defconst gascity-sling-preview-buffer-name "*gc-sling: preview*"
+  "Base name of the full sling preview buffer (`P', REQ-008).
+Host-qualified and city-pinned by `gascity-view-get-buffer-create'
+like every view, so a local and a remote preview coexist.")
+
+(defvar-local gascity-sling-preview--data nil
+  "The dispatch this preview buffer previews, as a plist:
+`:city' the pinned city directory, `:scope' the menu scope it came
+from, and `:launch' a thunk starting the real sling (no `--dry-run')
+— exactly what the menu's `s' would sling.  Set when the buffer is
+painted; `gascity-sling-preview-launch' reads it.")
+
+(defvar-local gascity-sling-preview--plan-marker nil
+  "Marker at the Routing plan section's answer, or nil.
+The async dry run's stdout (or its failure line) replaces the buffer
+from this marker down (`gascity-sling--preview-fill-plan').")
+
+(defvar gascity-sling-preview-validation-functions nil
+  "Abnormal hook adding validation lines to the full preview buffer.
+Each function is called with (SCOPE RECIPE VALUES) inside the city
+pin and returns a list of full-text check lines (`✓ …' / `⚠ …'), nil
+when it has nothing to say.  Pure, cached data only — nothing here
+may run gc (REQ-008/010); the roster-based checks of the sling
+redesign (the bl-bdj trap, cross-store routing) belong here.")
+
+(defvar-keymap gascity-sling-preview-mode-map
+  :doc "Keymap of the full sling preview buffer (REQ-008).
+`s' launches the previewed sling from here; `q' quits."
+  "s" #'gascity-sling-preview-launch
+  "q" #'quit-window)
+
+(define-derived-mode gascity-sling-preview-mode special-mode "GC-Sling-Preview"
+  "Read-only full preview of the pending sling (REQ-008, mockup §8).
+The buffer holds everything gascity can compute client-side — the
+header sentence, the validation checks in full, the cached recipe's
+steps → needs DAG — plus gc's `--dry-run' routing plan when it
+answers.  `s' launches exactly what was previewed, completing a
+missing target or work the way the menu's `s' would (D9); `q' quits.
+The preview is never a gate: the menu's `s' works anytime.
+
+The buffer is created through `gascity-view-get-buffer-create', so
+it is host-qualified and its `default-directory' stays pinned to
+the city the menu was entered from — a local and a remote preview
+coexist, and the launch keeps hitting the entered-from city.
+
+\\{gascity-sling-preview-mode-map}")
+
+(defun gascity-sling--preview-header (scope recipe)
+  "Return the preview buffer's header sentence for the SCOPE dispatch.
+The one-sentence summary, mockup §1–§4 wording: plain (`Sling WORK to
+TARGET'), formula (`Run FORMULA (formula) on TARGET'), targeted
+(`Run FORMULA against bead WORK, drained by TARGET' — the drain
+clause consults `gascity-formula--needs-convoy' on RECIPE).  The
+sling redesign's own sentence renderer (WI-1) owns the final
+wording; this stays close to it so the buffer reads as the menu's
+fuller twin.  Missing pieces read as their mockup §2 hints."
+  (let ((formula (plist-get scope :formula))
+        (work (plist-get scope :arg))
+        (target (plist-get scope :target)))
+    (cond
+     ((and formula recipe (gascity-formula--needs-convoy recipe))
+      (format "Run %s against bead %s, drained by %s"
+              formula
+              (if (gascity-formula--nonblank work) work "(no work — A or point at a bead)")
+              (if (gascity-formula--nonblank target) target "(no target — T or default)")))
+     (formula
+      (format "Run %s (formula) on %s"
+              formula
+              (if (gascity-formula--nonblank target) target "(no target — T or default)")))
+     (t
+      (format "Sling %s to %s"
+              (if (gascity-formula--nonblank work) work "(no work — A or point at a bead)")
+              (if (gascity-formula--nonblank target) target "(no target — T or default)"))))))
+
+(defun gascity-sling--preview-validation-lines (scope recipe values)
+  "Return the Validation section's check lines for the SCOPE dispatch.
+RECIPE is the cached recipe (nil on the plain path), VALUES the
+collected formula var values.  One full-text line per check, `✓' when
+it passes and `⚠' when it has something to say: the target every
+dispatch needs, the work a convoy-requiring formula needs, and
+required vars and patterns — the same rules
+`gascity-sling-formula--command' enforces at dispatch, spelled out
+before any gc call.  Pure, cached data only, and never a gate
+(REQ-008): `s' stays available whatever this says.  Further checks
+join through `gascity-sling-preview-validation-functions'."
+  (let ((formula (plist-get scope :formula))
+        (work (plist-get scope :arg))
+        (target (plist-get scope :target))
+        (lines nil))
+    (setq lines
+          (list (if (gascity-formula--nonblank target)
+                    (format "✓ target %s" target)
+                  "⚠ no target — set one with T (launching asks otherwise)")))
+    (when (and formula recipe (gascity-formula--needs-convoy recipe))
+      (setq lines
+            (append lines
+                    (if (gascity-formula--nonblank work)
+                        (list (format "✓ work %s (the formula requires it)" work))
+                      (list (format "⚠ no work — %s requires a target convoy (A, or point at a bead)"
+                                    formula))))))
+    (when formula
+      (let* ((vars (or (and recipe (gascity-formula-vars recipe)) '()))
+             (required (delq nil
+                             (mapcar (lambda (var)
+                                       (and (gascity-formula-var-required var)
+                                            (gascity-formula-var-name var)))
+                                     vars)))
+             (missing (delq nil
+                            (mapcar (lambda (name)
+                                      (and (gascity-formula--blank
+                                           (cdr (assoc name values)))
+                                           name))
+                                    required))))
+        (setq lines
+              (append lines
+                      (if required
+                          (if missing
+                              (mapcar (lambda (name)
+                                        (format "⚠ missing required var: %s" name))
+                                      missing)
+                            (list (format "✓ required vars set: %s"
+                                          (mapconcat #'identity required ", "))))
+                        '("✓ no required vars"))))
+        (dolist (var vars)
+          (let ((pattern (gascity-formula-var-pattern var))
+                (value (cdr (assoc (gascity-formula-var-name var) values))))
+            ;; A blank value is the required check's business; a
+            ;; pattern that does not compile as an Emacs regexp
+            ;; degrades to no check (REQ-016) — the
+            ;; `gascity-formula--validate-values' rules, mirrored.
+            (when (and pattern (gascity-formula--nonblank value))
+              (condition-case nil
+                  (unless (string-match pattern value)
+                    (setq lines
+                          (append lines
+                                  (list (format "⚠ var %s does not match pattern %s"
+                                                (gascity-formula-var-name var)
+                                                pattern)))))
+                (invalid-regexp nil)))))))
+    (dolist (fn gascity-sling-preview-validation-functions)
+      (let ((extra (funcall fn scope recipe values)))
+        (when (stringp extra) (setq extra (list extra)))
+        (setq lines (append lines extra))))
+    lines))
+
+(defun gascity-sling--preview-recipe-lines (scope recipe)
+  "Return the Recipe section's `steps → needs' lines for the SCOPE dispatch.
+The step/dependency data of the CACHED recipe — the same payload
+`gascity-sling-formula--render-recipe' renders — straight from gc's
+compiled recipe, never re-substituted (REQ-012): one line per step,
+the steps it depends on behind `needs'.  Without a formula the plain
+dispatch has no recipe and the section says so."
+  (if (not (plist-get scope :formula))
+      '("  (no formula picked — this dispatch is plain)")
+    (let* ((steps (or (and recipe (gascity-formula-steps recipe)) '()))
+           (deps (or (and recipe (gascity-formula-deps recipe)) '())))
+      (if (not steps)
+          '("  (no steps)")
+        (mapcar
+         (lambda (step)
+           (let* ((id (or (alist-get 'id step) ""))
+                  (title (or (alist-get 'title step) id))
+                  (needs (delq nil
+                               (mapcar (lambda (dep)
+                                         (and (equal (alist-get 'step_id dep) id)
+                                              (or (alist-get 'depends_on_id dep) "?")))
+                                       deps))))
+             (format "  %-24s needs %s"
+                     title
+                     (if needs (mapconcat #'identity needs ", ") "nothing"))))
+         steps)))))
+
+(defun gascity-sling--preview-fill-plan (buf text)
+  "Fill BUF's Routing plan section with the dry run's TEXT answer.
+TEXT is gc's captured stdout, the failure's first line, or the reason
+no plan was asked for; blank stdout shows the `(no plan output)'
+placeholder of `gascity-sling--show-plan'.  The section shows `…'
+until the async dry run answers; a killed BUF is left alone — a late
+answer must not resurrect it (D9)."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (when (and (markerp gascity-sling-preview--plan-marker)
+                 (marker-position gascity-sling-preview--plan-marker))
+        (let ((inhibit-read-only t)
+              (body (if (and (stringp text)
+                             (not (string-empty-p (string-trim text))))
+                        text
+                      "(no plan output)")))
+          (save-excursion
+            (goto-char gascity-sling-preview--plan-marker)
+            (delete-region (point) (point-max))
+            (insert body)
+            (unless (string-suffix-p "\n" body) (insert "\n"))))))))
+
+(defun gascity-sling--preview-start-plan (buf command)
+  "Start the `--dry-run' sling COMMAND filling BUF's Routing plan section.
+Read-only like `gascity-sling--show-plan' — a view target on the
+store's action lane, no cache invalidation — through
+`gascity-command-act-async', so gc's captured stdout (or its
+failure's first line, also echoed) lands in the section when gc
+answers (D9: first paint never waited for it)."
+  (with-current-buffer buf
+    (gascity-command-act-async
+     command
+     :target (list 'view (buffer-name buf))
+     :dir default-directory
+     :invalidate nil
+     :on-success (lambda (text)
+                   (gascity-sling--preview-fill-plan buf text))
+     :on-error (lambda (msg)
+                 (message "%s" msg)
+                 (gascity-sling--preview-fill-plan buf msg)))))
+
+(defun gascity-sling--preview-paint (buf scope recipe values)
+  "Paint BUF's client-side sections for the SCOPE dispatch; return BUF.
+The header sentence, Validation, the cached recipe's steps → needs
+DAG and the Routing plan heading with its `…' placeholder —
+everything gascity can compute without gc, so the first paint never
+blocks (REQ-008, D9).  The plan marker is left where the dry run's
+answer will replace from."
+  (with-current-buffer buf
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert (format "Sling preview — %s  (s launch · q quit)\n"
+                     (or (gascity-context-city-name) "gc"))
+              (make-string 72 ?─) "\n"
+              "  " (gascity-sling--preview-header scope recipe) "\n")
+      (insert "\nValidation\n")
+      (dolist (line (gascity-sling--preview-validation-lines scope recipe values))
+        (insert "  " line "\n"))
+      (insert "\n" (format "Recipe — %s (steps → needs)\n"
+                           (or (plist-get scope :formula) "none picked (plain dispatch)")))
+      (dolist (line (gascity-sling--preview-recipe-lines scope recipe))
+        (insert line "\n"))
+      (insert "\nRouting plan (gc sling … --dry-run)\n")
+      (setq gascity-sling-preview--plan-marker (copy-marker (point)))
+      (insert "  …\n")
+      (goto-char (point-min))))
+  buf)
+
+(defun gascity-sling--full-preview (scope args)
+  "Open the full preview buffer (REQ-008) for the menu SCOPE and ARGS.
+Resolves the same dispatch the menu's `s'/`p' would run — without
+reading or prompting anything — paints every client-side section at
+once, then starts the `--dry-run' whose answer fills the Routing
+plan section.  A dispatch that cannot be built yet (no target, no
+work, a failing validation) still previews: the warning is in
+Validation and the routing plan section keeps its reason — the
+preview is never a gate.  Returns SCOPE, remembered per city (bug
+S-2), so a later `S s' slings exactly what was previewed."
+  (let* ((default-directory (gascity-sling--city-dir scope))
+         (formula (plist-get scope :formula))
+         (recipe (and formula (gascity-formula-recipe-cached formula)))
+         (values (and formula (gascity-sling-formula--current-values)))
+         (target (plist-get scope :target))
+         (arg (plist-get scope :arg))
+         (buf (gascity-view-get-buffer-create
+               gascity-sling-preview-buffer-name)))
+    (with-current-buffer buf
+      (gascity-sling-preview-mode)
+      (setq gascity-sling-preview--data
+            (list :city (gascity-sling--city-dir scope)
+                  :scope scope
+                  :launch (if formula
+                              ;; The proven dispatch path, completing a
+                              ;; missing target the way `s' does.
+                              (lambda ()
+                                (gascity-sling-formula--dispatch
+                                 recipe
+                                 (or target
+                                     (gascity-action--read-session "Sling to target: "))
+                                 arg values))
+                            ;; The plain path, exactly `gascity-sling--run':
+                            ;; the city pin travels with the launch (the
+                            ;; buffer is host-pinned, but its caller may
+                            ;; not be).
+                            (lambda ()
+                              (let* ((default-directory
+                                      (gascity-sling--city-dir scope))
+                                     (arg (or arg
+                                              (read-string "Bead id or task text: "
+                                                           (gascity-bead-at-point))))
+                                     (command
+                                      (apply #'gascity-command-sling
+                                             :target
+                                             (or target
+                                                 (gascity-action--read-session "Sling to target: "))
+                                             :arg arg
+                                             (gascity-sling--parse-transient-args args))))
+                                (oset command json t)
+                                (gascity-command-act-async
+                                 command :dir (gascity-sling--city-dir scope)))))))
+      (gascity-sling--preview-paint buf scope recipe values)
+      (pop-to-buffer buf)
+      ;; The dry run: started after first paint, its answer fills in.
+      ;; A dispatch that cannot be built keeps its reason here — the
+      ;; validation lines above spell out why.
+      (let* ((reason (cond
+                      ((not (gascity-formula--nonblank target))
+                       "(no routing plan — no target; set one with T in the menu)")
+                      ((and (not formula) (not (gascity-formula--nonblank arg)))
+                       "(no routing plan — no work; pick one with A or point at a bead)")
+                      (t nil)))
+             (command (and (not reason)
+                           (condition-case nil
+                               (if formula
+                                   (gascity-sling-formula--command
+                                    recipe target arg values t)
+                                 (apply #'gascity-command-sling
+                                        :target target :arg arg
+                                        (append (list :dry-run t)
+                                                (gascity-sling--parse-transient-args args))))
+                             (user-error nil)))))
+        (if command
+            (gascity-sling--preview-start-plan buf command)
+          (gascity-sling--preview-fill-plan
+           buf (or reason "(no routing plan — see Validation above)")))))
+    ;; What the menu held is remembered for the city (bug S-2): a
+    ;; later `S s' slings exactly what was previewed.
+    (gascity-sling--remember scope args)
+    scope))
+
+(transient-define-suffix gascity-sling-dispatch-full-preview (args)
+  "Open the full preview buffer for the dispatch ARGS (REQ-008).
+Everything computable client-side renders at once — the header
+sentence, the validation checks with their full text, the cached
+recipe's steps → needs DAG — and gc's `--dry-run' routing plan fills
+its section in when the async call answers.  The menu exits: the
+buffer is the interactive surface now — `s' there launches exactly
+what was previewed, `q' quits — while the state is remembered for
+the city (bug S-2), so a later `S s' slings the same dispatch.  The
+preview is never a gate: the menu's `s' works anytime."
+  (interactive (list (transient-args 'gascity-sling-dispatch)))
+  (gascity-sling--full-preview (transient-scope) args))
+
+(defun gascity-sling-preview-launch ()
+  "Launch the sling this buffer previews (REQ-008).
+`s' in the preview buffer: no input is gathered beyond what the
+menu's own `s' would read — a missing target (or, on the plain
+path, work) is completed with the same one-shot prompts, then the
+call starts and returns (D9); gc's answer is echoed and the buffer
+quits.  The city's remembered menu state is cleared, like the
+menu's `s' (a real launch forgets, bug S-2)."
+  (interactive)
+  (let ((data gascity-sling-preview--data))
+    (unless (and data (functionp (plist-get data :launch)))
+      (user-error "This buffer previews nothing — open it with P in the sling menu"))
+    (funcall (plist-get data :launch))
+    (gascity-sling--forget (plist-get data :city))
+    (quit-window)))
+
 (transient-define-suffix gascity-sling-dispatch-reset ()
   "Clear the formula, target, arg and values; forget the city's saved state."
   :transient t
@@ -1618,11 +1996,11 @@ city, so re-entering `S' after leaving restores it."
                                   :formula nil :target nil :arg nil))))
 
 (defconst gascity-sling--reserved-keys
-  '("f" "g" "T" "A" "c" "a" "n" "m" "t" "s" "p" "r" "x" "q")
+  '("f" "g" "T" "A" "c" "a" "n" "m" "t" "s" "p" "P" "r" "x" "q")
   "Every single letter statically bound in `gascity-sling-dispatch':
 the Formula group (`-f' pick, `g' refresh), the Destination `-T' and
 `A' (arg edit), the routing flags `-c -a -n -m -t' and the Actions
-\(`s', `p', `r', `x', `q').
+\(`s', `p', `P' the full preview, `r', `x', `q').
 The generated variable infix keys avoid exactly this list; it lives
 beside the layout it keys so a re-binding cannot silently collide
 \(OQ-2), and a test asserts the two stay in sync.")
@@ -1835,6 +2213,7 @@ the header (ga-4ia4)."
       (vector "Actions"
               '("s" "Sling…" gascity-sling-dispatch-run)
               '("p" "Preview (dry-run)…" gascity-sling-dispatch-preview)
+              '("P" "Full preview…" gascity-sling-dispatch-full-preview)
               '("r" "Preview recipe…" gascity-sling-dispatch-recipe)
               '("x" "Reset (clear formula, target, vars)" gascity-sling-dispatch-reset)
               '("q" "Quit" transient-quit-one)))
