@@ -368,11 +368,6 @@ everything and forgets the city."
 
 ;;; WI-1: shape inference and the one-sentence header (REQ-001/002)
 
-(defun gascity-sling-test--recipe (name &optional steps)
-  "Decode a minimal `gascity-formula' named NAME with raw STEPS."
-  (gascity-domain-decode
-   'gascity-formula `((name . ,name) ,@(when steps `((steps . ,steps))))))
-
 (defconst gascity-sling-test--drain-recipe
   (gascity-sling-test--recipe
    "build-basic"
@@ -1145,7 +1140,7 @@ RET keeps it, so a derivable target costs no typing."
 (mockup §6c shape — rows are agent plists, scope from WI-2's
 `gascity-agents-scope').")
 
-(defun gascity-sling-test--recipe (&optional vars)
+(defun gascity-sling-test--vars-recipe (&optional vars)
   "Decode a minimal build-basic-like recipe with VARS (a raw vector)."
   (gascity-domain-decode
    'gascity-formula
@@ -1218,6 +1213,8 @@ check by rebinding its predicate inside BODY."
           ((symbol-function 'gascity-sling-formula--current-values)
            (lambda () gascity-sling-test--footer-values))
           ;; Nothing fires by default.
+          ((symbol-function 'gascity-sling--derived-target)
+           (lambda (&optional _) nil))
           ((symbol-function 'gascity-sling--v2-trap-p)
            (lambda (&rest _) nil))
           ((symbol-function 'gascity-sling--cross-store-p)
@@ -1242,6 +1239,16 @@ no vars at all."
              :target "mayor" :arg "bl-5ja")
        gascity-sling-test--roster nil)
       "✓ Ready — plain route · target mayor (city) · no vars"))))
+
+(ert-deftest gascity-test-sling-missing-required-vars-nil-recipe-degrades ()
+  "A nil recipe (no formula picked — the plain shape) has no required
+vars: the real validator degrades to nil instead of signalling.  The
+WI-6 footer composes it with the recipe nil on every transient setup,
+so an unguarded `gascity-formula-vars' on nil crashed the setup (the
+WI-11 bright-lights pass, `No applicable method')."
+  (should (null (gascity-sling--missing-required-vars nil nil)))
+  (should (null (gascity-sling--missing-required-vars
+                 (gascity-sling-test--recipe "pancakes" nil) nil))))
 
 (ert-deftest gascity-test-sling-footer-ready-formula-sentence ()
   "Mockup §3: a formula without work is the targetless `--formula'
@@ -1273,7 +1280,7 @@ qualification a v2 launch needs; the name sits in the Who line."
                :target "hello-world/gc.implementation-worker"
                :arg "bl-5ja")
          gascity-sling-test--roster
-         (gascity-sling-test--recipe
+         (gascity-sling-test--vars-recipe
           (vector '((name . "artifact_root"))
                   '((name . "push"))
                   '((name . "context_path")))))
@@ -1285,7 +1292,7 @@ and the footer feeds the validator the RECIPE and the target's
 ROSTER-SCOPE (never the raw target name); the suggestion rig is the
 first rig-scoped roster row (hello-world), a cold roster degrades to
 the generic wording.  The warning is a string — it never blocks `s'."
-  (let ((recipe (gascity-sling-test--recipe))
+  (let ((recipe (gascity-sling-test--vars-recipe))
         (trap-args nil))
     (gascity-sling-test--with-footer-deps
       (cl-letf (((symbol-function 'gascity-sling--v2-trap-p)
@@ -1312,6 +1319,32 @@ the generic wording.  The warning is a string — it never blocks `s'."
                  :target "mayor" :arg "bl-5ja")
            nil recipe)
           "⚠ formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a rig-scoped agent with T"))))))
+
+(ert-deftest gascity-test-sling-footer-derived-target-answers-checks ()
+  "The Who default (WI-3) is a target for the footer's checks too.
+With nothing set, the derived target suppresses the §5c missing-target
+warning — `s' will not prompt — and a derived rig-scoped target on a
+foreign-store bead shows the §5b cross-store warning before the
+launch (the WI-11 bright-lights pass: gc refused the cross-rig launch
+the footer had called `⚠ No target')."
+  (gascity-sling-test--with-footer-deps
+    (cl-letf (((symbol-function 'gascity-sling--derived-target)
+               (lambda (&optional _)
+                 (list :target "hello-world/gc.implementation-worker"))))
+      (should-not
+       (string-match-p "No target"
+                       (gascity-sling--footer
+                        (list :city gascity-sling-test--city
+                              :formula nil :target nil :arg "bl-5ja")
+                        gascity-sling-test--roster nil)))
+      (cl-letf (((symbol-function 'gascity-sling--cross-store-p)
+                 (lambda (_work _scope _rigs) t)))
+        (should
+         (string-match-p "cross-store route"
+                         (gascity-sling--footer
+                          (list :city gascity-sling-test--city
+                                :formula nil :target nil :arg "bl-5ja")
+                          gascity-sling-test--roster nil)))))))
 
 (ert-deftest gascity-test-sling-footer-cross-store-warning ()
   "Mockup §5b: a rig-scoped target reading another store than the
@@ -1343,7 +1376,7 @@ never a gc read)."
   "Mockup §5c: the three missing pieces stack as `⚠' lines in order —
 missing work for a drain formula, missing required vars, missing
 target — the footer prefixes and joins them; no check ever refuses."
-  (let ((recipe (gascity-sling-test--recipe)))
+  (let ((recipe (gascity-sling-test--vars-recipe)))
     (gascity-sling-test--with-footer-deps
       (cl-letf (((symbol-function 'gascity-sling--missing-work-p)
                  (lambda (r work)
@@ -1364,7 +1397,7 @@ target — the footer prefixes and joins them; no check ever refuses."
 that lands (the re-setups of a pick, a target, an arg) recomputes it:
 the warnings of §5c peel away one by one until the ready sentence
 remains, on the same recipe."
-  (let ((recipe (gascity-sling-test--recipe)))
+  (let ((recipe (gascity-sling-test--vars-recipe)))
     (gascity-sling-test--with-footer-deps
       (cl-letf (((symbol-function 'gascity-sling--missing-work-p)
                  (lambda (r work)

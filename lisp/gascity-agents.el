@@ -272,14 +272,23 @@ Pure over the roster plists."
 
 (defun gascity-agents-roster-scope (target roster)
   "Return the scope of the roster agent named TARGET, or nil.
-Free entry — a typed name no roster row carries, including a cold
-roster's empty one — cannot be classified, so nil: the scope-dependent
-validators (REQ-010) degrade instead of dead-ending; gc stays the
-authority.  Pure."
-  (when-let* ((agent (seq-find (lambda (a)
-                                 (equal (plist-get a :name) target))
-                               roster)))
-    (gascity-agents-scope agent)))
+A roster row named TARGET classifies through `gascity-agents-scope'.
+Without one, a TARGET that names a rig itself — a slash prefix — is
+rig-scoped on its own: the pool instances the joined roster carries
+(`…/gc.implementation-worker-1') never match a config-name target
+exactly, and the Who default names configs, so the classifier falls
+back to the name's own prefix (the plan's scope classifier: roster
+`:rig', or the name's slash prefix).  Free entry — a typed name no
+roster row carries and no slash names — cannot be classified, so nil:
+the scope-dependent validators (REQ-010) degrade instead of
+dead-ending; gc stays the authority.  Pure."
+  (or (when-let* ((agent (seq-find (lambda (a)
+                                     (equal (plist-get a :name) target))
+                                   roster)))
+        (gascity-agents-scope agent))
+      (and (stringp target)
+           (string-search "/" target)
+           (substring target 0 (string-search "/" target)))))
 
 (defun gascity-agents--read-roster (done &optional cached)
   "Read the roster's payloads through the store; call DONE with them.

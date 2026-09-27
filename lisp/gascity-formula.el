@@ -610,7 +610,7 @@ from it counts as empty."
                        (gascity-formula--blank
                         (cdr (assoc (gascity-formula-var-name var) values)))
                        (gascity-formula-var-name var)))
-                (or (gascity-formula-vars recipe) '()))))
+                (or (and recipe (gascity-formula-vars recipe)) '()))))
 
 (defun gascity-sling--missing-vars-warning (names)
   "Return the missing-vars footer warning (mockup §5c wording), or nil."
@@ -1440,7 +1440,7 @@ dispatch.  An empty entered value counts as unset, which is dispatch's
 required-var business (REQ-008)."
   (let* ((recipe (gascity-sling-formula--scope-recipe))
          (names (mapcar #'gascity-formula-var-name
-                        (or (gascity-formula-vars recipe) '()))))
+                        (or (and recipe (gascity-formula-vars recipe)) '()))))
     (delq nil
           (mapcar
            (lambda (arg)

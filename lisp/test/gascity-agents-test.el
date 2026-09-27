@@ -149,10 +149,20 @@ to nil on free entry — a cold roster never dead-ends a dispatch."
     (should (equal (gascity-agents-roster-scope
                     "gascity.el/core.control-dispatcher" roster)
                    "gascity.el"))
-    ;; Free entry: a typed name no row carries classifies to nil.
+    ;; Free entry: a typed name no row carries and no slash names
+    ;; classifies to nil.
     (should-not (gascity-agents-roster-scope "typed-freely" roster))
     ;; A cold roster: nothing to classify, still no error.
-    (should-not (gascity-agents-roster-scope "mayor" nil))))
+    (should-not (gascity-agents-roster-scope "mayor" nil))
+    ;; A config-name target against a roster carrying only pool
+    ;; instances (`…/gc.implementation-worker-1', the joined roster the
+    ;; footer peeks) is rig-scoped by its own slash prefix — the plan's
+    ;; classifier fallback (WI-11 bright-lights pass).
+    (should (equal (gascity-agents-roster-scope
+                    "hello-world/gc.implementation-worker"
+                    (list (list :name "hello-world/gc.implementation-worker-1"
+                                :rig "hello-world")))
+                   "hello-world"))))
 
 (ert-deftest gascity-test-agents-roster-reads-through-store ()
   "The completion-facing accessor reads the same store entries the

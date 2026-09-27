@@ -1721,7 +1721,14 @@ vars, missing target.  Each degrades silently when its input is cold
 (free entry, a cold roster or memo): a cold roster never dead-ends,
 gc answers at launch.  Warnings never block `s'."
   (let* ((work (or (plist-get scope :work) (plist-get scope :arg)))
-         (target (plist-get scope :target))
+         ;; What `s' would launch: the set target wins, the Who
+         ;; default (WI-3) answers next — a derivation is a target for
+         ;; every check here, not only for the header sentence (the
+         ;; WI-11 bright-lights pass: a derived rig-scoped target on a
+         ;; city bead was refused by gc at launch while the footer
+         ;; stayed silent about the cross-store route).
+         (target (or (plist-get scope :target)
+                     (plist-get (gascity-sling--derived-target scope) :target)))
          (target-scope (and target (gascity-agents-roster-scope target roster)))
          (rigs (gascity-rigs-cached (gascity-sling--city-dir scope)))
          (values (gascity-sling-formula--current-values))
