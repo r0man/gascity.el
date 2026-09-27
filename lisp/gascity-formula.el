@@ -383,6 +383,93 @@ recursively, across nested alists and JSON arrays."
          (seq-some #'gascity-formula--value-mentions-convoy value))))
 
 ;;; ============================================================
+;;; Shape inference and the header sentence (sling WI-1,
+;;; REQ-001/002)
+;;; ============================================================
+
+;; Pure display functions: the shape shown in the sling menu's header
+;; is inferred from the work + formula selections — never a flag, never
+;; a toggle — and rendered as one sentence.  Dispatch keeps
+;; `gascity-formula--needs-convoy' as the AUTHORITATIVE shape rule: a
+;; mismatch between the inferred display shape and what gc accepts is
+;; the live footer's business (WI-2/WI-6), not a new blocking prompt.
+
+(defun gascity-sling--shape (work formula)
+  "Return the sling shape inferred from WORK and FORMULA.
+One of the symbols `plain', `formula' or `on': no formula picked is the
+plain path; a formula with a chosen work is the targeted `--on' shape;
+a formula without work is the targetless `--formula' shape.  Display
+only — dispatch re-derives the shape through
+`gascity-formula--needs-convoy', gc's own documented rule (plan D2)."
+  (cond ((not formula) 'plain)
+        ((not (gascity-formula--blank work)) 'on)
+        (t 'formula)))
+
+(defun gascity-sling--work-id-p (work)
+  "Return non-nil when WORK reads as a bead or convoy id.
+The scope's work slot holds either a bead/convoy id (pre-seeded from
+point or picked) or freeform task text.  A bare id — one dash joining
+two alphanumeric runs, e.g. `bl-5ja', `hw-conv' — gets the \='bead\='
+qualifier in the header sentence; anything else (task text usually has
+spaces) is rendered as the text itself.  A display heuristic only."
+  (and (stringp work)
+       (string-match-p "\\`[a-z0-9]+-[a-z0-9]+\\'" work)))
+
+(defconst gascity-sling--no-work-hint "(no work — A or point at a bead)"
+  "The header sentence's stand-in for a missing work selection.
+Mockup §2 wording: the What stage is unanswered, `A' or pointing at a
+bead answers it.")
+
+(defconst gascity-sling--no-target-hint "(no target — T or default)"
+  "The header sentence's stand-in for a missing target.
+Mockup §2 wording: the Who stage has no derived default, `T' answers
+it.")
+
+(defun gascity-sling--work-phrase (work)
+  "Return WORK as the header sentence's work phrase.
+`bead <id>' for a bare bead/convoy id, the freeform task text as
+entered, or the mockup §2 no-work hint when blank."
+  (cond ((gascity-formula--blank work) gascity-sling--no-work-hint)
+        ((gascity-sling--work-id-p work) (format "bead %s" work))
+        (t work)))
+
+(defun gascity-sling--target-phrase (target)
+  "Return TARGET as the header sentence's target phrase.
+The agent name, or the mockup §2 no-target hint when blank."
+  (if (gascity-formula--blank target)
+      gascity-sling--no-target-hint
+    target))
+
+(defun gascity-sling--header-sentence (work formula target &optional recipe)
+  "Return the one-sentence header for the sling scope (REQ-002).
+WORK is the bead/convoy id or freeform task text, FORMULA the picked
+formula name (nil for the plain path), TARGET the chosen agent, and
+RECIPE the picked formula's cached recipe — the \='drained by\=' clause
+consults `gascity-formula--needs-convoy' on it (mockup §4/§5a); a
+non-convoy formula's target renders as \='on <target>\=' like the
+`--formula' shape.  With RECIPE nil the \='on\=' shape degrades to the
+non-convoy wording rather than reading gc — nothing on a render path
+may run a synchronous read (D9).  The exact wordings are mockup
+§1–§4:
+
+  Sling bead bl-5ja to mayor
+  Run pancakes (formula) on mayor
+  Run build-basic against bead bl-5ja, drained by mayor"
+  (let ((target-phrase (gascity-sling--target-phrase target)))
+    (pcase (gascity-sling--shape work formula)
+      ('plain
+       (format "Sling %s to %s"
+               (gascity-sling--work-phrase work) target-phrase))
+      ('formula
+       (format "Run %s (formula) on %s" formula target-phrase))
+      ('on
+       (format "Run %s against %s, %s %s"
+               formula (gascity-sling--work-phrase work)
+               (if (and recipe (gascity-formula--needs-convoy recipe))
+                   "drained by" "on")
+               target-phrase)))))
+
+;;; ============================================================
 ;;; Validation (REQ-008/009)
 ;;; ============================================================
 

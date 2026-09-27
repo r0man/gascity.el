@@ -206,5 +206,111 @@ everything and forgets the city."
           (should (equal (plist-get scope :city) gascity-sling-test--city))
           (should-not (assoc gascity-sling-test--city gascity-sling--remembered)))))))
 
+;;; WI-1: shape inference and the one-sentence header (REQ-001/002)
+
+(defun gascity-sling-test--recipe (name &optional steps)
+  "Decode a minimal `gascity-formula' named NAME with raw STEPS."
+  (gascity-domain-decode
+   'gascity-formula `((name . ,name) ,@(when steps `((steps . ,steps))))))
+
+(defconst gascity-sling-test--drain-recipe
+  (gascity-sling-test--recipe
+   "build-basic"
+   '(((id . "implement") (title . "Implement owned work") (type . "task"))
+     ((id . "drain") (title . "Drain the convoy") (type . "drain")
+      (metadata . ((gc.kind . "drain"))))))
+  "A recipe with a `gc.kind=drain' step — `needs-convoy' is true.")
+
+(defconst gascity-sling-test--plain-recipe
+  (gascity-sling-test--recipe
+   "pancakes"
+   '(((id . "mix") (title . "Mix the batter") (type . "task"))))
+  "A recipe with no drain step and no `{{convoy_id}}' — targetless.")
+
+(ert-deftest gascity-test-sling-shape-inference ()
+  "The displayed shape is inferred from work + formula, never a flag:
+no formula is the plain path regardless of work; a formula with work is
+the `--on' shape; a formula without work is `--formula'.  A blank
+work string counts as no work (WI-1, REQ-001/002)."
+  (should (eq (gascity-sling--shape nil nil) 'plain))
+  (should (eq (gascity-sling--shape "bl-5ja" nil) 'plain))
+  (should (eq (gascity-sling--shape " " nil) 'plain))
+  (should (eq (gascity-sling--shape "bl-5ja" "build-basic") 'on))
+  (should (eq (gascity-sling--shape nil "pancakes") 'formula))
+  (should (eq (gascity-sling--shape "" "pancakes") 'formula))
+  (should (eq (gascity-sling--shape "   " "pancakes") 'formula)))
+
+(ert-deftest gascity-test-sling-header-sentence-mockups ()
+  "The header sentence renders the exact mockup §1–§4 wordings for the
+shape × work-presence combinations, and the `drained by' clause
+consults `gascity-formula--needs-convoy' on the cached recipe (§4/§5a);
+a non-convoy recipe renders `on <target>' like the `--formula' shape.
+A nil recipe degrades to the same wording without reading gc (D9)."
+  ;; §1 — plain, fully pre-seeded.
+  (should (equal (gascity-sling--header-sentence "bl-5ja" nil "mayor")
+                 "Sling bead bl-5ja to mayor"))
+  ;; §2 — cold entry, both hints.
+  (should (equal (gascity-sling--header-sentence nil nil nil)
+                 "Sling (no work — A or point at a bead) to (no target — T or default)"))
+  ;; §3 — formula without work: the targetless --formula shape.
+  (should (equal (gascity-sling--header-sentence nil "pancakes" "mayor")
+                 "Run pancakes (formula) on mayor"))
+  ;; §4 — formula with work: the --on shape, drained by the target
+  ;; (needs-convoy on the cached recipe).
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "build-basic"
+                  "hello-world/gc.implementation-worker"
+                  gascity-sling-test--drain-recipe)
+                 "Run build-basic against bead bl-5ja, drained by hello-world/gc.implementation-worker"))
+  ;; §5a — the same drain recipe with a city-scoped target.
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "build-basic" "mayor"
+                  gascity-sling-test--drain-recipe)
+                 "Run build-basic against bead bl-5ja, drained by mayor")))
+
+(ert-deftest gascity-test-sling-header-sentence-partial-scopes ()
+  "The mockup hints stand in for each missing half of the sentence —
+plain without target, plain without work, formula without target — and
+freeform task text renders as the text itself, not `bead <id>' (the
+id heuristic: one dash joining two alphanumeric runs)."
+  (should (equal (gascity-sling--header-sentence "bl-5ja" nil nil)
+                 "Sling bead bl-5ja to (no target — T or default)"))
+  (should (equal (gascity-sling--header-sentence nil nil "mayor")
+                 "Sling (no work — A or point at a bead) to mayor"))
+  (should (equal (gascity-sling--header-sentence nil "pancakes" nil)
+                 "Run pancakes (formula) on (no target — T or default)"))
+  (should (equal
+           (gascity-sling--header-sentence "fix the flaky timer test" nil "mayor")
+           "Sling fix the flaky timer test to mayor")))
+
+(ert-deftest gascity-test-sling-header-sentence-non-convoy-recipe ()
+  "The `on' shape with a recipe that needs no convoy keeps the §3
+`on <target>' preposition; a missing recipe degrades to the same
+wording — no synchronous gc read on the render path (D9, WI-1)."
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "pancakes" "mayor"
+                  gascity-sling-test--plain-recipe)
+                 "Run pancakes against bead bl-5ja, on mayor"))
+  ;; Recipe nil (cold cache): degrade, never read gc.
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "pancakes" "mayor" nil)
+                 "Run pancakes against bead bl-5ja, on mayor")))
+
+(ert-deftest gascity-test-sling-scope-info-renders-the-sentence ()
+  "The menu header carries the sentence (the old field list is gone):
+`gascity-sling--scope-info' wraps it in the raw unwrapped `(:info …)'
+spec, reads the work from `:work' or the legacy `:arg' slot, and
+passes the cached recipe through for the `drained by' clause (WI-1)."
+  (should (equal (gascity-sling--scope-info
+                   (list :formula nil :target nil :arg nil) nil)
+                 (list :info "Sling (no work — A or point at a bead) to (no target — T or default)")))
+  (should (equal (gascity-sling--scope-info
+                   (list :formula nil :target "mayor" :work "bl-5ja") nil)
+                 (list :info "Sling bead bl-5ja to mayor")))
+  (should (equal (gascity-sling--scope-info
+                   (list :formula "build-basic" :target "mayor" :arg "bl-5ja")
+                   gascity-sling-test--drain-recipe)
+                 (list :info "Run build-basic against bead bl-5ja, drained by mayor"))))
+
 (provide 'gascity-sling-test)
 ;;; gascity-sling-test.el ends here

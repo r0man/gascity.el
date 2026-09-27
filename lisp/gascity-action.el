@@ -64,6 +64,7 @@
 ;; (cross-file verb wiring — a missing declaration is only caught by the
 ;; `--warnings-as-errors' compile gate).
 (declare-function gascity-sling-formula--bead-or-convoy-at-point "gascity-formula")
+(declare-function gascity-sling--header-sentence "gascity-formula")
 (declare-function gascity-sling-formula--read-formula "gascity-formula")
 (declare-function gascity-sling-formula--current-values "gascity-formula")
 (declare-function gascity-sling-formula--dispatch "gascity-formula")
@@ -1240,21 +1241,27 @@ The generated variable infix keys avoid exactly this list; it lives
 beside the layout it keys so a re-binding cannot silently collide
 \(OQ-2), and a test asserts the two stay in sync.")
 
-(defun gascity-sling--scope-info (scope)
+(defun gascity-sling--scope-info (scope &optional recipe)
   "Return the raw info spec describing SCOPE — the menu's header line.
-The `(:info …)' suffix form is passed unwrapped; nesting it as
-`((:info …))' parses as an argument spec and crashes setup (founded in
-the tmux-Emacs TRAMP e2e pass).  A leading `(:info …)' as the FIRST
-element of its group vector also breaks setup — it parses as a group
-argument — so the group title carries the city name and this spec
-carries the scope.  With no formula picked the header hints at `-f'
-\(OQ-3)."
+One sentence, the inferred shape (REQ-002): no field list, no shape
+flag — the shape is inferred from the scope's work + formula and the
+wording is the signed-off mockup §1–§4 (e.g. \='Sling bead bl-5ja to
+mayor\=', \='Run pancakes (formula) on mayor\', \='Run build-basic
+against bead bl-5ja, drained by …\').  RECIPE is the picked formula's
+cached recipe — the \='drained by\=' clause consults
+`gascity-formula--needs-convoy' on it; nil (or a formula-less scope)
+degrades without reading gc (D9).  The `(:info …)' suffix form is
+passed unwrapped; nesting it as `((:info …))' parses as an argument
+spec and crashes setup (founded in the tmux-Emacs TRAMP e2e pass).  A
+leading `(:info …)' as the FIRST element of its group vector also
+breaks setup — it parses as a group argument — so the group title
+carries the city name and this spec carries the sentence."
   (list :info
-        (format "Arg: %s · Formula: %s · Target: %s"
-                (or (plist-get scope :arg)
-                    "(none — point at a bead or convoy)")
-                (or (plist-get scope :formula) "(none — -f to pick)")
-                (or (plist-get scope :target) "(none)"))))
+        (gascity-sling--header-sentence
+         (or (plist-get scope :work) (plist-get scope :arg))
+         (plist-get scope :formula)
+         (plist-get scope :target)
+         recipe)))
 
 (defun gascity-sling--children-specs (scope)
   "Return the raw stacked layout specs for SCOPE (REQ-C).
@@ -1275,7 +1282,7 @@ the header (ga-4ia4)."
     (append
      (list
       (vector (format "Sling — %s" (gascity-context-city-name))
-              (gascity-sling--scope-info scope))
+              (gascity-sling--scope-info scope recipe))
       (vector "Formula"
               '("-f" "Pick formula…" gascity-sling-dispatch-pick)
               '("g" "Refresh catalog" gascity-sling-dispatch-refresh))

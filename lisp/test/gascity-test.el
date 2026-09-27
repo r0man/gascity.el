@@ -1633,9 +1633,10 @@ unified prefix carries the formula suffixes in place."
   "AC-2/OQ-3: the unified prefix stacks the sections vertically —
 header info, Formula, Destination, Routing flags, Actions, then the
 Variables section last, full width — and the info line is a raw
-unwrapped `(:info …)' spec (nested `((:info …))' crashes setup).  With
-no formula picked there is no Variables section and the header hints
-at `-f'."
+unwrapped `(:info …)' spec (nested `((:info …))' crashes setup) carrying
+the one-sentence shape header (WI-1).  With no formula picked there is
+no Variables section and the header is the mockup §2 cold-entry
+sentence."
   (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
              (lambda (_n)
                (gascity-test--formula-with-vars
@@ -1649,26 +1650,32 @@ at `-f'."
       ;; The header group is titled with the city; the scope info line
       ;; is a raw unwrapped `(:info …)' spec, not the group's first
       ;; element (a leading `(:info …)' parses as a group argument and
-      ;; breaks setup — founded in the TRAMP e2e pass).
+      ;; breaks setup — founded in the TRAMP e2e pass), and carries the
+      ;; one-sentence shape header (WI-1: formula + work is the --on
+      ;; shape; the stubbed recipe has no drain step, so the target
+      ;; renders `on sess-1').
       (should (equal (aref (nth 0 groups) 0) "Sling — testcity"))
       (let ((info (aref (nth 0 groups) 1)))
         (should (eq (car info) :info))
         (should (stringp (cadr info)))
-        (should (string-match-p "Target: sess-1" (cadr info))))
+        (should (equal (cadr info)
+                       "Run do-work against bead gce-1, on sess-1")))
       (should (equal (aref (nth 1 groups) 0) "Formula"))
       (should (equal (aref (nth 2 groups) 0) "Destination"))
       (should (equal (aref (nth 3 groups) 0) "Routing flags"))
       (should (equal (aref (nth 4 groups) 0) "Actions"))
       (should (string-prefix-p "Variables — do-work"
                                (aref (nth 5 groups) 0)))))
-  ;; No formula picked: five groups, no Variables section, header hint.
+  ;; No formula picked: five groups, no Variables section, and the
+  ;; header is the cold-entry sentence (mockup §2) — no -f hint, the
+  ;; formula stage's own hint shows it.
   (cl-letf (((symbol-function 'gascity-context-city-name)
              (lambda (&optional _dir) "testcity")))
     (let ((groups (gascity-sling--children-specs
                    (list :formula nil :target nil :arg nil))))
       (should (= (length groups) 5))
-      (should (string-match-p "-f to pick"
-                              (cadr (aref (nth 0 groups) 1)))))))
+      (should (equal (cadr (aref (nth 0 groups) 1))
+                     "Sling (no work — A or point at a bead) to (no target — T or default)")))))
 
 (ert-deftest gascity-test-sling-pick-re-setups-in-place ()
   "AC-1: `-f' reads a formula once and re-settles THIS prefix with the
@@ -1726,17 +1733,17 @@ scope and set values."
 
 (ert-deftest gascity-test-sling-target-set-and-header ()
   "AC-3/REQ-B: `-T' reads the target once with session completion,
-re-settles in place with it in the scope, and the header shows it; an
-unset target renders `Target: (none)'."
-  ;; The header reflects the scope's target.
-  (should (string-match-p
-           "Target: (none)"
+re-settles in place with it in the scope, and the header sentence
+shows it; an unset target renders the mockup §2 no-target hint."
+  ;; The header sentence reflects the scope's target.
+  (should (equal
            (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target nil :arg nil)))))
-  (should (string-match-p
-           "Target: sess-7"
+                   (list :formula nil :target nil :arg nil)))
+           "Sling (no work — A or point at a bead) to (no target — T or default)"))
+  (should (equal
            (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target "sess-7" :arg nil)))))
+                   (list :formula nil :target "sess-7" :arg nil)))
+           "Sling (no work — A or point at a bead) to sess-7"))
 
   ;; Pressing -T re-settles with the read target in the scope.
   (let (reads setup)
@@ -1761,15 +1768,15 @@ edited arg in the scope and the current infix values carried as
 :value — the header reflects it immediately and a formula dispatch
 uses the edited arg without quitting and re-seeding via point.  The
 edited arg lives in scope, so it survives a formula re-pick (-f)."
-  ;; The header renders the unset arg's hint and an edited arg.
-  (should (string-match-p
-           "Arg: (none — point at a bead or convoy)"
+  ;; The header sentence renders the unset arg's hint and an edited arg.
+  (should (equal
            (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target nil :arg nil)))))
-  (should (string-match-p
-           "Arg: gce-9"
+                   (list :formula nil :target nil :arg nil)))
+           "Sling (no work — A or point at a bead) to (no target — T or default)"))
+  (should (equal
            (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target nil :arg "gce-9")))))
+                   (list :formula nil :target nil :arg "gce-9")))
+           "Sling bead gce-9 to (no target — T or default)"))
   ;; Pressing A re-settles with the read arg in the scope, values
   ;; carried.
   (let (prompts setup)
