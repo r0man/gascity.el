@@ -1721,6 +1721,16 @@ at point in the rig list:
 @findex gascity-sling
 @code{gc sling}: route a bead id, a formula, or free task text to an
 agent.  Supports a formula, a nudge, and a dry run.
+
+@cindex derived target, sling
+The Who target derives when it can, in this order: the work bead's
+rig's @code{default_sling_target} or @code{default_sling_targets} (a
+rig reporting none skips this rule), the per-(city, formula) target
+remembered from the last launch, and finally the city's exactly one
+rig-scoped @code{gc.implementation-worker} agent when that is
+unambiguous.  A derived target is used without prompting, shown with a
+@code{derived} tag in the menu header, and pre-seeds the @kbd{T}
+picker; only when nothing derives does the menu prompt for a target.
 @item Run order --- dispatcher @kbd{O}, list @kbd{x}
 @findex gascity-order-run
 @code{gc order run}: run an order now, bypassing its trigger.

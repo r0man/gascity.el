@@ -107,7 +107,24 @@ includes for its beads even though it is not a `city.toml' rig.")
    (suspended
     :initarg :suspended :initform nil :type (or null boolean) :json-key suspended
     :accessor gascity-rig-suspended
-    :documentation "Non-nil when the rig is suspended."))
+    :documentation "Non-nil when the rig is suspended.")
+   (default-sling-target
+    :initarg :default-sling-target :initform nil :type (or null string)
+    :json-key default_sling_target
+    :accessor gascity-rig-default-sling-target
+    :documentation "The rig's default sling target (`default_sling_target'
+in its city.toml rig table), when `gc rig list' reports one.  The sling
+menu's derived Who default reads it first (WI-3); gc does not emit the
+field today, so it decodes nil and that rule skips fail-soft (plan,
+Open Implementation Details).")
+   (default-sling-targets
+    :initarg :default-sling-targets :initform nil :type (or null (list-of string))
+    :json-key default_sling_targets
+    :accessor gascity-rig-default-sling-targets
+    :documentation "The rig's default sling targets
+(`default_sling_targets'), a list — gc picks one at random when a sling
+names no target; the client-side Who derivation shows the first,
+deterministically.  Nil when `gc rig list' reports none."))
   :documentation "A rig as reported by `gc rig list'.")
 
 ;;; Session — `gc session list' -> `sessions' vector

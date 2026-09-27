@@ -56,6 +56,7 @@
 ;; which require this module; `gascity--refresh-current-view' calls them
 ;; by name after a mutation made from a detail buffer.
 (declare-function gascity-dashboard-refresh "gascity-dashboard")
+(declare-function gascity-dashboard--rig-of "gascity-dashboard" (qname))
 (declare-function gascity-rig-dashboard-refresh "gascity-rig")
 (declare-function gascity-polecat-detail-refresh "gascity-session")
 
@@ -276,10 +277,12 @@ background (`gascity-store-peek'); nil when cold — free entry works."
   (completing-read prompt (gascity-action--rig-names) nil nil nil nil
                    (gascity-context-rig-name-cached)))
 
-(defun gascity-action--read-session (prompt)
-  "Read a session alias with PROMPT, defaulting to the session at point."
+(defun gascity-action--read-session (prompt &optional default)
+  "Read a session alias with PROMPT, defaulting to DEFAULT, else point.
+DEFAULT, when non-nil (e.g. the sling menu's derived Who target), wins
+over the agent at point — RET keeps it."
   (completing-read prompt (gascity-action--session-names) nil nil nil nil
-                   (gascity-action--agent-at-point-name)))
+                   (or default (gascity-action--agent-at-point-name))))
 
 (defun gascity-action--read-order (prompt)
   "Read an order name with PROMPT."
@@ -1146,6 +1149,163 @@ followed by `S s' slings what was previewed (bug S-2).")
     (setq gascity-sling--remembered
           (seq-remove (lambda (e) (equal (car e) city)) gascity-sling--remembered))))
 
+;;; Derived Who default (plan WI-3, REQ-005)
+;;
+;; `s' never asks Who again when a target is derivable.  The answer
+;; is computed client-side, in the design's order: the work bead's rig
+;; default, the per-(city, formula) launch memory, then the
+;; implementation-worker convention — the roster's exactly one
+;; rig-scoped `gc.implementation-worker'.  Every input is cached
+;; data (`gascity-store-get', the rig memo): the derivation runs from
+;; the menu's render path too, so it must never spawn gc (D9).
+
+(defvar gascity-sling--target-memory nil
+  "The sling menu's per-((city . formula)) launch target memory.
+An alist ((DIR . FORMULA) . TARGET): the target of every real launch
+is recorded (`gascity-sling--remember-target') and the next dispatch
+of the same city and formula derives it (rule 2 of the Who default,
+plan WI-3).  Plain launches record under FORMULA nil.  Unlike the
+remembered menu state (`gascity-sling--remembered', cleared after a
+launch) this is a memory, like the per-(formula,var) history: it
+survives launches.")
+
+(defun gascity-sling--remember-target (city formula target)
+  "Record TARGET as CITY's launch target memory for FORMULA.
+The target of a real launch — set with `-T', derived, or read at
+dispatch — becomes the next launch's derived default (WI-3 rule 2).
+CITY is the city directory, FORMULA the formula name or nil (a plain
+sling); an empty TARGET records nothing."
+  (when (and city (stringp target) (not (string-empty-p target)))
+    (setf (alist-get (cons city formula) gascity-sling--target-memory
+                     nil nil #'equal)
+          target)))
+
+(defun gascity-sling--memory-target (scope memory)
+  "Return the launch target remembered for SCOPE in MEMORY, or nil.
+Pure: the (city . formula) pair of SCOPE against the alist — a hit is
+the same city and the same formula; another formula, another city or
+no entry is a miss."
+  (cdr (assoc (cons (plist-get scope :city) (plist-get scope :formula))
+              memory #'equal)))
+
+(defun gascity-sling--work (scope)
+  "Return SCOPE's work answer: a bead or convoy id, or freeform text.
+`:work' generalizes `:arg' (plan WI-4); both are read, `:work' first,
+so the derivation keeps working on either side of that rename."
+  (or (plist-get scope :work) (plist-get scope :arg)))
+
+(defun gascity-sling--work-rig (scope)
+  "Return the memoized `gascity-rig' owning SCOPE's work bead, or nil.
+The bead id's prefix routes to its rig — the same prefix routing the
+bd verbs use — resolved against the rig memo (`gascity-rigs-cached')
+alone: never a gc read (D9).  Freeform text, a prefixless id, an
+unknown prefix or a cold memo all give nil (rule 1 skips fail-soft)."
+  (when-let* ((work (gascity-sling--work scope))
+              (prefix (gascity-beads--id-prefix work))
+              (city (plist-get scope :city)))
+    (seq-find (lambda (r) (equal (gascity-rig-prefix r) prefix))
+              (gascity-rigs-cached city))))
+
+(defun gascity-sling--rig-default-target (scope)
+  "Return the work bead's rig default sling target for SCOPE, or nil.
+`default_sling_target' first, then the first of
+`default_sling_targets' — gc picks one of the list at random
+server-side; a default the menu SHOWS must be deterministic.  The
+rig's data comes from the memo, so a rig reporting no defaults — today
+none do — gives nil and the derivation falls through (Open
+Implementation Details: fail-soft)."
+  (when-let* ((rig (gascity-sling--work-rig scope)))
+    (or (gascity-rig-default-sling-target rig)
+        (car (gascity-rig-default-sling-targets rig)))))
+
+(defconst gascity-sling--implementation-worker "gc.implementation-worker"
+  "The agent name of the Who convention rule (WI-3).
+The derivation's third rule looks for the roster's exactly one
+RIG-SCOPED agent of this name — the worker this very package's runs
+are dispatched to — when that is unambiguous.  The match is on the
+roster's configured template (a pool): slinging to it routes the
+bead to an eligible session of the pool, so a live instance's
+suffixed name never counts.")
+
+(defun gascity-sling--implementation-worker-target (roster)
+  "Return ROSTER's single rig-scoped implementation worker, or nil.
+Exactly one `<rig>/gc.implementation-worker' derives that name (the
+convention rule, WI-3); two or more — one per rig — are ambiguous, and
+a city-scoped worker never counts: both skip the rule.  ROSTER is a
+list of agent plists (`:name' the qualified name, `:rig' the rig).
+Duplicate entries of the same agent are one."
+  (let ((names (delete-dups
+                (delq nil
+                      (mapcar
+                       (lambda (a)
+                         (let ((name (plist-get a :name)))
+                           (and (stringp name)
+                                (string-match
+                                 (format "\\`\\(.+\\)/%s\\'"
+                                         (regexp-quote
+                                          gascity-sling--implementation-worker))
+                                 name)
+                                name)))
+                       roster)))))
+    (pcase names (`(,only) only) (_ nil))))
+
+(defun gascity-sling--derive-target (scope roster memory)
+  "Return the derived Who target for SCOPE, ROSTER and MEMORY, or nil.
+The design's order (REQ-005): (1) the work bead's rig
+`default_sling_target'/`default_sling_targets', fail-soft when the
+rig data carries none; (2) the per-(city, formula) target memory;
+(3) the implementation-worker convention — ROSTER's exactly one
+rig-scoped `gc.implementation-worker' when unambiguous.  Pure over
+its inputs: SCOPE is the menu's scope plist, ROSTER a list of agent
+plists (`:name' `:rig'), MEMORY the `gascity-sling--target-memory'
+alist.  The answer is `(:target NAME :source SOURCE)' with SOURCE one
+of `rig-default', `memory' or `implementation-worker' — the header's
+derived tag and the `T' picker's seed render from it — or nil when no
+rule derives.  A target set in the scope wins over the derivation;
+this function never consults it."
+  (or (when-let* ((target (gascity-sling--rig-default-target scope)))
+        (list :target target :source 'rig-default))
+      (when-let* ((target (gascity-sling--memory-target scope memory)))
+        (list :target target :source 'memory))
+      (when-let* ((target (gascity-sling--implementation-worker-target roster)))
+        (list :target target :source 'implementation-worker))))
+
+(defun gascity-sling--roster (&optional city)
+  "Return CITY's agent roster for the Who derivation, or nil when cold.
+One plist per configured agent of the `gc agent list' payload — `:name'
+the qualified name, `:rig' its slash prefix, nil for a city-scoped
+agent.  Those names are the sling targets (a singleton agent or a
+pool template, `mayor', `gascity.el/gc.implementation-worker'), so
+they are the convention rule's roster; live sessions carry instance
+suffixes (`…/gc.implementation-worker-18') and name no config, so the
+session join is deliberately not read here.  Read from the store's
+cache only (`gascity-store-get': never a spawn, never a block — the
+header renders through this, D9); a cold or failed read is an empty
+roster and the roster rule skips fail-soft.  CITY defaults to the
+live scope's city."
+  (let* ((dir (or city (gascity-sling--city-dir)))
+         (data (plist-get (gascity-store-get '("agent" "list") dir) :data)))
+    (delq nil
+          (mapcar (lambda (a)
+                    (let ((name (alist-get 'qualified_name a)))
+                      (and (stringp name)
+                           (list :name name
+                                 :rig (gascity-dashboard--rig-of name)))))
+                  (append (alist-get 'agents data) nil)))))
+
+(defun gascity-sling--derived-target (&optional scope)
+  "Return the derived Who target of SCOPE (default the live scope).
+Gathers the derivation's inputs from session state — the roster from
+the cached `gc agent list' payload (`gascity-sling--roster'), the
+memory from `gascity-sling--target-memory' — and runs
+`gascity-sling--derive-target' over them.  See that function for the
+answer's shape and the rule order."
+  (let ((scope (or scope (ignore-errors (transient-scope)))))
+    (when scope
+      (gascity-sling--derive-target
+       scope (gascity-sling--roster (gascity-sling--city-dir scope))
+       gascity-sling--target-memory))))
+
 (defun gascity-sling--resetup (scope)
   "Set the sling menu up again with SCOPE and the current values; remember both."
   (let ((value (transient-args 'gascity-sling-dispatch)))
@@ -1181,7 +1341,15 @@ routing plan instead of executing."
                     (plist-get scope :arg)
                   (or (plist-get scope :arg)
                       (read-string "Bead id or task text: " (gascity-bead-at-point)))))
+           ;; The work just read belongs to the scope the derivation
+           ;; sees: a bead id typed here can still rig-default its
+           ;; target (rule 1 keys off the work bead).
+           (scope (plist-put (copy-sequence scope) :arg arg))
            (target (or (plist-get scope :target)
+                       ;; The derived Who default (WI-3): a derivable
+                       ;; target is used without prompting (REQ-005);
+                       ;; only when nothing derives does the read run.
+                       (plist-get (gascity-sling--derived-target scope) :target)
                        (gascity-action--read-session "Sling to target: "))))
       (if formula
           (gascity-sling-formula--dispatch
@@ -1198,9 +1366,16 @@ routing plan instead of executing."
             ;; from the payload when the async call answers (D9).
             (oset command json t)
             (gascity-command-act-async command))))
+      ;; The launch target becomes the city's (city, formula) Who
+      ;; memory (WI-3): the next launch's derived default (rule 2).
+      ;; A preview does not record — only a real launch is a choice.
+      (unless preview
+        (gascity-sling--remember-target
+         (gascity-sling--city-dir scope) formula target))
       ;; What was read goes into the scope: a preview keeps the menu
       ;; open showing it, and the `s' that follows slings exactly it.
-      (plist-put (plist-put (copy-sequence scope) :target target) :arg arg))))
+      ;; SCOPE is already the arg-updated copy; the target lands on it.
+      (plist-put scope :target target))))
 
 (transient-define-suffix gascity-sling-dispatch-run (args)
   "Sling for real using the dispatch flags ARGS.
@@ -1248,13 +1423,17 @@ the tmux-Emacs TRAMP e2e pass).  A leading `(:info …)' as the FIRST
 element of its group vector also breaks setup — it parses as a group
 argument — so the group title carries the city name and this spec
 carries the scope.  With no formula picked the header hints at `-f'
-\(OQ-3)."
+\(OQ-3).  A target only derivable — not set with `-T' — renders with
+the `derived' tag: what `s' would launch (WI-3, REQ-005)."
   (list :info
         (format "Arg: %s · Formula: %s · Target: %s"
                 (or (plist-get scope :arg)
                     "(none — point at a bead or convoy)")
                 (or (plist-get scope :formula) "(none — -f to pick)")
-                (or (plist-get scope :target) "(none)"))))
+                (or (plist-get scope :target)
+                    (when-let* ((derived (gascity-sling--derived-target scope)))
+                      (format "%s (derived)" (plist-get derived :target)))
+                    "(none)"))))
 
 (defun gascity-sling--children-specs (scope)
   "Return the raw stacked layout specs for SCOPE (REQ-C).
@@ -1375,11 +1554,15 @@ dispatch."
   "Read the sling target with session completion; the header shows it.
 The read is synchronous but strictly user-initiated — it runs only on
 this binding press (OQ-1, F-4), never during setup or redisplay.  The
-set target wins at dispatch; an unset one is read once there."
+set target wins at dispatch; an unset one is used from the derivation
+or read once there (WI-3).  The derived Who default seeds the read —
+RET keeps it — so a derivable target costs no typing."
   :transient t
   (interactive)
   (let ((default-directory (gascity-sling--city-dir)))
-    (let ((target (gascity-action--read-session "Sling to target: ")))
+    (let ((target (gascity-action--read-session
+                   "Sling to target: "
+                   (plist-get (gascity-sling--derived-target) :target))))
       (gascity-sling--resetup
        (plist-put (copy-sequence (transient-scope)) :target target)))))
 
@@ -1429,9 +1612,14 @@ catalog/recipe read and dispatch on the entered-from city
                   (list :city default-directory
                         :formula nil :target nil :arg at-point))))
     ;; Warm the formula caches (catalog + `gc formula list') through the
-    ;; store so `-f' answers from memory (bug S-1, D9).
+    ;; store so `-f' answers from memory (bug S-1, D9), and `gc agent
+    ;; list' the same way — the derived Who default's convention rule
+    ;; (WI-3) reads it from the store's cache, so a cold session
+    ;; requests the entry once, here (async, TTL-gated; a warm entry
+    ;; is free).
     (let ((default-directory (plist-get scope :city)))
-      (ignore-errors (gascity-formula-refresh-async nil #'ignore 'cached)))
+      (ignore-errors (gascity-formula-refresh-async nil #'ignore 'cached))
+      (ignore-errors (gascity-store-request '("agent" "list"))))
     (transient-setup 'gascity-sling-dispatch nil nil
                      :scope scope :value (cdr saved))))
 
