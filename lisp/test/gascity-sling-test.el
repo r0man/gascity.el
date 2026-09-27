@@ -15,6 +15,11 @@
 ;; - S-2: `p' closed the sling menu and lost formula, target and vars; a
 ;;   following `S s' became a plain sling.  Preview now keeps the menu,
 ;;   and the state is remembered per city.
+;;
+;; - WI-9 (REQ-012): a real launch records the per-(city,formula)
+;;   target memory (the Who default's memory tier — previews never
+;;   record), `x' clears the infix values alongside the scope, and
+;;   the remembered state still re-opens at `S'.
 
 ;;; Code:
 
@@ -205,6 +210,137 @@ everything and forgets the city."
           (should (null (plist-get scope :target)))
           (should (equal (plist-get scope :city) gascity-sling-test--city))
           (should-not (assoc gascity-sling-test--city gascity-sling--remembered)))))))
+
+;;; WI-9 (REQ-012): launch memory and menu state
+
+(ert-deftest gascity-test-sling-launch-records-target-memory ()
+  "A real formula sling records its target under (city . formula) in
+`gascity-sling--target-memory' — the Who default derivation's memory
+tier — while the post-launch forget clears only the open-menu state:
+launch memory and menu state are two different things."
+  (let ((gascity-sling--target-memory nil)
+        (gascity-sling--remembered
+         (list (cons gascity-sling-test--city
+                     (cons (list :city gascity-sling-test--city
+                                 :formula "e2e-demo" :target "mayor" :arg "bl-1")
+                           nil))))
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1"))
+        dispatched)
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (&rest _) (push t dispatched))))
+        (call-interactively #'gascity-sling-dispatch-run)
+        (should (= (length dispatched) 1))
+        (should (equal (cdr (assoc (cons gascity-sling-test--city "e2e-demo")
+                                   gascity-sling--target-memory))
+                       "mayor"))
+        ;; The real launch forgets the menu state, never the memory.
+        (should-not (assoc gascity-sling-test--city
+                           gascity-sling--remembered))))))
+
+(ert-deftest gascity-test-sling-preview-records-no-target-memory ()
+  "`p' previews without touching the launch memory: only a real `s'
+records the (city, formula) target."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1"))
+        previewed)
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (_r _t _a _v &optional preview)
+                   (setq previewed preview))))
+        (call-interactively #'gascity-sling-dispatch-preview)
+        (should previewed)
+        (should (null gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-plain-launch-records-no-target-memory ()
+  "The plain path has no formula, so a launch records no target
+memory — the memory is per (city, formula)."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula nil
+                     :target nil :arg nil)))
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (_p &rest _) "gce-1"))
+                ((symbol-function 'gascity-action--read-session)
+                 (lambda (_p) "sess-1"))
+                ((symbol-function 'gascity-command-act-async)
+                 (lambda (&rest _))))
+        (call-interactively #'gascity-sling-dispatch-run)
+        (should (null gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-refused-launch-records-no-target-memory ()
+  "A launch the validation refuses records no target memory: the
+recording runs after the dispatch, so a `user-error' thrown before any
+gc invocation never reaches it."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1")))
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (&rest _)
+                   (user-error "Var summary_path must be set"))))
+        (should-error (call-interactively #'gascity-sling-dispatch-run)
+                      :type 'user-error)
+        (should (null gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-blank-target-records-no-target-memory ()
+  "A blank target records no memory: the dispatch's own shape building
+drops it, so it was never a target the launch really used."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target nil :arg "bl-1"))
+        dispatched)
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-action--read-session)
+                 (lambda (_p) ""))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (&rest _) (push t dispatched))))
+        (call-interactively #'gascity-sling-dispatch-run)
+        (should (= (length dispatched) 1))
+        (should (null gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-reset-clears-values-too ()
+  "`x' clears the infix values alongside the scope: the re-setup carries
+no `:value', so no var or routing flag survives the reset (REQ-012).
+The per-(city, formula) launch memory is not menu state — `x' keeps it."
+  (let ((gascity-sling--target-memory
+         (list (cons (cons gascity-sling-test--city "e2e-demo") "mayor")))
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1"))
+        captured)
+    (cl-letf (((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'transient-setup)
+               (lambda (_name _l _s &rest args) (setq captured args))))
+      (call-interactively #'gascity-sling-dispatch-reset)
+      (dolist (key '(:formula :target :arg))
+        (should (null (plist-get (plist-get captured :scope) key))))
+      (should (equal (plist-get (plist-get captured :scope) :city)
+                     gascity-sling-test--city))
+      (should (null (plist-get captured :value)))
+      (should-not (assoc gascity-sling-test--city
+                         gascity-sling--remembered))
+      ;; Launch memory survives the reset: only the menu state is cleared.
+      (should (equal (cdr (assoc (cons gascity-sling-test--city "e2e-demo")
+                                  gascity-sling--target-memory))
+                     "mayor")))))
 
 (provide 'gascity-sling-test)
 ;;; gascity-sling-test.el ends here
