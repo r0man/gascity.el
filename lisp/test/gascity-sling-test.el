@@ -1096,7 +1096,7 @@ derivable keeps the no-target hint."
   (let ((info (lambda (scope) (nth 1 (gascity-sling--scope-info scope)))))
     (gascity-sling-test--with-agent-list gascity-sling-test--agent-list
       (should (string-match-p
-               "Sling hw-12 to hello-world/gc.implementation-worker"
+               "Sling bead hw-12 to hello-world/gc.implementation-worker"
                (funcall info (list :city gascity-sling-test--city :formula nil
                                    :target nil :arg "hw-12"))))
       ;; A set target renders without derivation — `-T' overrides.
