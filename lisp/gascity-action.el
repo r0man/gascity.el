@@ -76,6 +76,14 @@
 (declare-function gascity-formula-refresh-async "gascity-formula")
 (declare-function gascity-mail-inbox-refresh "gascity-mail")
 
+;; The launch follow offer's pieces live in later-loading modules: the
+;; run detail its `F' jump opens, and the composite per-store read its
+;; fallback resolves the newest run root through (cross-file wiring —
+;; a missing declaration is only caught by the `--warnings-as-errors'
+;; compile gate).
+(declare-function gascity-run-show "gascity-run")
+(declare-function gascity-dashboard--read-work "gascity-dashboard")
+
 ;;; ============================================================
 ;;; Synchronous action runner (inline-result callers only)
 ;;; ============================================================
@@ -1240,6 +1248,168 @@ its target as the (city, formula) pair's launch memory
       ;; What was read goes into the scope: a preview keeps the menu
       ;; open showing it, and the `s' that follows slings exactly it.
       (plist-put (plist-put (copy-sequence scope) :target target) :arg arg))))
+
+;;; The launch follow offer (plans/sling-command WI-8, REQ-009)
+;;
+;; A successful formula sling creates a workflow, and its root —
+;; reported by the `gc sling --json' payload — is offered for one
+;; keypress: `F' jumps to the run view, any other key dismisses and
+;; runs its own binding, the user staying put.  The plain route never
+;; offers (it creates no workflow of its own) and keeps its plain
+;; echo.  Nothing here blocks: the offer runs from the act's
+;; `:on-success' callback, once the launch has answered (D9).
+
+(defconst gascity-sling--run-roots-key
+  '("bd" "list" :sling-run-roots)
+  "Store key of the follow offer's run-roots read (kind `bd').")
+
+(defconst gascity-sling--run-roots-argv
+  '("bd" "list" "--all" "-n" "0" "--brief"
+    "--metadata-field" "gc.kind=workflow")
+  "The per-store read behind `gascity-sling--run-roots-key': every run
+root bead of a store — the Runs view's own roots argv (all statuses,
+no row limit, no free text).")
+
+(defun gascity-sling--read-run-roots (resolve reject)
+  "Read the run roots of the city store and each rig store.
+The loader of `gascity-sling--run-roots-key', the fallback read of the
+follow offer.  RESOLVE gets (:beads BEADS :errors ERRORS), every
+root stamped with its `gascity-rig' store (nil: the city store),
+REJECT only when every store failed — `gascity-dashboard--read-work'."
+  (gascity-dashboard--read-work resolve reject
+                                (list gascity-sling--run-roots-argv)))
+
+(defun gascity-sling--launched-root (result)
+  "Return the root bead id of the workflow sling RESULT created, or nil.
+`gc sling --json' names it in `molecule_id' — the payload schema's
+\"Created molecule/root workflow bead ID\", the field the WI-11 e2e
+pass confirms live.  No other field is documented to be a bead id, so
+none is read: the follow offer never guesses (REQ-009).  A non-alist
+RESULT (a failed JSON parse hands back raw stdout) yields nil."
+  (and (consp result)
+       (let ((root (alist-get 'molecule_id result)))
+         (and (stringp root) (not (string-empty-p root)) root))))
+
+(defun gascity-sling--launched-formula (result formula)
+  "Return the formula of a successful sling RESULT, else FORMULA (its name)."
+  (or (and (consp result)
+           (let ((name (alist-get 'formula result)))
+             (and (stringp name) (not (string-empty-p name)) name)))
+      formula))
+
+(defun gascity-sling--launched-work (result arg)
+  "Return the work a successful sling RESULT acted on.
+The payload's `bead_id' — \"Created or selected work bead ID\" — when
+it answers, else ARG: the convoy routed `--on', or the freeform text.
+With neither answering (not possible from the dispatch's own shapes,
+which always carry one) the echo shows `…'."
+  (or (and (consp result)
+           (let ((bead (alist-get 'bead_id result)))
+             (and (stringp bead) (not (string-empty-p bead)) bead)))
+      (and (stringp arg) (not (string-empty-p arg)) arg)
+      "…"))
+
+(defun gascity-sling--root-rig (id dir)
+  "Return the name of the rig store owning bead ID, or nil.
+ID's prefix (`gascity-beads--id-prefix') picks the rig from DIR's
+host's rig memo (`gascity-rigs-cached') — no gc call: the offer lands
+from a store callback (D9).  A cold memo or a city-store bead yields
+nil, which `gascity-run-show' reads as the city store."
+  (when-let* ((prefix (gascity-beads--id-prefix id))
+              (rig (seq-find (lambda (r) (equal (gascity-rig-prefix r) prefix))
+                             (gascity-rigs-cached dir))))
+    (gascity-rig-name rig)))
+
+(defun gascity-sling--newest-run-root (beads since)
+  "Return (ID . RIG) of the newest of BEADS created at or after SINCE.
+BEADS are the fallback read's run-root rows, each stamped with its
+`gascity-rig' store (nil: the city store); SINCE is epoch seconds.
+The newest is by `created_at', parsed with `gascity-ui-parse-time'; a
+row without an id or a parseable timestamp is skipped, never guessed
+at.  Nil when nothing was created since SINCE."
+  (let ((newest nil)
+        (at -1.0))
+    (dolist (b (and (listp beads) beads))
+      (when-let* ((id (alist-get 'id b))
+                  (created (gascity-ui-parse-time (alist-get 'created_at b))))
+        (when (and (stringp id) (not (string-empty-p id))
+                   (>= created since) (> created at))
+          (setq at created
+                newest (cons id (cdr (assq 'gascity-rig b)))))))
+    newest))
+
+(defun gascity-sling--follow-offer (root formula work &optional rig)
+  "Echo the launch of the workflow ROOT and offer to follow it (`F').
+`Launched workflow <id> (<formula> on <work>) — F: run view' in the
+echo area, then a momentary keymap: the next `F' jumps to
+`gascity-run-show' on ROOT — RIG, when non-nil, the owning rig
+store, so `b'/RET open its beads in the right one — and any other
+key dismisses the map and runs its own binding: the user stays put
+(REQ-009).  No map is installed over an active minibuffer, whose
+input it would hijack."
+  (message "Launched workflow %s (%s on %s) — F: run view" root formula work)
+  (unless (active-minibuffer-window)
+    (let ((map (make-sparse-keymap)))
+      (define-key map "F"
+                  (lambda ()
+                    (interactive)
+                    (gascity-run-show root nil rig)))
+      (set-transient-map map))))
+
+(defun gascity-sling--resolve-launched-root (started dir then)
+  "Resolve the run root created since STARTED, passing it to THEN.
+The follow offer's fallback (REQ-009), taken when the payload does
+not name the root: the run roots of the city's stores are read once
+through the store, in DIR — the city the sling was entered from (a
+store callback's `default-directory' is arbitrary; the completed
+action has already invalidated the `bd' kind, so the read answers
+post-launch).  THEN is called with the (ID . RIG) of the newest root
+created at or after STARTED — the launch's start in epoch seconds,
+less a two-second allowance for whole-second rounding and trivial
+clock skew (the bead is stamped by gc, possibly on another host) —
+or nil when the launch created none or the read failed: never a guess."
+  (let ((default-directory dir))
+    (gascity-store-fetch
+     gascity-sling--run-roots-key
+     (lambda (payload)
+       (funcall then (gascity-sling--newest-run-root
+                      (plist-get payload :beads)
+                      (- started 2))))
+     (lambda (_err) (funcall then nil))
+     :loader #'gascity-sling--read-run-roots)))
+
+(defun gascity-sling--launch-handler (command formula arg)
+  "Return the `:on-success' handler of a formula sling (WI-8, REQ-009).
+COMMAND is the sling being acted on, FORMULA its name, ARG the
+bead/convoy it was slung on.  When gc answers, the workflow root the
+launch created — named by the payload (`gascity-sling--launched-root')
+— is echoed with the momentary `F' follow offer
+(`gascity-sling--follow-offer'); a payload without it resolves the
+newest run root through the store first, and a launch that resolves
+no root at all keeps the plain success echo.  The launch itself
+never blocks: this handler runs only once the action has answered
+(D9)."
+  (let* ((target (gascity-action--command-target command))
+         (dir default-directory)
+         (started (float-time)))
+    (lambda (result)
+      (if-let* ((root (gascity-sling--launched-root result)))
+          (gascity-sling--follow-offer
+           root
+           (gascity-sling--launched-formula result formula)
+           (gascity-sling--launched-work result arg)
+           (gascity-sling--root-rig root dir))
+        (gascity-sling--resolve-launched-root
+         started dir
+         (lambda (run)
+           (if run
+               (gascity-sling--follow-offer
+                (car run)
+                (gascity-sling--launched-formula result formula)
+                (gascity-sling--launched-work result arg)
+                (cdr run))
+             (message "%s" (gascity-action--success-text
+                             command target result)))))))))
 
 (transient-define-suffix gascity-sling-dispatch-run (args)
   "Sling for real using the dispatch flags ARGS.
