@@ -45,16 +45,19 @@
 ;;; Fresh store per test
 
 (defvar gascity-sling--remembered)
+(defvar gascity-sling--target-memory)
 
 (defun gascity-test--reset-store (&rest _)
   "Clear the payload store, its scheduler and pending deferred calls
 before an ERT test (a call a test left behind would otherwise run from
 the `gascity-timer' watchdog in a later one).  Also the sling menu's
-remembered per-city state, another session-wide table a test could
+session-wide tables — the remembered per-city state and the
+per-(city, formula) launch memory — which a test could otherwise
 leak into the next."
   (gascity-store-clear)
   (mapc #'gascity-timer-cancel gascity-timer--items)
-  (setq gascity-sling--remembered nil))
+  (setq gascity-sling--remembered nil
+        gascity-sling--target-memory nil))
 
 (advice-add 'ert-run-test :before #'gascity-test--reset-store)
 

@@ -70,6 +70,7 @@
 (declare-function gascity-sling-formula--dispatch "gascity-formula")
 (declare-function gascity-sling-formula--show-recipe "gascity-formula")
 (declare-function gascity-sling-formula--var-children "gascity-formula")
+(declare-function gascity-formula--nonblank "gascity-formula")
 (declare-function gascity-formula-recipe-cached "gascity-formula")
 (declare-function gascity-formula-invalidate "gascity-formula")
 (declare-function gascity-formula-refresh-async "gascity-formula")
@@ -1122,7 +1123,13 @@ or the reused minibuffer a `completing-read' inherits), and the formula
 catalog/recipe caches key off `gascity-context-scope-key' of whatever
 directory is current at call time — an unpinned read both queries
 another city and memoizes its catalog under the wrong (possibly
-empty) scope key (ga-4ia4, bright-lights dogfood §5)."
+empty) scope key (ga-4ia4, bright-lights dogfood §5).
+
+Every reader the menu gains — the work picker, the agent picker, a
+file or directory completion — runs under the same pin (REQ-012): a
+new reader never reads from the ambient `default-directory' as given,
+only through this function, so a completion offered from a reused
+minibuffer still resolves against the entered-from city."
   (or (plist-get (or scope (transient-scope)) :city)
       default-directory))
 
@@ -1146,6 +1153,26 @@ followed by `S s' slings what was previewed (bug S-2).")
   (let ((city (or city (plist-get (ignore-errors (transient-scope)) :city))))
     (setq gascity-sling--remembered
           (seq-remove (lambda (e) (equal (car e) city)) gascity-sling--remembered))))
+
+(defvar gascity-sling--target-memory nil
+  "The last real-launch target per (city . formula): (CITY . FORMULA) → TARGET.
+CITY is the city directory the menu was entered from, FORMULA the
+scope's picked formula and TARGET the session the sling really
+launched to.  Recorded when `s' dispatches the formula path — never a
+preview — and read back as the Who default derivation's
+per-(city,formula) memory tier (`gascity-sling--derive-target',
+REQ-012).  Launch memory, not open-menu state: the `s' forget and the
+`x' reset that clear `gascity-sling--remembered' never clear it.")
+
+(defun gascity-sling--remember-target (city formula target)
+  "Remember TARGET as CITY's last launch target for FORMULA (REQ-012).
+A nil CITY, FORMULA or TARGET records nothing, and a blank TARGET
+records nothing — a blank target is dropped by the dispatch's own
+shape building, so it was never a target the launch really used."
+  (when (and city formula (gascity-formula--nonblank target))
+    (setf (alist-get (cons city formula) gascity-sling--target-memory
+                     nil nil #'equal)
+          target)))
 
 (defun gascity-sling--resetup (scope)
   "Set the sling menu up again with SCOPE and the current values; remember both."
@@ -1172,7 +1199,9 @@ the bead at point) then target, parse the flags and act or preview.
 A target set through `-T' wins; with none set, the formula path reads
 it once via `gascity-action--read-session' (REQ-B's dispatch
 fallback).  With PREVIEW non-nil, force `--dry-run' and show gc's
-routing plan instead of executing."
+routing plan instead of executing.  A real formula launch records
+its target as the (city, formula) pair's launch memory
+(`gascity-sling--target-memory', REQ-012); a preview records nothing."
   (let ((default-directory (gascity-sling--city-dir)))
     (let* ((scope (transient-scope))
            (formula (plist-get scope :formula))
@@ -1185,9 +1214,18 @@ routing plan instead of executing."
            (target (or (plist-get scope :target)
                        (gascity-action--read-session "Sling to target: "))))
       (if formula
-          (gascity-sling-formula--dispatch
-           (gascity-formula-recipe-cached formula)
-           target arg (gascity-sling-formula--current-values) preview)
+          (progn
+            (gascity-sling-formula--dispatch
+             (gascity-formula-recipe-cached formula)
+             target arg (gascity-sling-formula--current-values) preview)
+            ;; A real launch — never a preview — remembers the target
+            ;; as this (city, formula) pair's launch memory (REQ-012);
+            ;; the Who default derivation reads it back.  Recording
+            ;; runs after the dispatch, so a validation `user-error'
+            ;; records nothing.
+            (unless preview
+              (gascity-sling--remember-target
+               default-directory formula target)))
         (let* ((plist (gascity-sling--parse-transient-args args))
                (command (apply #'gascity-command-sling
                                :target target :arg arg
