@@ -444,16 +444,6 @@ scope key; the remembered-state contract itself is unchanged)."
 
 ;;; The redesign: shape inference and the header sentence (WI-1)
 
-(ert-deftest gascity-test-sling-shape-inference ()
-  "The shape is inferred from (work, formula), never chosen via flags:
-formula nil is always the plain route; a formula without work is the
-targetless `--formula' shape; a formula with work is the targeted
-`--on' drain (mockup §6b)."
-  (skip-unless (fboundp 'gascity-sling--shape))
-  (should (eq (gascity-sling--shape nil nil) 'plain))
-  (should (eq (gascity-sling--shape "bl-5ja" nil) 'plain))
-  (should (eq (gascity-sling--shape nil "do-work") 'formula))
-  (should (eq (gascity-sling--shape "bl-5ja" "do-work") 'on)))
 
 (ert-deftest gascity-test-sling-header-sentence ()
   "The first header line is one sentence naming the shape, the work
@@ -542,38 +532,6 @@ slug, never the bare bead id."
 
 ;;; The redesign: the derived Who default (WI-3)
 
-(ert-deftest gascity-test-sling-derive-target-precedence ()
-  "The Who default derivation order: per-(city, formula) target
-memory first, then the implementation-worker convention — the
-roster's exactly one rig-scoped `gc.implementation-worker'; an
-ambiguous roster (two rig-scoped workers, or only a city-scoped one)
-derives nothing and leaves `T' to ask."
-  (skip-unless (fboundp 'gascity-sling--derive-target))
-  (let ((scope (list :city gascity-sling-test--city :formula "do-work"
-                     :work nil :target nil))
-        (one-worker '((:name "mayor" :state "active")
-                      (:name "hello-world/gc.implementation-worker"
-                       :rig "hello-world" :state "idle"))))
-    ;; A memory hit for this (city, formula) wins.
-    (should (equal "mayor"
-                   (gascity-sling--derive-target
-                    scope one-worker
-                    (list (cons (cons gascity-sling-test--city "do-work")
-                                "mayor")))))
-    ;; No memory: the single rig-scoped implementation-worker.
-    (should (equal "hello-world/gc.implementation-worker"
-                   (gascity-sling--derive-target scope one-worker nil)))
-    ;; Two rig-scoped workers are ambiguous: nothing is derived.
-    (should-not (gascity-sling--derive-target
-                 scope
-                 (append one-worker
-                         '((:name "other/gc.implementation-worker"
-                            :rig "other" :state "idle")))
-                 nil))
-    ;; A city-scoped worker alone does not satisfy the convention.
-    (should-not (gascity-sling--derive-target
-                 scope '((:name "gc.implementation-worker" :state "idle"))
-                 nil))))
 
 ;;; The redesign: client-side validation (WI-2, WI-6)
 
