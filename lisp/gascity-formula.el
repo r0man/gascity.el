@@ -1236,16 +1236,14 @@ the store (`gascity-formula-choices-wait'); nothing to offer is a clear
     (completing-read "Formula: " (mapcar #'car choices)
                      nil t nil 'gascity-sling-formula-picker-history)))
 
-(defun gascity-sling-formula--dispatch (recipe target arg values &optional dry-run)
-  "Validate and sling RECIPE with VALUES; return the command acted on.
-TARGET is the session target, ARG the bead/convoy pre-seeded at point.
-Validation runs first — a missing required var refuses before any gc
-invocation (REQ-008), and a convoy-requiring formula with no bead or
-convoy at point refuses too (REQ-013).  On success the sling is
-started through `gascity-command-act-async' (D9) and the originating
-view refreshes once gc answers.
-With DRY-RUN non-nil the same command carries `--dry-run' and gc's
-routing plan is shown instead of acting."
+(defun gascity-sling-formula--command (recipe target arg values &optional dry-run)
+  "Validate RECIPE's VALUES and return the `gascity-command-sling' to act on.
+The one command builder behind the dispatch and the full preview
+buffer's routing plan (sling-command WI-7): exactly the command
+`gascity-sling-formula--dispatch' starts, with `--dry-run' when
+DRY-RUN is non-nil.  Validation runs first — a missing required var
+refuses before any gc invocation (REQ-008), and a convoy-requiring
+formula with no bead or convoy at point refuses too (REQ-013)."
   (gascity-formula--validate-values recipe values)
   (let* ((name (gascity-formula-name recipe))
          (varlist (mapcar (lambda (kv) (format "%s=%s" (car kv) (cdr kv)))
@@ -1269,6 +1267,18 @@ routing plan is shown instead of acting."
                             (list :arg name :formula t)
                             (when varlist (list :var varlist))
                             (when dry-run (list :dry-run t)))))))
+    command))
+
+(defun gascity-sling-formula--dispatch (recipe target arg values &optional dry-run)
+  "Validate and sling RECIPE with VALUES; return the command acted on.
+TARGET is the session target, ARG the bead/convoy pre-seeded at point.
+Validation and the command shape live in
+`gascity-sling-formula--command'.  On success the sling is started
+through `gascity-command-act-async' (D9) and the originating view
+refreshes once gc answers.
+With DRY-RUN non-nil the same command carries `--dry-run' and gc's
+routing plan is shown instead of acting."
+  (let ((command (gascity-sling-formula--command recipe target arg values dry-run)))
     (if dry-run
         (gascity-sling--show-plan command)
       ;; Started asynchronously (D9): `gc sling --json' reports its
