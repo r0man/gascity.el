@@ -15,6 +15,14 @@
 ;; - S-2: `p' closed the sling menu and lost formula, target and vars; a
 ;;   following `S s' became a plain sling.  Preview now keeps the menu,
 ;;   and the state is remembered per city.
+;;
+;; The launch follow offer of the sling redesign (plans/sling-command,
+;; WI-8 / REQ-009): a successful formula sling echoes
+;; `Launched workflow <id> (<formula> on <work>) — F: run view' and
+;; binds `F', for one keypress, to `gascity-run-show' on the created
+;; workflow root — named by the `gc sling --json' payload, else the
+;; newest run root resolved through the store, never a guess.  The
+;; plain route keeps its plain echo and no offer.
 
 ;;; Code:
 
@@ -205,6 +213,247 @@ everything and forgets the city."
           (should (null (plist-get scope :target)))
           (should (equal (plist-get scope :city) gascity-sling-test--city))
           (should-not (assoc gascity-sling-test--city gascity-sling--remembered)))))))
+
+;;; The launch follow offer (WI-8, REQ-009)
+
+(defconst gascity-sling-test--launched
+  '((schema_version . "1") (ok . t) (success . t) (target . "mayor")
+    (routed . t) (queued) (dry_run) (method . "on-formula")
+    (molecule_id . "ga-1") (workflow_id . "wf-77")
+    (convoy_id . "ga-2") (bead_id . "gce-9") (formula . "do-work"))
+  "A successful formula `gc sling --json' payload, as gascity decodes
+it (false and null both read nil): the created workflow root bead is
+`molecule_id', the work bead `bead_id'.")
+
+(ert-deftest gascity-test-sling-launched-root-is-the-payload-root ()
+  "The created workflow root comes from the payload's `molecule_id' —
+the schema's \"Created molecule/root workflow bead ID\" — and nothing
+else: a blank or absent root, or a non-alist result (a failed JSON
+parse hands back raw stdout), yields nil rather than an id the offer
+would be guessing at."
+  (should (equal (gascity-sling--launched-root gascity-sling-test--launched)
+                 "ga-1"))
+  (should-not (gascity-sling--launched-root
+                '((ok . t) (workflow_id . "wf-77") (bead_id . "gce-9"))))
+  (should-not (gascity-sling--launched-root
+                '((molecule_id . "") (workflow_id . "wf-77"))))
+  (should-not (gascity-sling--launched-root "raw stdout")))
+
+(ert-deftest gascity-test-sling-launched-formula-and-work ()
+  "The echo's parenthetical names the payload's own formula and work
+bead, falling back to the dispatch's formula name and arg when the
+payload does not carry them."
+  (should (equal (gascity-sling--launched-formula
+                  gascity-sling-test--launched "fallback")
+                 "do-work"))
+  (should (equal (gascity-sling--launched-formula "raw stdout" "fb")
+                 "fb"))
+  (should (equal (gascity-sling--launched-work
+                  gascity-sling-test--launched "fallback")
+                 "gce-9"))
+  (should (equal (gascity-sling--launched-work
+                  '((ok . t) (bead_id . "")) "gce-arg")
+                 "gce-arg")))
+
+(ert-deftest gascity-test-sling-newest-run-root-since-launch ()
+  "The fallback picks the newest run root created at or after the
+launch — carrying its rig store — never an older run, never a row it
+cannot date, and nothing when the launch created none."
+  (let ((beads `(((id . "ga-old") (created_at . "2026-09-27T10:00:00Z"))
+                 ((id . "ga-new") (created_at . "2026-09-27T11:00:00Z")
+                  (gascity-rig . "gascity.el"))
+                 ((id . "ga-mid") (created_at . "2026-09-27T10:30:00Z"))
+                 ((id . "ga-undated")))))
+    (should (equal (gascity-sling--newest-run-root
+                    beads (gascity-ui-parse-time "2026-09-27T10:15:00Z"))
+                   '("ga-new" . "gascity.el")))
+    ;; A root created exactly at SINCE counts: the launch's own second.
+    (should (equal (gascity-sling--newest-run-root
+                    beads (gascity-ui-parse-time "2026-09-27T11:00:00Z"))
+                   '("ga-new" . "gascity.el")))
+    ;; Nothing created since: no offer is better than a guess.
+    (should-not (gascity-sling--newest-run-root
+                 beads (gascity-ui-parse-time "2026-09-27T12:00:00Z")))
+    (should-not (gascity-sling--newest-run-root nil 0.0))))
+
+(ert-deftest gascity-test-sling-follow-offer-binds-one-F-jump ()
+  "The offer echoes `Launched workflow <id> (<formula> on <work>) — F:
+run view' and installs exactly one momentary binding: `F' jumps to
+`gascity-run-show' on the root — in the owning rig store when known —
+and any other key falls through to its own binding, the map holding
+nothing else."
+  (let ((shown nil)
+        (echos nil)
+        (pch pre-command-hook)
+        (otlm overriding-terminal-local-map))
+    (cl-letf (((symbol-function 'gascity-run-show)
+               (lambda (run &optional _convoy rig)
+                 (push (list run rig) shown)))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos))))
+      (unwind-protect
+          (progn
+            (gascity-sling--follow-offer "ga-1" "do-work" "gce-9" "gascity.el")
+            (should (equal (car echos)
+                           "Launched workflow ga-1 (do-work on gce-9) — F: run view"))
+            (let ((map overriding-terminal-local-map))
+              (should (keymapp map))
+              ;; Only `F': any other key dismisses and runs its own
+              ;; binding.
+              (should (commandp (lookup-key map "F")))
+              (should-not (lookup-key map "x"))
+              ;; The jump.
+              (call-interactively (lookup-key map "F"))
+              (should (equal shown '(("ga-1" "gascity.el"))))))
+        ;; Restore the momentary state by hand: batch tests send no
+        ;; keys, so the map and its pre-command hook would linger.
+        (setq pre-command-hook pch
+              overriding-terminal-local-map otlm)))))
+
+(defun gascity-sling-test--dispatched-handler ()
+  "Return the launch handler a formula dispatch attaches, with the
+act stubbed to capture it."
+  (let ((handlers nil))
+    (cl-letf (((symbol-function 'gascity-command-act-async)
+               (lambda (_command &rest kwargs)
+                 (when-let* ((handler (plist-get kwargs :on-success)))
+                   (push handler handlers)))))
+      (gascity-sling-formula--dispatch
+       (gascity-domain-decode 'gascity-formula '((name . "do-work")))
+       "sess-1" "gce-9" nil))
+    (car handlers)))
+
+(ert-deftest gascity-test-sling-formula-launch-attaches-the-offer-plain-does-not ()
+  "`s' dispatches exactly as today in both paths (D9): the formula
+path alone attaches the launch handler — the follow offer, REQ-009 —
+while the plain route keeps the plain act and its plain echo, with no
+handler and no offer."
+  ;; The formula path rides the handler along on the act.
+  (should (functionp (gascity-sling-test--dispatched-handler)))
+  ;; The plain path: no handler on the act, no offer at all.
+  (let ((kwargs nil)
+        (offers nil)
+        (scope (list :city gascity-sling-test--city :formula nil
+                     :target "sess-9" :arg "gce-abc")))
+    (cl-letf (((symbol-function 'gascity-command-act-async)
+               (lambda (_command &rest kw) (push kw kwargs)))
+              ((symbol-function 'gascity-sling--follow-offer)
+               (lambda (&rest _) (push t offers)))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      (gascity-sling-test--with-menu scope
+        (call-interactively #'gascity-sling-dispatch-run))
+      (should (= (length kwargs) 1))
+      (should-not (plist-get (car kwargs) :on-success))
+      (should-not offers))))
+
+(ert-deftest gascity-test-sling-launch-handler-offers-the-created-root ()
+  "The handler turns the payload's created root into the echo plus the
+`F' jump — without touching the store (the payload already answered)
+or blocking anything (D9): the offer is its whole report."
+  (let ((maps nil)
+        (shown nil)
+        (echos nil)
+        (fetches nil))
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _) (push map maps)))
+              ((symbol-function 'gascity-run-show)
+               (lambda (run &optional _convoy rig)
+                 (push (list run rig) shown)))
+              ((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _dir) nil))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos)))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (&rest args) (push args fetches))))
+      (let ((default-directory gascity-sling-test--city))
+        (funcall (gascity-sling--launch-handler
+                  (gascity-command-sling :target "sess-1" :arg "gce-9"
+                                         :on "do-work")
+                  "do-work" "gce-9")
+                 gascity-sling-test--launched))
+      (should (null fetches))
+      (should (equal (car echos)
+                     "Launched workflow ga-1 (do-work on gce-9) — F: run view"))
+      (should (= (length maps) 1))
+      (should (commandp (lookup-key (car maps) "F")))
+      (call-interactively (lookup-key (car maps) "F"))
+      ;; A cold rig memo: the jump opens the run in the city store.
+      (should (equal shown '(("ga-1" nil)))))))
+
+(ert-deftest gascity-test-sling-launch-handler-fallback-resolves-newest ()
+  "A payload without a root (the field WI-11 confirms on a live
+launch) does not guess and does not give up: the newest run root
+created since the launch is resolved through the store — one
+run-roots read of the city's stores — and the offer names it."
+  (let ((now (current-time))
+        (maps nil)
+        (echos nil)
+        (fetches nil))
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _) (push map maps)))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos)))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (args callback &optional _errback &rest _)
+                 (push args fetches)
+                 (funcall callback
+                          `(:beads
+                            (((id . "ga-old")
+                              (created_at
+                               . ,(format-time-string
+                                   "%Y-%m-%dT%H:%M:%SZ"
+                                   (time-subtract now 3600) t)))
+                             ((id . "ga-new")
+                              (created_at
+                               . ,(format-time-string
+                                   "%Y-%m-%dT%H:%M:%SZ" (time-add now 30) t))
+                              (gascity-rig . "gascity.el")))
+                            :errors nil)))))
+      (funcall (gascity-sling--launch-handler
+                (gascity-command-sling :target "sess-1" :arg "gce-9"
+                                       :on "do-work")
+                "do-work" "gce-9")
+               '((ok . t) (success . t) (target . "mayor")
+                 (routed . t) (queued) (dry_run) (method . "on-formula")
+                 (bead_id . "gce-9")))
+      (should (equal (car fetches) gascity-sling--run-roots-key))
+      (should (equal (car echos)
+                     "Launched workflow ga-new (do-work on gce-9) — F: run view"))
+      (should (= (length maps) 1)))))
+
+(ert-deftest gascity-test-sling-launch-handler-no-root-plain-echo ()
+  "A launch that resolves no root — no payload field, and no run root
+created since it started — keeps the plain success echo and never
+offers a jump: better no offer than a wrong one."
+  (let ((now (current-time))
+        (maps nil)
+        (echos nil))
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _) (push map maps)))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos)))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (_args callback &optional _errback &rest _)
+                 (funcall callback
+                          `(:beads
+                            (((id . "ga-old")
+                              (created_at
+                               . ,(format-time-string
+                                   "%Y-%m-%dT%H:%M:%SZ"
+                                   (time-subtract now 3600) t))))
+                            :errors nil)))))
+      (funcall (gascity-sling--launch-handler
+                (gascity-command-sling :target "sess-1" :arg "gce-9"
+                                       :on "do-work")
+                "do-work" "gce-9")
+               '((ok . t) (success . t) (target . "mayor")
+                 (routed . t) (queued) (dry_run) (method . "on-formula")))
+      (should (equal (car echos) "GC sling: ok"))
+      (should-not maps))))
 
 (provide 'gascity-sling-test)
 ;;; gascity-sling-test.el ends here

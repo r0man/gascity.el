@@ -81,6 +81,7 @@
 ;; before `gascity-section' (the at-point ladder).
 (declare-function gascity-command-act-async "gascity-action")
 (declare-function gascity-sling--show-plan "gascity-action")
+(declare-function gascity-sling--launch-handler "gascity-action")
 (declare-function gascity-object-at-point "gascity-section")
 (declare-function gascity-view-get-buffer-create "gascity-context")
 
@@ -786,8 +787,10 @@ TARGET is the session target, ARG the bead/convoy pre-seeded at point.
 Validation runs first — a missing required var refuses before any gc
 invocation (REQ-008), and a convoy-requiring formula with no bead or
 convoy at point refuses too (REQ-013).  On success the sling is
-started through `gascity-command-act-async' (D9) and the originating
-view refreshes once gc answers.
+started through `gascity-command-act-async' (D9), the originating
+view refreshes once gc answers, and the launch handler echoes the
+created workflow root with the momentary `F' follow jump
+(`gascity-sling--launch-handler', REQ-009).
 With DRY-RUN non-nil the same command carries `--dry-run' and gc's
 routing plan is shown instead of acting."
   (gascity-formula--validate-values recipe values)
@@ -816,9 +819,13 @@ routing plan is shown instead of acting."
     (if dry-run
         (gascity-sling--show-plan command)
       ;; Started asynchronously (D9): `gc sling --json' reports its
-      ;; dispatch in the echo area and refreshes the view when it lands.
+      ;; dispatch in the echo area and refreshes the view when it lands;
+      ;; the formula path alone attaches the launch handler — the echo
+      ;; of the created workflow root and the momentary `F' follow jump
+      ;; (REQ-009).  The plain route keeps the plain act and echo.
       (oset command json t)
-      (gascity-command-act-async command))
+      (gascity-command-act-async command
+        :on-success (gascity-sling--launch-handler command name arg)))
     command))
 
 (defun gascity-sling-formula--show-recipe (name values)
