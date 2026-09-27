@@ -18,6 +18,13 @@
 (require 'gascity)
 (require 'gascity-test-helpers)     ; fresh store per test, mock TRAMP, render guard
 
+;; Redesign APIs (plans/sling-command WI-3..WI-7).  These exist only
+;; once the sling redesign lands; the ported tests that use them skip
+;; otherwise (`gascity-test-sling-redesign-p').
+(declare-function gascity-sling-dispatch-preview "gascity-action")
+(declare-function gascity-sling-dispatch-work "gascity-action")
+(declare-function gascity-sling--derive-target "gascity-action")
+
 (defun gascity-test--plain-cols (entry)
   "Return ENTRY's column vector as a list of property-stripped values."
   (cl-map 'list (lambda (c) (if (stringp c) (substring-no-properties c) c))
@@ -1179,22 +1186,28 @@ sharing a variable name."
   (gascity-domain-decode 'gascity-formula `((name . "do-work") (vars . ,vars))))
 
 (ert-deftest gascity-test-formula-sling-var-children-shapes ()
-  "The pure children generation matches `vars[]' (REQ-004..009): one infix
-per var, class per shape, self-documenting description, unique keys
-avoiding the transient's static suffix keys.  A formula without vars
-renders no Variables section."
+  "The pure children generation matches `vars[]': one infix per var,
+class per typed shape, self-documenting description, unique keys
+avoiding the transient's static suffix keys.  Under the redesign the
+group is titled `How — <formula> vars' (mockup §4) and the typed
+heuristic gives `*_path' vars the file class and all-digit-defaulted
+vars the numeric class; anything unrecognized fails soft to the
+string option.  A formula without vars renders no How section.
+(Ported to the redesign; the title and classes changed.)"
+  (skip-unless (gascity-test-sling-redesign-p))
   (let ((formula (gascity-test--formula-with-vars
                   (vector '((name . "drain_policy") (enum . ["separate" "same-session"]))
                            '((name . "verbose") (default . "false"))
                            '((name . "summary_path") (required . t)
                              (description . "Where the summary goes")
                              (default . "build/summary.md"))
-                           '((name . "branch") (pattern . "\\`[a-z-]+\\'"))))))
+                           '((name . "max_iterations") (default . "10"))
+                           '((name . "flavor"))))))
     (let ((children (gascity-sling-formula--var-children
                      formula gascity-sling--reserved-keys)))
       (should (vectorp children))
-      (should (equal (aref children 0) "Variables — do-work"))
-      (should (= (length children) 5))            ; header + 4 var infixes
+      (should (equal (aref children 0) "How — do-work vars"))
+      (should (= (length children) 6))            ; header + 5 var infixes
       (let ((specs (seq-subseq children 1)))
         ;; Keys are unique tokens avoiding the unified prefix's
         ;; static single-letter bindings.
@@ -1203,7 +1216,7 @@ renders no Variables section."
           (dolist (key keys)
             (should-not (member key gascity-sling--reserved-keys))))
         ;; The enum var is a fixed-choices option: illegal values
-        ;; unrepresentable by construction (REQ-005).
+        ;; unrepresentable by construction.
         (let ((enum (seq-find
                      (lambda (spec)
                        (eq (plist-get (nthcdr 3 spec) :class)
@@ -1213,27 +1226,44 @@ renders no Variables section."
           (should (equal (plist-get (nthcdr 3 enum) :argument) "--var drain_policy="))
           (should (equal (plist-get (nthcdr 3 enum) :var-choices)
                          '("separate" "same-session"))))
-        ;; The "false"-defaulted var is a toggle (REQ-006).
+        ;; The "false"-defaulted var is a toggle.
         (should (seq-find
                  (lambda (spec)
                    (eq (plist-get (nthcdr 3 spec) :class)
                        'gascity-sling-formula--bool-option))
                  specs))
-        ;; The plain var is a string option carrying the var's payload,
-        ;; with a required mark, its description and default (REQ-007/008).
-        (let ((string-spec (seq-find
-                            (lambda (spec)
-                              (equal (plist-get (nthcdr 3 spec) :var-name)
-                                     "summary_path"))
-                            specs)))
-          (should string-spec)
-          (should (eq (plist-get (nthcdr 3 string-spec) :class)
-                      'gascity-sling-formula--string-option))
-          (should (equal (plist-get (nthcdr 3 string-spec) :var-required) t))
-          (should (string-match-p "(required)" (nth 1 string-spec)))
-          (should (string-match-p "Where the summary goes" (nth 1 string-spec)))
-          (should (string-match-p "default: build/summary.md" (nth 1 string-spec)))))))
-  ;; A formula without vars renders no Variables section (REQ-004).
+        ;; A `*_path' var reads a file — the typed heuristic — keeping
+        ;; the required mark, its description and default.
+        (let ((file-spec (seq-find
+                          (lambda (spec)
+                            (equal (plist-get (nthcdr 3 spec) :var-name)
+                                   "summary_path"))
+                          specs)))
+          (should file-spec)
+          (should (eq (plist-get (nthcdr 3 file-spec) :class)
+                      'gascity-sling-formula--file-option))
+          (should (equal (plist-get (nthcdr 3 file-spec) :var-required) t))
+          (should (string-match-p "(required)" (nth 1 file-spec)))
+          (should (string-match-p "Where the summary goes" (nth 1 file-spec)))
+          (should (string-match-p "default: build/summary.md" (nth 1 file-spec))))
+        ;; An all-digit default reads numerically (mockup §7's refusal
+        ;; is the numeric option's reader).
+        (should (seq-find
+                 (lambda (spec)
+                   (and (eq (plist-get (nthcdr 3 spec) :class)
+                            'gascity-sling-formula--numeric-option)
+                        (equal (plist-get (nthcdr 3 spec) :var-name)
+                               "max_iterations")))
+                 specs))
+        ;; An unrecognized name fails soft to the string option.
+        (should (seq-find
+                 (lambda (spec)
+                   (and (eq (plist-get (nthcdr 3 spec) :class)
+                            'gascity-sling-formula--string-option)
+                        (equal (plist-get (nthcdr 3 spec) :var-name)
+                               "flavor")))
+                 specs)))))
+  ;; A formula without vars renders no How section.
   (should-not (gascity-sling-formula--var-children
                (gascity-test--formula-with-steps nil)
                gascity-sling--reserved-keys)))
@@ -1345,9 +1375,12 @@ layout — a static re-binding cannot silently collide."
              (lambda (_name) nil))
             ((symbol-function 'gascity-context-city-name)
              (lambda (&optional _dir) "testcity")))
+    ;; The scope carries both the old `:arg' and the redesign's `:work'
+    ;; key: each layout reads its own, the other is inert, so the sync
+    ;; holds whichever generation is loaded.
     (let ((bound nil))
       (dolist (group (gascity-sling--children-specs
-                      (list :formula nil :target nil :arg nil)))
+                      (list :formula nil :target nil :arg nil :work nil)))
         (when (vectorp group)
           (dolist (spec (append group nil))
             (when (and (consp spec) (stringp (car spec)))
@@ -1440,12 +1473,15 @@ directory must not key `gascity-formula-recipe-cached' (ga-4ia4)."
 the sling run — execute with `default-directory' pinned to the city
 the transient was entered from, wherever transient runs them from
 (ga-4ia4): the caches key off the current directory and the dispatch's
-gc invocation reads where `default-directory' points."
+gc invocation reads where `default-directory' points.  (Ported for
+the redesign: `T' completes over agents instead of sessions; the
+dispatch sub-case carries a set target so the pinning — not the
+target fallback — is what runs.)"
   (with-temp-buffer
     (setq default-directory "/elsewhere/foreign/")
     (cl-letf (((symbol-function 'transient-scope)
                (lambda () (list :city "/city/entered-from/"
-                                :formula "do-work")))
+                                :formula "do-work" :target "mayor")))
               ((symbol-function 'transient-args)
                (lambda (_prefix) nil))
               ((symbol-function 'transient-setup)
@@ -1456,12 +1492,22 @@ gc invocation reads where `default-directory' points."
                    (lambda (_formula _done) (setq refresh-dir default-directory) nil)))
           (gascity-sling-dispatch-refresh)
           (should (equal refresh-dir "/city/entered-from/"))))
-      ;; The target read completes over the entered-from city's sessions.
+      ;; The target read completes over the entered-from city's agents
+      ;; (`T' under the redesign; a session under the old layout).
       (let ((read-dir nil))
-        (cl-letf (((symbol-function 'gascity-action--read-session)
-                   (lambda (_prompt) (setq read-dir default-directory) "mayor")))
-          (gascity-sling-dispatch-target)
-          (should (equal read-dir "/city/entered-from/"))))
+        (if (gascity-test-sling-redesign-p)
+            ;; `T' completes over the roster, still pinned to the
+            ;; entered-from city (the suffix reads inside its city
+            ;; pin, so the minibuffer's directory is the city's).
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (_prompt _coll &rest _)
+                         (setq read-dir default-directory) "mayor")))
+              (gascity-sling-dispatch-target)
+              (should (equal read-dir "/city/entered-from/")))
+          (cl-letf (((symbol-function 'gascity-action--read-session)
+                     (lambda (_prompt) (setq read-dir default-directory) "mayor")))
+            (gascity-sling-dispatch-target)
+            (should (equal read-dir "/city/entered-from/")))))
       ;; The recipe preview re-runs `gc formula show' pinned.
       (let ((recipe-dir nil))
         (cl-letf (((symbol-function 'gascity-sling-formula--show-recipe)
@@ -1471,8 +1517,11 @@ gc invocation reads where `default-directory' points."
                    (lambda () nil)))
           (gascity-sling-dispatch-recipe)
           (should (equal recipe-dir "/city/entered-from/"))))
-      ;; The formula dispatch — recipe cache, session fallback read and
-      ;; the sling execution — runs pinned.
+      ;; The formula dispatch — recipe cache and the sling execution —
+      ;; runs pinned.  The scope carries a set target so neither
+      ;; generation's fallback read (session read, derived default)
+      ;; enters the picture: the pinning of the dispatch itself is
+      ;; what is under test.
       (let ((dispatch-dir nil))
         (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
                    (lambda (_name) nil))
@@ -1607,16 +1656,21 @@ failure surfaces as a clean `user-error'."
         (should (string-match-p "gc: nope" (error-message-string err)))))))
 
 (ert-deftest gascity-test-sling-unified-wiring ()
-  "REQ-A/REQ-H: the two-transient split is gone — the absorbed formula
-prefix, its entry command and its suffixes no longer exist, and the
-unified prefix carries the formula suffixes in place."
+  "REQ-A/REQ-H (ported to the redesign): the unified prefix carries
+every stage suffix in place — `f' pick, `g' refresh, `T' target, `r'
+recipe, `s' run, `x' reset and the `P' full preview that replaces
+the old `p' dry-run suffix — and the absorbed pre-unification
+commands stay gone.  (The `A' work picker is asserted through the
+layout in `gascity-test-sling-unified-layout', not by name: the plan
+does not pin its command symbol.)"
+  (skip-unless (gascity-test-sling-redesign-p))
   (should (commandp 'gascity-sling-dispatch))
   (should (commandp 'gascity-sling-dispatch-pick))
   (should (commandp 'gascity-sling-dispatch-refresh))
   (should (commandp 'gascity-sling-dispatch-target))
-  (should (commandp 'gascity-sling-dispatch-arg))
   (should (commandp 'gascity-sling-dispatch-recipe))
   (should (commandp 'gascity-sling-dispatch-run))
+  (should (commandp 'gascity-sling-dispatch-reset))
   (should (commandp 'gascity-sling-dispatch-preview))
   (should-not (fboundp 'gascity-sling-formula))
   (should-not (fboundp 'gascity-sling-formula-dispatch))
@@ -1630,45 +1684,77 @@ unified prefix carries the formula suffixes in place."
   (should-not (boundp 'gascity-sling-formula--reserved-keys)))
 
 (ert-deftest gascity-test-sling-unified-layout ()
-  "AC-2/OQ-3: the unified prefix stacks the sections vertically —
-header info, Formula, Destination, Routing flags, Actions, then the
-Variables section last, full width — and the info line is a raw
-unwrapped `(:info …)' spec (nested `((:info …))' crashes setup).  With
-no formula picked there is no Variables section and the header hints
-at `-f'."
-  (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
-             (lambda (_n)
-               (gascity-test--formula-with-vars
-                (vector '((name . "drain_policy"))))))
-            ((symbol-function 'gascity-context-city-name)
-             (lambda (&optional _dir) "testcity")))
-    (let ((groups (gascity-sling--children-specs
-                   (list :formula "do-work" :target "sess-1"
-                         :arg "gce-1"))))
-      (should (= (length groups) 6))
-      ;; The header group is titled with the city; the scope info line
-      ;; is a raw unwrapped `(:info …)' spec, not the group's first
-      ;; element (a leading `(:info …)' parses as a group argument and
-      ;; breaks setup — founded in the TRAMP e2e pass).
-      (should (equal (aref (nth 0 groups) 0) "Sling — testcity"))
-      (let ((info (aref (nth 0 groups) 1)))
-        (should (eq (car info) :info))
-        (should (stringp (cadr info)))
-        (should (string-match-p "Target: sess-1" (cadr info))))
-      (should (equal (aref (nth 1 groups) 0) "Formula"))
-      (should (equal (aref (nth 2 groups) 0) "Destination"))
-      (should (equal (aref (nth 3 groups) 0) "Routing flags"))
-      (should (equal (aref (nth 4 groups) 0) "Actions"))
-      (should (string-prefix-p "Variables — do-work"
-                               (aref (nth 5 groups) 0)))))
-  ;; No formula picked: five groups, no Variables section, header hint.
-  (cl-letf (((symbol-function 'gascity-context-city-name)
-             (lambda (&optional _dir) "testcity")))
-    (let ((groups (gascity-sling--children-specs
-                   (list :formula nil :target nil :arg nil))))
-      (should (= (length groups) 5))
-      (should (string-match-p "-f to pick"
-                              (cadr (aref (nth 0 groups) 1)))))))
+  "The redesigned prefix stacks the mockup §1–§4 groups: one header
+group (city title, one-sentence header, live footer), then `What'
+(`A' work picker, `f' formula picker), the picked formula's
+`How — <formula> vars' group, `Who' (`T'), the routing flags —
+plain shape with work only — and `Actions' (`s P r g x q').  A cold
+entry shows What, Who and Actions only; a formula shape has no
+routing flags.  The header's sentence and footer stay raw unwrapped
+`:info …' specs (nested `((:info …))' crashes setup — kept from the
+pre-unification fix)."
+  (skip-unless (gascity-test-sling-redesign-p))
+  (let ((drain (gascity-test--formula-with-steps
+                (vector '((id . "drain") (title . "Drain unit")
+                          (metadata . ((gc.kind . "drain"))))))))
+    (gascity-test-with-store-stubs _reads _actions
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                (lambda (_name) drain))
+               ((symbol-function 'gascity-context-city-name)
+                (lambda (&optional _dir) "testcity")))
+        ;; §1: the plain shape with work — header, What, Who,
+        ;; Routing flags, Actions.
+        (let ((groups (gascity-sling--children-specs
+                       (list :city "/city/" :formula nil
+                             :work "bl-5ja" :target "mayor"))))
+          (should (= (length groups) 5))
+          (should (equal (aref (nth 0 groups) 0) "Sling — testcity"))
+          (should (equal (aref (nth 1 groups) 0) "What"))
+          (should (equal (aref (nth 2 groups) 0) "Who"))
+          (should (equal (aref (nth 3 groups) 0) "Routing flags"))
+          (should (equal (aref (nth 4 groups) 0) "Actions"))
+          ;; The What group binds the work picker on `A' and the
+          ;; formula picker on `f' (§10).
+          (let ((specs (append (nth 1 groups) nil)))
+            (should (assoc "A" specs))
+            (should (assoc "f" specs)))
+          ;; The Actions bind s P r g x q (§1).
+          (let ((specs (append (nth 4 groups) nil)))
+            (should (assoc "s" specs))
+            (should (assoc "P" specs))
+            (should (assoc "r" specs))
+            (should (assoc "g" specs))
+            (should (assoc "x" specs))
+            (should (assoc "q" specs))))
+        ;; §4: a drain formula with work — the How group between What
+        ;; and Who, no routing flags (formula shape).
+        (let ((groups (gascity-sling--children-specs
+                       (list :city "/city/" :formula "do-work"
+                             :work "bl-5ja"
+                             :target "hello-world/gc.implementation-worker"))))
+          (should (= (length groups) 5))
+          (should (equal (aref (nth 1 groups) 0) "What"))
+          (should (string-prefix-p "How — do-work vars"
+                                   (aref (nth 2 groups) 0)))
+          (should (equal (aref (nth 3 groups) 0) "Who"))
+          (should (equal (aref (nth 4 groups) 0) "Actions")))
+        ;; §2: a cold entry — What, Who, Actions only, no flags.
+        (let ((groups (gascity-sling--children-specs
+                       (list :city "/city/" :formula nil
+                             :work nil :target nil))))
+          (should (= (length groups) 4))
+          (should (equal (aref (nth 1 groups) 0) "What"))
+          (should (equal (aref (nth 2 groups) 0) "Who"))
+          (should (equal (aref (nth 3 groups) 0) "Actions")))
+        ;; The header group carries its lines as raw `:info …' specs.
+        (let ((header (append (nth 0 (gascity-sling--children-specs
+                                      (list :city "/city/" :formula nil
+                                            :work "bl-5ja" :target "mayor")))
+                              nil)))
+          (should (seq-some (lambda (el)
+                              (and (eq (car-safe el) :info)
+                                   (stringp (cadr el))))
+                             header)))))))
 
 (ert-deftest gascity-test-sling-pick-re-setups-in-place ()
   "AC-1: `-f' reads a formula once and re-settles THIS prefix with the
@@ -1725,76 +1811,108 @@ scope and set values."
       (should (equal (plist-get (cdr setup) :value) '("--var a=1"))))))
 
 (ert-deftest gascity-test-sling-target-set-and-header ()
-  "AC-3/REQ-B: `-T' reads the target once with session completion,
-re-settles in place with it in the scope, and the header shows it; an
-unset target renders `Target: (none)'."
-  ;; The header reflects the scope's target.
+  "The header sentence names the target once `T' sets it; `T' reads
+the agent once with roster completion and re-settles THIS prefix in
+place with it in the scope (ported to the redesign: agents, not
+sessions; the sentence replaces the old scope-info line)."
+  (skip-unless (gascity-test-sling-redesign-p))
+  ;; The header sentence reflects the scope's target.
   (should (string-match-p
-           "Target: (none)"
-           (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target nil :arg nil)))))
+           "Sling bead bl-1 to mayor"
+           (gascity-test-sling-header-text
+            (list :city "/city/" :formula nil :work "bl-1"
+                  :target "mayor")
+            nil)))
   (should (string-match-p
-           "Target: sess-7"
-           (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target "sess-7" :arg nil)))))
-
-  ;; Pressing -T re-settles with the read target in the scope.
+           "(no target — T or default)"
+           (gascity-test-sling-header-text
+            (list :city "/city/" :formula nil :work "bl-1"
+                  :target nil)
+            nil)))
+  ;; Pressing T re-settles with the read agent in the scope.
   (let (reads setup)
-    (cl-letf (((symbol-function 'gascity-action--read-session)
-               (lambda (_prompt) (setq reads (1+ (or reads 0))) "sess-7"))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt _collection &rest _)
+                 (setq reads (1+ (or reads 0))) "mayor"))
               ((symbol-function 'transient-setup)
                (lambda (prefix _sfx _lay &rest args)
                  (setq setup (cons prefix args))))
               ((symbol-function 'transient-scope)
-               (lambda () (list :formula "do-work" :target nil :arg nil)))
+               (lambda () (list :city "/city/" :formula "do-work"
+                                :target nil :work "bl-1")))
               ((symbol-function 'transient-args)
                (lambda (_prefix) nil)))
       (call-interactively #'gascity-sling-dispatch-target)
       (should (= reads 1))
+      (should (eq (car setup) 'gascity-sling-dispatch))
       (should (equal (plist-get (cdr setup) :scope)
-                     (list :formula "do-work" :target "sess-7"
-                           :arg nil))))))
+                     (list :city "/city/" :formula "do-work"
+                           :target "mayor" :work "bl-1"))))))
 
 (ert-deftest gascity-test-sling-arg-edit-re-setups-in-place ()
-  "`A' reads the bead id / task text, re-settles THIS prefix with the
-edited arg in the scope and the current infix values carried as
-:value — the header reflects it immediately and a formula dispatch
-uses the edited arg without quitting and re-seeding via point.  The
-edited arg lives in scope, so it survives a formula re-pick (-f)."
-  ;; The header renders the unset arg's hint and an edited arg.
-  (should (string-match-p
-           "Arg: (none — point at a bead or convoy)"
-           (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target nil :arg nil)))))
-  (should (string-match-p
-           "Arg: gce-9"
-           (nth 1 (gascity-sling--scope-info
-                   (list :formula nil :target nil :arg "gce-9")))))
-  ;; Pressing A re-settles with the read arg in the scope, values
-  ;; carried.
-  (let (prompts setup)
-    (cl-letf (((symbol-function 'read-string)
-               (lambda (prompt &optional init _hist _def _inh)
-                 (setq prompts (list prompt init)) "gce-9"))
+  "`A' reads the work — an annotated completing-read over the city's
+open beads and convoys — and re-settles THIS prefix with it in the
+scope (`:work'), the current infix values carried as :value; an empty
+pick falls through to the freeform `Bead id or task text:' prompt,
+and `C-u A' goes straight to freeform (mockup §6a).  The edited work
+lives in the scope, so it survives a formula re-pick (`f')."
+  (skip-unless (gascity-test-sling-redesign-p))
+  ;; A picked bead re-settles as the scope's work.
+  (let (prompt setup)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (p &rest _) (setq prompt p) "bl-5ja"))
               ((symbol-function 'transient-setup)
                (lambda (prefix _sfx _lay &rest args)
                  (setq setup (cons prefix args))))
               ((symbol-function 'transient-scope)
-               (lambda () (list :formula "do-work" :target "sess-1"
-                                :arg nil)))
+               (lambda () (list :city "/city/" :formula "do-work"
+                                :target "sess-1" :work nil)))
               ((symbol-function 'transient-args)
                (lambda (_prefix) '("--var a=1"))))
-      (call-interactively #'gascity-sling-dispatch-arg)
-      (should (equal prompts
-                     '("Bead id or task text: " nil)))
+      (call-interactively #'gascity-sling-dispatch-work)
+      (should (string-prefix-p "Work" prompt))
       (should (eq (car setup) 'gascity-sling-dispatch))
       (should (equal (plist-get (cdr setup) :scope)
-                     (list :formula "do-work" :target "sess-1"
-                           :arg "gce-9")))
+                     (list :city "/city/" :formula "do-work"
+                           :target "sess-1" :work "bl-5ja")))
       (should (equal (plist-get (cdr setup) :value) '("--var a=1")))))
-  ;; The edited arg is scope state: an -f re-pick re-setups with it
-  ;; intact (the dispatch then sees the edited arg, not the stale
-  ;; at-point seed).
+  ;; An empty pick falls through to the freeform text prompt.
+  (let (prompts setup)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) ""))
+              ((symbol-function 'read-string)
+               (lambda (p &rest _) (push p prompts) "fix the flaky test"))
+              ((symbol-function 'transient-setup)
+               (lambda (prefix _sfx _lay &rest args)
+                 (setq setup (cons prefix args))))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/" :formula "do-work"
+                                :target "sess-1" :work nil)))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) nil)))
+      (call-interactively #'gascity-sling-dispatch-work)
+      (should (equal prompts '("Bead id or task text: ")))
+      (should (equal (plist-get (plist-get (cdr setup) :scope) :work)
+                     "fix the flaky test"))))
+  ;; `C-u A' skips the completion and reads freeform at once.
+  (let (prompts completed)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (setq completed t) ""))
+              ((symbol-function 'read-string)
+               (lambda (p &rest _) (push p prompts) "just do it"))
+              ((symbol-function 'transient-setup)
+               (lambda (&rest _)))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/" :formula "do-work"
+                                :target "sess-1" :work nil)))
+              ((symbol-function 'transient-args)
+               (lambda (_prefix) nil)))
+      (let ((current-prefix-arg '(4)))
+        (call-interactively #'gascity-sling-dispatch-work))
+      (should-not completed)
+      (should (equal prompts '("Bead id or task text: ")))))
+  ;; The edited work is scope state: an `f' re-pick re-setups with it
+  ;; intact.
   (let (read setup)
     (cl-letf (((symbol-function 'gascity-sling-formula--read-formula)
                (lambda () (setq read t) "do-work"))
@@ -1802,120 +1920,154 @@ edited arg lives in scope, so it survives a formula re-pick (-f)."
                (lambda (prefix _sfx _lay &rest args)
                  (setq setup (cons prefix args))))
               ((symbol-function 'transient-scope)
-               (lambda () (list :formula nil :target "sess-1"
-                                :arg "gce-9")))
+               (lambda () (list :city "/city/" :formula nil
+                                :target "sess-1" :work "gce-9")))
               ((symbol-function 'transient-args)
                (lambda (_prefix) nil)))
       (call-interactively #'gascity-sling-dispatch-pick)
       (should read)
       (should (equal (plist-get (cdr setup) :scope)
-                     (list :formula "do-work" :target "sess-1"
-                           :arg "gce-9"))))))
+                     (list :city "/city/" :formula "do-work"
+                           :target "sess-1" :work "gce-9"))))))
 
 (ert-deftest gascity-test-sling-dispatch-target-fallback ()
-  "AC-3: dispatch with an unset target reads it exactly once via
-`gascity-action--read-session' (the dispatch fallback, OQ-1/F-4); a
-`-T'-set target suppresses the read entirely."
-  ;; Unset target: the fallback reads once and the formula dispatch
-  ;; receives it.
-  (let (reads dispatched)
-    (cl-letf (((symbol-function 'transient-scope)
-               (lambda () (list :formula "do-work" :target nil
-                                :arg "gce-1")))
+  "`s' with no target uses the derived Who default without prompting;
+a scope target wins outright (no derivation); nothing derivable makes
+`s' prompt exactly once with the agent completion (mockup §5c: `No
+target — T to choose, or s will prompt').  (Ported to the redesign:
+the derived default replaces the old session read.)"
+  (skip-unless (and (fboundp 'gascity-sling--derive-target)
+                    (gascity-test-sling-redesign-p)))
+  ;; A derived target launches without any prompt.
+  (let (dispatched)
+    (cl-letf (((symbol-function 'gascity-sling--derive-target)
+               (lambda (&rest _) "hello-world/gc.implementation-worker"))
+              ((symbol-function 'read-string)
+               (lambda (&rest _) (error "`s' must not prompt")))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (error "`s' must not prompt")))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/" :formula "do-work"
+                                :work "gce-1" :target nil)))
               ((symbol-function 'transient-args)
                (lambda (_p) nil))
-              ((symbol-function 'gascity-action--read-session)
-               (lambda (_prompt) (setq reads (1+ (or reads 0))) "sess-1"))
               ((symbol-function 'gascity-formula-recipe-cached)
                (lambda (_n) (gascity-test--formula-with-vars nil)))
               ((symbol-function 'gascity-sling-formula--current-values)
                (lambda () nil))
               ((symbol-function 'gascity-sling-formula--dispatch)
-               (lambda (_recipe target _arg _values &optional _dry)
+               (lambda (_recipe target &rest _)
+                 (setq dispatched target))))
+      (call-interactively #'gascity-sling-dispatch-run)
+      (should (equal dispatched
+                     "hello-world/gc.implementation-worker"))))
+  ;; Nothing derivable: exactly one prompt, the agent completion.
+  (let (reads dispatched)
+    (cl-letf (((symbol-function 'gascity-sling--derive-target)
+               (lambda (&rest _) nil))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt &rest _)
+                 (setq reads (1+ (or reads 0))) "mayor"))
+              ((symbol-function 'read-string)
+               (lambda (&rest _) (error "no freeform here")))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/" :formula "do-work"
+                                :work "gce-1" :target nil)))
+              ((symbol-function 'transient-args)
+               (lambda (_p) nil))
+              ((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_n) (gascity-test--formula-with-vars nil)))
+              ((symbol-function 'gascity-sling-formula--current-values)
+               (lambda () nil))
+              ((symbol-function 'gascity-sling-formula--dispatch)
+               (lambda (_recipe target &rest _)
                  (setq dispatched target))))
       (call-interactively #'gascity-sling-dispatch-run)
       (should (= reads 1))
-      (should (equal dispatched "sess-1"))))
-  ;; A set target wins: no read at all.
-  (let (reads dispatched)
-    (cl-letf (((symbol-function 'transient-scope)
-               (lambda () (list :formula "do-work" :target "set-sess"
-                                :arg "gce-1")))
+      (should (equal dispatched "mayor"))))
+  ;; A scope target wins: no derivation, no prompt.
+  (let (dispatched derived)
+    (cl-letf (((symbol-function 'gascity-sling--derive-target)
+               (lambda (&rest _) (setq derived t) "nope"))
+              ((symbol-function 'read-string)
+               (lambda (&rest _) (error "`s' must not prompt")))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (error "`s' must not prompt")))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/" :formula "do-work"
+                                :work "gce-1" :target "set-sess")))
               ((symbol-function 'transient-args)
                (lambda (_p) nil))
-              ((symbol-function 'gascity-action--read-session)
-               (lambda (_prompt) (cl-incf reads) "nope"))
               ((symbol-function 'gascity-formula-recipe-cached)
                (lambda (_n) (gascity-test--formula-with-vars nil)))
               ((symbol-function 'gascity-sling-formula--current-values)
                (lambda () nil))
               ((symbol-function 'gascity-sling-formula--dispatch)
-               (lambda (_recipe target _arg _values &optional _dry)
+               (lambda (_recipe target &rest _)
                  (setq dispatched target))))
       (call-interactively #'gascity-sling-dispatch-run)
-      (should (null reads))
+      (should-not derived)
       (should (equal dispatched "set-sess")))))
 
 (ert-deftest gascity-test-sling-plain-path-unchanged ()
-  "AC-7/REQ-G: with no formula picked, `s' prompts bead/text then
-target in the shipped order and builds the same plain
-`gascity-command-sling' (the routing flags flow through the plain
-parser)."
-  (let (order acted)
+  "The plain route is unchanged plumbing behind the redesign: with the
+work and target already answered, `s' builds the same
+`gascity-command-sling' (routing flags included) with ZERO prompts —
+the fully pre-seeded `S s' of mockup §1; a cold entry prompts the
+work (the `A' completion) before the target, in the What → Who
+order."
+  (skip-unless (gascity-test-sling-redesign-p))
+  ;; §1: everything answered — `s' alone slings.
+  (let (acted)
     (cl-letf (((symbol-function 'transient-scope)
-               (lambda () (list :formula nil :target nil :arg nil)))
+               (lambda () (list :city "/city/" :formula nil
+                                :work "gce-abc" :target "sess-9")))
               ((symbol-function 'transient-args)
                (lambda (_p) '("--nudge" "--merge=direct")))
-              ((symbol-function 'gascity-bead-at-point)
-               (lambda () "gce-abc"))
               ((symbol-function 'read-string)
-               (lambda (prompt &rest _)
-                 (push prompt order)
-                 (if (string-prefix-p "Bead" prompt)
-                     "gce-abc" "sess-9")))
-              ((symbol-function 'gascity-action--read-session)
-               (lambda (_prompt)
-                 (push "Sling to target: " order)
-                 "sess-9"))
+               (lambda (&rest _) (error "`s' must not prompt")))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (error "`s' must not prompt")))
               ((symbol-function 'gascity-command-act-async)
-               (lambda (command &rest _) (push command acted)))
-              ((symbol-function 'gascity--refresh-current-view)
-               (lambda () nil)))
+               (lambda (command &rest _) (push command acted))))
       (call-interactively #'gascity-sling-dispatch-run)
-      (should (equal (nreverse order)
-                     '("Bead id or task text: " "Sling to target: ")))
+      (should (= (length acted) 1))
       (let ((command (car acted)))
         (should (equal (oref command :target) "sess-9"))
         (should (equal (oref command :arg) "gce-abc"))
         (should (oref command :nudge))
-        (should (equal (oref command :merge) "direct"))))))
-
-(ert-deftest gascity-test-sling-preview-dry-run-paths ()
-  "`p' previews gc's routing plan in both paths: the plain path forces
-`--dry-run' through the plain parser; the formula path builds the same
-command with `--dry-run' via the formula dispatch."
-  ;; Plain path preview: shown, not acted.
-  (let (shown acted)
-    (cl-letf (((symbol-function 'transient-scope)
-               (lambda () (list :formula nil :target nil :arg nil)))
+        (should (equal (oref command :merge) "direct")))))
+  ;; A cold entry: the work is read first, then the target.
+  (let (prompts acted)
+    (cl-letf (((symbol-function 'gascity-sling--derive-target)
+               (lambda (&rest _) nil))
+              ((symbol-function 'transient-scope)
+               (lambda () (list :city "/city/" :formula nil
+                                :work nil :target nil)))
               ((symbol-function 'transient-args)
                (lambda (_p) nil))
-              ;; `p' keeps the menu (S-2): it sets the menu up again.
-              ((symbol-function 'transient-setup) #'ignore)
+              ((symbol-function 'completing-read)
+               (lambda (prompt &rest _)
+                 (push prompt prompts)
+                 (if (string-prefix-p "Work" prompt) "bl-1" "mayor")))
               ((symbol-function 'read-string)
-               (lambda (_p &rest _) "gce-1"))
-              ((symbol-function 'gascity-action--read-session)
-               (lambda (_p) "sess-1"))
-              ((symbol-function 'gascity-sling--show-plan)
-               (lambda (command) (setq shown command)))
+               (lambda (&rest _) (error "no freeform needed")))
               ((symbol-function 'gascity-command-act-async)
-               (lambda (_c &rest _) (push t acted))))
-      (call-interactively #'gascity-sling-dispatch-preview)
-      (should shown)
-      (should-not acted)
-      (should (equal (gascity-command-line shown)
-                     '("gc" "sling" "sess-1" "gce-1" "--dry-run")))))
-  ;; Formula path preview: same command with --dry-run, plan shown.
+               (lambda (command &rest _) (push command acted))))
+      (call-interactively #'gascity-sling-dispatch-run)
+      (setq prompts (nreverse prompts))
+      (should (string-prefix-p "Work" (nth 0 prompts)))
+      (should (string-prefix-p "Target" (nth 1 prompts)))
+      (should (= (length acted) 1))
+      (should (equal (oref (car acted) :target) "mayor"))
+      (should (equal (oref (car acted) :arg) "bl-1")))))
+
+(ert-deftest gascity-test-sling-preview-dry-run-paths ()
+  "The formula path previews gc's routing plan with the same command
+plus `--dry-run' (the retained dry-run plumbing behind the redesign's
+`P' buffer; the plain path's `P' preview — the dry run parked through
+the store, the menu keeping its state — is covered by
+`gascity-test-sling-preview-keeps-state-and-s-slings-it')."
   (let ((formula (gascity-test--formula-with-vars
                   (vector '((name . "summary_path")))))
         shown acted)
