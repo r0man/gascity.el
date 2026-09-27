@@ -206,5 +206,333 @@ everything and forgets the city."
           (should (equal (plist-get scope :city) gascity-sling-test--city))
           (should-not (assoc gascity-sling-test--city gascity-sling--remembered)))))))
 
+;;; WI-6: the live footer (REQ-007/REQ-010, mockup §1–§5)
+
+;; The footer composes the WI-2 validators (gascity-formula) and the
+;; WI-1 shape inference — sibling work items of the same redesign
+;; that land as their own commits, so these tests stub each one AT ITS
+;; CONTRACT: the predicates with WI-2's real decision rules (or a
+;; captured-args stand-in), the builders with their canonical mockup
+;; wording — the exact strings of gascity-formula's real builders —
+;; the shape rule with WI-1's real body.  At integration the real
+;; functions take over; the wording pinning stays meaningful because
+;; the stubs mirror them verbatim.
+
+(defconst gascity-sling-test--roster
+  (list (list :name "mayor" :rig nil)
+        (list :name "hello-world/gc.implementation-worker"
+              :rig "hello-world"))
+  "A two-agent roster: the city-scoped mayor and one rig-scoped agent
+(mockup §6c shape — rows are agent plists, scope from WI-2's
+`gascity-agents-scope').")
+
+(defun gascity-sling-test--recipe (&optional vars)
+  "Decode a minimal build-basic-like recipe with VARS (a raw vector)."
+  (gascity-domain-decode
+   'gascity-formula
+   `((name . "build-basic") ,@(and vars `((vars . ,vars))))))
+
+(defvar gascity-sling-test--footer-values nil
+  "The `gascity-sling-formula--current-values' answer inside the tests.
+Let-bound by a test to pin the footer's var count; the live infix
+reader is stubbed so no transient state is touched.")
+
+(defmacro gascity-sling-test--with-footer-deps (&rest body)
+  "Run BODY with the footer's WI-1/WI-2 contract stubbed.
+Nothing fires (every predicate answers nil), every builder words the
+mockup-exact warning, the shape rule is WI-1's real one, and
+`gascity-sling-formula--current-values' answers
+`gascity-sling-test--footer-values' (let-bind it).  A test fires a
+check by rebinding its predicate inside BODY."
+  (declare (indent 0))
+  `(let ((gascity-sling--missing-target-warning
+          "No target — T to choose, or s will prompt"))
+     (cl-letf
+         (;; WI-1's shape rule, verbatim.
+          ((symbol-function 'gascity-sling--shape)
+           (lambda (work formula)
+             (cond ((not formula) 'plain)
+                   ((not (gascity-formula--blank work)) 'on)
+                   (t 'formula))))
+          ;; WI-2's scope classifier and lookup, verbatim.
+          ((symbol-function 'gascity-agents-scope)
+           (lambda (agent)
+             (or (plist-get agent :rig)
+                 (let ((name (plist-get agent :name)))
+                   (if (and (stringp name) (string-search "/" name))
+                       (substring name 0 (string-search "/" name))
+                     "city")))))
+          ((symbol-function 'gascity-agents-roster-scope)
+           (lambda (target roster)
+             (when-let* ((agent (seq-find (lambda (a)
+                                            (equal (plist-get a :name) target))
+                                          roster)))
+               (gascity-agents-scope agent))))
+          ;; WI-2's builders, canonical mockup wording.
+          ((symbol-function 'gascity-sling--v2-trap-warning)
+           (lambda (&optional rig)
+             (format
+              "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a %s with T"
+              (if (gascity-formula--nonblank rig)
+                  (format "%s/* agent" rig)
+                "rig-scoped agent"))))
+          ;; Verbatim WI-2 (gascity-formula): the bead named in full,
+          ;; both stores the bead's prefix resolves to — here pinned to
+          ;; hello-world, the mockup §5b store.
+          ((symbol-function 'gascity-sling--cross-store-warning)
+           (lambda (work scope _rigs)
+             (format
+              "cross-store route: bead %s lives in the %s store but the target reads the %s store — gc will refuse (pick a city agent or a %s agent)"
+              work "hello-world" scope "hello-world")))
+          ((symbol-function 'gascity-sling--missing-work-warning)
+           (lambda (recipe)
+             (format "%s drains a bead — pick work with A (or point at one)"
+                     (or (gascity-formula-name recipe) "formula"))))
+          ((symbol-function 'gascity-sling--missing-vars-warning)
+           (lambda (names)
+             (and names
+                  (format "Missing required vars: %s"
+                          (mapconcat #'identity names ", ")))))
+          ((symbol-function 'gascity-sling--missing-target-p)
+           (lambda (target) (gascity-formula--blank target)))
+          ;; The live infix values: the test's let-bound fixture.
+          ((symbol-function 'gascity-sling-formula--current-values)
+           (lambda () gascity-sling-test--footer-values))
+          ;; Nothing fires by default.
+          ((symbol-function 'gascity-sling--v2-trap-p)
+           (lambda (&rest _) nil))
+          ((symbol-function 'gascity-sling--cross-store-p)
+           (lambda (&rest _) nil))
+          ((symbol-function 'gascity-sling--missing-work-p)
+           (lambda (&rest _) nil))
+          ((symbol-function 'gascity-sling--missing-required-vars)
+           (lambda (&rest _) nil)))
+       ,@body)))
+
+(ert-deftest gascity-test-sling-footer-ready-plain-sentence ()
+  "Mockup §1: a fully answered plain dispatch reads
+`✓ Ready — plain route · target mayor (city) · no vars'.  The shape
+comes from the WI-1 rule (no formula is the plain shape), the target
+word from the roster (mayor is city-scoped), and the plain shape has
+no vars at all."
+  (gascity-sling-test--with-footer-deps
+    (should
+     (equal
+      (gascity-sling--footer
+       (list :city gascity-sling-test--city :formula nil
+             :target "mayor" :arg "bl-5ja")
+       gascity-sling-test--roster nil)
+      "✓ Ready — plain route · target mayor (city) · no vars"))))
+
+(ert-deftest gascity-test-sling-footer-ready-formula-sentence ()
+  "Mockup §3: a formula without work is the targetless `--formula'
+shape; pancakes declares no vars, so `0 vars' (not `no vars': a
+formula is in scope, it just has nothing to answer)."
+  (gascity-sling-test--with-footer-deps
+    (should
+     (equal
+      (gascity-sling--footer
+       (list :city gascity-sling-test--city :formula "pancakes"
+             :target "mayor" :arg nil)
+       gascity-sling-test--roster
+       (gascity-domain-decode 'gascity-formula '((name . "pancakes"))))
+      "✓ Ready — formula run · target mayor (city) · 0 vars"))))
+
+(ert-deftest gascity-test-sling-footer-ready-on-sentence ()
+  "Mockup §4: formula plus work is the targeted `--on' shape; the
+vars word counts non-blank answers against the declared vars (2 of
+3), and a rig-scoped target renders as just `rig-scoped' — the
+qualification a v2 launch needs; the name sits in the Who line."
+  (let ((gascity-sling-test--footer-values
+         '(("artifact_root" . "plans/e2e-sling-v2/")
+           ("push" . "true"))))
+    (gascity-sling-test--with-footer-deps
+      (should
+       (equal
+        (gascity-sling--footer
+         (list :city gascity-sling-test--city :formula "build-basic"
+               :target "hello-world/gc.implementation-worker"
+               :arg "bl-5ja")
+         gascity-sling-test--roster
+         (gascity-sling-test--recipe
+          (vector '((name . "artifact_root"))
+                  '((name . "push"))
+                  '((name . "context_path")))))
+        "✓ Ready — on run · target rig-scoped · 2 of 3 vars set")))))
+
+(ert-deftest gascity-test-sling-footer-v2-trap-warning ()
+  "Mockup §5a: a city-scoped target on a v2 formula warns verbatim —
+and the footer feeds the validator the RECIPE and the target's
+ROSTER-SCOPE (never the raw target name); the suggestion rig is the
+first rig-scoped roster row (hello-world), a cold roster degrades to
+the generic wording.  The warning is a string — it never blocks `s'."
+  (let ((recipe (gascity-sling-test--recipe))
+        (trap-args nil))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--v2-trap-p)
+                 (lambda (r scope)
+                   (setq trap-args (list r scope))
+                   t)))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula "build-basic"
+                 :target "mayor" :arg "bl-5ja")
+           gascity-sling-test--roster recipe)
+          "⚠ formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a hello-world/* agent with T"))))
+    (should (eq (nth 0 trap-args) recipe))
+    (should (equal (nth 1 trap-args) "city"))
+    ;; Cold roster: the suggestion stays generic.
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--v2-trap-p)
+                 (lambda (&rest _) t)))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula "build-basic"
+                 :target "mayor" :arg "bl-5ja")
+           nil recipe)
+          "⚠ formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a rig-scoped agent with T"))))))
+
+(ert-deftest gascity-test-sling-footer-cross-store-warning ()
+  "Mockup §5b: a rig-scoped target reading another store than the
+work bead warns verbatim — and the footer feeds the validator the
+WORK, the target's roster scope and the rig memo
+(`gascity-rigs-cached' of the scope's city — nil here, a cold memo,
+never a gc read)."
+  (let ((cross-args nil))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--cross-store-p)
+                 (lambda (work scope rigs)
+                   (setq cross-args (list work scope rigs))
+                   t)))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula nil
+                 :target "gascity.el/implementation-worker"
+                 :arg "hw-ab12")
+           (list (list :name "gascity.el/implementation-worker"
+                       :rig "gascity.el"))
+           nil)
+          "⚠ cross-store route: bead hw-ab12 lives in the hello-world store but the target reads the gascity.el store — gc will refuse (pick a city agent or a hello-world agent)"))))
+    (should (equal (nth 0 cross-args) "hw-ab12"))
+    (should (equal (nth 1 cross-args) "gascity.el"))
+    (should (null (nth 2 cross-args)))))
+
+(ert-deftest gascity-test-sling-footer-missing-pieces-stack ()
+  "Mockup §5c: the three missing pieces stack as `⚠' lines in order —
+missing work for a drain formula, missing required vars, missing
+target — the footer prefixes and joins them; no check ever refuses."
+  (let ((recipe (gascity-sling-test--recipe)))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--missing-work-p)
+                 (lambda (r work)
+                   (and (eq r recipe) (gascity-formula--blank work))))
+                ((symbol-function 'gascity-sling--missing-required-vars)
+                 (lambda (r _values)
+                   (and (eq r recipe) '("artifact_root")))))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula "build-basic"
+                 :target nil :arg nil)
+           nil recipe)
+          "⚠ build-basic drains a bead — pick work with A (or point at one)\n⚠ Missing required vars: artifact_root\n⚠ No target — T to choose, or s will prompt"))))))
+
+(ert-deftest gascity-test-sling-footer-recomputes-across-scope-changes ()
+  "REQ-007: the footer is a pure function of the scope — each answer
+that lands (the re-setups of a pick, a target, an arg) recomputes it:
+the warnings of §5c peel away one by one until the ready sentence
+remains, on the same recipe."
+  (let ((recipe (gascity-sling-test--recipe)))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--missing-work-p)
+                 (lambda (r work)
+                   (and (eq r recipe) (gascity-formula--blank work)))))
+        (let ((base (list :city gascity-sling-test--city
+                          :formula "build-basic" :target nil :arg nil)))
+          ;; Nothing answered: missing work, missing target.
+          (should (equal (gascity-sling--footer base nil recipe)
+                         "⚠ build-basic drains a bead — pick work with A (or point at one)\n⚠ No target — T to choose, or s will prompt"))
+          ;; The target lands: the missing-target warning goes.
+          (should (equal (gascity-sling--footer
+                          (plist-put (copy-sequence base) :target "mayor")
+                          gascity-sling-test--roster recipe)
+                         "⚠ build-basic drains a bead — pick work with A (or point at one)"))
+          ;; The work lands: ready.
+          (should (equal (gascity-sling--footer
+                          (plist-put (plist-put (copy-sequence base)
+                                               :target "mayor")
+                                     :arg "bl-5ja")
+                          gascity-sling-test--roster recipe)
+                         "✓ Ready — on run · target mayor (city) · 0 vars")))))))
+
+(ert-deftest gascity-test-sling-footer-info-renders-in-every-setup ()
+  "REQ-007: the footer renders as part of every transient setup — the
+header group of `gascity-sling--children-specs' carries the footer
+`:info' spec on every shape, and its description FUNCTION computes
+`gascity-sling--footer' for the live scope (a function, so every
+redraw recomputes it; the spec must not be a group's first element).
+Parse-time stays pure: no roster read, no footer call — the spec is
+built without touching the WI-2 surface, so no other menu test sees
+the footer's dependencies."
+  (let ((recipe (gascity-domain-decode 'gascity-formula
+                                       '((name . "build-basic")))))
+    (gascity-sling-test--with-city
+      (gascity-test-with-store-stubs _reads _actions
+        (gascity-sling-test--with-footer-deps
+          (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                     (lambda (_name) recipe))
+                    ((symbol-function 'gascity-context-city-name)
+                     (lambda (&optional _dir) "testcity"))
+                    ((symbol-function 'gascity-agents--roster)
+                     (lambda (_data) gascity-sling-test--roster)))
+            (dolist (scope (list
+                            (list :city gascity-sling-test--city
+                                  :formula "build-basic" :target "mayor"
+                                  :arg "bl-5ja")
+                            (list :city gascity-sling-test--city
+                                  :formula nil :target "mayor"
+                                  :arg "bl-5ja")))
+              (let* ((groups (gascity-sling--children-specs scope))
+                     (footer (aref (nth 0 groups) 2)))
+                (should (eq (car footer) :info))
+                (should (functionp (cadr footer)))
+                ;; The description function renders the live footer of
+                ;; this scope — re-evaluated at every format.
+                (should
+                 (equal (funcall (cadr footer))
+                        (gascity-sling--footer
+                         scope gascity-sling-test--roster
+                         (and (plist-get scope :formula) recipe))))))))))))
+
+(ert-deftest gascity-test-sling-footer-roster-cached-peeks-the-store ()
+  "The footer's render path reads the roster from the store's cache —
+peeking `status', `session list' and `agent list' (scheduling
+background refreshes, never blocking, D9) — and joins them through
+WI-2's `gascity-agents--roster'.  The work-bead read stays out: the
+footer classifies targets, it does not link beads."
+  (gascity-sling-test--with-city
+    (gascity-test-with-store-stubs reads _actions
+      (let (data)
+        (cl-letf (((symbol-function 'gascity-agents--roster)
+                   (lambda (payload)
+                     (setq data payload)
+                     gascity-sling-test--roster)))
+          (should (equal
+                   (gascity-sling--roster-cached gascity-sling-test--city)
+                   gascity-sling-test--roster))
+          (should (member '("status") (mapcar #'car reads)))
+          (should (member '("session" "list") (mapcar #'car reads)))
+          (should (member '("agent" "list") (mapcar #'car reads)))
+          ;; The bead-linking join is not the footer's business.
+          (should-not (member '("bd" "list") (mapcar #'car reads)))
+          ;; The join sees exactly the peeks, keyed like the loaders.
+          (should (plist-member data :status))
+          (should (plist-member data :sessions))
+          (should (plist-member data :agents))
+          (should-not (plist-member data :work)))))))
+
 (provide 'gascity-sling-test)
 ;;; gascity-sling-test.el ends here

@@ -73,6 +73,29 @@
 (declare-function gascity-formula-invalidate "gascity-formula")
 (declare-function gascity-formula-refresh-async "gascity-formula")
 (declare-function gascity-mail-inbox-refresh "gascity-mail")
+;; The live footer (REQ-007/REQ-010, plans/sling-command WI-6) also
+;; reaches into the sibling work items of the sling redesign, which
+;; land as their own commits: the shape sentence (WI-1) and the
+;; client-side validators with their warning builders (WI-2) in
+;; gascity-formula, the roster accessors in gascity-agents.  Declared
+;; here so the whole-package compile gate sees the wiring; the
+;; footer's tests stub each one at its contract.
+(declare-function gascity-sling--shape (work formula) "gascity-formula")
+(declare-function gascity-sling--v2-trap-p (recipe scope) "gascity-formula")
+(declare-function gascity-sling--v2-trap-warning
+                  (&optional rig) "gascity-formula")
+(declare-function gascity-sling--cross-store-p (work scope rigs) "gascity-formula")
+(declare-function gascity-sling--cross-store-warning
+                  (work scope rigs) "gascity-formula")
+(declare-function gascity-sling--missing-work-p (recipe work) "gascity-formula")
+(declare-function gascity-sling--missing-work-warning (recipe) "gascity-formula")
+(declare-function gascity-sling--missing-required-vars
+                  (recipe values) "gascity-formula")
+(declare-function gascity-sling--missing-vars-warning (names) "gascity-formula")
+(declare-function gascity-sling--missing-target-p (target) "gascity-formula")
+(declare-function gascity-agents-scope (agent) "gascity-agents")
+(declare-function gascity-agents-roster-scope (target roster) "gascity-agents")
+(declare-function gascity-agents--roster (data) "gascity-agents")
 
 ;;; ============================================================
 ;;; Synchronous action runner (inline-result callers only)
@@ -1062,8 +1085,9 @@ With a prefix argument, capture that many trailing LINES instead of the
 ;;
 ;; Sling is the lone flag-heavy verb, so it gets one transient
 ;; (`gascity-sling-dispatch', DESIGN-write-actions §10): sections stack
-;; vertically — header, Formula, Destination, Routing flags, Actions,
-;; then the picked formula's full-width Variables section.  `-f' picks a
+;; vertically — header (scope info plus the live footer), Formula,
+;; Destination, Routing flags, Actions, then the picked formula's
+;; full-width Variables section.  `-f' picks a
 ;; formula in place (the same prefix re-setups with the new scope); `-T'
 ;; sets a visible target session; `A' edits the sling arg (bead id or
 ;; task text) in place; `s'/`p' sling or preview.  With a
@@ -1256,11 +1280,149 @@ carries the scope.  With no formula picked the header hints at `-f'
                 (or (plist-get scope :formula) "(none — -f to pick)")
                 (or (plist-get scope :target) "(none)"))))
 
+;; The live footer (REQ-007/REQ-010, mockup §1–§5, plans/sling-command
+;; WI-6): the second header line, always visible, recomputed as each
+;; answer changes.  The footer composes; the WI-2 validators decide and
+;; their builders word (`gascity-sling--v2-trap-warning' & co.), the
+;; WI-1 shape inference names the shape.  Full warning detail lives in
+;; the `P' buffer (WI-7); the footer never blocks `s' — gc stays the
+;; authority.
+
+(defvar gascity-sling--missing-target-warning nil
+  "The missing-target footer warning, mockup §5c wording.
+Defined as a constant beside the WI-2 validators (gascity-formula);
+the predeclaration keeps the whole-package compile gate green while
+the work items land as their own commits.")
+
+(defun gascity-sling--footer-rig (roster)
+  "Return the scope of ROSTER's first rig-scoped agent, or nil.
+The bl-bdj trap's suggestion names a rig the city actually has agents
+for (mockup §5a: \='pick a hello-world/* agent with T\='): the first
+rig-scoped row of WI-2's roster order.  A cold roster or an all-city
+one degrades to nil — `gascity-sling--v2-trap-warning' then stays
+generic.  Pure."
+  (cl-loop for agent in roster
+           for scope = (gascity-agents-scope agent)
+           thereis (and (not (equal scope "city")) scope)))
+
+(defun gascity-sling--footer--target-word (target scope)
+  "Return TARGET as the footer's target word, at SCOPE.
+`mayor (city)' for a city-scoped agent (mockup §1/§3); just
+`rig-scoped' when the roster classifies the target under a rig — the
+qualification is what a v2 launch needs, the name sits in the Who
+line (§4/§5a); the bare name when neither (free entry, a cold
+roster — never a guess)."
+  (cond ((equal scope "city") (format "%s (city)" target))
+        (scope "rig-scoped")
+        (t (or target "(none)"))))
+
+(defun gascity-sling--footer--vars-word (recipe values)
+  "Return the footer's var word: how much of RECIPE is answered.
+`no vars' on the plain shape (no formula, mockup §1), `0 vars' for a
+formula that declares none (§3), `N of M vars set' counting the
+non-blank answers of VALUES against the M declared (§4)."
+  (let ((vars (and recipe (gascity-formula-vars recipe))))
+    (cond
+     ((null recipe) "no vars")
+     ((null vars) "0 vars")
+     (t (format "%d of %d vars set" (length values) (length vars))))))
+
+(defun gascity-sling--footer (scope roster recipe)
+  "Return the live footer line(s) of the sling menu for SCOPE.
+`✓ Ready — <shape> · target <name> (<scope>) · <vars>' when every
+client-side check is clean (mockup §1/§3/§4), or one `⚠ <reason>'
+line per warning — §5c stacks its three, in the order below.  Pure
+over cached data, never a gc read (D9): ROSTER is the WI-2 roster
+the render path peeks from the store (`gascity-sling--roster-cached'),
+RECIPE the picked formula's cached recipe (nil without a formula),
+the live infix values `gascity-sling-formula--current-values'.
+
+The WI-2 validators decide and their builders word (REQ-010); this
+function composes them, target-first: the bl-bdj trap (§5a, a v2
+formula whose binding-qualified step targets need a rig-scoped agent),
+the cross-store route (§5b, work bead and target in different stores,
+the rig memo `gascity-rigs-cached' resolving the prefix), then §5c's
+missing pieces — missing work for a drain formula, missing required
+vars, missing target.  Each degrades silently when its input is cold
+(free entry, a cold roster or memo): a cold roster never dead-ends,
+gc answers at launch.  Warnings never block `s'."
+  (let* ((work (or (plist-get scope :work) (plist-get scope :arg)))
+         (target (plist-get scope :target))
+         (target-scope (and target (gascity-agents-roster-scope target roster)))
+         (rigs (gascity-rigs-cached (gascity-sling--city-dir scope)))
+         (values (gascity-sling-formula--current-values))
+         (warnings
+          (delq nil
+                (list
+                 ;; §5a — a city target on a v2 formula.
+                 (when (gascity-sling--v2-trap-p recipe target-scope)
+                   (gascity-sling--v2-trap-warning
+                    (gascity-sling--footer-rig roster)))
+                 ;; §5b — the work bead and a rig-scoped target read
+                 ;; different stores.
+                 (when (gascity-sling--cross-store-p work target-scope rigs)
+                   (gascity-sling--cross-store-warning work target-scope rigs))
+                 ;; §5c — the missing pieces, in mockup order.
+                 (when (gascity-sling--missing-work-p recipe work)
+                   (gascity-sling--missing-work-warning recipe))
+                 (gascity-sling--missing-vars-warning
+                  (gascity-sling--missing-required-vars recipe values))
+                 (when (gascity-sling--missing-target-p target)
+                   gascity-sling--missing-target-warning)))))
+    (if warnings
+        (mapconcat (lambda (w) (concat "⚠ " w)) warnings "\n")
+      (format "✓ Ready — %s · target %s · %s"
+              (pcase (gascity-sling--shape work (plist-get scope :formula))
+                ('plain "plain route")
+                ('formula "formula run")
+                ('on "on run")
+                (_ "run"))
+              (gascity-sling--footer--target-word target target-scope)
+              (gascity-sling--footer--vars-word recipe values)))))
+
+(defun gascity-sling--roster-cached (&optional city)
+  "Return CITY's agent roster from the store's cache, or nil when cold.
+The footer's render path (REQ-007): peeks the roster's store entries —
+`gc status', `gc session list', `gc agent list' — returning whatever
+the store holds and scheduling background refreshes when stale
+(`gascity-store-peek', §8.5): never blocking, never a synchronous gc
+(D9).  The join is WI-2's `gascity-agents--roster' over the peeks —
+the work-bead read stays out: the footer classifies targets, it does
+not link beads.  A cold store degrades to a nil roster: the
+scope-dependent checks stay silent and free entry keeps working.
+CITY defaults to the live scope's pin (`gascity-sling--city-dir')."
+  (let ((dir (or city (gascity-sling--city-dir))))
+    (gascity-agents--roster
+     (list :status (gascity-store-peek '("status") dir)
+           :sessions (gascity-store-peek '("session" "list") dir)
+           :agents (gascity-store-peek '("agent" "list") dir)))))
+
+(defun gascity-sling--footer-info (scope recipe)
+  "Return the `(:info …)' spec rendering the live footer for SCOPE.
+REQ-007: the footer renders as part of every transient setup, and
+its description is a FUNCTION — transient evaluates it at format
+time, on every setup AND every redraw — so it recomputes as each
+answer changes: a var infix edit redraws the menu and the count
+follows without a re-setup (mockup §1 note).  SCOPE and RECIPE are
+captured here — a re-pick re-setups and re-creates the closure with
+fresh ones — while the roster and the live values are read at format
+time, all cached, no gc on the render path (D9).  Like
+`gascity-sling--scope-info' the spec is passed unwrapped and must not
+be a group's first element (a leading `(:info …)' parses as a group
+argument and breaks setup)."
+  (list :info
+        (lambda ()
+          (gascity-sling--footer
+           scope
+           (gascity-sling--roster-cached (plist-get scope :city))
+           recipe))))
+
 (defun gascity-sling--children-specs (scope)
   "Return the raw stacked layout specs for SCOPE (REQ-C).
 The sections are sibling groups — no `transient-columns' anywhere, so
-each renders full width and stacks vertically: the header info line,
-Formula, Destination, Routing flags, Actions, then the picked
+each renders full width and stacks vertically: the header info line
+plus the live footer (`gascity-sling--footer-info', WI-6), Formula,
+Destination, Routing flags, Actions, then the picked
 formula's Variables section last (absent until a formula with vars is
 picked, REQ-A/REQ-B).  The generated infix keys avoid
 `gascity-sling--reserved-keys' (REQ-D).  The recipe read and the
@@ -1275,7 +1437,8 @@ the header (ga-4ia4)."
     (append
      (list
       (vector (format "Sling — %s" (gascity-context-city-name))
-              (gascity-sling--scope-info scope))
+              (gascity-sling--scope-info scope)
+              (gascity-sling--footer-info scope recipe))
       (vector "Formula"
               '("-f" "Pick formula…" gascity-sling-dispatch-pick)
               '("g" "Refresh catalog" gascity-sling-dispatch-refresh))
