@@ -1,4 +1,4 @@
-;;; gascity-sling-test.el --- Sling picker union and menu state (S-1, S-2) -*- lexical-binding: t; -*-
+;;; gascity-sling-test.el --- Sling picker union, menu state and the redesign suite -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026
 
@@ -6,8 +6,10 @@
 
 ;;; Commentary:
 
-;; Bugs S-1 and S-2 of the dashboard-v3 formula e2e
-;; (docs/qa/2026-09-25-dashboard-v3-e2e-scenarios.md):
+;; The sling command's own suite.  Two generations live here side by
+;; side because the sling redesign (plans/sling-command/) lands as
+;; parallel work items while this suite (WI-10, REQ-013) is written
+;; against the redesign's specified behavior:
 ;;
 ;; - S-1: the formula picker offered only `gc formula catalog' (opt-in
 ;;   pack formulas), so the city's own formulas could not be slung.  It
@@ -15,6 +17,32 @@
 ;; - S-2: `p' closed the sling menu and lost formula, target and vars; a
 ;;   following `S s' became a plain sling.  Preview now keeps the menu,
 ;;   and the state is remembered per city.
+;;
+;; - WI-9 (REQ-012): a real launch records the per-(city,formula)
+;;   target memory (the Who default's memory tier — previews never
+;;   record), `x' clears the infix values alongside the scope, and
+;;   the remembered state still re-opens at `S'.
+;; - The launch follow offer of the sling redesign (plans/sling-command,
+;;   WI-8 / REQ-009): a successful formula sling echoes
+;;   `Launched workflow <id> (<formula> on <work>) — F: run view' and
+;;   binds `F', for one keypress, to `gascity-run-show' on the created
+;;   workflow root — named by the `gc sling --json' payload, else the
+;;   newest run root resolved through the store, never a guess.  The
+;;   plain route keeps its plain echo and no offer.
+;; - The S-1/S-2 regressions (picker union, preview keeps the menu)
+;;   exercise retained plumbing and hold under both layouts; their
+;;   layout-coupled halves (the old `p' preview, the `:arg' scope key)
+;;   are ported to the redesign (`P' full preview, `A'/`T' pickers,
+;;   scope `:work') and skip until the redesigned layout is loaded
+;;   (`gascity-test-sling-redesign-p').
+;; - The redesign tests pin the plan-specified contracts: shape
+;;   inference, the header sentence, typed-var heuristics, the Who
+;;   default derivation, the bl-bdj trap and cross-store warnings,
+;;   the follow offer, the live footer and the reserved-key set.
+;;
+;; Everything stubs the gc boundary (`gascity-test-with-store-stubs',
+;; `cl-letf' on the reader functions) so the suite stays offline and
+;; fast.
 
 ;;; Code:
 
@@ -22,6 +50,18 @@
 (require 'cl-lib)
 (require 'gascity)
 (require 'gascity-test-helpers)
+
+;; Redesign APIs (plans/sling-command WI-1..WI-9).  These exist only
+;; once the redesign lands; the tests that use them skip otherwise.
+(declare-function gascity-sling--shape "gascity-formula")
+(declare-function gascity-sling--binding-targets-p "gascity-formula")
+(declare-function gascity-sling--v2-trap-p "gascity-formula")
+(declare-function gascity-sling--cross-store-p "gascity-formula")
+(declare-function gascity-sling--title-slug "gascity-formula")
+(declare-function gascity-sling-formula--var-class "gascity-formula")
+(declare-function gascity-sling--derive-target "gascity-action")
+(declare-function gascity-sling--footer "gascity-action")
+(declare-function gascity-sling-dispatch-preview "gascity-action")
 
 (defconst gascity-sling-test--city "/tmp/sling-city/")
 
@@ -38,6 +78,28 @@
                   (source . "/tmp/sling-city/formulas/e2e-demo.formula.toml"))
                  ((name . "mol-extra") (source . "/pack/mol-extra.formula.toml"))]))
   "A `gc formula list' payload: two catalog formulas, one city, one pack.")
+
+;;; Fixtures for the redesign tests
+
+(defconst gascity-sling-test--drain-steps
+  (vector '((id . "drain") (title . "Drain unit")
+            (metadata . ((gc.kind . "drain")))))
+  "Steps making `gascity-formula--needs-convoy' true (the `--on' shape).")
+
+(defconst gascity-sling-test--v2-steps
+  (vector '((id . "run") (title . "Run operator")
+            (metadata . ((gc.run_target . "gc.run-operator")))))
+  "Steps naming a binding-qualified run target (the bl-bdj trap shape).")
+
+(defconst gascity-sling-test--roster
+  '((:name "mayor" :state "active")
+    (:name "hello-world/gc.implementation-worker" :rig "hello-world" :state "idle")
+    (:name "hello-world/gc.run-operator" :rig "hello-world" :state "stopped")
+    (:name "hello-world/gc.requirements-planner" :rig "hello-world" :state "idle"))
+  "A roster as the agents loaders produce: one city agent, rig-scoped
+ones (`:rig' absent means the city store), with scope and live state —
+the Who picker's candidates and the footer's classification both read
+it.")
 
 (defmacro gascity-sling-test--with-city (&rest body)
   "Run BODY in the test city with empty formula caches and a stable key."
@@ -61,6 +123,149 @@
     (run-at-time 0 nil (lambda () (funcall callback payload)))
     nil))
 
+(defun gascity-sling-test--recipe (name steps &optional vars)
+  "Decode a `gascity-formula' NAME with raw STEPS and VARS."
+  (gascity-domain-decode
+   'gascity-formula `((name . ,name) (steps . ,steps)
+                      ,@(and vars `((vars . ,vars))))))
+
+(defconst gascity-sling-test--build-basic
+  (gascity-sling-test--recipe
+   "build-basic"
+   (vector '((id . "requirements") (title . "Requirements")
+             (metadata . ((gc.kind . "work")
+                          (gc.run_target . "gc.requirements-planner"))))
+           '((id . "run") (title . "Run")
+             (metadata . ((gc.run_target . "gc.run-operator"))))
+           '((id . "publish") (title . "Publish")
+             (metadata . ((gc.run_target . "mayor"))))
+           '((id . "drain") (title . "Drain")
+             (metadata . ((gc.kind . "drain")
+                          (gc.run_target . "{{implementation_target}}")))))
+   (vector '((name . "artifact_root") (required . t))
+           '((name . "implementation_target") (required . t))))
+  "A build-basic-shaped recipe: two binding-qualified run targets, a
+plain-agent one, a `{{implementation_target}}' placeholder, a drain
+step and two required vars.")
+
+(defconst gascity-sling-test--pancakes
+  (gascity-sling-test--recipe
+   "pancakes"
+   (vector '((id . "cook") (title . "Cook")
+             (metadata . ((gc.kind . "work") (gc.run_target . "mayor"))))))
+  "A plain v1-shaped recipe: only plain-agent run targets, no drain.")
+
+(defun gascity-sling-test--rigs ()
+  "The bright-lights-shaped rig memo: the city HQ row and one rig."
+  (list (gascity-domain-decode
+         'gascity-rig '((name . "bright-lights") (prefix . "bl") (hq . t)))
+        (gascity-domain-decode
+         'gascity-rig '((name . "hello-world") (prefix . "hw")))))
+
+;;; REQ-010: the client-side validators (WI-2 — pure, never blocking)
+
+(ert-deftest gascity-test-sling-binding-targets-p ()
+  "A binding-qualified run target contains a `.' and no `/'."
+  (should (gascity-sling--binding-qualified-target-p "gc.run-operator"))
+  (should-not (gascity-sling--binding-qualified-target-p "mayor"))
+  (should-not (gascity-sling--binding-qualified-target-p
+               "hello-world/polecat"))
+  (should-not (gascity-sling--binding-qualified-target-p nil))
+  ;; Over recipes: build-basic's steps carry them, a plain one does not,
+  ;; and no formula picked is no.
+  (should (gascity-sling--binding-targets-p gascity-sling-test--build-basic))
+  (should-not (gascity-sling--binding-targets-p gascity-sling-test--pancakes))
+  (should-not (gascity-sling--binding-targets-p nil)))
+
+(ert-deftest gascity-test-sling-v2-trap-p-and-warning ()
+  "The bl-bdj trap: binding-qualified run targets with a city-scoped
+target warn with the mockup §5a wording; a rig scope and free entry
+degrade."
+  (should (gascity-sling--v2-trap-p gascity-sling-test--build-basic "city"))
+  (should-not (gascity-sling--v2-trap-p
+               gascity-sling-test--build-basic "hello-world"))
+  ;; Free entry (an unclassifiable target) never dead-ends: no warning.
+  (should-not (gascity-sling--v2-trap-p gascity-sling-test--build-basic nil))
+  ;; A plain formula with a city target is no trap at all.
+  (should-not (gascity-sling--v2-trap-p gascity-sling-test--pancakes "city"))
+  (should-not (gascity-sling--v2-trap-p nil "city"))
+  (should (equal (gascity-sling--v2-trap-warning "hello-world")
+                 "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a hello-world/* agent with T"))
+  ;; Without a rig to suggest the wording stays generic.
+  (should (equal (gascity-sling--v2-trap-warning)
+                 "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a rig-scoped agent with T")))
+
+(ert-deftest gascity-test-sling-cross-store-p-and-warning ()
+  "Cross-store: a bead and a rig-scoped target in different stores warn
+with the mockup §5b wording; a city target never fires and everything
+unresolvable degrades."
+  (let ((rigs (gascity-sling-test--rigs)))
+    ;; The store resolves from the bead's id prefix via the rig memo.
+    (should (equal (gascity-sling--bead-store "hw-ab12" rigs) "hello-world"))
+    (should (equal (gascity-sling--bead-store "bl-5ja" rigs) "bright-lights"))
+    ;; Freeform work text, a foreign prefix and a cold memo resolve to
+    ;; nothing — never a guess.
+    (should-not (gascity-sling--bead-store "fix the flaky test" rigs))
+    (should-not (gascity-sling--bead-store "zz-9" rigs))
+    (should-not (gascity-sling--bead-store "hw-ab12" nil))
+    ;; The mockup §5b case: an hw bead slung at another rig's agent.
+    (should (gascity-sling--cross-store-p "hw-ab12" "gascity.el" rigs))
+    ;; Same store, and the city agent (gc's own remedy) — no warning.
+    (should-not (gascity-sling--cross-store-p "hw-ab12" "hello-world" rigs))
+    (should-not (gascity-sling--cross-store-p "hw-ab12" "city" rigs))
+    ;; Unresolvable sides degrade: free entry, freeform work, cold memo.
+    (should-not (gascity-sling--cross-store-p "hw-ab12" nil rigs))
+    (should-not (gascity-sling--cross-store-p "fix the login" "gascity.el" rigs))
+    (should-not (gascity-sling--cross-store-p "hw-ab12" "gascity.el" nil))
+    ;; The mockup §5b wording, verbatim.
+    (should (equal (gascity-sling--cross-store-warning "hw-ab12" "gascity.el" rigs)
+                   "cross-store route: bead hw-ab12 lives in the hello-world store but the target reads the gascity.el store — gc will refuse (pick a city agent or a hello-world agent)"))
+    ;; A clean route builds no warning.
+    (should-not (gascity-sling--cross-store-warning "hw-ab12" "hello-world" rigs))))
+
+(ert-deftest gascity-test-sling-missing-pieces ()
+  "The mockup §5c checks: a drain formula without work, missing
+required vars and no target — pure, and `validate-values' still
+refuses what the footer only warns about."
+  ;; No work for a drain formula...
+  (should (gascity-sling--missing-work-p gascity-sling-test--build-basic nil))
+  (should (gascity-sling--missing-work-p gascity-sling-test--build-basic ""))
+  (should-not (gascity-sling--missing-work-p
+               gascity-sling-test--build-basic "bl-5ja"))
+  ;; ...but a plain shape never fires: freeform text is its work.
+  (should-not (gascity-sling--missing-work-p nil nil))
+  (should-not (gascity-sling--missing-work-p gascity-sling-test--pancakes nil))
+  (should (equal (gascity-sling--missing-work-warning
+                   gascity-sling-test--build-basic)
+                 "build-basic drains a bead — pick work with A (or point at one)"))
+  ;; Missing required vars, in declared order; the footer's wording.
+  (should (equal (gascity-sling--missing-required-vars
+                   gascity-sling-test--build-basic nil)
+                 '("artifact_root" "implementation_target")))
+  (should (equal (gascity-sling--missing-required-vars
+                   gascity-sling-test--build-basic
+                   '(("artifact_root" . "plans/e2e/") ("implementation_target" . "x")))
+                 nil))
+  ;; A blank value counts as unset.
+  (should (equal (gascity-sling--missing-required-vars
+                   gascity-sling-test--build-basic
+                   '(("artifact_root" . " ") ("implementation_target" . "gc.w")))
+                 '("artifact_root")))
+  (should (equal (gascity-sling--missing-vars-warning
+                   '("artifact_root" "implementation_target"))
+                 "Missing required vars: artifact_root, implementation_target"))
+  (should-not (gascity-sling--missing-vars-warning nil))
+  ;; No target.
+  (should (gascity-sling--missing-target-p nil))
+  (should (gascity-sling--missing-target-p " "))
+  (should-not (gascity-sling--missing-target-p "mayor"))
+  (should (equal gascity-sling--missing-target-warning
+                 "No target — T to choose, or s will prompt"))
+  ;; The signaling half still refuses at dispatch (REQ-008/009).
+  (should-error (gascity-formula--validate-values
+                 gascity-sling-test--build-basic nil)
+                :type 'user-error))
+
 ;;; S-1: the picker offers every formula the city can run
 
 (ert-deftest gascity-test-sling-choices-union ()
@@ -82,7 +287,7 @@ formula outside the catalog `(not in catalog)'."
                      ("mol-extra" . "(not in catalog)"))))))
 
 (ert-deftest gascity-test-sling-picker-offers-city-formulas ()
-  "`-f' offers e2e-demo (a city formula) with its annotation, without a
+  "`f' offers e2e-demo (a city formula) with its annotation, without a
 synchronous gc read: a cold cache waits on the store reads."
   (gascity-sling-test--with-city
     (let (offered annotate)
@@ -111,8 +316,9 @@ synchronous gc read: a cold cache waits on the store reads."
         (should-error (gascity-sling-formula--read-formula) :type 'user-error)))))
 
 (ert-deftest gascity-test-sling-entry-prefetches-formulas ()
-  "Entering the sling menu starts the catalog and list reads through the
-store (no process in the stub), so `-f' answers from memory."
+  "Entering the sling menu starts the catalog, list and agent-list
+reads through the store (no process in the stub): `-f' answers from
+memory, and the Who default's convention rule finds its roster (WI-3)."
   (gascity-sling-test--with-city
     (gascity-test-with-store-stubs reads _actions
       (cl-letf (((symbol-function 'transient-setup) #'ignore)
@@ -120,7 +326,11 @@ store (no process in the stub), so `-f' answers from memory."
                  (lambda () nil)))
         (gascity-sling-dispatch)
         (should (member '("formula" "catalog") (mapcar #'car reads)))
-        (should (member '("formula" "list") (mapcar #'car reads)))))))
+        (should (member '("formula" "list") (mapcar #'car reads)))
+        ;; `gc agent list' too — the derived Who default's roster source
+        ;; (WI-3): requested once at entry, async, so the derivation
+        ;; answers from the store's cache.
+        (should (member '("agent" "list") (mapcar #'car reads)))))))
 
 ;;; S-2: preview keeps the menu state; `s' slings what was previewed
 
@@ -136,75 +346,1619 @@ store (no process in the stub), so `-f' answers from memory."
      ,@body))
 
 (ert-deftest gascity-test-sling-preview-keeps-state-and-s-slings-it ()
-  "Plain path: `p' reads arg and target once, keeps the menu open with
-them in the scope, and remembers them for the city; `s' then slings the
-same command without prompting, and forgets the city's state."
+  "Plain path: `P' opens the full preview without prompting — the
+routing plan is the dry run of the same sling, started through the
+store — and the menu keeps its scope (work and target stay); `s' then
+slings the same command without prompting, and forgets the city's
+state (S-2, ported to the redesign: `p'→`P', scope `:work')."
+  (skip-unless (and (fboundp 'gascity-sling-dispatch-preview)
+                    (gascity-test-sling-redesign-p)))
   (let ((scope (list :city gascity-sling-test--city :formula nil
-                     :target nil :arg nil))
-        previewed acted prompts)
+                     :target "sess-1" :work "gce-1"))
+        (preview-buf nil))
     (gascity-sling-test--with-menu scope
-      (cl-letf (((symbol-function 'read-string)
-                 (lambda (p &rest _) (push p prompts) "gce-1"))
-                ((symbol-function 'gascity-action--read-session)
-                 (lambda (p) (push p prompts) "sess-1"))
-                ((symbol-function 'gascity-sling--show-plan)
-                 (lambda (c) (setq previewed c)))
-                ((symbol-function 'gascity-command-act-async)
-                 (lambda (c &rest _) (setq acted c))))
-        (call-interactively #'gascity-sling-dispatch-preview)
-        (should (equal (gascity-command-line previewed)
-                       '("gc" "sling" "sess-1" "gce-1" "--dry-run")))
-        (should (equal (plist-get scope :arg) "gce-1"))
-        (should (equal (plist-get scope :target) "sess-1"))
-        (should (assoc gascity-sling-test--city gascity-sling--remembered))
-        ;; `s' right after: no prompt, the previewed command minus --dry-run.
-        (setq prompts nil)
-        (call-interactively #'gascity-sling-dispatch-run)
-        (should-not prompts)
-        (should (equal (gascity-command-line acted)
-                       '("gc" "sling" "sess-1" "gce-1" "--json")))
-        (should-not (assoc gascity-sling-test--city gascity-sling--remembered))))))
+      (gascity-test-with-store-stubs _reads actions
+        (cl-letf (((symbol-function 'read-string)
+                   (lambda (&rest _) (error "`P' and `s' must not prompt")))
+                  ((symbol-function 'completing-read)
+                   (lambda (&rest _) (error "`P' and `s' must not prompt")))
+                  ((symbol-function 'gascity-view-get-buffer-create)
+                   (lambda (_name &rest _)
+                     (setq preview-buf (generate-new-buffer " *gc-sling-preview*"))
+                     preview-buf))
+                  ((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+          (call-interactively #'gascity-sling-dispatch-preview)
+          ;; The preview's routing plan is the dry run of this sling.
+          (should (member '("sling" "sess-1" "gce-1" "--dry-run")
+                         (mapcar #'car actions)))
+          ;; The menu keeps its state: the scope still carries the work
+          ;; and target the preview showed (S-2).
+          (should (equal (plist-get scope :work) "gce-1"))
+          (should (equal (plist-get scope :target) "sess-1"))
+          ;; `s' right after: no prompt, the previewed command without
+          ;; the dry run, as a real `--json' sling.
+          (call-interactively #'gascity-sling-dispatch-run)
+          (should (member '("sling" "sess-1" "gce-1" "--json")
+                         (mapcar #'car actions)))
+          (should-not (assoc gascity-sling-test--city
+                             gascity-sling--remembered)))))
+    (when (buffer-live-p preview-buf)
+      (let ((kill-buffer-query-functions nil))
+        (kill-buffer preview-buf)))))
 
 (ert-deftest gascity-test-sling-preview-is-transient ()
-  "`p' stays in the menu (a transient suffix), like `g', `-T' and `A'."
+  "`P' stays in the menu (a transient suffix), like `g', `r' and `A'."
+  (skip-unless (fboundp 'gascity-sling-dispatch-preview))
   (should (oref (get 'gascity-sling-dispatch-preview 'transient--suffix)
                 transient)))
 
 (ert-deftest gascity-test-sling-reentry-restores-and-x-resets ()
   "Re-entering `S' in the same city restores the remembered formula,
-target and values (a bead at point still names the arg); `x' clears
-everything and forgets the city."
+target and work (a bead at point still names the work); `x' clears
+everything and forgets the city (ported to the redesign's `:work'
+scope key; the remembered-state contract itself is unchanged)."
+  (skip-unless (gascity-test-sling-redesign-p))
   (let ((gascity-sling--remembered
          (list (cons gascity-sling-test--city
                      (cons (list :city gascity-sling-test--city
-                                 :formula "e2e-demo" :target "mayor" :arg "bl-1")
+                                 :formula "e2e-demo" :target "mayor"
+                                 :work "bl-1")
                            '("--var name=x")))))
-        captured)
-    (cl-letf (((symbol-function 'transient-setup)
-               (lambda (_name _l _s &rest args) (setq captured args)))
-              ((symbol-function 'gascity-formula-refresh-async) #'ignore)
-              ((symbol-function 'gascity-sling-formula--bead-or-convoy-at-point)
-               (lambda () nil)))
-      (let ((default-directory gascity-sling-test--city))
-        (gascity-sling-dispatch))
-      (should (equal (plist-get (plist-get captured :scope) :formula) "e2e-demo"))
-      (should (equal (plist-get (plist-get captured :scope) :target) "mayor"))
-      (should (equal (plist-get (plist-get captured :scope) :arg) "bl-1"))
-      (should (equal (plist-get captured :value) '("--var name=x")))
-      ;; A bead at point wins the arg.
-      (cl-letf (((symbol-function 'gascity-sling-formula--bead-or-convoy-at-point)
-                 (lambda () "bl-9")))
+        (captured nil))
+    (gascity-test-with-store-stubs _reads _actions
+      (cl-letf (((symbol-function 'transient-setup)
+                 (lambda (_name _l _s &rest args) (setq captured args)))
+                ((symbol-function 'gascity-formula-refresh-async) #'ignore)
+                ((symbol-function 'gascity-sling-formula--bead-or-convoy-at-point)
+                 (lambda () nil)))
         (let ((default-directory gascity-sling-test--city))
           (gascity-sling-dispatch))
-        (should (equal (plist-get (plist-get captured :scope) :arg) "bl-9")))
-      ;; `x' resets.
-      (let ((scope (plist-get captured :scope)))
-        (gascity-sling-test--with-menu scope
-          (call-interactively #'gascity-sling-dispatch-reset)
-          (should (null (plist-get scope :formula)))
-          (should (null (plist-get scope :target)))
-          (should (equal (plist-get scope :city) gascity-sling-test--city))
-          (should-not (assoc gascity-sling-test--city gascity-sling--remembered)))))))
+        (should (equal (plist-get (plist-get captured :scope) :formula)
+                       "e2e-demo"))
+        (should (equal (plist-get (plist-get captured :scope) :target)
+                       "mayor"))
+        (should (equal (plist-get (plist-get captured :scope) :work) "bl-1"))
+        (should (equal (plist-get captured :value) '("--var name=x")))
+        ;; A bead at point wins the work.
+        (cl-letf (((symbol-function 'gascity-sling-formula--bead-or-convoy-at-point)
+                   (lambda () "bl-9")))
+          (let ((default-directory gascity-sling-test--city))
+            (gascity-sling-dispatch))
+          (should (equal (plist-get (plist-get captured :scope) :work)
+                         "bl-9")))
+        ;; `x' resets work, formula and target, and forgets the city.
+        (let ((scope (plist-get captured :scope)))
+          (gascity-sling-test--with-menu scope
+            (call-interactively #'gascity-sling-dispatch-reset)
+            (should (null (plist-get scope :formula)))
+            (should (null (plist-get scope :target)))
+            (should (null (plist-get scope :work)))
+            (should (equal (plist-get scope :city) gascity-sling-test--city))
+            (should-not (assoc gascity-sling-test--city
+                               gascity-sling--remembered))))))))
+
+;;; The redesign: shape inference and the header sentence (WI-1)
+
+
+(ert-deftest gascity-test-sling-header-sentence ()
+  "The first header line is one sentence naming the shape, the work
+and the target, with the mockup §1–§4 wording: plain names the bead
+and the target; a formula without work says `(formula) on'; a drain
+formula with work says `against bead …, drained by …'; a cold entry
+shows both pick hints."
+  (skip-unless (gascity-test-sling-redesign-p))
+  ;; Plain: "Sling bead bl-5ja to mayor" (mockup §1).
+  (should (string-match-p
+           "Sling bead bl-5ja to mayor"
+           (gascity-test-sling-header-text
+            (list :city gascity-sling-test--city :formula nil
+                  :work "bl-5ja" :target "mayor")
+            nil)))
+  ;; Formula without work: "Run pancakes (formula) on mayor" (§3).
+  (should (string-match-p
+           "Run do-work (formula) on mayor"
+           (gascity-test-sling-header-text
+            (list :city gascity-sling-test--city :formula "do-work"
+                  :work nil :target "mayor")
+            (gascity-sling-test--recipe "do-work" nil))))
+  ;; Drain formula with work: "Run build-basic against bead bl-5ja,
+  ;; drained by hello-world/gc.implementation-worker" (§4).
+  (should (string-match-p
+           "Run do-work against bead bl-5ja, drained by hello-world/gc.implementation-worker"
+           (gascity-test-sling-header-text
+            (list :city gascity-sling-test--city :formula "do-work"
+                  :work "bl-5ja"
+                  :target "hello-world/gc.implementation-worker")
+            (gascity-sling-test--recipe "do-work" gascity-sling-test--drain-steps))))
+  ;; Cold entry: both hints in one sentence (§2).
+  (should (string-match-p
+           "(no work — A or point at a bead)"
+           (gascity-test-sling-header-text
+            (list :city gascity-sling-test--city :formula nil
+                  :work nil :target nil)
+            nil))))
+
+;;; The redesign: typed How vars (WI-5)
+
+
+
+;;; The redesign: the derived Who default (WI-3)
+
+
+;;; The redesign: client-side validation (WI-2, WI-6)
+
+
+
+
+;;; The redesign: the follow offer (WI-8)
+
+(ert-deftest gascity-test-sling-follow-offer ()
+  "A formula-path launch echoes `Launched workflow <id> (<formula>
+on <work>) — F: run view' and offers a momentary `F' that jumps to
+`gascity-run-show' on the created workflow root; any other key
+dismisses it.  A plain-route launch offers nothing (§9)."
+  (skip-unless (gascity-test-sling-redesign-p))
+  (let ((messages nil) (maps nil) (shown nil)
+        (scope (list :city gascity-sling-test--city :formula "do-work"
+                     :work "gce-1" :target "sess-1")))
+    (gascity-sling-test--with-menu scope
+      (gascity-test-with-store-stubs _reads _actions
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (push (apply #'format fmt args) messages)))
+                  ((symbol-function 'set-transient-map)
+                   (lambda (map &rest _) (push map maps) nil))
+                  ((symbol-function 'gascity-run-show)
+                   (lambda (run &rest _) (push run shown)))
+                  ((symbol-function 'gascity-formula-recipe-cached)
+                   (lambda (_name)
+                     (gascity-sling-test--recipe
+                      "do-work" gascity-sling-test--drain-steps)))
+                  ;; Answer the launch at once like the store would.
+                  ;; `gc sling --json' names the created workflow root
+                  ;; in `molecule_id' — the field the WI-11 e2e pass
+                  ;; confirmed live (the offer never guesses at any
+                  ;; other field).
+                  ((symbol-function 'gascity-command-act-async)
+                   (lambda (command &rest rest)
+                     (let ((on-success (plist-get rest :on-success)))
+                       (when on-success
+                         (funcall on-success
+                                  '((molecule_id . "bl-9xyz")
+                                    (workflow_id . "bl-9xyz")
+                                    (root_bead_id . "bl-9xyz")
+                                    (workflow_root_id . "bl-9xyz"))))
+                     command))))
+          ;; The formula path: the offer.
+          (call-interactively #'gascity-sling-dispatch-run)
+          (should (cl-some (lambda (m)
+                             (string-match-p
+                              "Launched workflow bl-9xyz (do-work on gce-1)" m))
+                           messages))
+          ;; The momentary map: `F' jumps to the run view.
+          (should maps)
+          (let ((binding (lookup-key (car maps) "F")))
+            (should binding)
+            (funcall binding)
+            (should (member "bl-9xyz" shown)))
+          ;; The plain route on the same stubs: no offer at all.
+          (setq messages nil maps nil shown nil)
+          (setq scope (list :city gascity-sling-test--city :formula nil
+                            :work "gce-1" :target "sess-1"))
+          (call-interactively #'gascity-sling-dispatch-run)
+          (should-not maps)
+          (should-not (cl-some (lambda (m)
+                                (string-match-p "Launched workflow" m))
+                              messages)))))))
+
+;;; The redesign: the reserved set (WI-4)
+
+(ert-deftest gascity-test-sling-reserved-set-matches-mockups ()
+  "The redesigned reserved set is exactly the mockup §10 key summary
+— `A f T c a n m t s P r g x q' — with `p' freed and `P' added; the
+generated var keys avoid it and `gascity-test-sling-reserved-keys-
+complete' keeps it in sync with the bound layout."
+  (skip-unless (gascity-test-sling-redesign-p))
+  (let ((mockups '("A" "f" "T" "c" "a" "n" "m" "t" "s" "P" "r" "g" "x" "q")))
+    (should (= (length gascity-sling--reserved-keys) (length mockups)))
+    (should-not (cl-set-difference gascity-sling--reserved-keys mockups
+                                  :test #'equal))
+    (should-not (cl-set-difference mockups gascity-sling--reserved-keys
+                                   :test #'equal))
+    (should-not (member "p" gascity-sling--reserved-keys))))
+
+;;; WI-1: shape inference and the one-sentence header (REQ-001/002)
+
+(defconst gascity-sling-test--drain-recipe
+  (gascity-sling-test--recipe
+   "build-basic"
+   '(((id . "implement") (title . "Implement owned work") (type . "task"))
+     ((id . "drain") (title . "Drain the convoy") (type . "drain")
+      (metadata . ((gc.kind . "drain"))))))
+  "A recipe with a `gc.kind=drain' step — `needs-convoy' is true.")
+
+(defconst gascity-sling-test--plain-recipe
+  (gascity-sling-test--recipe
+   "pancakes"
+   '(((id . "mix") (title . "Mix the batter") (type . "task"))))
+  "A recipe with no drain step and no `{{convoy_id}}' — targetless.")
+
+(ert-deftest gascity-test-sling-shape-inference ()
+  "The displayed shape is inferred from work + formula, never a flag:
+no formula is the plain path regardless of work; a formula with work is
+the `--on' shape; a formula without work is `--formula'.  A blank
+work string counts as no work (WI-1, REQ-001/002)."
+  (should (eq (gascity-sling--shape nil nil) 'plain))
+  (should (eq (gascity-sling--shape "bl-5ja" nil) 'plain))
+  (should (eq (gascity-sling--shape " " nil) 'plain))
+  (should (eq (gascity-sling--shape "bl-5ja" "build-basic") 'on))
+  (should (eq (gascity-sling--shape nil "pancakes") 'formula))
+  (should (eq (gascity-sling--shape "" "pancakes") 'formula))
+  (should (eq (gascity-sling--shape "   " "pancakes") 'formula)))
+
+(ert-deftest gascity-test-sling-header-sentence-mockups ()
+  "The header sentence renders the exact mockup §1–§4 wordings for the
+shape × work-presence combinations, and the `drained by' clause
+consults `gascity-formula--needs-convoy' on the cached recipe (§4/§5a);
+a non-convoy recipe renders `on <target>' like the `--formula' shape.
+A nil recipe degrades to the same wording without reading gc (D9)."
+  ;; §1 — plain, fully pre-seeded.
+  (should (equal (gascity-sling--header-sentence "bl-5ja" nil "mayor")
+                 "Sling bead bl-5ja to mayor"))
+  ;; §2 — cold entry, both hints.
+  (should (equal (gascity-sling--header-sentence nil nil nil)
+                 "Sling (no work — A or point at a bead) to (no target — T or default)"))
+  ;; §3 — formula without work: the targetless --formula shape.
+  (should (equal (gascity-sling--header-sentence nil "pancakes" "mayor")
+                 "Run pancakes (formula) on mayor"))
+  ;; §4 — formula with work: the --on shape, drained by the target
+  ;; (needs-convoy on the cached recipe).
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "build-basic"
+                  "hello-world/gc.implementation-worker"
+                  gascity-sling-test--drain-recipe)
+                 "Run build-basic against bead bl-5ja, drained by hello-world/gc.implementation-worker"))
+  ;; §5a — the same drain recipe with a city-scoped target.
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "build-basic" "mayor"
+                  gascity-sling-test--drain-recipe)
+                 "Run build-basic against bead bl-5ja, drained by mayor")))
+
+(ert-deftest gascity-test-sling-header-sentence-partial-scopes ()
+  "The mockup hints stand in for each missing half of the sentence —
+plain without target, plain without work, formula without target — and
+freeform task text renders as the text itself, not `bead <id>' (the
+id heuristic: one dash joining two alphanumeric runs)."
+  (should (equal (gascity-sling--header-sentence "bl-5ja" nil nil)
+                 "Sling bead bl-5ja to (no target — T or default)"))
+  (should (equal (gascity-sling--header-sentence nil nil "mayor")
+                 "Sling (no work — A or point at a bead) to mayor"))
+  (should (equal (gascity-sling--header-sentence nil "pancakes" nil)
+                 "Run pancakes (formula) on (no target — T or default)"))
+  (should (equal
+           (gascity-sling--header-sentence "fix the flaky timer test" nil "mayor")
+           "Sling fix the flaky timer test to mayor")))
+
+(ert-deftest gascity-test-sling-header-sentence-non-convoy-recipe ()
+  "The `on' shape with a recipe that needs no convoy keeps the §3
+`on <target>' preposition; a missing recipe degrades to the same
+wording — no synchronous gc read on the render path (D9, WI-1)."
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "pancakes" "mayor"
+                  gascity-sling-test--plain-recipe)
+                 "Run pancakes against bead bl-5ja, on mayor"))
+  ;; Recipe nil (cold cache): degrade, never read gc.
+  (should (equal (gascity-sling--header-sentence
+                  "bl-5ja" "pancakes" "mayor" nil)
+                 "Run pancakes against bead bl-5ja, on mayor")))
+
+(ert-deftest gascity-test-sling-scope-info-renders-the-sentence ()
+  "The menu header carries the sentence (the old field list is gone):
+`gascity-sling--scope-info' wraps it in the raw unwrapped `(:info …)'
+spec, reads the work from `:work' or the legacy `:arg' slot, and
+passes the cached recipe through for the `drained by' clause (WI-1)."
+  (should (equal (gascity-sling--scope-info
+                   (list :formula nil :target nil :arg nil) nil)
+                 (list :info "Sling (no work — A or point at a bead) to (no target — T or default)")))
+  (should (equal (gascity-sling--scope-info
+                   (list :formula nil :target "mayor" :work "bl-5ja") nil)
+                 (list :info "Sling bead bl-5ja to mayor")))
+  (should (equal (gascity-sling--scope-info
+                   (list :formula "build-basic" :target "mayor" :arg "bl-5ja")
+                   gascity-sling-test--drain-recipe)
+                 (list :info "Run build-basic against bead bl-5ja, drained by mayor"))))
+;;; WI-9 (REQ-012): launch memory and menu state
+
+(ert-deftest gascity-test-sling-launch-records-target-memory ()
+  "A real formula sling records its target under (city . formula) in
+`gascity-sling--target-memory' — the Who default derivation's memory
+tier — while the post-launch forget clears only the open-menu state:
+launch memory and menu state are two different things."
+  (let ((gascity-sling--target-memory nil)
+        (gascity-sling--remembered
+         (list (cons gascity-sling-test--city
+                     (cons (list :city gascity-sling-test--city
+                                 :formula "e2e-demo" :target "mayor" :arg "bl-1")
+                           nil))))
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1"))
+        dispatched)
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (&rest _) (push t dispatched))))
+        (call-interactively #'gascity-sling-dispatch-run)
+        (should (= (length dispatched) 1))
+        (should (equal (cdr (assoc (cons gascity-sling-test--city "e2e-demo")
+                                   gascity-sling--target-memory))
+                       "mayor"))
+        ;; The real launch forgets the menu state, never the memory.
+        (should-not (assoc gascity-sling-test--city
+                           gascity-sling--remembered))))))
+
+(ert-deftest gascity-test-sling-preview-records-no-target-memory ()
+  "`p' previews without touching the launch memory: only a real `s'
+records the (city, formula) target."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1"))
+        previewed)
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (_r _t _a _v &optional preview)
+                   (setq previewed preview))))
+        (call-interactively #'gascity-sling-dispatch-preview)
+        (should previewed)
+        (should (null gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-plain-launch-records-nil-formula-memory ()
+  "A plain launch has no formula, so its target records under the
+(city, nil) pair (WI-3's rule 2 reads it back for the next plain
+sling) — never under a formula."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula nil
+                     :target nil :arg nil)))
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-sling--read-work)
+                 (lambda (&optional _) "gce-1"))
+                ((symbol-function 'gascity-sling--read-agent)
+                 (lambda (_p &optional _i &rest _) "sess-1"))
+                ((symbol-function 'gascity-command-act-async)
+                 (lambda (&rest _))))
+        (call-interactively #'gascity-sling-dispatch-run)
+        (should (equal (cdr (assoc (cons gascity-sling-test--city nil)
+                                   gascity-sling--target-memory #'equal))
+                       "sess-1"))))))
+
+(ert-deftest gascity-test-sling-refused-launch-records-no-target-memory ()
+  "A launch the validation refuses records no target memory: the
+recording runs after the dispatch, so a `user-error' thrown before any
+gc invocation never reaches it."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1")))
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (&rest _)
+                   (user-error "Var summary_path must be set"))))
+        (should-error (call-interactively #'gascity-sling-dispatch-run)
+                      :type 'user-error)
+        (should (null gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-blank-target-records-no-target-memory ()
+  "A blank target records no memory: the dispatch's own shape building
+drops it, so it was never a target the launch really used."
+  (let ((gascity-sling--target-memory nil)
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target nil :arg "bl-1"))
+        dispatched)
+    (gascity-sling-test--with-menu scope
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) nil))
+                ((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () nil))
+                ((symbol-function 'gascity-sling--read-agent)
+                 (lambda (_p &optional _i &rest _) ""))
+                ((symbol-function 'gascity-sling-formula--dispatch)
+                 (lambda (&rest _) (push t dispatched))))
+        (call-interactively #'gascity-sling-dispatch-run)
+        (should (= (length dispatched) 1))
+        (should (null gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-reset-clears-values-too ()
+  "`x' clears the infix values alongside the scope: the re-setup carries
+no `:value', so no var or routing flag survives the reset (REQ-012).
+The per-(city, formula) launch memory is not menu state — `x' keeps it."
+  (let ((gascity-sling--target-memory
+         (list (cons (cons gascity-sling-test--city "e2e-demo") "mayor")))
+        (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                     :target "mayor" :arg "bl-1"))
+        captured)
+    (cl-letf (((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'transient-setup)
+               (lambda (_name _l _s &rest args) (setq captured args))))
+      (call-interactively #'gascity-sling-dispatch-reset)
+      (dolist (key '(:formula :target :arg))
+        (should (null (plist-get (plist-get captured :scope) key))))
+      (should (equal (plist-get (plist-get captured :scope) :city)
+                     gascity-sling-test--city))
+      (should (null (plist-get captured :value)))
+      (should-not (assoc gascity-sling-test--city
+                         gascity-sling--remembered))
+      ;; Launch memory survives the reset: only the menu state is cleared.
+      (should (equal (cdr (assoc (cons gascity-sling-test--city "e2e-demo")
+                                  gascity-sling--target-memory))
+                     "mayor")))))
+;;; The launch follow offer (WI-8, REQ-009)
+
+(defconst gascity-sling-test--launched
+  '((schema_version . "1") (ok . t) (success . t) (target . "mayor")
+    (routed . t) (queued) (dry_run) (method . "on-formula")
+    (molecule_id . "ga-1") (workflow_id . "wf-77")
+    (convoy_id . "ga-2") (bead_id . "gce-9") (formula . "do-work"))
+  "A successful formula `gc sling --json' payload, as gascity decodes
+it (false and null both read nil): the created workflow root bead is
+`molecule_id', the work bead `bead_id'.")
+
+(ert-deftest gascity-test-sling-launched-root-is-the-payload-root ()
+  "The created workflow root comes from the payload's `molecule_id' —
+the schema's \"Created molecule/root workflow bead ID\" — and nothing
+else: a blank or absent root, or a non-alist result (a failed JSON
+parse hands back raw stdout), yields nil rather than an id the offer
+would be guessing at."
+  (should (equal (gascity-sling--launched-root gascity-sling-test--launched)
+                 "ga-1"))
+  (should-not (gascity-sling--launched-root
+                '((ok . t) (workflow_id . "wf-77") (bead_id . "gce-9"))))
+  (should-not (gascity-sling--launched-root
+                '((molecule_id . "") (workflow_id . "wf-77"))))
+  (should-not (gascity-sling--launched-root "raw stdout")))
+
+(ert-deftest gascity-test-sling-launched-formula-and-work ()
+  "The echo's parenthetical names the payload's own formula and work
+bead, falling back to the dispatch's formula name and arg when the
+payload does not carry them."
+  (should (equal (gascity-sling--launched-formula
+                  gascity-sling-test--launched "fallback")
+                 "do-work"))
+  (should (equal (gascity-sling--launched-formula "raw stdout" "fb")
+                 "fb"))
+  (should (equal (gascity-sling--launched-work
+                  gascity-sling-test--launched "fallback")
+                 "gce-9"))
+  (should (equal (gascity-sling--launched-work
+                  '((ok . t) (bead_id . "")) "gce-arg")
+                 "gce-arg")))
+
+(ert-deftest gascity-test-sling-newest-run-root-since-launch ()
+  "The fallback picks the newest run root created at or after the
+launch — carrying its rig store — never an older run, never a row it
+cannot date, and nothing when the launch created none."
+  (let ((beads `(((id . "ga-old") (created_at . "2026-09-27T10:00:00Z"))
+                 ((id . "ga-new") (created_at . "2026-09-27T11:00:00Z")
+                  (gascity-rig . "gascity.el"))
+                 ((id . "ga-mid") (created_at . "2026-09-27T10:30:00Z"))
+                 ((id . "ga-undated")))))
+    (should (equal (gascity-sling--newest-run-root
+                    beads (gascity-ui-parse-time "2026-09-27T10:15:00Z"))
+                   '("ga-new" . "gascity.el")))
+    ;; A root created exactly at SINCE counts: the launch's own second.
+    (should (equal (gascity-sling--newest-run-root
+                    beads (gascity-ui-parse-time "2026-09-27T11:00:00Z"))
+                   '("ga-new" . "gascity.el")))
+    ;; Nothing created since: no offer is better than a guess.
+    (should-not (gascity-sling--newest-run-root
+                 beads (gascity-ui-parse-time "2026-09-27T12:00:00Z")))
+    (should-not (gascity-sling--newest-run-root nil 0.0))))
+
+(ert-deftest gascity-test-sling-follow-offer-binds-one-F-jump ()
+  "The offer echoes `Launched workflow <id> (<formula> on <work>) — F:
+run view' and installs exactly one momentary binding: `F' jumps to
+`gascity-run-show' on the root — in the owning rig store when known —
+and any other key falls through to its own binding, the map holding
+nothing else."
+  (let ((shown nil)
+        (echos nil)
+        (pch pre-command-hook)
+        (otlm overriding-terminal-local-map))
+    (cl-letf (((symbol-function 'gascity-run-show)
+               (lambda (run &optional _convoy rig)
+                 (push (list run rig) shown)))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos))))
+      (unwind-protect
+          (progn
+            (gascity-sling--follow-offer "ga-1" "do-work" "gce-9" "gascity.el")
+            (should (equal (car echos)
+                           "Launched workflow ga-1 (do-work on gce-9) — F: run view"))
+            (let ((map overriding-terminal-local-map))
+              (should (keymapp map))
+              ;; Only `F': any other key dismisses and runs its own
+              ;; binding.
+              (should (commandp (lookup-key map "F")))
+              (should-not (lookup-key map "x"))
+              ;; The jump.
+              (call-interactively (lookup-key map "F"))
+              (should (equal shown '(("ga-1" "gascity.el"))))))
+        ;; Restore the momentary state by hand: batch tests send no
+        ;; keys, so the map and its pre-command hook would linger.
+        (setq pre-command-hook pch
+              overriding-terminal-local-map otlm)))))
+
+(defun gascity-sling-test--dispatched-handler ()
+  "Return the launch handler a formula dispatch attaches, with the
+act stubbed to capture it."
+  (let ((handlers nil))
+    (cl-letf (((symbol-function 'gascity-command-act-async)
+               (lambda (_command &rest kwargs)
+                 (when-let* ((handler (plist-get kwargs :on-success)))
+                   (push handler handlers)))))
+      (gascity-sling-formula--dispatch
+       (gascity-domain-decode 'gascity-formula '((name . "do-work")))
+       "sess-1" "gce-9" nil))
+    (car handlers)))
+
+(ert-deftest gascity-test-sling-formula-launch-attaches-the-offer-plain-does-not ()
+  "`s' dispatches exactly as today in both paths (D9): the formula
+path alone attaches the launch handler — the follow offer, REQ-009 —
+while the plain route keeps the plain act and its plain echo, with no
+handler and no offer."
+  ;; The formula path rides the handler along on the act.
+  (should (functionp (gascity-sling-test--dispatched-handler)))
+  ;; The plain path: no handler on the act, no offer at all.
+  (let ((kwargs nil)
+        (offers nil)
+        (scope (list :city gascity-sling-test--city :formula nil
+                     :target "sess-9" :arg "gce-abc")))
+    (cl-letf (((symbol-function 'gascity-command-act-async)
+               (lambda (_command &rest kw) (push kw kwargs)))
+              ((symbol-function 'gascity-sling--follow-offer)
+               (lambda (&rest _) (push t offers)))
+              ((symbol-function 'gascity--refresh-current-view) #'ignore))
+      (gascity-sling-test--with-menu scope
+        (call-interactively #'gascity-sling-dispatch-run))
+      (should (= (length kwargs) 1))
+      (should-not (plist-get (car kwargs) :on-success))
+      (should-not offers))))
+
+(ert-deftest gascity-test-sling-launch-handler-offers-the-created-root ()
+  "The handler turns the payload's created root into the echo plus the
+`F' jump — without touching the store (the payload already answered)
+or blocking anything (D9): the offer is its whole report."
+  (let ((maps nil)
+        (shown nil)
+        (echos nil)
+        (fetches nil))
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _) (push map maps)))
+              ((symbol-function 'gascity-run-show)
+               (lambda (run &optional _convoy rig)
+                 (push (list run rig) shown)))
+              ((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _dir) nil))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos)))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (&rest args) (push args fetches))))
+      (let ((default-directory gascity-sling-test--city))
+        (funcall (gascity-sling--launch-handler
+                  (gascity-command-sling :target "sess-1" :arg "gce-9"
+                                         :on "do-work")
+                  "do-work" "gce-9")
+                 gascity-sling-test--launched))
+      (should (null fetches))
+      (should (equal (car echos)
+                     "Launched workflow ga-1 (do-work on gce-9) — F: run view"))
+      (should (= (length maps) 1))
+      (should (commandp (lookup-key (car maps) "F")))
+      (call-interactively (lookup-key (car maps) "F"))
+      ;; A cold rig memo: the jump opens the run in the city store.
+      (should (equal shown '(("ga-1" nil)))))))
+
+(ert-deftest gascity-test-sling-launch-handler-fallback-resolves-newest ()
+  "A payload without a root (the field WI-11 confirms on a live
+launch) does not guess and does not give up: the newest run root
+created since the launch is resolved through the store — one
+run-roots read of the city's stores — and the offer names it."
+  (let ((now (current-time))
+        (maps nil)
+        (echos nil)
+        (fetches nil))
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _) (push map maps)))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos)))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (args callback &optional _errback &rest _)
+                 (push args fetches)
+                 (funcall callback
+                          `(:beads
+                            (((id . "ga-old")
+                              (created_at
+                               . ,(format-time-string
+                                   "%Y-%m-%dT%H:%M:%SZ"
+                                   (time-subtract now 3600) t)))
+                             ((id . "ga-new")
+                              (created_at
+                               . ,(format-time-string
+                                   "%Y-%m-%dT%H:%M:%SZ" (time-add now 30) t))
+                              (gascity-rig . "gascity.el")))
+                            :errors nil)))))
+      (funcall (gascity-sling--launch-handler
+                (gascity-command-sling :target "sess-1" :arg "gce-9"
+                                       :on "do-work")
+                "do-work" "gce-9")
+               '((ok . t) (success . t) (target . "mayor")
+                 (routed . t) (queued) (dry_run) (method . "on-formula")
+                 (bead_id . "gce-9")))
+      (should (equal (car fetches) gascity-sling--run-roots-key))
+      (should (equal (car echos)
+                     "Launched workflow ga-new (do-work on gce-9) — F: run view"))
+      (should (= (length maps) 1)))))
+
+(ert-deftest gascity-test-sling-launch-handler-no-root-plain-echo ()
+  "A launch that resolves no root — no payload field, and no run root
+created since it started — keeps the plain success echo and never
+offers a jump: better no offer than a wrong one."
+  (let ((now (current-time))
+        (maps nil)
+        (echos nil))
+    (cl-letf (((symbol-function 'set-transient-map)
+               (lambda (map &rest _) (push map maps)))
+              ((symbol-function 'message)
+               (lambda (format &rest args)
+                 (push (apply #'format format args) echos)))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (_args callback &optional _errback &rest _)
+                 (funcall callback
+                          `(:beads
+                            (((id . "ga-old")
+                              (created_at
+                               . ,(format-time-string
+                                   "%Y-%m-%dT%H:%M:%SZ"
+                                   (time-subtract now 3600) t))))
+                            :errors nil)))))
+      (funcall (gascity-sling--launch-handler
+                (gascity-command-sling :target "sess-1" :arg "gce-9"
+                                       :on "do-work")
+                "do-work" "gce-9")
+               '((ok . t) (success . t) (target . "mayor")
+                 (routed . t) (queued) (dry_run) (method . "on-formula")))
+      (should (equal (car echos) "GC sling: ok"))
+      (should-not maps))))
+;;; WI-3: the derived Who default (REQ-005)
+
+(defconst gascity-sling-test--agent-list
+  '((agents . [((name . "dog-1") (qualified_name . "bd.dog-1")
+                (scope . "city"))
+               ((name . "implementation-worker")
+                (qualified_name . "hello-world/gc.implementation-worker")
+                (scope . "rig"))
+               ((name . "run-operator")
+                (qualified_name . "hello-world/gc.run-operator")
+                (scope . "rig"))]))
+  "A `gc agent list' payload for the roster: one city-scoped agent,
+two rig-scoped ones, and exactly one rig-scoped
+`gc.implementation-worker' template.")
+
+(defmacro gascity-sling-test--with-agent-list (payload &rest body)
+  "Run BODY with the store's cached `gc agent list' payload as PAYLOAD.
+The derivation reads the cache (`gascity-store-get'), never spawns —
+this stub feeds it."
+  (declare (indent 1) (debug t))
+  `(cl-letf (((symbol-function 'gascity-store-get)
+              (lambda (_args &optional _dir)
+                (list :status 'ready :data ,payload))))
+     ,@body))
+
+(ert-deftest gascity-test-sling-derive-target-precedence ()
+  "The rules fire in the design's order (REQ-005): the work bead's rig
+default beats the target memory, the memory beats the
+implementation-worker convention; each rule falls through on a miss."
+  (let* ((city gascity-sling-test--city)
+         (scope (list :city city :formula "build-basic" :target nil :arg "hw-12"))
+         (roster (list (list :name "hello-world/gc.implementation-worker"
+                             :rig "hello-world")))
+         (memory (list (cons (cons city "build-basic") "hello-world/gc.reviewer"))))
+    ;; Rule 1 over rules 2 and 3: the rig's default target answers.
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&rest _)
+                 (list (gascity-rig :name "hello-world" :prefix "hw"
+                                   :default-sling-target
+                                   "hello-world/gc.run-operator")))))
+      (should (equal (gascity-sling--derive-target scope roster memory)
+                     '(:target "hello-world/gc.run-operator"
+                       :source rig-default))))
+    ;; The plural default backs the singular, deterministically: its
+    ;; first element, never gc's random pick — a shown default must
+    ;; not flicker between renders.
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&rest _)
+                 (list (gascity-rig :name "hello-world" :prefix "hw"
+                                   :default-sling-targets
+                                   '("hello-world/gc.first"
+                                     "hello-world/gc.second"))))))
+      (should (equal (gascity-sling--derive-target scope roster memory)
+                     '(:target "hello-world/gc.first" :source rig-default))))
+    ;; Rule 1 misses (the rig reports no defaults): the memory.
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&rest _)
+                 (list (gascity-rig :name "hello-world" :prefix "hw")))))
+      (should (equal (gascity-sling--derive-target scope roster memory)
+                     '(:target "hello-world/gc.reviewer" :source memory)))
+      ;; Rules 1 and 2 miss: the convention — the roster's single
+      ;; rig-scoped implementation worker.
+      (should (equal (gascity-sling--derive-target scope roster nil)
+                     '(:target "hello-world/gc.implementation-worker"
+                       :source implementation-worker))))
+    ;; Nothing derives at all: nil, never a prompt-blocking default.
+    (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil)))
+      (should-not (gascity-sling--derive-target scope nil nil)))))
+
+(ert-deftest gascity-test-sling-derive-target-rig-default-fail-soft ()
+  "Rule 1 skips fail-soft (Open Implementation Details): freeform
+work text, a prefixless id, an unknown prefix or a cold rig memo never
+error — the later rules still answer."
+  (let* ((city gascity-sling-test--city)
+         (memory (list (cons (cons city "build-basic") "hello-world/gc.reviewer")))
+         (roster (list (list :name "hello-world/gc.implementation-worker"
+                             :rig "hello-world"))))
+    (dolist (work '("fix the docs"        ; freeform text — no prefix
+                    "plaincity"            ; prefixless id
+                    "zzz-9"))              ; a prefix no rig owns
+      (let ((scope (list :city city :formula "build-basic" :target nil :arg work)))
+        (cl-letf (((symbol-function 'gascity-rigs-cached)
+                   (lambda (&rest _)
+                     (list (gascity-rig :name "hello-world" :prefix "hw"
+                                       :default-sling-target "hw/gc.one")))))
+          ;; The rig default exists, but the work is not its bead:
+          ;; the memory answers.
+          (should (equal (gascity-sling--derive-target scope roster memory)
+                         '(:target "hello-world/gc.reviewer" :source memory))))))
+    ;; A cold rig memo with a real work bead: rule 1 still misses.
+    (let ((scope (list :city city :formula "build-basic" :target nil :arg "hw-12")))
+      (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil)))
+        (should (equal (gascity-sling--derive-target scope roster memory)
+                       '(:target "hello-world/gc.reviewer" :source memory)))))))
+
+(ert-deftest gascity-test-sling-derive-target-exactly-one-worker ()
+  "The convention's exactly-one rule: one rig-scoped
+`gc.implementation-worker' template derives; two (one per rig) are
+ambiguous and skip; the same agent twice is still one; a city-scoped
+worker never counts; a live session's suffixed instance is not the
+template; none derives nothing."
+  (let* ((one (list (list :name "hello-world/gc.implementation-worker"
+                          :rig "hello-world")
+                    (list :name "hello-world/gc.run-operator" :rig "hello-world")
+                    (list :name "bd.dog-1" :rig nil)))
+         (worker #'gascity-sling--implementation-worker-target))
+    (should (equal (funcall worker one)
+                   "hello-world/gc.implementation-worker"))
+    ;; The same agent twice (a configured agent joined to its live
+    ;; session) is still exactly one.
+    (should (equal (funcall worker (append one (list (car one))))
+                   "hello-world/gc.implementation-worker"))
+    ;; Two rigs, one worker each: ambiguous — no default.
+    (should-not (funcall worker
+                         (append one
+                                 (list (list :name
+                                             "other-rig/gc.implementation-worker"
+                                             :rig "other-rig")))))
+    ;; A city-scoped worker does not count.
+    (should-not (funcall worker
+                         (list (list :name "gc.implementation-worker" :rig nil))))
+    ;; A live session instance (a pool slot, `-18') is not the
+    ;; template — never a convention answer.
+    (should-not (funcall worker
+                         (list (list :name
+                                     "hello-world/gc.implementation-worker-18"
+                                     :rig "hello-world"))))
+    ;; None at all.
+    (should-not (funcall worker
+                         (list (list :name "hello-world/gc.run-operator"
+                                     :rig "hello-world"))))))
+
+(ert-deftest gascity-test-sling-target-memory-hit-and-miss ()
+  "The per-(city, formula) target memory: a launch records its target,
+the same pair derives it back (hit), another formula or another city
+misses, a plain launch records under a nil formula, and an empty
+target records nothing."
+  (let ((city gascity-sling-test--city)
+        (gascity-sling--target-memory nil))
+    (gascity-sling--remember-target city "build-basic" "hello-world/gc.run-operator")
+    ;; Hit: same city, same formula.
+    (should (equal (gascity-sling--memory-target
+                    (list :city city :formula "build-basic")
+                    gascity-sling--target-memory)
+                   "hello-world/gc.run-operator"))
+    ;; Miss: another formula.
+    (should-not (gascity-sling--memory-target
+                 (list :city city :formula "do-work")
+                 gascity-sling--target-memory))
+    ;; Miss: another city.
+    (should-not (gascity-sling--memory-target
+                 (list :city "/other/city/" :formula "build-basic")
+                 gascity-sling--target-memory))
+    ;; A plain launch (no formula) records under nil.
+    (gascity-sling--remember-target city nil "mayor")
+    (should (equal (gascity-sling--memory-target
+                    (list :city city :formula nil)
+                    gascity-sling--target-memory)
+                   "mayor"))
+    ;; An empty target records nothing.
+    (gascity-sling--remember-target city "e2e-demo" "")
+    (should-not (gascity-sling--memory-target
+                 (list :city city :formula "e2e-demo")
+                 gascity-sling--target-memory))))
+
+(ert-deftest gascity-test-sling-roster-reads-agent-list ()
+  "The derivation's roster is the configured agents of `gc agent
+list' — the sling targets (singleton agents and pool templates), not
+the live sessions — read from the store's cache only, never a spawn
+(D9): a warmed entry answers one plist per agent (`:name' the
+qualified name, `:rig' its slash prefix, nil for city scope), a cold
+store answers nil, and the full derivation fires the convention rule
+over the warmed roster."
+  (gascity-test-with-store-stubs reads _actions
+    ;; Cold: no entry, no roster — the rule skips fail-soft.
+    (should-not (gascity-sling--roster gascity-sling-test--city))
+    ;; Warm the entry as the menu entry does; the stub parks the read.
+    (gascity-store-request '("agent" "list") :dir gascity-sling-test--city)
+    (should (member '("agent" "list") (mapcar #'car reads)))
+    (funcall (nth 1 (car reads)) gascity-sling-test--agent-list)
+    (should (equal (gascity-sling--roster gascity-sling-test--city)
+                   (list (list :name "bd.dog-1" :rig nil)
+                         (list :name "hello-world/gc.implementation-worker"
+                               :rig "hello-world")
+                         (list :name "hello-world/gc.run-operator"
+                               :rig "hello-world"))))
+    ;; The full derivation over the warmed roster: the single worker
+    ;; template, tagged with its source.
+    (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil)))
+      (should (equal (gascity-sling--derived-target
+                      (list :city gascity-sling-test--city :formula nil
+                            :target nil :arg nil))
+                     '(:target "hello-world/gc.implementation-worker"
+                       :source implementation-worker))))))
+
+(ert-deftest gascity-test-sling-run-uses-derived-without-prompting ()
+  "REQ-005: `s' with no set target and a derivable one launches on it
+without prompting, and the launch records it as the city's (city,
+formula) target memory."
+  (let ((scope (list :city gascity-sling-test--city :formula "build-basic"
+                     :target nil :arg "hw-12"))
+        (gascity-sling--target-memory nil)
+        dispatched)
+    (gascity-sling-test--with-menu scope
+      (gascity-sling-test--with-agent-list gascity-sling-test--agent-list
+        (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+                  ((symbol-function 'gascity-action--read-session)
+                   (lambda (&rest _) (error "a derivable target must not prompt")))
+                  ((symbol-function 'gascity-formula-recipe-cached)
+                   (lambda (_name) nil))
+                  ((symbol-function 'gascity-sling-formula--current-values)
+                   (lambda () nil))
+                  ((symbol-function 'gascity-sling-formula--dispatch)
+                   (lambda (_recipe target _arg _values &optional _dry)
+                     (setq dispatched target))))
+          (call-interactively #'gascity-sling-dispatch-run)
+          (should (equal dispatched "hello-world/gc.implementation-worker"))
+          ;; The launch is remembered: the next launch derives it.
+          (should (equal (cdr (assoc (cons gascity-sling-test--city "build-basic")
+                                     gascity-sling--target-memory #'equal))
+                         "hello-world/gc.implementation-worker")))))))
+
+(ert-deftest gascity-test-sling-preview-uses-derived-but-records-nothing ()
+  "`p' previews with the derived target — no prompt — but records no
+memory: only a real launch is a choice (WI-3)."
+  (let ((scope (list :city gascity-sling-test--city :formula nil
+                     :target nil :arg "hw-12"))
+        (gascity-sling--target-memory nil)
+        shown)
+    (gascity-sling-test--with-menu scope
+      (gascity-sling-test--with-agent-list gascity-sling-test--agent-list
+        (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+                  ((symbol-function 'gascity-action--read-session)
+                   (lambda (&rest _) (error "a derivable target must not prompt")))
+                  ((symbol-function 'gascity-sling--show-plan)
+                   (lambda (command) (setq shown command)))
+                  ((symbol-function 'gascity-command-act-async)
+                   (lambda (&rest _) (error "a preview must not act"))))
+          (call-interactively #'gascity-sling-dispatch-preview)
+          (should (equal (gascity-command-line shown)
+                         '("gc" "sling" "hello-world/gc.implementation-worker"
+                           "hw-12" "--dry-run")))
+          (should-not gascity-sling--target-memory))))))
+
+(ert-deftest gascity-test-sling-header-derived-tag ()
+  "A target only DERIVED renders in the header sentence (REQ-005,
+adapted to the merged one-sentence header of WI-1): what `s' would
+launch, no field list; one set with `-T' renders plain; nothing
+derivable keeps the no-target hint."
+  (let ((info (lambda (scope) (nth 1 (gascity-sling--scope-info scope)))))
+    (gascity-sling-test--with-agent-list gascity-sling-test--agent-list
+      (should (string-match-p
+               "Sling bead hw-12 to hello-world/gc.implementation-worker"
+               (funcall info (list :city gascity-sling-test--city :formula nil
+                                   :target nil :arg "hw-12"))))
+      ;; A set target renders without derivation — `-T' overrides.
+      (should (string-match-p
+               "Sling bead hw-12 to sess-7"
+               (funcall info (list :city gascity-sling-test--city :formula nil
+                                   :target "sess-7" :arg "hw-12")))))
+    ;; Nothing derivable (cold cache): the no-target hint.
+    (should (string-match-p "to (no target — T or default)"
+                            (funcall info (list :city gascity-sling-test--city
+                                                :formula nil :target nil
+                                                :arg nil))))))
+
+(ert-deftest gascity-test-sling-target-read-seeds-derived ()
+  "`-T' — the Who picker — is seeded with the derived target (WI-3):
+RET keeps it, so a derivable target costs no typing."
+  (let (seeded)
+    (gascity-sling-test--with-agent-list gascity-sling-test--agent-list
+      (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+                ;; The picker answers from the joined roster's peeks;
+                ;; the stub parks the store boundary — hand it the
+                ;; fixture so the blocking accessor never runs.
+                ((symbol-function 'gascity-sling--roster-cached)
+                 (lambda (&optional _) gascity-sling-test--roster))
+                ((symbol-function 'gascity-sling--read-agent)
+                 (lambda (_prompt &optional initial &rest _)
+                   (setq seeded initial) "picked"))
+                ((symbol-function 'transient-scope)
+                 (lambda () (list :city gascity-sling-test--city :formula nil
+                                  :target nil :arg nil)))
+                ((symbol-function 'transient-args) (lambda (_p) nil))
+                ((symbol-function 'transient-setup) (lambda (&rest _))))
+        (call-interactively #'gascity-sling-dispatch-target)
+        (should (equal seeded "hello-world/gc.implementation-worker"))))))
+;;; WI-6: the live footer (REQ-007/REQ-010, mockup §1–§5)
+
+;; The footer composes the WI-2 validators (gascity-formula) and the
+;; WI-1 shape inference — sibling work items of the same redesign
+;; that land as their own commits, so these tests stub each one AT ITS
+;; CONTRACT: the predicates with WI-2's real decision rules (or a
+;; captured-args stand-in), the builders with their canonical mockup
+;; wording — the exact strings of gascity-formula's real builders —
+;; the shape rule with WI-1's real body.  At integration the real
+;; functions take over; the wording pinning stays meaningful because
+;; the stubs mirror them verbatim.
+
+(defun gascity-sling-test--vars-recipe (&optional vars)
+  "Decode a minimal build-basic-like recipe with VARS (a raw vector)."
+  (gascity-domain-decode
+   'gascity-formula
+   `((name . "build-basic") ,@(and vars `((vars . ,vars))))))
+
+(defvar gascity-sling-test--footer-values nil
+  "The `gascity-sling-formula--current-values' answer inside the tests.
+Let-bound by a test to pin the footer's var count; the live infix
+reader is stubbed so no transient state is touched.")
+
+(defmacro gascity-sling-test--with-footer-deps (&rest body)
+  "Run BODY with the footer's WI-1/WI-2 contract stubbed.
+Nothing fires (every predicate answers nil), every builder words the
+mockup-exact warning, the shape rule is WI-1's real one, and
+`gascity-sling-formula--current-values' answers
+`gascity-sling-test--footer-values' (let-bind it).  A test fires a
+check by rebinding its predicate inside BODY."
+  (declare (indent 0))
+  `(let ((gascity-sling--missing-target-warning
+          "No target — T to choose, or s will prompt"))
+     (cl-letf
+         (;; WI-1's shape rule, verbatim.
+          ((symbol-function 'gascity-sling--shape)
+           (lambda (work formula)
+             (cond ((not formula) 'plain)
+                   ((not (gascity-formula--blank work)) 'on)
+                   (t 'formula))))
+          ;; WI-2's scope classifier and lookup, verbatim.
+          ((symbol-function 'gascity-agents-scope)
+           (lambda (agent)
+             (or (plist-get agent :rig)
+                 (let ((name (plist-get agent :name)))
+                   (if (and (stringp name) (string-search "/" name))
+                       (substring name 0 (string-search "/" name))
+                     "city")))))
+          ((symbol-function 'gascity-agents-roster-scope)
+           (lambda (target roster)
+             (when-let* ((agent (seq-find (lambda (a)
+                                            (equal (plist-get a :name) target))
+                                          roster)))
+               (gascity-agents-scope agent))))
+          ;; WI-2's builders, canonical mockup wording.
+          ((symbol-function 'gascity-sling--v2-trap-warning)
+           (lambda (&optional rig)
+             (format
+              "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a %s with T"
+              (if (gascity-formula--nonblank rig)
+                  (format "%s/* agent" rig)
+                "rig-scoped agent"))))
+          ;; Verbatim WI-2 (gascity-formula): the bead named in full,
+          ;; both stores the bead's prefix resolves to — here pinned to
+          ;; hello-world, the mockup §5b store.
+          ((symbol-function 'gascity-sling--cross-store-warning)
+           (lambda (work scope _rigs)
+             (format
+              "cross-store route: bead %s lives in the %s store but the target reads the %s store — gc will refuse (pick a city agent or a %s agent)"
+              work "hello-world" scope "hello-world")))
+          ((symbol-function 'gascity-sling--missing-work-warning)
+           (lambda (recipe)
+             (format "%s drains a bead — pick work with A (or point at one)"
+                     (or (gascity-formula-name recipe) "formula"))))
+          ((symbol-function 'gascity-sling--missing-vars-warning)
+           (lambda (names)
+             (and names
+                  (format "Missing required vars: %s"
+                          (mapconcat #'identity names ", ")))))
+          ((symbol-function 'gascity-sling--missing-target-p)
+           (lambda (target) (gascity-formula--blank target)))
+          ;; The live infix values: the test's let-bound fixture.
+          ((symbol-function 'gascity-sling-formula--current-values)
+           (lambda () gascity-sling-test--footer-values))
+          ;; Nothing fires by default.
+          ((symbol-function 'gascity-sling--derived-target)
+           (lambda (&optional _) nil))
+          ((symbol-function 'gascity-sling--v2-trap-p)
+           (lambda (&rest _) nil))
+          ((symbol-function 'gascity-sling--cross-store-p)
+           (lambda (&rest _) nil))
+          ((symbol-function 'gascity-sling--missing-work-p)
+           (lambda (&rest _) nil))
+          ((symbol-function 'gascity-sling--missing-required-vars)
+           (lambda (&rest _) nil)))
+       ,@body)))
+
+(ert-deftest gascity-test-sling-footer-ready-plain-sentence ()
+  "Mockup §1: a fully answered plain dispatch reads
+`✓ Ready — plain route · target mayor (city) · no vars'.  The shape
+comes from the WI-1 rule (no formula is the plain shape), the target
+word from the roster (mayor is city-scoped), and the plain shape has
+no vars at all."
+  (gascity-sling-test--with-footer-deps
+    (should
+     (equal
+      (gascity-sling--footer
+       (list :city gascity-sling-test--city :formula nil
+             :target "mayor" :arg "bl-5ja")
+       gascity-sling-test--roster nil)
+      "✓ Ready — plain route · target mayor (city) · no vars"))))
+
+(ert-deftest gascity-test-sling-missing-required-vars-nil-recipe-degrades ()
+  "A nil recipe (no formula picked — the plain shape) has no required
+vars: the real validator degrades to nil instead of signalling.  The
+WI-6 footer composes it with the recipe nil on every transient setup,
+so an unguarded `gascity-formula-vars' on nil crashed the setup (the
+WI-11 bright-lights pass, `No applicable method')."
+  (should (null (gascity-sling--missing-required-vars nil nil)))
+  (should (null (gascity-sling--missing-required-vars
+                 (gascity-sling-test--recipe "pancakes" nil) nil))))
+
+(ert-deftest gascity-test-sling-footer-ready-formula-sentence ()
+  "Mockup §3: a formula without work is the targetless `--formula'
+shape; pancakes declares no vars, so `0 vars' (not `no vars': a
+formula is in scope, it just has nothing to answer)."
+  (gascity-sling-test--with-footer-deps
+    (should
+     (equal
+      (gascity-sling--footer
+       (list :city gascity-sling-test--city :formula "pancakes"
+             :target "mayor" :arg nil)
+       gascity-sling-test--roster
+       (gascity-domain-decode 'gascity-formula '((name . "pancakes"))))
+      "✓ Ready — formula run · target mayor (city) · 0 vars"))))
+
+(ert-deftest gascity-test-sling-footer-ready-on-sentence ()
+  "Mockup §4: formula plus work is the targeted `--on' shape; the
+vars word counts non-blank answers against the declared vars (2 of
+3), and a rig-scoped target renders as just `rig-scoped' — the
+qualification a v2 launch needs; the name sits in the Who line."
+  (let ((gascity-sling-test--footer-values
+         '(("artifact_root" . "plans/e2e-sling-v2/")
+           ("push" . "true"))))
+    (gascity-sling-test--with-footer-deps
+      (should
+       (equal
+        (gascity-sling--footer
+         (list :city gascity-sling-test--city :formula "build-basic"
+               :target "hello-world/gc.implementation-worker"
+               :arg "bl-5ja")
+         gascity-sling-test--roster
+         (gascity-sling-test--vars-recipe
+          (vector '((name . "artifact_root"))
+                  '((name . "push"))
+                  '((name . "context_path")))))
+        "✓ Ready — on run · target rig-scoped · 2 of 3 vars set")))))
+
+(ert-deftest gascity-test-sling-footer-v2-trap-warning ()
+  "Mockup §5a: a city-scoped target on a v2 formula warns verbatim —
+and the footer feeds the validator the RECIPE and the target's
+ROSTER-SCOPE (never the raw target name); the suggestion rig is the
+first rig-scoped roster row (hello-world), a cold roster degrades to
+the generic wording.  The warning is a string — it never blocks `s'."
+  (let ((recipe (gascity-sling-test--vars-recipe))
+        (trap-args nil))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--v2-trap-p)
+                 (lambda (r scope)
+                   (setq trap-args (list r scope))
+                   t)))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula "build-basic"
+                 :target "mayor" :arg "bl-5ja")
+           gascity-sling-test--roster recipe)
+          "⚠ formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a hello-world/* agent with T"))))
+    (should (eq (nth 0 trap-args) recipe))
+    (should (equal (nth 1 trap-args) "city"))
+    ;; Cold roster: the suggestion stays generic.
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--v2-trap-p)
+                 (lambda (&rest _) t)))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula "build-basic"
+                 :target "mayor" :arg "bl-5ja")
+           nil recipe)
+          "⚠ formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a rig-scoped agent with T"))))))
+
+(ert-deftest gascity-test-sling-footer-derived-target-answers-checks ()
+  "The Who default (WI-3) is a target for the footer's checks too.
+With nothing set, the derived target suppresses the §5c missing-target
+warning — `s' will not prompt — and a derived rig-scoped target on a
+foreign-store bead shows the §5b cross-store warning before the
+launch (the WI-11 bright-lights pass: gc refused the cross-rig launch
+the footer had called `⚠ No target')."
+  (gascity-sling-test--with-footer-deps
+    (cl-letf (((symbol-function 'gascity-sling--derived-target)
+               (lambda (&optional _)
+                 (list :target "hello-world/gc.implementation-worker"))))
+      (should-not
+       (string-match-p "No target"
+                       (gascity-sling--footer
+                        (list :city gascity-sling-test--city
+                              :formula nil :target nil :arg "bl-5ja")
+                        gascity-sling-test--roster nil)))
+      (cl-letf (((symbol-function 'gascity-sling--cross-store-p)
+                 (lambda (_work _scope _rigs) t)))
+        (should
+         (string-match-p "cross-store route"
+                         (gascity-sling--footer
+                          (list :city gascity-sling-test--city
+                                :formula nil :target nil :arg "bl-5ja")
+                          gascity-sling-test--roster nil)))))))
+
+(ert-deftest gascity-test-sling-footer-cross-store-warning ()
+  "Mockup §5b: a rig-scoped target reading another store than the
+work bead warns verbatim — and the footer feeds the validator the
+WORK, the target's roster scope and the rig memo
+(`gascity-rigs-cached' of the scope's city — nil here, a cold memo,
+never a gc read)."
+  (let ((cross-args nil))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--cross-store-p)
+                 (lambda (work scope rigs)
+                   (setq cross-args (list work scope rigs))
+                   t)))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula nil
+                 :target "gascity.el/implementation-worker"
+                 :arg "hw-ab12")
+           (list (list :name "gascity.el/implementation-worker"
+                       :rig "gascity.el"))
+           nil)
+          "⚠ cross-store route: bead hw-ab12 lives in the hello-world store but the target reads the gascity.el store — gc will refuse (pick a city agent or a hello-world agent)"))))
+    (should (equal (nth 0 cross-args) "hw-ab12"))
+    (should (equal (nth 1 cross-args) "gascity.el"))
+    (should (null (nth 2 cross-args)))))
+
+(ert-deftest gascity-test-sling-footer-missing-pieces-stack ()
+  "Mockup §5c: the three missing pieces stack as `⚠' lines in order —
+missing work for a drain formula, missing required vars, missing
+target — the footer prefixes and joins them; no check ever refuses."
+  (let ((recipe (gascity-sling-test--vars-recipe)))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--missing-work-p)
+                 (lambda (r work)
+                   (and (eq r recipe) (gascity-formula--blank work))))
+                ((symbol-function 'gascity-sling--missing-required-vars)
+                 (lambda (r _values)
+                   (and (eq r recipe) '("artifact_root")))))
+        (should
+         (equal
+          (gascity-sling--footer
+           (list :city gascity-sling-test--city :formula "build-basic"
+                 :target nil :arg nil)
+           nil recipe)
+          "⚠ build-basic drains a bead — pick work with A (or point at one)\n⚠ Missing required vars: artifact_root\n⚠ No target — T to choose, or s will prompt"))))))
+
+(ert-deftest gascity-test-sling-footer-recomputes-across-scope-changes ()
+  "REQ-007: the footer is a pure function of the scope — each answer
+that lands (the re-setups of a pick, a target, an arg) recomputes it:
+the warnings of §5c peel away one by one until the ready sentence
+remains, on the same recipe."
+  (let ((recipe (gascity-sling-test--vars-recipe)))
+    (gascity-sling-test--with-footer-deps
+      (cl-letf (((symbol-function 'gascity-sling--missing-work-p)
+                 (lambda (r work)
+                   (and (eq r recipe) (gascity-formula--blank work)))))
+        (let ((base (list :city gascity-sling-test--city
+                          :formula "build-basic" :target nil :arg nil)))
+          ;; Nothing answered: missing work, missing target.
+          (should (equal (gascity-sling--footer base nil recipe)
+                         "⚠ build-basic drains a bead — pick work with A (or point at one)\n⚠ No target — T to choose, or s will prompt"))
+          ;; The target lands: the missing-target warning goes.
+          (should (equal (gascity-sling--footer
+                          (plist-put (copy-sequence base) :target "mayor")
+                          gascity-sling-test--roster recipe)
+                         "⚠ build-basic drains a bead — pick work with A (or point at one)"))
+          ;; The work lands: ready.
+          (should (equal (gascity-sling--footer
+                          (plist-put (plist-put (copy-sequence base)
+                                               :target "mayor")
+                                     :arg "bl-5ja")
+                          gascity-sling-test--roster recipe)
+                         "✓ Ready — on run · target mayor (city) · 0 vars")))))))
+
+(ert-deftest gascity-test-sling-footer-info-renders-in-every-setup ()
+  "REQ-007: the footer renders as part of every transient setup — the
+header group of `gascity-sling--children-specs' carries the footer
+`:info' spec on every shape, and its description FUNCTION computes
+`gascity-sling--footer' for the live scope (a function, so every
+redraw recomputes it; the spec must not be a group's first element).
+Parse-time stays pure: no roster read, no footer call — the spec is
+built without touching the WI-2 surface, so no other menu test sees
+the footer's dependencies."
+  (let ((recipe (gascity-domain-decode 'gascity-formula
+                                       '((name . "build-basic")))))
+    (gascity-sling-test--with-city
+      (gascity-test-with-store-stubs _reads _actions
+        (gascity-sling-test--with-footer-deps
+          (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                     (lambda (_name) recipe))
+                    ((symbol-function 'gascity-context-city-name)
+                     (lambda (&optional _dir) "testcity"))
+                    ((symbol-function 'gascity-agents--roster)
+                     (lambda (_data) gascity-sling-test--roster)))
+            (dolist (scope (list
+                            (list :city gascity-sling-test--city
+                                  :formula "build-basic" :target "mayor"
+                                  :arg "bl-5ja")
+                            (list :city gascity-sling-test--city
+                                  :formula nil :target "mayor"
+                                  :arg "bl-5ja")))
+              (let* ((groups (gascity-sling--children-specs scope))
+                     (footer (aref (nth 0 groups) 2)))
+                (should (eq (car footer) :info))
+                (should (functionp (cadr footer)))
+                ;; The description function renders the live footer of
+                ;; this scope — re-evaluated at every format.
+                (should
+                 (equal (funcall (cadr footer))
+                        (gascity-sling--footer
+                         scope gascity-sling-test--roster
+                         (and (plist-get scope :formula) recipe))))))))))))
+
+(ert-deftest gascity-test-sling-footer-roster-cached-peeks-the-store ()
+  "The footer's render path reads the roster from the store's cache —
+peeking `status', `session list' and `agent list' (scheduling
+background refreshes, never blocking, D9) — and joins them through
+WI-2's `gascity-agents--roster'.  The work-bead read stays out: the
+footer classifies targets, it does not link beads."
+  (gascity-sling-test--with-city
+    (gascity-test-with-store-stubs reads _actions
+      (let (data)
+        (cl-letf (((symbol-function 'gascity-agents--roster)
+                   (lambda (payload)
+                     (setq data payload)
+                     gascity-sling-test--roster)))
+          (should (equal
+                   (gascity-sling--roster-cached gascity-sling-test--city)
+                   gascity-sling-test--roster))
+          (should (member '("status") (mapcar #'car reads)))
+          (should (member '("session" "list") (mapcar #'car reads)))
+          (should (member '("agent" "list") (mapcar #'car reads)))
+          ;; The bead-linking join is not the footer's business.
+          (should-not (member '("bd" "list") (mapcar #'car reads)))
+          ;; The join sees exactly the peeks, keyed like the loaders.
+          (should (plist-member data :status))
+          (should (plist-member data :sessions))
+          (should (plist-member data :agents))
+          (should-not (plist-member data :work)))))))
+;;; WI-7 (REQ-008): the `P' full preview buffer
+
+(defconst gascity-sling-test--preview-recipe
+  '((name . "do-work")
+    (description . "Full lifecycle")
+    (vars . [((name . "summary_path") (required . t))
+             ((name . "mode") (pattern . "\\`[a-z]+\\'"))])
+    (steps . [((id . "prepare") (title . "Prepare"))
+              ((id . "implement") (title . "Implement")
+               (metadata . ((gc.kind . "drain"))))])
+    (deps . [((step_id . "implement") (depends_on_id . "prepare"))]))
+  "A compiled `gc formula show' payload for the preview: one required
+var, one pattern var, a drain step (so the formula needs a convoy),
+and two steps of which one needs the other.")
+
+(defun gascity-sling-test--preview-buffer ()
+  "Return the live full-preview buffer, whatever city qualified it."
+  (seq-find (lambda (b)
+              (and (buffer-live-p b)
+                   (string-prefix-p "*gc-sling: preview*" (buffer-name b))))
+            (buffer-list)))
+
+(defmacro gascity-sling-test--with-preview (reads actions values &rest body)
+  "Run BODY with the full preview's gc boundary stubbed and fixtures set.
+READS and ACTIONS record the store spawns
+(`gascity-test-with-store-stubs'); the recipe cache answers from the
+`gascity-sling-test--preview-recipe' fixture, the live var values are
+VALUES, and the preview buffer plus the remembered menu state die with
+the test."
+  (declare (indent 3))
+  `(let ((gascity-sling--remembered gascity-sling--remembered))
+     (unwind-protect
+         (let ((default-directory gascity-sling-test--city))
+           (gascity-test-with-store-stubs ,reads ,actions
+             (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                        (lambda (_name)
+                          (gascity-domain-decode 'gascity-formula
+                                                 gascity-sling-test--preview-recipe)))
+                       ((symbol-function 'gascity-sling-formula--current-values)
+                        (lambda () ,values))
+                       ((symbol-function 'gascity-context-city-name)
+                        (lambda (&optional _dir) "testcity"))
+                       ((symbol-function 'pop-to-buffer)
+                        (lambda (b &rest _) b)))
+               ,@body)))
+       (dolist (b (buffer-list))
+         (when (and (buffer-live-p b)
+                    (string-prefix-p "*gc-sling: preview*" (buffer-name b)))
+           (let ((kill-buffer-query-functions nil))
+             (kill-buffer b)))))))
+
+(ert-deftest gascity-test-sling-full-preview-renders-sections ()
+  "`P' paints the preview buffer at once, client-side (REQ-008): the
+header sentence, the Validation checks with their full text, the
+cached recipe's steps → needs DAG, and the Routing plan section
+pending on the async dry run — exactly one gc spawn (the dry run,
+the `p' command), nothing synchronous, and the buffer stays pinned
+to the entered-from city."
+  (gascity-sling-test--with-preview reads actions
+      '(("summary_path" . "build/summary.md"))
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target "rig/agent" :arg "bl-1")))
+      (gascity-sling--full-preview scope nil)
+      (let ((buf (gascity-sling-test--preview-buffer)))
+        (should buf)
+        (with-current-buffer buf
+          (should (eq major-mode 'gascity-sling-preview-mode))
+          (should (equal default-directory gascity-sling-test--city))
+          (let ((text (buffer-string)))
+            (should (string-search "Sling preview — testcity" text))
+            (should (string-search
+                     "Run do-work against bead bl-1, drained by rig/agent" text))
+            (should (string-search "Validation" text))
+            (should (string-search "✓ target rig/agent" text))
+            (should (string-search "✓ work bl-1 (the formula requires it)" text))
+            (should (string-search "✓ required vars set: summary_path" text))
+            (should (string-search "Recipe — do-work (steps → needs)" text))
+            (should (string-search "needs nothing" text))
+            (should (string-search "Implement" text))
+            (should (string-search "needs prepare" text))
+            (should (string-search "Routing plan (gc sling … --dry-run)" text))
+            ;; First paint: the section waits on the dry run.
+            (should (string-search "…" text)))))
+      ;; One spawn, the dry run itself — the same command `p' shows,
+      ;; built by the shared `gascity-sling-formula--command'.
+      (should (null reads))
+      (should (= (length actions) 1))
+      (should (equal (car (car actions))
+                     '("sling" "rig/agent" "bl-1" "--on" "do-work"
+                       "--var" "summary_path=build/summary.md" "--dry-run"))))))
+
+(ert-deftest gascity-test-sling-full-preview-fills-plan-when-answered ()
+  "The Routing plan section fills with gc's dry-run stdout when the
+async call answers (D9) — first paint never blocks on it — and a
+failed dry run fills its first stderr line instead."
+  (gascity-sling-test--with-preview reads actions
+      '(("summary_path" . "build/summary.md"))
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target "rig/agent" :arg "bl-1")))
+      (gascity-sling--full-preview scope nil)
+      ;; gc answers: the captured stdout replaces the placeholder.
+      (funcall (nth 1 (car actions))
+               (list :exit-code 0
+                     :stdout "Target:\n  Session config: rig/agent (min=0)\n"
+                     :stderr "" :executable "gc"))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (should (string-search "Session config: rig/agent" (buffer-string)))
+        ;; The pending line is gone (the heading keeps its own …).
+        (should-not (string-search "\n  …\n" (buffer-string))))
+      ;; A failing dry run: the failure's line lands in the section.
+      (gascity-sling--full-preview scope nil)
+      (funcall (nth 1 (car actions))
+               (list :exit-code 1 :stdout "" :stderr "boom\n" :executable "gc"))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (should (string-search "failed: boom" (buffer-string)))
+        (should-not (string-search "\n  …\n" (buffer-string)))))))
+
+(ert-deftest gascity-test-sling-full-preview-launches-from-the-buffer ()
+  "The preview buffer binds `s' to launching exactly what was
+previewed (REQ-008): the dry-run command without `--dry-run', reported
+as JSON — no prompts, the call started and the buffer quits — and the
+city's remembered menu state is cleared like the menu's own `s'
+(bug S-2).  `q' quits."
+  (gascity-sling-test--with-preview reads actions
+      '(("summary_path" . "build/summary.md"))
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target "rig/agent" :arg "bl-1")))
+      (gascity-sling--full-preview scope nil)
+      ;; What `P' holds is remembered for the city (S-2).
+      (should (assoc gascity-sling-test--city gascity-sling--remembered))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (should (eq (key-binding "s") #'gascity-sling-preview-launch))
+        (should (eq (key-binding "q") #'quit-window))
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      ;; The launch: exactly the previewed command, minus `--dry-run',
+      ;; as JSON (most recent spawn first).
+      (should (= (length actions) 2))
+      (let ((args (car (car actions))))
+        (should (equal (seq-take args 3) '("sling" "rig/agent" "bl-1")))
+        (should (equal (cadr (member "--on" args)) "do-work"))
+        (should (member "--json" args))
+        (should-not (member "--dry-run" args)))
+      ;; A real launch forgets the city's remembered state (S-2).
+      (should-not (assoc gascity-sling-test--city gascity-sling--remembered)))))
+
+(ert-deftest gascity-test-sling-full-preview-warnings-never-a-gate ()
+  "A dispatch that cannot run yet still previews (REQ-008): a missing
+target, missing work for the convoy-requiring formula and a missing
+required var render as full-text warnings, no dry run is asked for
+at all, and the buffer's `s' stays bound — the preview is never a
+gate; the menu's `s' works the same."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target nil :arg nil)))
+      (gascity-sling--full-preview scope nil)
+      (should (null reads))
+      (should (null actions))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (let ((text (buffer-string)))
+          (should (string-search "⚠ no target" text))
+          (should (string-search
+                   "⚠ no work — do-work requires a target convoy" text))
+          (should (string-search "⚠ missing required var: summary_path" text))
+          (should (string-search "(no routing plan — no target" text))
+          ;; The client-side sections still render in full.
+          (should (string-search "Recipe — do-work (steps → needs)" text))
+          (should (string-search "needs prepare" text))
+          ;; Never a gate: the launch binding is live.
+          (should (eq (key-binding "s") #'gascity-sling-preview-launch)))))))
+
+(ert-deftest gascity-test-sling-full-preview-plain-path ()
+  "`P' previews the plain dispatch too: the recipe section says there
+is none, the dry run carries the menu's routing flags, and `s'
+launches the plain command with `--json' — the plain path of
+`gascity-sling--run' unchanged."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((scope (list :city gascity-sling-test--city :formula nil
+                       :target "sess-1" :arg "gce-1")))
+      (gascity-sling--full-preview scope '("--nudge" "--merge=direct"))
+      (let ((args (car (car actions))))
+        (should (= (length actions) 1))
+        (should (equal (seq-take args 3) '("sling" "sess-1" "gce-1")))
+        (should (member "--nudge" args))
+        (should (member "direct" args))
+        (should (member "--dry-run" args)))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (let ((text (buffer-string)))
+          (should (string-search "Sling gce-1 to sess-1" text))
+          (should (string-search "✓ target sess-1" text))
+          (should (string-search
+                   "(no formula picked — this dispatch is plain)" text))))
+      ;; Launch: the plain command, JSON, no dry run, flags kept.
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      (should (= (length actions) 2))
+      (let ((args (car (car actions))))
+        (should (equal (seq-take args 3) '("sling" "sess-1" "gce-1")))
+        (should (member "--nudge" args))
+        (should (member "--json" args))
+        (should-not (member "--dry-run" args))))))
+
+(ert-deftest gascity-test-sling-full-preview-pattern-warning ()
+  "A set var that fails its declared pattern warns in full text — the
+`gascity-formula--validate-values' rules mirrored client-side — and
+keeps the dry run from launching."
+  (gascity-sling-test--with-preview reads actions
+      '(("summary_path" . "build/summary.md") ("mode" . "Not-Valid!"))
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target "rig/agent" :arg "bl-1")))
+      (gascity-sling--full-preview scope nil)
+      ;; The pattern failure refuses the command build: no dry run.
+      (should (null actions))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (should (string-search "⚠ var mode does not match pattern" (buffer-string)))
+        (should (string-search "(no routing plan — see Validation above)"
+                                (buffer-string)))))))
+
+(ert-deftest gascity-test-sling-full-preview-validation-hook ()
+  "Further checks (the sling redesign's roster-based warnings) join
+the Validation section through
+`gascity-sling-preview-validation-functions' — pure, in the city pin —
+without touching the preview itself."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((gascity-sling-preview-validation-functions
+           (list (lambda (_scope _recipe _values)
+                   '("✓ no cross-store route")))))
+      (gascity-sling--full-preview
+       (list :city gascity-sling-test--city :formula nil
+             :target "sess-1" :arg "gce-1")
+       nil)
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (should (string-search "✓ no cross-store route" (buffer-string)))))))
+
+(ert-deftest gascity-test-sling-full-preview-suffix-is-wired ()
+  "`P' is the menu's full-preview suffix (REQ-008) and a non-transient
+one: the buffer it opens is the interactive surface, while the
+menu's state is remembered for the city (bug S-2)."
+  (should (commandp 'gascity-sling-dispatch-full-preview))
+  ;; A non-transient suffix: one press opens the buffer and leaves the menu.
+  ;; `P' is bound in the Actions group of the stacked layout (its
+  ;; position depends on the picked formula's How group, so the group
+  ;; is found by content).
+  (let* ((groups (gascity-sling--children-specs
+                  (list :formula nil :target nil :work "bl-1")))
+         (actions (seq-find (lambda (group)
+                              (and (vectorp group)
+                                   (seq-some (lambda (s)
+                                               (and (consp s)
+                                                    (equal (car s) "P")))
+                                             (append group nil))))
+                            groups))
+         (spec (and actions
+                    (seq-find (lambda (s)
+                                (and (consp s) (equal (car s) "P")))
+                              (append actions nil)))))
+    (should (equal (list "P" "Full preview…"
+                         'gascity-sling-dispatch-full-preview)
+                   spec)))
+  ;; The reserved set stays in sync with the binding (OQ-2).
+  (should (member "P" gascity-sling--reserved-keys))
+  (let ((bound nil))
+    (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_name) nil))
+              ((symbol-function 'gascity-context-city-name)
+               (lambda (&optional _dir) "testcity")))
+      (dolist (group (gascity-sling--children-specs
+                      (list :formula nil :target nil :arg nil)))
+        (when (vectorp group)
+          (dolist (spec (append group nil))
+            (when (and (consp spec) (stringp (car spec))
+                       (equal (car spec) "P"))
+              (setq bound (nth 2 spec))))))
+      (should (eq bound 'gascity-sling-dispatch-full-preview)))))
 
 (provide 'gascity-sling-test)
 ;;; gascity-sling-test.el ends here

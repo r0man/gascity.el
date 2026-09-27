@@ -45,16 +45,19 @@
 ;;; Fresh store per test
 
 (defvar gascity-sling--remembered)
+(defvar gascity-sling--target-memory)
 
 (defun gascity-test--reset-store (&rest _)
   "Clear the payload store, its scheduler and pending deferred calls
 before an ERT test (a call a test left behind would otherwise run from
 the `gascity-timer' watchdog in a later one).  Also the sling menu's
-remembered per-city state, another session-wide table a test could
+session-wide tables — the remembered per-city state and the
+per-(city, formula) launch memory — which a test could otherwise
 leak into the next."
   (gascity-store-clear)
   (mapc #'gascity-timer-cancel gascity-timer--items)
-  (setq gascity-sling--remembered nil))
+  (setq gascity-sling--remembered nil
+        gascity-sling--target-memory nil))
 
 (advice-add 'ert-run-test :before #'gascity-test--reset-store)
 
@@ -283,6 +286,43 @@ and both return nil (no process was started)."
                   (push (list args callback) ,actions)
                   nil)))
        ,@body)))
+
+(defun gascity-test-sling-redesign-p ()
+  "Non-nil when the redesigned sling layout (plans/sling-command) is loaded.
+The sling redesign lands as parallel work items (WI-1..WI-9 rewrite the
+layout; WI-10 ports this suite), so the suite runs against whichever
+layout the load path presents: the redesigned transient reserves `P'
+for the full preview and frees the old `p' (mockup §10), while the old
+layout reserves `p' and has no `P'.  Ported tests skip until the
+redesign is present; layout-agnostic tests run under both."
+  (and (boundp 'gascity-sling--reserved-keys)
+       (member "P" gascity-sling--reserved-keys)
+       (not (member "p" gascity-sling--reserved-keys))))
+
+(declare-function gascity-sling--children-specs "gascity-action")
+
+(defun gascity-test-sling-header-text (scope recipe)
+  "Return every string of the sling layout's header group for SCOPE, joined.
+RECIPE is what `gascity-formula-recipe-cached' answers for the scope's
+formula (nil: none cached).  The redesigned first group (plans/sling-command
+mockup §1) carries the city title, the one-sentence header and the live
+footer; joining all of them lets a test match any of the three regardless
+of how the renderer splits its `:info' specs.  The layout's reads run
+under store stubs so a cold roster never spawns a process.  Under the
+pre-redesign layout this helper is meaningless — callers skip themselves
+with `gascity-test-sling-redesign-p'."
+  (gascity-test-with-store-stubs _reads _actions
+    (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_name) recipe))
+              ((symbol-function 'gascity-context-city-name)
+               (lambda (&optional _dir) "testcity")))
+      (let* ((group (append (nth 0 (gascity-sling--children-specs scope)) nil))
+             (strings (mapcan (lambda (el)
+                                 (if (stringp el)
+                                     (list el)
+                                   (seq-filter #'stringp el)))
+                               group)))
+        (mapconcat #'identity strings " ")))))
 
 (defmacro gascity-test-with-temp-view (&rest body)
   "Like `with-temp-buffer', but the buffer dies with its `kill-buffer-hook'.
