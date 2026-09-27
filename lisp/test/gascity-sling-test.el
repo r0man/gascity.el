@@ -61,6 +61,149 @@
     (run-at-time 0 nil (lambda () (funcall callback payload)))
     nil))
 
+(defun gascity-sling-test--recipe (name steps &optional vars)
+  "Decode a `gascity-formula' NAME with raw STEPS and VARS."
+  (gascity-domain-decode
+   'gascity-formula `((name . ,name) (steps . ,steps)
+                      ,@(and vars `((vars . ,vars))))))
+
+(defconst gascity-sling-test--build-basic
+  (gascity-sling-test--recipe
+   "build-basic"
+   (vector '((id . "requirements") (title . "Requirements")
+             (metadata . ((gc.kind . "work")
+                          (gc.run_target . "gc.requirements-planner"))))
+           '((id . "run") (title . "Run")
+             (metadata . ((gc.run_target . "gc.run-operator"))))
+           '((id . "publish") (title . "Publish")
+             (metadata . ((gc.run_target . "mayor"))))
+           '((id . "drain") (title . "Drain")
+             (metadata . ((gc.kind . "drain")
+                          (gc.run_target . "{{implementation_target}}")))))
+   (vector '((name . "artifact_root") (required . t))
+           '((name . "implementation_target") (required . t))))
+  "A build-basic-shaped recipe: two binding-qualified run targets, a
+plain-agent one, a `{{implementation_target}}' placeholder, a drain
+step and two required vars.")
+
+(defconst gascity-sling-test--pancakes
+  (gascity-sling-test--recipe
+   "pancakes"
+   (vector '((id . "cook") (title . "Cook")
+             (metadata . ((gc.kind . "work") (gc.run_target . "mayor"))))))
+  "A plain v1-shaped recipe: only plain-agent run targets, no drain.")
+
+(defun gascity-sling-test--rigs ()
+  "The bright-lights-shaped rig memo: the city HQ row and one rig."
+  (list (gascity-domain-decode
+         'gascity-rig '((name . "bright-lights") (prefix . "bl") (hq . t)))
+        (gascity-domain-decode
+         'gascity-rig '((name . "hello-world") (prefix . "hw")))))
+
+;;; REQ-010: the client-side validators (WI-2 — pure, never blocking)
+
+(ert-deftest gascity-test-sling-binding-targets-p ()
+  "A binding-qualified run target contains a `.' and no `/'."
+  (should (gascity-sling--binding-qualified-target-p "gc.run-operator"))
+  (should-not (gascity-sling--binding-qualified-target-p "mayor"))
+  (should-not (gascity-sling--binding-qualified-target-p
+               "hello-world/polecat"))
+  (should-not (gascity-sling--binding-qualified-target-p nil))
+  ;; Over recipes: build-basic's steps carry them, a plain one does not,
+  ;; and no formula picked is no.
+  (should (gascity-sling--binding-targets-p gascity-sling-test--build-basic))
+  (should-not (gascity-sling--binding-targets-p gascity-sling-test--pancakes))
+  (should-not (gascity-sling--binding-targets-p nil)))
+
+(ert-deftest gascity-test-sling-v2-trap-p-and-warning ()
+  "The bl-bdj trap: binding-qualified run targets with a city-scoped
+target warn with the mockup §5a wording; a rig scope and free entry
+degrade."
+  (should (gascity-sling--v2-trap-p gascity-sling-test--build-basic "city"))
+  (should-not (gascity-sling--v2-trap-p
+               gascity-sling-test--build-basic "hello-world"))
+  ;; Free entry (an unclassifiable target) never dead-ends: no warning.
+  (should-not (gascity-sling--v2-trap-p gascity-sling-test--build-basic nil))
+  ;; A plain formula with a city target is no trap at all.
+  (should-not (gascity-sling--v2-trap-p gascity-sling-test--pancakes "city"))
+  (should-not (gascity-sling--v2-trap-p nil "city"))
+  (should (equal (gascity-sling--v2-trap-warning "hello-world")
+                 "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a hello-world/* agent with T"))
+  ;; Without a rig to suggest the wording stays generic.
+  (should (equal (gascity-sling--v2-trap-warning)
+                 "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a rig-scoped agent with T")))
+
+(ert-deftest gascity-test-sling-cross-store-p-and-warning ()
+  "Cross-store: a bead and a rig-scoped target in different stores warn
+with the mockup §5b wording; a city target never fires and everything
+unresolvable degrades."
+  (let ((rigs (gascity-sling-test--rigs)))
+    ;; The store resolves from the bead's id prefix via the rig memo.
+    (should (equal (gascity-sling--bead-store "hw-ab12" rigs) "hello-world"))
+    (should (equal (gascity-sling--bead-store "bl-5ja" rigs) "bright-lights"))
+    ;; Freeform work text, a foreign prefix and a cold memo resolve to
+    ;; nothing — never a guess.
+    (should-not (gascity-sling--bead-store "fix the flaky test" rigs))
+    (should-not (gascity-sling--bead-store "zz-9" rigs))
+    (should-not (gascity-sling--bead-store "hw-ab12" nil))
+    ;; The mockup §5b case: an hw bead slung at another rig's agent.
+    (should (gascity-sling--cross-store-p "hw-ab12" "gascity.el" rigs))
+    ;; Same store, and the city agent (gc's own remedy) — no warning.
+    (should-not (gascity-sling--cross-store-p "hw-ab12" "hello-world" rigs))
+    (should-not (gascity-sling--cross-store-p "hw-ab12" "city" rigs))
+    ;; Unresolvable sides degrade: free entry, freeform work, cold memo.
+    (should-not (gascity-sling--cross-store-p "hw-ab12" nil rigs))
+    (should-not (gascity-sling--cross-store-p "fix the login" "gascity.el" rigs))
+    (should-not (gascity-sling--cross-store-p "hw-ab12" "gascity.el" nil))
+    ;; The mockup §5b wording, verbatim.
+    (should (equal (gascity-sling--cross-store-warning "hw-ab12" "gascity.el" rigs)
+                   "cross-store route: bead hw-ab12 lives in the hello-world store but the target reads the gascity.el store — gc will refuse (pick a city agent or a hello-world agent)"))
+    ;; A clean route builds no warning.
+    (should-not (gascity-sling--cross-store-warning "hw-ab12" "hello-world" rigs))))
+
+(ert-deftest gascity-test-sling-missing-pieces ()
+  "The mockup §5c checks: a drain formula without work, missing
+required vars and no target — pure, and `validate-values' still
+refuses what the footer only warns about."
+  ;; No work for a drain formula...
+  (should (gascity-sling--missing-work-p gascity-sling-test--build-basic nil))
+  (should (gascity-sling--missing-work-p gascity-sling-test--build-basic ""))
+  (should-not (gascity-sling--missing-work-p
+               gascity-sling-test--build-basic "bl-5ja"))
+  ;; ...but a plain shape never fires: freeform text is its work.
+  (should-not (gascity-sling--missing-work-p nil nil))
+  (should-not (gascity-sling--missing-work-p gascity-sling-test--pancakes nil))
+  (should (equal (gascity-sling--missing-work-warning
+                   gascity-sling-test--build-basic)
+                 "build-basic drains a bead — pick work with A (or point at one)"))
+  ;; Missing required vars, in declared order; the footer's wording.
+  (should (equal (gascity-sling--missing-required-vars
+                   gascity-sling-test--build-basic nil)
+                 '("artifact_root" "implementation_target")))
+  (should (equal (gascity-sling--missing-required-vars
+                   gascity-sling-test--build-basic
+                   '(("artifact_root" . "plans/e2e/") ("implementation_target" . "x")))
+                 nil))
+  ;; A blank value counts as unset.
+  (should (equal (gascity-sling--missing-required-vars
+                   gascity-sling-test--build-basic
+                   '(("artifact_root" . " ") ("implementation_target" . "gc.w")))
+                 '("artifact_root")))
+  (should (equal (gascity-sling--missing-vars-warning
+                   '("artifact_root" "implementation_target"))
+                 "Missing required vars: artifact_root, implementation_target"))
+  (should-not (gascity-sling--missing-vars-warning nil))
+  ;; No target.
+  (should (gascity-sling--missing-target-p nil))
+  (should (gascity-sling--missing-target-p " "))
+  (should-not (gascity-sling--missing-target-p "mayor"))
+  (should (equal gascity-sling--missing-target-warning
+                 "No target — T to choose, or s will prompt"))
+  ;; The signaling half still refuses at dispatch (REQ-008/009).
+  (should-error (gascity-formula--validate-values
+                 gascity-sling-test--build-basic nil)
+                :type 'user-error))
+
 ;;; S-1: the picker offers every formula the city can run
 
 (ert-deftest gascity-test-sling-choices-union ()

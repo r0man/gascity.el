@@ -18,6 +18,13 @@
 ;;   pools → agents, built from the gascity-status.el components, and
 ;;   `T' there switches back.
 ;;
+;; The sling's Who completion (REQ-005, plans/sling-command WI-2) also
+;; reads here: `gascity-agents-roster' returns the same agent plists
+;; ordered city-first then per rig, over the very same store reads —
+;; the `T' picker's candidates (`gascity-agents-roster-candidates'),
+;; the scope classifier (`gascity-agents-scope') and the target lookup
+;; (`gascity-agents-roster-scope') the pre-launch validators consume.
+;;
 ;; Reads (one named loader each, through the store — shared with the
 ;; cockpit, capped per host, bounded by its deadline): `gc status', `gc
 ;; session list', `gc agent list' (providers and pool bounds) and the
@@ -191,6 +198,132 @@ substring of the name) narrow further."
                      (let ((n (funcall count '(stopped suspended))))
                        (and (> n 0) (format "%d stopped" n)))))
      " · ")))
+
+;;; Roster — the sling's Who completion (REQ-005)
+
+;; The completion-facing half of the sling's Who stage (plans/
+;; sling-command, WI-2): candidates over the same loaders the table
+;; refreshes with, so the `T' picker never opens a new gc call site.
+;; The scope classifier feeds the pre-launch validators in
+;; `gascity-formula.el'; a cold roster never dead-ends — completion
+;; over nil is free entry, and the scope-dependent checks degrade.
+
+(defun gascity-agents-scope (agent)
+  "Return AGENT's sling scope: its rig's name, or \"city\".
+The classifier behind the Who annotation and the REQ-010 validators:
+the roster plist's `:rig' wins; a name with a slash prefix names its
+rig on its own (a qualified agent joined without a rig); everything
+else is city-scoped.  Pure."
+  (or (plist-get agent :rig)
+      (let ((name (plist-get agent :name)))
+        (if (and (stringp name)
+                 (string-search "/" name))
+            (substring name 0 (string-search "/" name))
+          "city"))))
+
+(defun gascity-agents--roster (data)
+  "Return the agent plists of DATA, city agents first then per rig.
+DATA is the Agents view's reads plist (:status :sessions :agents
+:work — any may be nil: a cold or failed read degrades to the rows
+the rest still join).  The `T' picker's candidate order (mockup §6c):
+city agents first, then each rig's in `gc status''s rig order; within
+a group the dashboard's row order (stalled first) is kept, and
+agents of rigs the status payload does not name follow, grouped by
+scope in row order.  Pure."
+  (let* ((rows (gascity-agents--rows data (float-time)))
+         (rigs (delete-dups
+                (seq-keep (lambda (rig) (alist-get 'name rig))
+                          (append (alist-get 'rigs (plist-get data :status))
+                                  nil))))
+         (scope (lambda (agent) (gascity-agents-scope agent)))
+         (city (seq-filter (lambda (a) (equal (funcall scope a) "city")) rows)))
+    (append
+     city
+     (apply #'append
+            (mapcar (lambda (rig)
+                      (seq-filter (lambda (a) (equal (funcall scope a) rig)) rows))
+                    rigs))
+     ;; Rigs `gc status' did not name still show, grouped after the
+     ;; known ones — never dropped.
+     (let ((left (seq-remove (lambda (a)
+                               (or (equal (funcall scope a) "city")
+                                   (member (funcall scope a) rigs)))
+                             rows))
+           (scopes nil))
+       (dolist (a left)
+         (cl-pushnew (funcall scope a) scopes :test #'equal))
+       (apply #'append
+              (mapcar (lambda (rig)
+                        (seq-filter (lambda (a) (equal (funcall scope a) rig))
+                                    left))
+                      (nreverse scopes)))))))
+
+(defun gascity-agents-roster-candidates (roster)
+  "Return ROSTER's completion candidates: (name . \"<rig|city> · state\").
+The `T' picker annotates each agent with its scope and live state
+(mockup §6c) — the state through `gascity-agents--state-label'.
+Pure over the roster plists."
+  (mapcar (lambda (agent)
+            (cons (plist-get agent :name)
+                  (format "%s · %s"
+                          (gascity-agents-scope agent)
+                          (gascity-agents--state-label agent))))
+          roster))
+
+(defun gascity-agents-roster-scope (target roster)
+  "Return the scope of the roster agent named TARGET, or nil.
+Free entry — a typed name no roster row carries, including a cold
+roster's empty one — cannot be classified, so nil: the scope-dependent
+validators (REQ-010) degrade instead of dead-ending; gc stays the
+authority.  Pure."
+  (when-let* ((agent (seq-find (lambda (a)
+                                 (equal (plist-get a :name) target))
+                               roster)))
+    (gascity-agents-scope agent)))
+
+(defun gascity-agents--read-roster (done &optional cached)
+  "Read the roster's payloads through the store; call DONE with them.
+The same four reads the Agents table refreshes with
+\(`gascity-agents--loaders'), collected outside a view buffer: every
+read's answer lands in the plist DONE receives, keyed like the
+loaders — a failed read's key stays absent, so the roster degrades to
+what the rest still join.  CACHED honors the store's TTL (a silent
+prefetch); the default forces past it.  DONE is called once, from
+whatever read answered last.  Returns nil."
+  (let* ((outstanding (length gascity-agents--loaders))
+         (data nil)
+         (gascity-agents--force (not cached))
+         (finish (lambda ()
+                   (when (zerop (setq outstanding (1- outstanding)))
+                     (funcall done data)))))
+    (pcase-dolist (`(,key . ,loader) gascity-agents--loaders)
+      (funcall loader
+               (lambda (payload)
+                 (setq data (plist-put data key payload))
+                 (funcall finish))
+               (lambda (_err) (funcall finish))))
+    nil))
+
+(defun gascity-agents-roster (&optional cached)
+  "Return this city's agent roster: plists, city agents first then per rig.
+The completion-facing Who accessor (REQ-005) over the same store
+reads the Agents view uses — never a new gc call site.  A cold store
+is read first and waited on, deadline-bounded (`C-g' quits), like the
+formula picker's `gascity-formula-choices-wait': the `T' read is
+input collection (D9).  CACHED keeps the store's TTL; the default
+forces a fresh read.  Returns nil when nothing answered — completion
+over nil is free entry, so a cold roster never dead-ends a dispatch."
+  (let ((done nil)
+        (data nil)
+        (deadline (+ (float-time)
+                     (if (numberp gascity-remote-async-timeout)
+                         (1+ gascity-remote-async-timeout)
+                       31))))
+    (gascity-agents--read-roster (lambda (d) (setq data d done t)) cached)
+    (with-local-quit
+      (while (and (not done) (< (float-time) deadline))
+        (accept-process-output nil 0.05)))
+    (gascity-agents--roster data)))
 
 ;;; Table
 

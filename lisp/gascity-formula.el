@@ -47,6 +47,15 @@
 ;; fields degrade silently everywhere (REQ-016): no `enum' → string input,
 ;; no `pattern' → no check, no metadata → no choices.
 ;;
+;; The sling redesign's pre-launch validators (REQ-010, mockup §5;
+;; plans/sling-command WI-2) live here too: `gascity-sling--v2-trap-p'
+;; (the bl-bdj \"unknown formulas v2 target\" trap),
+;; `gascity-sling--cross-store-p' and the §5c missing-pieces checks —
+;; pure predicates over the cached recipe, the roster's scope string
+;; and the rig memo, each with its mockup-worded warning builder.  They
+;; only ever warn (the live footer, the `P' preview): gc stays the
+;; authority.
+;;
 ;; History (REQ-010/011): `gascity-formula--history-var' returns an
 ;; ordinary minibuffer history variable per (formula, var), named
 ;; `gascity-formula-history-<formula>-<var>'.  The transient's generated
@@ -383,6 +392,151 @@ recursively, across nested alists and JSON arrays."
          (seq-some #'gascity-formula--value-mentions-convoy value))))
 
 ;;; ============================================================
+;;; Sling validators (REQ-010, mockup §5) — pure, never blocking
+;;; ============================================================
+
+;; The client-side pre-launch checks of the sling redesign (plans/
+;; sling-command, WI-2).  gc stays the authority: every predicate feeds
+;; the live footer's ⚠ (WI-6) and the `P' preview, nothing here ever
+;; refuses a dispatch.  All are pure over cached data — the recipe, the
+;; scope string `gascity-agents-roster-scope' classifies from the
+;; roster, and the rig memo the caller passes (the same prefix→rig
+;; routing the bd verbs use).  Anything unresolvable — free entry, a
+;; cold roster or memo — degrades to no warning: a cold roster never
+;; dead-ends, gc answers at launch.
+
+(defun gascity-sling--binding-qualified-target-p (value)
+  "Return non-nil when VALUE is a binding-qualified run target.
+A string containing a `.' and no `/': \"gc.run-operator\" qualifies,
+\"mayor\" and \"hello-world/polecat\" do not, and a non-string (an
+absent or null field, REQ-016) never does."
+  (and (stringp value)
+       (string-search "." value)
+       (not (string-search "/" value))))
+
+(defun gascity-sling--binding-targets-p (recipe)
+  "Return non-nil when any step of RECIPE carries a binding-qualified run target.
+A step `metadata[\"gc.run_target\"]' whose value qualifies
+(`gascity-sling--binding-qualified-target-p') — build-basic's
+\"gc.run-operator\" steps (23 of 38 against bright-lights).  Pure
+over the cached recipe; a nil RECIPE (no formula picked) is no."
+  (and recipe
+       (seq-some (lambda (step)
+                   (gascity-sling--binding-qualified-target-p
+                    (alist-get 'gc.run_target (alist-get 'metadata step))))
+                 (gascity-formula-steps recipe))))
+
+(defun gascity-sling--v2-trap-p (recipe scope)
+  "Return non-nil when RECIPE at SCOPE is the bl-bdj trap (REQ-010).
+A formula whose steps name binding-qualified run targets needs a
+rig-scoped target: gc fails its instantiation with \"unknown formulas
+v2 target\" (bl-bdj) — the trap fires at launch, a dry run never
+exercises it, so the client warns first.  SCOPE \"city\" (from
+`gascity-agents-roster-scope') traps; a rig name does not; nil (free
+entry, a cold roster) degrades to no warning."
+  (and (gascity-sling--binding-targets-p recipe)
+       (equal scope "city")))
+
+(defun gascity-sling--v2-trap-warning (&optional rig)
+  "Return the bl-bdj trap's footer warning (mockup §5a wording).
+RIG names the agent to suggest — \"pick a hello-world/* agent with
+T\"; without one the suggestion stays generic."
+  (format "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a %s with T"
+          (if (gascity-formula--nonblank rig)
+              (format "%s/* agent" rig)
+            "rig-scoped agent")))
+
+(defun gascity-sling--bead-prefix (bead)
+  "Return BEAD's store prefix — the id part before the first hyphen.
+\"hw-ab12\" → \"hw\".  nil when BEAD is nil or not a bead id: freeform
+work text never resolves to a store (gc creates its bead in the
+target's store at launch)."
+  (when (and (stringp bead)
+             (string-match "\\`\\([[:alnum:]]+\\)-[[:alnum:]]+\\'" bead))
+    (match-string 1 bead)))
+
+(defun gascity-sling--bead-store (bead rigs)
+  "Return BEAD's store — the name of the rig whose id prefix it carries.
+RIGS is the rig memo (`gascity-rigs-cached': the same prefix→rig
+routing the bd verbs use, the city HQ included as a rig row).  nil
+when BEAD is not a bead id, or its prefix matches no rig (a foreign
+prefix or a cold memo): an unresolvable store degrades, never
+guesses."
+  (when-let* ((prefix (gascity-sling--bead-prefix bead)))
+    (when-let* ((rig (seq-find (lambda (rig)
+                                 (equal (gascity-rig-prefix rig) prefix))
+                               rigs)))
+      (gascity-rig-name rig))))
+
+(defun gascity-sling--cross-store-p (work scope rigs)
+  "Return non-nil when WORK and a rig-scoped SCOPE read different stores.
+gc refuses a bead routed to another rig's agent (\"Cross-rig … without
+--force, sling would refuse\", verified by dry run against
+bright-lights): WORK's store resolves from its id prefix against RIGS,
+and SCOPE — the target's, a rig-scoped agent naming its rig — must
+match it.  A city-scoped target never fires: the mayor routes beads
+of every store (mockup §5b's remedy).  Anything unresolvable —
+freeform work, a cold memo, free entry — degrades to no warning."
+  (when-let* ((store (gascity-sling--bead-store work rigs)))
+    (and (gascity-formula--nonblank scope)
+         (not (equal scope "city"))
+         (not (equal scope store)))))
+
+(defun gascity-sling--cross-store-warning (work scope rigs)
+  "Return the cross-store route's footer warning (mockup §5b wording).
+The message names the bead, its store and the target's, and suggests
+a city agent or one of the bead's store.  nil when the route is not
+cross-store (`gascity-sling--cross-store-p')."
+  (when (gascity-sling--cross-store-p work scope rigs)
+    (let ((store (gascity-sling--bead-store work rigs)))
+      (format "cross-store route: bead %s lives in the %s store but the target reads the %s store — gc will refuse (pick a city agent or a %s agent)"
+              work store scope store))))
+
+(defun gascity-sling--missing-work-p (recipe work)
+  "Return non-nil when RECIPE drains a bead but no work is in scope (§5c).
+A convoy-requiring formula (plan D2) with blank WORK — gc would
+refuse at dispatch (\"requires a target convoy\"), so the footer says
+it first.  A nil RECIPE (the plain shape) never fires: freeform text
+is its work."
+  (and recipe
+       (gascity-formula--needs-convoy recipe)
+       (gascity-formula--blank work)))
+
+(defun gascity-sling--missing-work-warning (recipe)
+  "Return the missing-work footer warning (mockup §5c wording)."
+  (format "%s drains a bead — pick work with A (or point at one)"
+          (or (gascity-formula-name recipe) "formula")))
+
+(defun gascity-sling--missing-required-vars (recipe values)
+  "Return RECIPE's required vars missing from VALUES, in declared order.
+The non-signaling half of `gascity-formula--validate-values': the
+live footer warns (mockup §5c) while dispatch still refuses with the
+`user-error'.  VALUES is a (VAR-NAME . VALUE) alist; a var absent
+from it counts as empty."
+  (delq nil
+        (mapcar (lambda (var)
+                  (and (gascity-formula-var-required var)
+                       (gascity-formula--blank
+                        (cdr (assoc (gascity-formula-var-name var) values)))
+                       (gascity-formula-var-name var)))
+                (or (gascity-formula-vars recipe) '()))))
+
+(defun gascity-sling--missing-vars-warning (names)
+  "Return the missing-vars footer warning (mockup §5c wording), or nil."
+  (and names
+       (format "Missing required vars: %s" (mapconcat #'identity names ", "))))
+
+(defun gascity-sling--missing-target-p (target)
+  "Return non-nil when no target is in scope (mockup §5c).
+Blank TARGET: WI-3's derived default answers this before the footer
+renders, and `s' prompts when nothing is derivable."
+  (gascity-formula--blank target))
+
+(defconst gascity-sling--missing-target-warning
+  "No target — T to choose, or s will prompt"
+  "The missing-target footer warning (mockup §5c wording).")
+
+;;; ============================================================
 ;;; Validation (REQ-008/009)
 ;;; ============================================================
 
@@ -390,20 +544,16 @@ recursively, across nested alists and JSON arrays."
   "Check VALUES against FORMULA's declared vars, before any gc call.
 VALUES is an alist of (VAR-NAME . VALUE); a var absent from it counts
 as empty.  A missing required var signals `user-error' naming every
-missing var; a value that fails its var's `pattern' signals
-`user-error' naming the var and the pattern.  Nothing here runs gc —
-the point is to fail fast, client-side (REQ-008/009)."
-  (let ((vars (or (gascity-formula-vars formula) '()))
-        (missing nil))
-    (dolist (var vars)
-      (when (and (gascity-formula-var-required var)
-                 (gascity-formula--blank
-                  (cdr (assoc (gascity-formula-var-name var) values))))
-        (push (gascity-formula-var-name var) missing)))
+missing var (the same list `gascity-sling--missing-required-vars'
+collects for the live footer's ⚠); a value that fails its var's
+`pattern' signals `user-error' naming the var and the pattern.
+Nothing here runs gc — the point is to fail fast, client-side
+(REQ-008/009)."
+  (let ((missing (gascity-sling--missing-required-vars formula values)))
     (when missing
       (user-error "Missing required formula vars: %s"
-                  (mapconcat #'identity (nreverse missing) ", ")))
-    (dolist (var vars)
+                  (mapconcat #'identity missing ", ")))
+    (dolist (var (or (gascity-formula-vars formula) '()))
       (let ((pattern (gascity-formula-var-pattern var))
             (value (cdr (assoc (gascity-formula-var-name var) values))))
         ;; Only a value actually entered is pattern-checked; a blank one
