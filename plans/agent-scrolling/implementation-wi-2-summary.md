@@ -36,9 +36,11 @@ the buffer-local minor mode; activation sends the tmux copy-mode entry
 bytes `C-b [`. While active, the mode map's keys translate through the
 pure table `gascity-terminal--scroll-sequence` — `C-p`/`C-n` → C-Up/
 C-Down bytes (`\e[1;5A`/`\e[1;5B`), `C-v`/`M-v` and PageDown/PageUp →
-`\e[6~`/`\e[5~`, `M-<` → `g` `0` `RET` via the goto prompt, `M->` → a run
-of C-Down (`\e[1;5B`, `gascity-terminal--scroll-bottom-repeat` = 100
-presses) that settles at the bottom, `q` → `q`, Esc → `\e` — and the
+`\e[6~`/`\e[5~`, `M-<`/`M->` → tmux's own copy-mode `history-top`/
+`history-bottom` bytes (`\e<`/`\e>`, locked empirically in the live
+pass — see the QA report; the goto-prompt burst left a stuck modal
+prompt and a C-Down run cannot settle a deep scrollback), `q` → `q`,
+Esc → `\e` — and the
 bytes reach the pty through the per-backend raw-key adapter
 `gascity-terminal--send-raw` (vterm → `vterm-send-string`, term/
 ansi-term → `term-send-raw-string`, eat → `eat-self-input` one
@@ -98,6 +100,12 @@ existing pty (dashboard-v3 D9).
 | REQ-008 | covered |
 | REQ-009 | covered |
 | REQ-010 | covered |
+
+- Addendum (post-e2e): the `M-<`/`M->` translations were locked to
+  tmux's native `history-top`/`history-bottom` bytes during the WI-4
+  live pass; the originally documented goto-prompt and repeated-
+  C-Down mechanisms were rejected empirically
+  (docs/qa/2026-09-29-agent-scrolling-e2e.md).
 
 ## Remaining Risks
 

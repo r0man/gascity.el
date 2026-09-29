@@ -2215,6 +2215,45 @@ same, and the arrow keys move a line at a time.
 Leave copy-mode and return to the live pane.
 @end table
 
+@cindex scroll sub-mode
+@cindex Emacs keys, in a terminal
+@findex gascity-terminal-scroll-mode
+@findex gascity-terminal-scroll-toggle
+For Magit-flavoured reading, @kbd{C-c s}
+(@code{gascity-terminal-scroll-toggle}) toggles
+@code{gascity-terminal-scroll-mode}, a buffer-local scroll sub-mode:
+activation enters tmux copy-mode (those are the only bytes the agent
+can see on entry), and while it is active the Emacs scroll keys are
+translated to copy-mode byte sequences and sent to the pane --- the
+agent receives no keys (@kbd{C-p}/@kbd{C-n} scroll a line,
+@kbd{C-v}/@kbd{M-v}/@key{PageUp}/@key{PageDown} page, @kbd{M-<}/@kbd{M->}
+jump to the top/bottom).  @kbd{q} or @key{ESC} leave copy-mode and
+hand the keys back to the agent.  The toggle is optimistic and
+self-healing: re-pressing @kbd{C-c s} while the mode thinks it is
+active leaves copy-mode first, then re-enters, so an out-of-band exit
+(the mouse wheel, below) costs one re-toggle.  The status mirror's
+mode-line segment carries a @samp{[scroll]} marker while the sub-mode
+is active.
+
+@cindex mouse wheel, terminal
+@cindex gascity-terminal-ensure-mouse
+@defvr {User Option} gascity-terminal-ensure-mouse
+The attach pre-step additionally turns the session's tmux @code{mouse}
+option on (session-scoped) and installs one copy-mode binding that
+leaves copy-mode when the wheel reaches the bottom --- wheeling back
+down returns to the live tail.  Both are restored when the terminal
+buffer is killed.  Set this variable to nil to keep tmux's defaults.
+@end defvr
+
+The wheel itself depends on the backend: ghostel and eat report mouse
+events natively, so the wheel scrolls the transcript through tmux
+whenever the agent's own interface has not claimed the mouse.  vterm
+and term report nothing; there the scroll sub-mode's effective keymap
+also carries the wheel --- one notch scrolls about ten lines through
+copy-mode, and the first notch after entering re-sends the copy-mode
+entry.  On the reporting backends the wheel extension is never
+installed, so their native passthrough is untouched.
+
 @cindex bead at point, terminal
 @findex gascity-bead-show-at-point
 Agent transcripts are full of bead ids.  Put point on one --- the

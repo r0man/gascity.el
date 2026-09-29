@@ -3156,8 +3156,8 @@ mouse ensure is restored even without the mirror (REQ-013)."
 (ert-deftest gascity-test-terminal-scroll-sequence ()
   "`gascity-terminal--scroll-sequence' is the pure D1 translation table:
 C-p/C-n become C-Up/C-Down bytes (E7), the paging keys become
-PPage/NPage, M-< goes through the goto prompt, M-> repeats C-Down to
-settle at the bottom, q/Esc leave copy mode — any other event
+PPage/NPage, M-</M-> ride tmux's own history-top/bottom bindings
+(locked empirically), q/Esc leave copy mode — any other event
 translates to nothing (and keeps the backend's behaviour)."
   (should (equal (gascity-terminal--scroll-sequence ?\C-p) "\e[1;5A"))
   (should (equal (gascity-terminal--scroll-sequence ?\C-n) "\e[1;5B"))
@@ -3165,13 +3165,11 @@ translates to nothing (and keeps the backend's behaviour)."
   (should (equal (gascity-terminal--scroll-sequence ?\M-v) "\e[5~"))
   (should (equal (gascity-terminal--scroll-sequence 'next) "\e[6~"))
   (should (equal (gascity-terminal--scroll-sequence 'prior) "\e[5~"))
-  (should (equal (gascity-terminal--scroll-sequence ?\M-<) "g0\r"))
-  ;; M->: exactly `gascity-terminal--scroll-bottom-repeat' C-Downs, one
-  ;; run, no separator (requirements Open Question 1).
-  (should (equal (gascity-terminal--scroll-sequence ?\M->)
-                 (mapconcat #'identity
-                            (make-list gascity-terminal--scroll-bottom-repeat
-                                       "\e[1;5B"))))
+  ;; Top/bottom jumps ride tmux's own history-top/history-bottom
+  ;; bindings — single modified-key bytes, locked empirically (the
+  ;; goto-prompt burst left a stuck prompt in the live pass).
+  (should (equal (gascity-terminal--scroll-sequence ?\M-<) "\e<"))
+  (should (equal (gascity-terminal--scroll-sequence ?\M->) "\e>"))
   (should (equal (gascity-terminal--scroll-sequence ?q) "q"))
   (should (equal (gascity-terminal--scroll-sequence 'escape) "\e"))
   ;; Not table keys: nil, so the backend keeps them.

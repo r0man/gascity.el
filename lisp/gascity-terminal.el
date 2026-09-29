@@ -63,6 +63,25 @@
 ;; buffer's `minor-mode-overriding-map-alist', so the backend's
 ;; forwarding wins in gascity's terminals and nowhere else.
 ;;
+;; Scrolling is explicit, not a shadowing of live keys (D1): `C-c s'
+;; toggles `gascity-terminal-scroll-mode', a buffer-local sub-mode that
+;; enters tmux copy mode (`C-b [', the only bytes the agent sees on
+;; entry) and translates the Emacs scroll keys of its map to copy-mode
+;; byte sequences through the pure table
+;; `gascity-terminal--scroll-sequence', sent by the per-backend
+;; raw-key adapter `gascity-terminal--send-raw' (vterm, term, eat,
+;; ghostel with a control-byte/escape-sequence split — E6).  The agent
+;; receives no keys while the mode is on (E9); q/Esc leave both.  The
+;; toggle is optimistic + self-healing: a re-toggle sends q first,
+;; then re-enters.  On backends that do not report the mouse (vterm,
+;; term) the effective map also carries wheel notches (D2, ~10
+;; lines/notch); on ghostel/eat the native tmux passthrough wins, so
+;; their map never gets wheel bindings.  The attach pre-step, one
+;; async round trip, also ensures the session's tmux `mouse' option
+;; and a copy-mode wheel-to-bottom binding (D3), restored on teardown
+;; (`gascity-terminal-ensure-mouse'), and the status mirror's segment
+;; shows a [scroll] marker while the sub-mode is active.
+;;
 ;; Attaching is idempotent: when the agent's terminal buffer is already
 ;; open with a live process, `gascity-terminal-run' raises that window
 ;; instead of starting a second backend process in it (which would
@@ -803,35 +822,33 @@ plain keys."
 (defconst gascity-terminal--copy-mode-entry "\C-b["
   "Bytes entering tmux copy mode from the attach pty: `C-b' `['.")
 
-(defconst gascity-terminal--scroll-bottom-repeat 100
-  "C-Down presses `M->' sends to settle at copy mode's bottom.
-A C-Down (`\\e[1;5B') scrolls the viewport one line and is a no-op at
-the bottom, so any run at least as long as the distance to the bottom
-lands there; the surplus presses cost nothing.  Chosen over `End' per
-requirements Open Question 1; revisit when the live pass (WI-4) locks
-the feel.")
+;; The bottom/top jump is tmux's own: the copy-mode emacs table binds
+;; `M-<' to `history-top' and `M->' to `history-bottom', so the table
+;; sends those single modified-key bytes (`\\e<' / `\\e>') and lets
+;; tmux do the jump.  Locked empirically in the live pass (requirements
+;; Open Question 1): the goto-prompt burst `g 0 RET' left the modal
+;; prompt stuck open (every later byte typed into it, silently), and a
+;; run of C-Downs cannot settle a deep scrollback cheaply.
 
 (defun gascity-terminal--scroll-sequence (event)
   "Return the tmux copy-mode byte sequence for Emacs scroll key EVENT.
 EVENT is the single event that invoked a scroll command (as
 `last-command-event'): ?\\C-p / ?\\C-n scroll a line — sent as
 C-Up/C-Down bytes, since C-p/C-n in tmux copy mode are cursor moves,
-not scrolls (E7); ?\\C-v / ?\\M-v and `next'/`prior' page; ?\\M-<
-jumps to the top through the goto prompt (`g' `0' `RET'); ?\\M->
-repeats C-Down `gascity-terminal--scroll-bottom-repeat' times to
-settle at the bottom; ?q and `escape' leave copy mode.  Nil for any
-other event — those keys keep the backend's own behaviour.  Pure:
-this is the whole D1 table, so tests are table-driven.
+not scrolls (E7); ?\\C-v / ?\\M-v and `next'/`prior' page; ?\\M-< and
+?\\M-> jump to the top/bottom through tmux's own copy-mode
+`history-top'/`history-bottom' bindings (locked empirically — see the
+note above); ?q and `escape' leave copy mode.  Nil for any other
+event — those keys keep the backend's own behaviour.  Pure: this is
+the whole D1 table, so tests are table-driven.
 (DESIGN-agent-scrolling.md D1, evidence E6/E7.)"
   (pcase event
     (?\C-p "\e[1;5A")
     (?\C-n "\e[1;5B")
     ((or ?\C-v 'next) "\e[6~")
     ((or ?\M-v 'prior) "\e[5~")
-    (?\M-< "g0\r")
-    (?\M-> (mapconcat #'identity
-                      (make-list gascity-terminal--scroll-bottom-repeat
-                                 "\e[1;5B")))
+    (?\M-< "\e<")
+    (?\M-> "\e>")
     (?q "q")
     ('escape "\e")
     (_ nil)))
