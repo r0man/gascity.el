@@ -69,6 +69,15 @@
 ;; otherwise error, e.g. ghostel's "already has a running ghostel
 ;; process").
 ;;
+;; Mouse scrolling (DESIGN-agent-scrolling.md D2/D3): the same pre-step
+;; also turns the session's tmux `mouse' option on (session-scoped) and
+;; installs one copy-mode `WheelDownPane' binding that leaves copy mode
+;; when it is already at the bottom — wheeling through the transcript
+;; ends back at the live tail.  Both ride the pre-step's one host round
+;; trip, and the teardown (the kill-buffer hook below) restores them
+;; alongside the `status' override, so an external `tmux attach' sees
+;; tmux's defaults.  Gated by `gascity-terminal-ensure-mouse'.
+;;
 ;; One status line, not two: a tmux client inside an Emacs buffer shows
 ;; both tmux's own status bar and the Emacs mode line.  On attach,
 ;; `gascity-terminal--status-install' turns the session's tmux status bar
@@ -409,6 +418,13 @@ Recomputed by `gascity-terminal--status-refresh' and read by the
 (defvar-local gascity-terminal--status-timer nil
   "Repeating timer refreshing this buffer's tmux status, or nil.")
 
+(defvar-local gascity-terminal--status-mirrored nil
+  "Non-nil when this buffer actually mirrors the tmux status.
+The mirror is optional (`gascity-terminal-mode-line-status'); the
+tmux `status' override is only restored by the teardown when the
+mirror was installed.  The mouse ensure has its own switch
+(`gascity-terminal-ensure-mouse') and is restored regardless.")
+
 (defconst gascity-terminal--status-mode-line-segment
   '(:eval (gascity-terminal--status-segment))
   "Mode-line construct that renders the buffer's tmux status string.")
@@ -583,40 +599,94 @@ to respect."
     (with-current-buffer buffer
       (gascity-terminal--status-refresh))))
 
+(defun gascity-terminal--mouse-ensure-script (session socket)
+  "Return the sh fragment turning tmux mouse scrolling on for SESSION.
+SOCKET is the tmux server socket.  Two tmux commands: `set-option -t
+SESSION mouse on' (session-scoped) and one copy-mode `WheelDownPane'
+binding that leaves copy mode when it is already at the bottom —
+wheeling to the bottom returns to the live tail (DESIGN-agent-scrolling.md
+D3).  The teardown mirror is `gascity-terminal--mouse-teardown-script'."
+  (concat
+   (gascity-terminal--tmux-sh socket "set-option" "-t" session "mouse" "on")
+   " >/dev/null 2>&1; "
+   (gascity-terminal--tmux-sh
+    socket "bind" "-T" "copy-mode" "WheelDownPane" "select-pane"
+    ";" "if" "-F" "#{==:#{scroll_position},0}"
+    "send -X cancel" "send -X -N 5 scroll-down")
+   " >/dev/null 2>&1; "))
+
+(defun gascity-terminal--mouse-teardown-script (session socket)
+  "Return the sh fragment restoring SESSION's tmux mouse defaults.
+The mirror of `gascity-terminal--mouse-ensure-script': unsets the
+session-scoped `mouse' option and removes the copy-mode
+`WheelDownPane' binding, so a later `tmux attach' sees tmux's defaults
+(REQ-013)."
+  (concat
+   (gascity-terminal--tmux-sh socket "set-option" "-t" session "-u" "mouse")
+   " >/dev/null 2>&1; "
+   (gascity-terminal--tmux-sh socket "unbind" "-T" "copy-mode" "WheelDownPane")
+   " >/dev/null 2>&1; "))
+
+(defun gascity-terminal--teardown-script (session socket)
+  "Return the sh script restoring SESSION's attach overrides on SOCKET.
+A fragment per installed override: the `status' option only when the
+mode-line mirror was installed (`gascity-terminal--status-mirrored'),
+and the mouse ensure (`gascity-terminal--mouse-teardown-script') when
+`gascity-terminal-ensure-mouse' is non-nil.  Empty when nothing was
+installed."
+  (concat
+   (if gascity-terminal--status-mirrored
+       (concat (gascity-terminal--tmux-sh socket "set-option" "-t" session
+                                          "-u" "status")
+               " >/dev/null 2>&1; ")
+     "")
+   (if gascity-terminal-ensure-mouse
+       (gascity-terminal--mouse-teardown-script session socket)
+     "")))
+
 (defun gascity-terminal--status-teardown ()
-  "Tear down the tmux status mirror for the current buffer.
-Cancels the refresh timer and, in the background, removes the session's
-tmux `status' override (`set-option -u') so a later `tmux attach' shows
-its own status bar again.  Run from `kill-buffer-hook'; never blocks."
+  "Tear down this buffer's tmux session overrides in the background.
+Cancels the refresh timer and, in the background, restores what the
+attach changed for the session: the `status' override (when the mode
+line mirror was installed) and, when `gascity-terminal-ensure-mouse' is
+non-nil, the session's `mouse' option and the copy-mode `WheelDownPane'
+binding, so a later `tmux attach' sees tmux's own status bar and mouse
+defaults again.  Run from `kill-buffer-hook'; never blocks."
   (gascity-terminal--status-stop)
   (when (process-live-p gascity-terminal--status-process)
     (delete-process gascity-terminal--status-process))
   (when (and gascity-terminal--status-session
              (stringp gascity-terminal--status-session)
              (not (string-empty-p gascity-terminal--status-session)))
-    (ignore-errors
-      (gascity-terminal--run-async
-       (or gascity-terminal--status-directory default-directory)
-       (concat (gascity-terminal--tmux-sh gascity-terminal--status-socket
-                                          "set-option" "-t"
-                                          gascity-terminal--status-session
-                                          "-u" "status")
-               " >/dev/null 2>&1")
-       #'ignore))))
+    (let ((script (gascity-terminal--teardown-script
+                   gascity-terminal--status-session
+                   gascity-terminal--status-socket)))
+      (unless (string-empty-p script)
+        (ignore-errors
+          (gascity-terminal--run-async
+           (or gascity-terminal--status-directory default-directory)
+           script
+           #'ignore))))))
 
 (defun gascity-terminal--status-install (buffer session socket &optional dir status-off)
-  "Hide tmux SESSION's status bar and mirror it in BUFFER's mode line.
-Splices a buffer-local mode-line segment showing the session's friendly
-name and window list into the mode line before its trailing fill,
-starts a refresh timer, and arranges teardown on buffer kill.  The
-session's tmux status bar is turned off (scoped via `set-option -t') in
-the background — unless STATUS-OFF says the caller already did (the
-attach pre-step does, in its one host round trip).  DIR, when a remote
-TRAMP directory, is the city context the tmux queries run on; it is
-stored buffer-locally so the refresh and teardown reach the city's host
-from this otherwise-local buffer.  Nothing here blocks: every tmux call
-is an asynchronous local process.  Idempotent: safe to re-run when
-reattaching to a live terminal."
+  "Install BUFFER's attach overrides and, when enabled, the status mirror.
+The session, socket and remote DIR are recorded buffer-locally in every
+case (the teardown needs them to restore the overrides), and the
+teardown is added to BUFFER's `kill-buffer-hook' — it reverts the
+`status' override and, under `gascity-terminal-ensure-mouse', the mouse
+ensure (both installed for the session by the attach pre-step).
+
+When `gascity-terminal-mode-line-status' is non-nil, the session's tmux
+status bar is additionally mirrored in the buffer's mode line instead:
+a segment showing the friendly session name and window list is spliced
+in before the trailing fill, a refresh timer is started, and — unless
+STATUS-OFF says the caller already did (the attach pre-step does, in
+its one host round trip) — the tmux change is made in the background.
+DIR, when a remote TRAMP directory, is the city context the tmux
+queries run on; it is stored buffer-locally so the refresh and teardown
+reach the city's host from this otherwise-local buffer.  Nothing here
+blocks: every tmux call is an asynchronous local process.  Idempotent:
+safe to re-run when reattaching to a live terminal."
   (when (and (buffer-live-p buffer)
              session (stringp session) (not (string-empty-p session)))
     (with-current-buffer buffer
@@ -624,39 +694,42 @@ reattaching to a live terminal."
             gascity-terminal--status-socket socket
             gascity-terminal--status-directory (and dir (file-remote-p dir)
                                                     dir))
-      (unless status-off
-        (gascity-terminal--run-async
-         (or gascity-terminal--status-directory default-directory)
-         (concat (gascity-terminal--tmux-sh socket "set-option" "-t" session
-                                            "status" "off")
-                 " >/dev/null 2>&1")
-         #'ignore))
-      ;; Splice our segment into the mode line exactly once, just before
-      ;; the trailing fill (`mode-line-end-spaces') so it stays visible.
-      ;; Appending after the fill (`%-') renders it off-screen; prepend as
-      ;; a fallback when that anchor is absent.
-      (let ((mlf (if (listp mode-line-format)
-                     mode-line-format
-                   (list mode-line-format))))
-        (unless (member gascity-terminal--status-mode-line-segment mlf)
-          (let ((tail (member 'mode-line-end-spaces mlf)))
-            (setq-local mode-line-format
-                        (if tail
-                            (append (butlast mlf (length tail))
-                                    (cons gascity-terminal--status-mode-line-segment
-                                          tail))
-                          (cons gascity-terminal--status-mode-line-segment mlf))))))
-      ;; (Re)start the refresh timer; query once now, in the background.
-      (gascity-terminal--status-stop)
-      (let ((interval (if (and (numberp gascity-terminal-status-interval)
-                               (> gascity-terminal-status-interval 0))
-                          gascity-terminal-status-interval
-                        5)))
-        (setq gascity-terminal--status-timer
-              (run-with-timer interval interval
-                              #'gascity-terminal--status-tick buffer)))
-      (gascity-terminal--status-refresh)
-      ;; Tear down when the terminal buffer is killed.
+      (when gascity-terminal-mode-line-status
+        (setq gascity-terminal--status-mirrored t)
+        (unless status-off
+          (gascity-terminal--run-async
+           (or gascity-terminal--status-directory default-directory)
+           (concat (gascity-terminal--tmux-sh socket "set-option" "-t" session
+                                              "status" "off")
+                   " >/dev/null 2>&1")
+           #'ignore))
+        ;; Splice our segment into the mode line exactly once, just before
+        ;; the trailing fill (`mode-line-end-spaces') so it stays visible.
+        ;; Appending after the fill (`%-') renders it off-screen; prepend as
+        ;; a fallback when that anchor is absent.
+        (let ((mlf (if (listp mode-line-format)
+                       mode-line-format
+                     (list mode-line-format))))
+          (unless (member gascity-terminal--status-mode-line-segment mlf)
+            (let ((tail (member 'mode-line-end-spaces mlf)))
+              (setq-local mode-line-format
+                          (if tail
+                              (append (butlast mlf (length tail))
+                                      (cons gascity-terminal--status-mode-line-segment
+                                            tail))
+                            (cons gascity-terminal--status-mode-line-segment mlf))))))
+        ;; (Re)start the refresh timer; query once now, in the background.
+        (gascity-terminal--status-stop)
+        (let ((interval (if (and (numberp gascity-terminal-status-interval)
+                                 (> gascity-terminal-status-interval 0))
+                            gascity-terminal-status-interval
+                          5)))
+          (setq gascity-terminal--status-timer
+                (run-with-timer interval interval
+                                #'gascity-terminal--status-tick buffer)))
+        (gascity-terminal--status-refresh))
+      ;; Tear down when the terminal buffer is killed — the mirror and the
+      ;; mouse ensure both restore through it.
       (add-hook 'kill-buffer-hook #'gascity-terminal--status-teardown nil t))))
 
 (defun gascity-terminal--attach-argv (session socket &optional remote
@@ -771,7 +844,10 @@ It prints `gascity-no-session' and stops when SESSION is missing on
 SOCKET; else `gascity-tmux:PATH' (tmux as the host resolves it), and
 per OPTS: :term TERM → `gascity-term-ok'/`gascity-term-missing';
 :dir DIR (host-local) → `gascity-dir-ok' when it exists; :status-off →
-turns the session's tmux status bar off."
+turns the session's tmux status bar off; and, when
+`gascity-terminal-ensure-mouse' is non-nil, turns the session's `mouse'
+option on and installs the wheel-to-bottom copy-mode binding
+(`gascity-terminal--mouse-ensure-script')."
   (let ((term (plist-get opts :term))
         (dir (plist-get opts :dir)))
     (concat
@@ -789,6 +865,9 @@ turns the session's tmux status bar off."
          (concat (gascity-terminal--tmux-sh socket "set-option" "-t" session
                                             "status" "off")
                  " >/dev/null 2>&1; ")
+       "")
+     (if gascity-terminal-ensure-mouse
+         (gascity-terminal--mouse-ensure-script session socket)
        "")
      "echo gascity-ok")))
 
@@ -931,9 +1010,8 @@ from a timer: reports problems in the echo area, never signals."
                   (buffer-local-value 'default-directory buf) store))
             (gascity-terminal--install-keys buf)
             (gascity-terminal--beads-integrate buf store)
-            (when gascity-terminal-mode-line-status
-              (gascity-terminal--status-install buf session socket remote
-                                                status-off)))
+            (gascity-terminal--status-install buf session socket remote
+                                              status-off))
           buf))))))
 
 ;;; Backend preload

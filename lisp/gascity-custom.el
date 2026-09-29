@@ -191,6 +191,21 @@ segment."
   :type 'boolean
   :group 'gascity)
 
+(defcustom gascity-terminal-ensure-mouse t
+  "When non-nil, ensure tmux mouse scrolling for attached agent sessions.
+The attach pre-step then turns the session's tmux `mouse' option on
+(session-scoped) and installs one copy-mode `WheelDownPane' binding
+that leaves copy mode when it is already at the bottom — so wheeling
+through the transcript ends back at the live tail (tmux does not do
+that on its own).  Killing the terminal buffer restores both, so an
+external `tmux attach' sees tmux's defaults again (DESIGN-agent-scrolling.md
+D2/D3).  Requires no new process paths: the changes ride the attach
+pre-step's existing single host round trip.
+
+Set to nil to leave tmux's mouse configuration untouched."
+  :type 'boolean
+  :group 'gascity)
+
 (defcustom gascity-terminal-preload-idle 10
   "Seconds of idle after the first gascity view before the terminal preload.
 The first attach of a session would otherwise load the terminal

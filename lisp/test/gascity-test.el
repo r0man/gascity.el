@@ -3051,6 +3051,106 @@ tmux server."
   (should (null (gascity-terminal--socket-args "")))
   (should (null (gascity-terminal--socket-args nil))))
 
+(ert-deftest gascity-test-terminal-mouse-ensure-script ()
+  "`gascity-terminal--mouse-ensure-script' turns the session's tmux mouse
+option on and installs the wheel-to-bottom copy-mode binding
+(DESIGN-agent-scrolling.md D2/D3)."
+  (let ((script (gascity-terminal--mouse-ensure-script "sess" "sock")))
+    (should (string-search "tmux -L sock set-option -t sess mouse on" script))
+    (should (string-search
+             "tmux -L sock bind -T copy-mode WheelDownPane" script))
+    ;; Quoting is shell-quote-argument's business; compare the tmux words
+    ;; with shell quoting stripped.
+    (let ((plain (replace-regexp-in-string "[\\\\']" "" script)))
+      (should (string-search
+               (concat "select-pane ; if -F #{==:#{scroll_position},0}"
+                       " send -X cancel send -X -N 5 scroll-down")
+               plain)))))
+
+(ert-deftest gascity-test-terminal-attach-script-mouse ()
+  "The attach pre-step ensures tmux mouse only under
+`gascity-terminal-ensure-mouse'; with the option nil the script is
+unchanged."
+  (let (plain)
+    (cl-letf ((gascity-terminal-ensure-mouse nil))
+      (setq plain (gascity-terminal--attach-script "sess" "sock"
+                                                   :status-off t)))
+    (should (string-search "set-option -t sess status off" plain))
+    (should-not (string-search "mouse" plain))
+    (should-not (string-search "WheelDownPane" plain))
+    ;; With the option at its default (t) the script is exactly the plain
+    ;; one plus the mouse fragment: nothing else changes.
+    (let ((script (gascity-terminal--attach-script "sess" "sock"
+                                                   :status-off t)))
+      (should (equal plain
+                     (string-replace
+                      (gascity-terminal--mouse-ensure-script "sess" "sock")
+                      "" script))))))
+
+(ert-deftest gascity-test-terminal-status-teardown-restores-mouse ()
+  "The teardown restores what the attach installed: the `status' override
+\(when the mirror was installed) and, under
+`gascity-terminal-ensure-mouse', the session's `mouse' option and the
+copy-mode `WheelDownPane' binding.  With the option nil only the status
+override is reverted."
+  (let ((buf (generate-new-buffer "*gc-agent-teardown-mouse*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buf
+            (setq gascity-terminal--status-session "sess"
+                  gascity-terminal--status-socket "sock"
+                  gascity-terminal--status-mirrored t))
+          (let (script)
+            (cl-letf (((symbol-function 'gascity-terminal--run-async)
+                       (lambda (_dir s _cb) (setq script s) nil)))
+              (with-current-buffer buf (gascity-terminal--status-teardown))
+              (should (string-search
+                       "tmux -L sock set-option -t sess -u status" script))
+              (should (string-search
+                       "tmux -L sock set-option -t sess -u mouse" script))
+              (should (string-search
+                       "tmux -L sock unbind -T copy-mode WheelDownPane"
+                       script))))
+          ;; Option nil: the mouse overrides are left alone.
+          (let (script)
+            (cl-letf (((symbol-function 'gascity-terminal--run-async)
+                       (lambda (_dir s _cb) (setq script s) nil))
+                      (gascity-terminal-ensure-mouse nil))
+              (with-current-buffer buf (gascity-terminal--status-teardown))
+              (should (string-search
+                       "tmux -L sock set-option -t sess -u status" script))
+              (should-not (string-search "mouse" script))
+              (should-not (string-search "unbind" script))))
+          ;; No session recorded: no host round trip at all.
+          (with-current-buffer buf
+            (setq gascity-terminal--status-session nil))
+          (let (called)
+            (cl-letf (((symbol-function 'gascity-terminal--run-async)
+                       (lambda (&rest _) (setq called t) nil)))
+              (with-current-buffer buf (gascity-terminal--status-teardown))
+              (should-not called))))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-status-install-no-mirror-installs-teardown ()
+  "With `gascity-terminal-mode-line-status' nil the mirror is off, but the
+buffer still gets the session locals and the kill-buffer teardown, so the
+mouse ensure is restored even without the mirror (REQ-013)."
+  (let ((buf (generate-new-buffer "*gc-agent-nomirror*")))
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'gascity-terminal--run-async)
+                     (lambda (&rest _) nil))
+                    (gascity-terminal-mode-line-status nil))
+            (with-current-buffer buf
+              (gascity-terminal--status-install buf "sess" "sock" nil t))
+            (with-current-buffer buf
+              (should (equal gascity-terminal--status-session "sess"))
+              (should-not gascity-terminal--status-mirrored)
+              (should (memq #'gascity-terminal--status-teardown
+                            kill-buffer-hook))
+              (should-not gascity-terminal--status-timer))))
+      (kill-buffer buf))))
+
 (ert-deftest gascity-test-terminal-pane-cwd ()
   "The pane-cwd query returns the trimmed path, passing the socket; nil on miss."
   (should (null (gascity-terminal-pane-cwd "")))
@@ -3394,8 +3494,10 @@ with no file handler: starting it does no TRAMP I/O."
     (should (eq (plist-get spawned :connection-type) 'pipe))))
 
 (ert-deftest gascity-test-terminal-attach-honours-status-toggle ()
-  "`gascity-terminal-attach-tmux' installs the status mirror only when
-`gascity-terminal-mode-line-status' is non-nil."
+  "`gascity-terminal-attach-tmux' turns the session's tmux status bar off
+in the pre-step only when `gascity-terminal-mode-line-status' is non-nil;
+the status-install call happens either way (the teardown must restore the
+mouse ensure regardless of the mirror)."
   (let ((buf (generate-new-buffer "*gc-agent-toggle*")) installed)
     (unwind-protect
         (gascity-test--with-tmux-host nil
@@ -3412,7 +3514,10 @@ with no file handler: starting it does no TRAMP I/O."
             (let ((gascity-terminal-mode-line-status nil))
               (setq installed nil gascity-test--host-scripts nil)
               (gascity-terminal-attach-tmux "sess" "sock" nil)
-              (should-not installed)
+              ;; Still installed: the teardown (mouse restore) is needed
+              ;; even without the mirror.
+              (should installed)
+              ;; But the tmux status bar is left alone.
               (should-not (gascity-test--host-script-p "status off")))))
       (when (buffer-live-p buf) (kill-buffer buf)))))
 
