@@ -724,13 +724,13 @@ defaults again.  Run from `kill-buffer-hook'; never blocks."
            #'ignore))))))
 
 (defun gascity-terminal--status-install (buffer session socket &optional dir status-off)
-"Install BUFFER's attach overrides on SESSION/SOCKET and, when enabled, the
-status mirror.
-The session, socket and remote DIR are recorded buffer-locally in every
-case (the teardown needs them to restore the overrides), and the
-teardown is added to BUFFER's `kill-buffer-hook' — it reverts the
-`status' override and, under `gascity-terminal-ensure-mouse', the mouse
-ensure (both installed for the session by the attach pre-step).
+  "Install BUFFER's attach overrides on SESSION/SOCKET.
+When enabled, the status mirror is installed too.
+  SESSION, SOCKET and the remote DIR are recorded buffer-locally in every
+  case (the teardown needs them to restore the overrides), and the
+  teardown is added to BUFFER's `kill-buffer-hook' — it reverts the
+  `status' override and, under `gascity-terminal-ensure-mouse', the mouse
+  ensure (both installed for the session by the attach pre-step).
 
 When `gascity-terminal-mode-line-status' is non-nil, the session's tmux
 status bar is additionally mirrored in the buffer's mode line instead:
