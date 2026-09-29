@@ -3059,13 +3059,96 @@ option on and installs the wheel-to-bottom copy-mode binding
     (should (string-search "tmux -L sock set-option -t sess mouse on" script))
     (should (string-search
              "tmux -L sock bind -T copy-mode WheelDownPane" script))
-    ;; Quoting is shell-quote-argument's business; compare the tmux words
-    ;; with shell quoting stripped.
-    (let ((plain (replace-regexp-in-string "[\\\\']" "" script)))
-      (should (string-search
-               (concat "select-pane ; if -F #{==:#{scroll_position},0}"
-                       " send -X cancel send -X -N 5 scroll-down")
-               plain)))))
+    ;; The compound command must reach tmux as ONE argv word in the
+    ;; shape of `gascity-terminal--mouse-wheel-command' (verified live,
+    ;; tmux 3.7c): a word ending in plain ";" is tmux's command
+    ;; separator - the `if' then runs at bind time ("not in a mode",
+    ;; exit 1) and the key is bound to bare select-pane; an embedded
+    ;; "\;" is a LITERAL `;' once the binding fires ("too many
+    ;; arguments").  Don't string-match the quoting style - assert the
+    ;; bound VALUE through a real tmux on a scratch socket, and fire
+    ;; the binding in copy mode.  WheelDownPane itself needs a real
+    ;; mouse, so the functional pass binds the same command to C-o,
+    ;; which `send-keys' dispatches through the same key table.
+    (skip-unless (executable-find "tmux"))
+    (let* ((socket (concat "gc-mouse-ensure-" (number-to-string (emacs-pid))))
+           (tmux (concat (executable-find "tmux") " -L " socket))
+           (kill (concat tmux " kill-server >/dev/null 2>&1"))
+           ;; The live pass runs the ensure script for its OWN scratch
+           ;; socket, so the tmux invocations and the bound script agree.
+           (script (gascity-terminal--mouse-ensure-script "probe" socket))
+           (out (generate-new-buffer " *gc-mouse-ensure-probe*"))
+           pane read)
+      (unwind-protect
+          (progn
+            (call-process "sh" nil nil nil "-c"
+                          (concat tmux " new-session -d -s probe"))
+            (call-process "sh" nil nil nil "-c"
+                          (concat tmux " send-keys -t probe 'seq 1 200' Enter"))
+            (call-process "sh" nil nil nil "-c" script)
+            ;; The binding is installed and its value is the compound:
+            ;; if-shell with the cancel-then-scroll brace group - not
+            ;; bare select-pane, and not a literal-`;'-argument.
+            (with-current-buffer out
+              (erase-buffer)
+              (call-process "sh" nil t nil "-c"
+                            (concat tmux " list-keys -T copy-mode"))
+              (should (string-match-p
+                       (concat "WheelDownPane[ \\t]+if-shell -F"
+                               "[ \\t]+\\\"#{==:#{scroll_position},0}\\\""
+                               "[ \\t]+\\\"send -X cancel\\\""
+                               "[ \\t]+{ select-pane ; send-keys -X -N 5"
+                               " scroll-down }")
+                       (buffer-substring (point-min) (point-max)))))
+            ;; Fire the same command through a sendable key: scrolling
+            ;; keeps copy mode, and at the bottom it leaves for the
+            ;; live tail.
+            (call-process "sh" nil nil nil "-c"
+                          (gascity-terminal--tmux-sh
+                           socket "bind" "-T" "copy-mode" "C-o"
+                           gascity-terminal--mouse-wheel-command))
+            (with-current-buffer out
+              (erase-buffer)
+              (call-process "sh" nil t nil "-c"
+                            (concat tmux " list-panes -t probe"
+                                    " -F '#{pane_id}'"))
+              (setq pane (string-trim
+                          (buffer-substring (point-min) (point-max)))))
+            (should (string-prefix-p "%" pane))
+            (setq read (lambda (fmt)
+                         (with-current-buffer out
+                           (erase-buffer)
+                           (call-process "sh" nil t nil "-c"
+                                         (concat tmux " display-message -p -t "
+                                                 pane " '" fmt "'"))
+                           (string-trim (buffer-substring
+                                         (point-min) (point-max))))))
+            ;; Wait (bounded) for the shell to have produced the
+            ;; scrollback before entering copy mode.
+            (let ((deadline (+ (float-time) 10)))
+              (while (and (< (float-time) deadline)
+                          (< (string-to-number
+                              (funcall read "#{history_size}"))
+                             50))
+                (sit-for 0.1)))
+            (call-process "sh" nil nil nil "-c"
+                          (concat tmux " copy-mode -t " pane))
+            (call-process "sh" nil nil nil "-c"
+                          (concat tmux " send -X -t " pane " -N 10 scroll-up"))
+            (call-process "sh" nil nil nil "-c"
+                          (concat tmux " send-keys -t " pane " C-o"))
+            (should (equal (funcall read "#{scroll_position}") "5"))
+            (should (equal (funcall read "#{pane_in_mode}") "1"))
+            ;; Wheel to the bottom: the position clamps at 0, and the
+            ;; next wheel leaves copy mode (E8).
+            (call-process "sh" nil nil nil "-c"
+                          (concat tmux " send -X -t " pane
+                                  " -N 20 scroll-down"))
+            (call-process "sh" nil nil nil "-c"
+                          (concat tmux " send-keys -t " pane " C-o"))
+            (should (equal (funcall read "#{pane_in_mode}") "0")))
+        (call-process "sh" nil nil nil "-c" kill)
+        (kill-buffer out)))))
 
 (ert-deftest gascity-test-terminal-attach-script-mouse ()
   "The attach pre-step ensures tmux mouse only under

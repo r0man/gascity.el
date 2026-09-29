@@ -636,20 +636,37 @@ to respect."
     (with-current-buffer buffer
       (gascity-terminal--status-refresh))))
 
+(defconst gascity-terminal--mouse-wheel-command
+  (concat "if -F '#{==:#{scroll_position},0}' 'send -X cancel'"
+          " { select-pane; send -X -N 5 scroll-down }")
+  "Copy-mode command bound to `WheelDownPane' by
+`gascity-terminal--mouse-ensure-script': at the bottom of the history
+\(`scroll-position' 0) leave copy mode for the live tail, otherwise
+select the pane under the mouse and scroll.  The string must reach
+tmux as ONE argv word, and exactly in this shape (verified live,
+tmux 3.7c): a word ending in a plain `;' is tmux's command separator
+\(the `if' then runs at bind time and the key is bound to bare
+`select-pane'), an embedded `\\;' is a LITERAL `;' once the binding
+fires (\"too many arguments\"), and the brace group must be unquoted
+or it stays a string and fails to parse at fire time.")
+
 (defun gascity-terminal--mouse-ensure-script (session socket)
   "Return the sh fragment turning tmux mouse scrolling on for SESSION.
 SOCKET is the tmux server socket.  Two tmux commands: `set-option -t
 SESSION mouse on' (session-scoped) and one copy-mode `WheelDownPane'
 binding that leaves copy mode when it is already at the bottom —
 wheeling to the bottom returns to the live tail (DESIGN-agent-scrolling.md
-D3).  The teardown mirror is `gascity-terminal--mouse-teardown-script'."
+D3).  tmux key tables are server-global, so the binding is not
+targeted at SESSION; the compound command is
+`gascity-terminal--mouse-wheel-command' and must reach tmux as one
+argv word (see its docstring).
+The teardown mirror is `gascity-terminal--mouse-teardown-script'."
   (concat
    (gascity-terminal--tmux-sh socket "set-option" "-t" session "mouse" "on")
    " >/dev/null 2>&1; "
    (gascity-terminal--tmux-sh
-    socket "bind" "-T" "copy-mode" "WheelDownPane" "select-pane"
-    ";" "if" "-F" "#{==:#{scroll_position},0}"
-    "send -X cancel" "send -X -N 5 scroll-down")
+    socket "bind" "-T" "copy-mode" "WheelDownPane"
+    gascity-terminal--mouse-wheel-command)
    " >/dev/null 2>&1; "))
 
 (defun gascity-terminal--mouse-teardown-script (session socket)
