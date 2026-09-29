@@ -356,11 +356,14 @@ the views show their data, not error lines."
       (let ((opener (cadr view)))
         (unless (and (plist-get (cddr view) :pending) (not (commandp opener)))
           (ert-info ((format "view: %s" (car view)))
-            (let ((buf (gascity-audit--open opener)))
-              (should-not (string-match-p "no fixture for"
-                                          (with-current-buffer buf (buffer-string)))))))))
+            (condition-case err
+                (let ((buf (gascity-audit--open opener)))
+                  (should-not (string-match-p "no fixture for"
+                                              (with-current-buffer buf
+                                                (buffer-string)))))
+              (error (ert-fail (format "opening view %s signaled: %S"
+                                       (car view) err))))))))
     (should (null gascity-audit--unserved))))
-
 ;;; The lighter with a live remote stream (§7.12, P5)
 
 (defun gascity-audit--wait (pred &optional secs)

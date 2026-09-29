@@ -456,7 +456,7 @@ Recomputed by `gascity-terminal--status-refresh' and read by the
 The mirror is optional (`gascity-terminal-mode-line-status'); the
 tmux `status' override is only restored by the teardown when the
 mirror was installed.  The mouse ensure has its own switch
-(`gascity-terminal-ensure-mouse') and is restored regardless.")
+ (`gascity-terminal-ensure-mouse') and is restored regardless.")
 
 (defconst gascity-terminal--status-mode-line-segment
   '(:eval (gascity-terminal--status-segment))
@@ -495,7 +495,7 @@ session-existence probe, since `display-message' exits 0 even for a
 missing target."
   (let ((out (gascity-terminal--tmux
               socket "list-windows" "-t" session "-F"
-              "#{window_active}\t#{window_index}:#{window_name}#{window_flags}")))
+"#{window_active}\t#{window_index}:#{window_name}#{window_flags}")))
     (when (and out (not (string-empty-p out)))
       (mapcar (lambda (line)
                 (let ((parts (split-string line "\t")))
@@ -636,28 +636,46 @@ to respect."
     (with-current-buffer buffer
       (gascity-terminal--status-refresh))))
 
+(defconst gascity-terminal--mouse-wheel-command
+  (concat "if -F '#{==:#{scroll_position},0}' 'send -X cancel'"
+          " { select-pane; send -X -N 5 scroll-down }")
+  "Copy-mode command bound to `WheelDownPane' by the mouse ensure.
+At the bottom of the history
+`gascity-terminal--mouse-ensure-script': at the bottom of the history
+\(`scroll-position' 0) leave copy mode for the live tail, otherwise
+select the pane under the mouse and scroll.  The string must reach
+tmux as ONE argv word, and exactly in this shape (verified live,
+tmux 3.7c): a word ending in a plain `;' is tmux's command separator
+\(the `if' then runs at bind time and the key is bound to bare
+`select-pane'), an embedded `\\;' is a LITERAL `;' once the binding
+fires (\"too many arguments\"), and the brace group must be unquoted
+or it stays a string and fails to parse at fire time.")
+
 (defun gascity-terminal--mouse-ensure-script (session socket)
   "Return the sh fragment turning tmux mouse scrolling on for SESSION.
 SOCKET is the tmux server socket.  Two tmux commands: `set-option -t
 SESSION mouse on' (session-scoped) and one copy-mode `WheelDownPane'
 binding that leaves copy mode when it is already at the bottom —
 wheeling to the bottom returns to the live tail (DESIGN-agent-scrolling.md
-D3).  The teardown mirror is `gascity-terminal--mouse-teardown-script'."
+D3).  tmux key tables are server-global, so the binding is not
+targeted at SESSION; the compound command is
+`gascity-terminal--mouse-wheel-command' and must reach tmux as one
+argv word (see its docstring).
+The teardown mirror is `gascity-terminal--mouse-teardown-script'."
   (concat
    (gascity-terminal--tmux-sh socket "set-option" "-t" session "mouse" "on")
    " >/dev/null 2>&1; "
    (gascity-terminal--tmux-sh
-    socket "bind" "-T" "copy-mode" "WheelDownPane" "select-pane"
-    ";" "if" "-F" "#{==:#{scroll_position},0}"
-    "send -X cancel" "send -X -N 5 scroll-down")
+    socket "bind" "-T" "copy-mode" "WheelDownPane"
+    gascity-terminal--mouse-wheel-command)
    " >/dev/null 2>&1; "))
 
 (defun gascity-terminal--mouse-teardown-script (session socket)
-  "Return the sh fragment restoring SESSION's tmux mouse defaults.
+  "Return the sh fragment restoring SESSION's tmux mouse defaults on SOCKET.
 The mirror of `gascity-terminal--mouse-ensure-script': unsets the
 session-scoped `mouse' option and removes the copy-mode
 `WheelDownPane' binding, so a later `tmux attach' sees tmux's defaults
-(REQ-013)."
+ (REQ-013)."
   (concat
    (gascity-terminal--tmux-sh socket "set-option" "-t" session "-u" "mouse")
    " >/dev/null 2>&1; "
@@ -706,12 +724,13 @@ defaults again.  Run from `kill-buffer-hook'; never blocks."
            #'ignore))))))
 
 (defun gascity-terminal--status-install (buffer session socket &optional dir status-off)
-  "Install BUFFER's attach overrides and, when enabled, the status mirror.
-The session, socket and remote DIR are recorded buffer-locally in every
-case (the teardown needs them to restore the overrides), and the
-teardown is added to BUFFER's `kill-buffer-hook' — it reverts the
-`status' override and, under `gascity-terminal-ensure-mouse', the mouse
-ensure (both installed for the session by the attach pre-step).
+  "Install BUFFER's attach overrides on SESSION/SOCKET.
+When enabled, the status mirror is installed too.
+  SESSION, SOCKET and the remote DIR are recorded buffer-locally in every
+  case (the teardown needs them to restore the overrides), and the
+  teardown is added to BUFFER's `kill-buffer-hook' — it reverts the
+  `status' override and, under `gascity-terminal-ensure-mouse', the mouse
+  ensure (both installed for the session by the attach pre-step).
 
 When `gascity-terminal-mode-line-status' is non-nil, the session's tmux
 status bar is additionally mirrored in the buffer's mode line instead:
@@ -833,15 +852,16 @@ plain keys."
 (defun gascity-terminal--scroll-sequence (event)
   "Return the tmux copy-mode byte sequence for Emacs scroll key EVENT.
 EVENT is the single event that invoked a scroll command (as
-`last-command-event'): ?\\C-p / ?\\C-n scroll a line — sent as
-C-Up/C-Down bytes, since C-p/C-n in tmux copy mode are cursor moves,
-not scrolls (E7); ?\\C-v / ?\\M-v and `next'/`prior' page; ?\\M-< and
+`last-command-event'): the line-scroll bindings scroll a line — sent
+as C-Up/C-Down bytes, since those same keys in tmux copy mode are
+cursor moves, not scrolls (E7); the page bindings and `next'/`prior' page;
+?\\M-< and
 ?\\M-> jump to the top/bottom through tmux's own copy-mode
 `history-top'/`history-bottom' bindings (locked empirically — see the
 note above); ?q and `escape' leave copy mode.  Nil for any other
 event — those keys keep the backend's own behaviour.  Pure: this is
 the whole D1 table, so tests are table-driven.
-(DESIGN-agent-scrolling.md D1, evidence E6/E7.)"
+ (DESIGN-agent-scrolling.md D1, evidence E6/E7.)"
   (pcase event
     (?\C-p "\e[1;5A")
     (?\C-n "\e[1;5B")
@@ -855,7 +875,7 @@ the whole D1 table, so tests are table-driven.
 
 (defun gascity-terminal--scroll-backend ()
   "Return the raw-key backend symbol of the current terminal buffer, or nil.
-vterm → `vterm', term/ansi-term → `term', eat → `eat', ghostel →
+vterm → `vterm', term/`ansi-term' → `term', eat → `eat', ghostel →
 `ghostel' (DESIGN-agent-scrolling.md D1); any other major mode has no
 adapter (REQ-007)."
   (pcase major-mode
@@ -900,7 +920,7 @@ escape sequences alike — through `ghostel-send-string'."
 (defun gascity-terminal--send-raw (buffer seq)
   "Send the raw byte sequence SEQ to terminal BUFFER's pty.
 The sender is the backend's raw-key API, selected from BUFFER's major
-mode (E6): vterm → `vterm-send-string', term/ansi-term →
+mode (E6): vterm → `vterm-send-string', term/`ansi-term' →
 `term-send-raw-string', eat → `eat-self-input' (one character event
 per byte — eat's encoder passes plain characters through), ghostel →
 `gascity-terminal--ghostel-send'.  Returns non-nil when sent.  A
@@ -983,7 +1003,7 @@ message instead of erroring (REQ-007)."
 (defun gascity-terminal--backend-reports-mouse-p (backend)
   "Return non-nil when BACKEND reports mouse events natively.
 ghostel and eat feed the wheel to tmux themselves (E4/E5); vterm and
-term/ansi-term do not, and an unknown backend is assumed not to.
+term/`ansi-term' do not, and an unknown backend is assumed not to.
 Pure: the D2 table."
   (memq backend '(ghostel eat)))
 
@@ -1072,7 +1092,7 @@ active (REQ-010)."
                       minor-mode-overriding-map-alist))))
 
 (defvar-local gascity-terminal--attach-keys nil
-  "Non-nil in a gascity attach buffer: activates `gascity-terminal-attach-map'.")
+"Non-nil in a gascity attach buffer: activates `gascity-terminal-attach-map'.")
 
 ;; An emulation map rather than a layer over the local map: vterm's
 ;; copy mode swaps the buffer's local map for its own (and back), which
@@ -1149,7 +1169,7 @@ per OPTS: :term TERM → `gascity-term-ok'/`gascity-term-missing';
 turns the session's tmux status bar off; and, when
 `gascity-terminal-ensure-mouse' is non-nil, turns the session's `mouse'
 option on and installs the wheel-to-bottom copy-mode binding
-(`gascity-terminal--mouse-ensure-script')."
+ (`gascity-terminal--mouse-ensure-script')."
   (let ((term (plist-get opts :term))
         (dir (plist-get opts :dir)))
     (concat
@@ -1158,7 +1178,7 @@ option on and installs the wheel-to-bottom copy-mode binding
      "echo gascity-tmux:$(command -v tmux); "
      (if term
          (concat "if " (gascity-terminal--term-probe-sh term)
-                 "; then echo gascity-term-ok; else echo gascity-term-missing; fi; ")
+"; then echo gascity-term-ok; else echo gascity-term-missing; fi; ")
        "")
      (if dir
          (concat "[ -d " (shell-quote-argument dir) " ] && echo gascity-dir-ok; ")
@@ -1264,7 +1284,7 @@ terminal buffer when one was raised, else nil."
         nil))))
 
 (defun gascity-terminal--attach-finish (result session socket dir store remote
-                                               buf-name term host-dir status-off)
+buf-name term host-dir status-off)
   "Open the attach terminal after the pre-step answered RESULT.
 RESULT is (EXIT . STDOUT) of `gascity-terminal--attach-script'.
 SESSION, SOCKET, DIR, STORE, REMOTE, BUF-NAME, TERM, HOST-DIR and
