@@ -3324,6 +3324,86 @@ keys through the one translator command."
     (should (eq (lookup-key gascity-terminal-scroll-mode-map (kbd key))
                 #'gascity-terminal-scroll-key))))
 
+;;; Wheel translation for non-reporting backends (DESIGN-agent-scrolling.md D2)
+
+(ert-deftest gascity-test-terminal-scroll-backend-reports-mouse ()
+  "`gascity-terminal--backend-reports-mouse-p' is the pure D2 table:
+ghostel and eat report the mouse natively (E4/E5); vterm, term and an
+unknown backend do not."
+  (should (gascity-terminal--backend-reports-mouse-p 'ghostel))
+  (should (gascity-terminal--backend-reports-mouse-p 'eat))
+  (should-not (gascity-terminal--backend-reports-mouse-p 'vterm))
+  (should-not (gascity-terminal--backend-reports-mouse-p 'term))
+  (should-not (gascity-terminal--backend-reports-mouse-p nil)))
+
+(ert-deftest gascity-test-terminal-scroll-wheel-map-selection ()
+  "The scroll mode's effective map carries the wheel bindings only on
+backends that do not report the mouse (REQ-004): ghostel/eat keep the
+base map — no wheel bindings to interfere with the native tmux
+passthrough — while vterm gets the wheel extension."
+  ;; The base map never carries wheel bindings.
+  (should (null (lookup-key gascity-terminal-scroll-mode-map
+                            (kbd "<mouse-4>"))))
+  (should (null (lookup-key gascity-terminal-scroll-mode-map
+                            (kbd "<wheel-down>"))))
+  (let ((buf (generate-new-buffer "*gc-scroll-wheel-map*")))
+    (unwind-protect
+        (with-current-buffer buf
+          ;; A reporting backend: enabling the mode installs no wheel map.
+          (setq major-mode 'ghostel-mode)
+          (gascity-terminal-scroll-mode 1)
+          (should gascity-terminal-scroll-mode)
+          (should-not (assq 'gascity-terminal-scroll-mode
+                            minor-mode-overriding-map-alist))
+          (gascity-terminal-scroll-mode -1)
+          (should-not (assq 'gascity-terminal-scroll-mode
+                            minor-mode-overriding-map-alist))
+          ;; A non-reporting backend: the effective map is the wheel map.
+          (setq major-mode 'vterm-mode)
+          (gascity-terminal-scroll-mode 1)
+          (should (eq (cdr (assq 'gascity-terminal-scroll-mode
+                                 minor-mode-overriding-map-alist))
+                      gascity-terminal-scroll-wheel-map))
+          ;; Deactivating removes the buffer-local entry again.
+          (gascity-terminal-scroll-mode -1)
+          (should-not (assq 'gascity-terminal-scroll-mode
+                            minor-mode-overriding-map-alist)))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-scroll-wheel-notch ()
+  "A wheel notch sends a run of `gascity-terminal--scroll-wheel-notch'
+C-Ups (wheel up) or C-Downs (wheel down); the first notch after
+(re-)entry re-sends the copy-mode entry bytes before the run (REQ-011),
+later notches the run only.  A reporting backend is never driven (REQ-004)."
+  (let ((buf (generate-new-buffer "*gc-scroll-wheel*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq major-mode 'vterm-mode)
+          (let (sent)
+            (cl-letf (((symbol-function 'vterm-send-string)
+                       (lambda (s &optional _p) (push s sent))))
+              ;; Toggle arms the first-notch state (and sends the entry).
+              (gascity-terminal-scroll-toggle)
+              (setq sent nil)
+              (setq last-command-event 'mouse-4)
+              (gascity-terminal-scroll-wheel)
+              (should (equal (nreverse sent)
+                             (list (concat gascity-terminal--copy-mode-entry
+                                           "\e[1;5A\e[1;5A\e[1;5A"))))
+              ;; Later notches: the run only.
+              (setq sent nil)
+              (gascity-terminal-scroll-wheel)
+              (should (equal (nreverse sent) '("\e[1;5A\e[1;5A\e[1;5A")))
+              ;; Wheel down is the C-Down mirror; the notch constant is
+              ;; the adjustable knob of requirements Open Question 2.
+              (setq gascity-terminal--scroll-wheel-first t sent nil)
+              (setq last-command-event 'mouse-5)
+              (gascity-terminal-scroll-wheel)
+              (should (equal (nreverse sent)
+                             (list (concat gascity-terminal--copy-mode-entry
+                                           "\e[1;5B\e[1;5B\e[1;5B")))))))
+      (kill-buffer buf))))
+
 (ert-deftest gascity-test-terminal-pane-cwd ()
   "The pane-cwd query returns the trimmed path, passing the socket; nil on miss."
   (should (null (gascity-terminal-pane-cwd "")))

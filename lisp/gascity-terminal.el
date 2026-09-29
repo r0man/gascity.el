@@ -800,6 +800,9 @@ plain keys."
 ;; assumes it took, a re-toggle sends `q' first to recover from an
 ;; out-of-band copy-mode exit, and the `q'/Esc translations leave both.
 
+(defconst gascity-terminal--copy-mode-entry "\C-b["
+  "Bytes entering tmux copy mode from the attach pty: `C-b' `['.")
+
 (defconst gascity-terminal--scroll-bottom-repeat 100
   "C-Down presses `M->' sends to settle at copy mode's bottom.
 A C-Down (`\\e[1;5B') scrolls the viewport one line and is a no-op at
@@ -918,6 +921,13 @@ keeps the mode."
         (gascity-terminal-scroll-mode -1)
         (message "scroll mode off")))))
 
+(defvar-local gascity-terminal--scroll-wheel-first nil
+  "Non-nil while the next wheel notch is the first after (re-)entry.
+The first notch re-sends the copy-mode entry bytes before its
+C-Up/Down run — self-healing for the wheel, uniformly with the toggle
+\(REQ-011); the toggle arms it, the first notch clears it.")
+
+
 (defun gascity-terminal-scroll-toggle ()
   "Toggle `gascity-terminal-scroll-mode' in this attach buffer (`C-c s').
 Activation sends the copy-mode entry bytes `C-b [' — the only bytes
@@ -938,9 +948,55 @@ message instead of erroring (REQ-007)."
       ;; Self-healing: whatever tmux's pane state actually is, leave
       ;; copy mode first — then the entry below always enters it.
       (gascity-terminal--send-raw (current-buffer) "q"))
-    (gascity-terminal--send-raw (current-buffer) "\C-b[")
+    (gascity-terminal--send-raw (current-buffer) gascity-terminal--copy-mode-entry)
     (gascity-terminal-scroll-mode 1)
+    (setq gascity-terminal--scroll-wheel-first t)
     (message "scroll mode on")))
+
+;;; Wheel translation for non-reporting backends (DESIGN-agent-scrolling.md D2)
+
+;; On ghostel/eat the wheel is tmux's own: the backends report the mouse
+;; natively to tmux, not to Emacs (E4/E5), so their effective scroll-mode
+;; map keeps no wheel bindings at all — the native passthrough wins with
+;; the mode on or off (REQ-004).  On vterm/term, which report nothing,
+;; enabling the mode swaps in the wheel map (buffer-locally, through
+;; `minor-mode-overriding-map-alist') and one notch scrolls ≈10 lines
+;; through copy mode (REQ-003, REQ-011).
+
+(defun gascity-terminal--backend-reports-mouse-p (backend)
+  "Return non-nil when BACKEND reports mouse events natively.
+ghostel and eat feed the wheel to tmux themselves (E4/E5); vterm and
+term/ansi-term do not, and an unknown backend is assumed not to.
+Pure: the D2 table."
+  (memq backend '(ghostel eat)))
+
+(defconst gascity-terminal--scroll-wheel-notch 3
+  "C-Up/Down presses per wheel notch (≈10 lines, tmux's `-N 5' feel).
+Adjustable per requirements Open Question 2; the live pass locks it.")
+
+(defun gascity-terminal-scroll-wheel ()
+  "Send the intercepted wheel notch as tmux copy-mode scroll bytes.
+The first notch after (re-)entry re-sends the copy-mode entry bytes
+before a full run of `gascity-terminal--scroll-wheel-notch' C-Ups or
+C-Downs (REQ-011); later notches send only the run.  Wheel-down relies
+on the D3 binding to leave copy mode at the bottom.  A no-op on a
+backend that reports the mouse natively — its wheel goes to tmux
+without gascity (E5, REQ-004)."
+  (interactive)
+  (unless (gascity-terminal--backend-reports-mouse-p
+           (gascity-terminal--scroll-backend))
+    (let* ((up (memq (event-basic-type last-command-event)
+                     '(mouse-4 wheel-up)))
+           (run (mapconcat #'identity
+                           (make-list gascity-terminal--scroll-wheel-notch
+                                      (if up "\e[1;5A" "\e[1;5B"))))
+           (first gascity-terminal--scroll-wheel-first))
+      (setq gascity-terminal--scroll-wheel-first nil)
+      (gascity-terminal--send-raw
+       (current-buffer)
+       (if first
+           (concat gascity-terminal--copy-mode-entry run)
+         run)))))
 
 (defvar-keymap gascity-terminal-scroll-mode-map
   :doc "Keymap of `gascity-terminal-scroll-mode' (DESIGN-agent-scrolling.md D1).
@@ -958,17 +1014,45 @@ nothing else while the mode is active (E9)."
   "q" #'gascity-terminal-scroll-key
   "<escape>" #'gascity-terminal-scroll-key)
 
+(defvar-keymap gascity-terminal-scroll-wheel-map
+  :doc "Wheel extension of `gascity-terminal-scroll-mode-map' (D2).
+The buffer-local effective map of `gascity-terminal-scroll-mode' on
+backends that do NOT report the mouse: the base D1 keys plus the wheel
+notches.  Never installed on ghostel/eat — their native tmux
+passthrough must not be double-driven (E5, REQ-004)."
+  :parent gascity-terminal-scroll-mode-map
+  "<mouse-4>" #'gascity-terminal-scroll-wheel
+  "<mouse-5>" #'gascity-terminal-scroll-wheel
+  "<wheel-up>" #'gascity-terminal-scroll-wheel
+  "<wheel-down>" #'gascity-terminal-scroll-wheel)
+
 (define-minor-mode gascity-terminal-scroll-mode
   "Emacs-keys scroll sub-mode for a gascity tmux attach buffer (D1).
 Toggled with `C-c s' (`gascity-terminal-scroll-toggle').  While
 active, the Emacs scroll keys of `gascity-terminal-scroll-mode-map'
 are translated to tmux copy-mode byte sequences and sent to the pty;
 the agent receives no keys (E9).  `q' and Esc leave copy mode and
-deactivate the mode.  The status mirror's segment gains a `[scroll]'
-marker while the mode is active (REQ-010)."
+deactivate the mode.  On backends that do not report the mouse, the
+effective map additionally carries the wheel translation (D2); the
+status mirror's segment gains a `[scroll]' marker while the mode is
+active (REQ-010)."
   :init-value nil
   :lighter nil
-  :keymap gascity-terminal-scroll-mode-map)
+  :keymap gascity-terminal-scroll-mode-map
+  ;; The wheel extension is buffer-local and per-backend: install the
+  ;; overriding-map entry only when this buffer's backend does not
+  ;; report the mouse, and always on deactivate.  Ghostel/eat keep the
+  ;; base map — no wheel bindings to interfere with the passthrough.
+  (setq-local minor-mode-overriding-map-alist
+              (assq-delete-all 'gascity-terminal-scroll-mode
+                               minor-mode-overriding-map-alist))
+  (when (and gascity-terminal-scroll-mode
+             (not (gascity-terminal--backend-reports-mouse-p
+                   (gascity-terminal--scroll-backend))))
+    (setq-local minor-mode-overriding-map-alist
+                (cons (cons 'gascity-terminal-scroll-mode
+                            gascity-terminal-scroll-wheel-map)
+                      minor-mode-overriding-map-alist))))
 
 (defvar-local gascity-terminal--attach-keys nil
   "Non-nil in a gascity attach buffer: activates `gascity-terminal-attach-map'.")
