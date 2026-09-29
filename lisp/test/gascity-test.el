@@ -3151,6 +3151,179 @@ mouse ensure is restored even without the mirror (REQ-013)."
               (should-not gascity-terminal--status-timer))))
       (kill-buffer buf))))
 
+;;; The Emacs-keys scroll sub-mode (DESIGN-agent-scrolling.md D1, WI-2)
+
+(ert-deftest gascity-test-terminal-scroll-sequence ()
+  "`gascity-terminal--scroll-sequence' is the pure D1 translation table:
+C-p/C-n become C-Up/C-Down bytes (E7), the paging keys become
+PPage/NPage, M-< goes through the goto prompt, M-> repeats C-Down to
+settle at the bottom, q/Esc leave copy mode — any other event
+translates to nothing (and keeps the backend's behaviour)."
+  (should (equal (gascity-terminal--scroll-sequence ?\C-p) "\e[1;5A"))
+  (should (equal (gascity-terminal--scroll-sequence ?\C-n) "\e[1;5B"))
+  (should (equal (gascity-terminal--scroll-sequence ?\C-v) "\e[6~"))
+  (should (equal (gascity-terminal--scroll-sequence ?\M-v) "\e[5~"))
+  (should (equal (gascity-terminal--scroll-sequence 'next) "\e[6~"))
+  (should (equal (gascity-terminal--scroll-sequence 'prior) "\e[5~"))
+  (should (equal (gascity-terminal--scroll-sequence ?\M-<) "g0\r"))
+  ;; M->: exactly `gascity-terminal--scroll-bottom-repeat' C-Downs, one
+  ;; run, no separator (requirements Open Question 1).
+  (should (equal (gascity-terminal--scroll-sequence ?\M->)
+                 (mapconcat #'identity
+                            (make-list gascity-terminal--scroll-bottom-repeat
+                                       "\e[1;5B"))))
+  (should (equal (gascity-terminal--scroll-sequence ?q) "q"))
+  (should (equal (gascity-terminal--scroll-sequence 'escape) "\e"))
+  ;; Not table keys: nil, so the backend keeps them.
+  (should (null (gascity-terminal--scroll-sequence ?a)))
+  (should (null (gascity-terminal--scroll-sequence 'f13))))
+
+(ert-deftest gascity-test-terminal-scroll-adapter-dispatch ()
+  "`gascity-terminal--send-raw' picks the backend's raw-key API from the
+buffer's major mode (E6) and returns non-nil when it sent: vterm →
+`vterm-send-string', term/ansi-term → `term-send-raw-string', eat →
+`eat-self-input' one character event per byte, ghostel →
+`ghostel-send-string' for escape sequences and `ghostel-send-key' for
+control bytes (E6's semi-char strictness)."
+  (let ((buf (generate-new-buffer "*gc-scroll-adapter*")))
+    (unwind-protect
+        (progn
+          ;; vterm → vterm-send-string.
+          (with-current-buffer buf (setq major-mode 'vterm-mode))
+          (let (sent)
+            (cl-letf (((symbol-function 'vterm-send-string)
+                       (lambda (s &optional _p) (setq sent s))))
+              (should (gascity-terminal--send-raw buf "\e[1;5A"))
+              (should (equal sent "\e[1;5A"))))
+          ;; term/ansi-term → term-send-raw-string.
+          (dolist (mode '(term-mode ansi-term-mode))
+            (with-current-buffer buf (setq major-mode mode))
+            (let (sent)
+              (cl-letf (((symbol-function 'term-send-raw-string)
+                         (lambda (s) (setq sent s))))
+                (should (gascity-terminal--send-raw buf "\e[6~"))
+                (should (equal sent "\e[6~")))))
+          ;; eat → eat-self-input, one character event per byte.
+          (with-current-buffer buf (setq major-mode 'eat-mode))
+          (let (events)
+            (cl-letf (((symbol-function 'eat-self-input)
+                       (lambda (_n e) (setq events (append events (list e))))))
+              (should (gascity-terminal--send-raw buf "q\r"))
+              (should (equal events '(?q ?\r)))))
+          ;; ghostel: the control/escape split.
+          (with-current-buffer buf (setq major-mode 'ghostel-mode))
+          (let (strings keys)
+            (cl-letf (((symbol-function 'ghostel-send-string)
+                       (lambda (s) (setq strings (append strings (list s)))))
+                      ((symbol-function 'ghostel-send-key)
+                       (lambda (k &optional m)
+                         (setq keys (append keys (list (cons k m)))))))
+              ;; An escape sequence passes as one string (E6).
+              (should (gascity-terminal--send-raw buf "\e[1;5A"))
+              (should (equal strings '("\e[1;5A")))
+              (should-not keys)
+              ;; A control byte needs ghostel-send-key: C-b → ("b" "ctrl"),
+              ;; and the printable tail goes as its own string.
+              (setq strings nil keys nil)
+              (should (gascity-terminal--send-raw buf "\C-b["))
+              (should (equal keys '(("b" . "ctrl"))))
+              (should (equal strings '("[")))
+              ;; Mixed: "g0" as a string, RET as the `return' key.
+              (setq strings nil keys nil)
+              (should (gascity-terminal--send-raw buf "g0\r"))
+              (should (equal strings '("g0")))
+              (should (equal keys '(("return")))))))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-scroll-unknown-backend ()
+  "A backend without a raw-key adapter never errors (REQ-007):
+`gascity-terminal--send-raw' returns nil and deactivates the mode with
+a message, and the toggle reports without arming anything."
+  (let ((buf (generate-new-buffer "*gc-scroll-unknown*")))
+    (unwind-protect
+        (with-current-buffer buf
+          ;; fundamental-mode: no adapter.
+          (should-not (gascity-terminal--send-raw buf "\e[1;5A"))
+          (should-not gascity-terminal-scroll-mode)
+          ;; With the mode armed by hand, a send deactivates it.
+          (gascity-terminal-scroll-mode 1)
+          (should-not (gascity-terminal--send-raw buf "q"))
+          (should-not gascity-terminal-scroll-mode)
+          ;; The toggle reports and stays off.
+          (gascity-terminal-scroll-toggle)
+          (should-not gascity-terminal-scroll-mode))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-scroll-toggle ()
+  "Toggle semantics (REQ-008): activation sends the copy-mode entry
+bytes `C-b [' and arms the map; a re-toggle sends `q' first
+(self-healing after an out-of-band copy-mode exit) then re-enters;
+`q' and Esc leave copy mode and deactivate the mode (REQ-009)."
+  (let ((buf (generate-new-buffer "*gc-scroll-toggle*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq major-mode 'vterm-mode)
+          (let (sent)
+            (cl-letf (((symbol-function 'vterm-send-string)
+                       (lambda (s &optional _p) (push s sent))))
+              ;; Activation: exactly the entry bytes.
+              (gascity-terminal-scroll-toggle)
+              (should gascity-terminal-scroll-mode)
+              (should (equal (nreverse sent) '("\C-b[")))
+              ;; Re-toggle: q first, then re-entry; the mode stays on.
+              (setq sent nil)
+              (gascity-terminal-scroll-toggle)
+              (should gascity-terminal-scroll-mode)
+              (should (equal (nreverse sent) '("q" "\C-b[")))
+              ;; q: translated, and the mode deactivates.
+              (setq sent nil last-command-event ?q)
+              (gascity-terminal-scroll-key)
+              (should (equal (nreverse sent) '("q")))
+              (should-not gascity-terminal-scroll-mode)
+              ;; Esc likewise.
+              (gascity-terminal-scroll-toggle)
+              (should gascity-terminal-scroll-mode)
+              (setq sent nil last-command-event 'escape)
+              (gascity-terminal-scroll-key)
+              (should (equal (nreverse sent) '("\e")))
+              (should-not gascity-terminal-scroll-mode)
+              ;; A key with no table entry sends nothing, keeps the mode.
+              (gascity-terminal-scroll-mode 1)
+              (setq sent nil last-command-event ?a)
+              (gascity-terminal-scroll-key)
+              (should-not sent)
+              (should gascity-terminal-scroll-mode))))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-scroll-status-marker ()
+  "The status mirror's segment carries the `[scroll]' marker exactly
+while `gascity-terminal-scroll-mode' is active in the buffer (REQ-010):
+same segment, nothing appended by tmux."
+  (let ((buf (generate-new-buffer "*gc-scroll-marker*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq gascity-terminal--status-string "mayor  1:claude*")
+          (should (equal (gascity-terminal--status-segment)
+                         " mayor  1:claude*"))
+          (gascity-terminal-scroll-mode 1)
+          (should (equal (gascity-terminal--status-segment)
+                         " mayor  1:claude* [scroll]"))
+          (gascity-terminal-scroll-mode -1)
+          (should (equal (gascity-terminal--status-segment)
+                         " mayor  1:claude*")))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-scroll-bindings ()
+  "The attach map binds `C-c s' to the toggle (no §10 collision — the
+attach map owns only `C-c' keys), and the scroll-mode map owns the D1
+keys through the one translator command."
+  (should (eq (lookup-key gascity-terminal-attach-map (kbd "C-c s"))
+              #'gascity-terminal-scroll-toggle))
+  (dolist (key '("C-p" "C-n" "C-v" "M-v" "<next>" "<prior>" "M-<" "M->"
+                 "q" "<escape>"))
+    (should (eq (lookup-key gascity-terminal-scroll-mode-map (kbd key))
+                #'gascity-terminal-scroll-key))))
+
 (ert-deftest gascity-test-terminal-pane-cwd ()
   "The pane-cwd query returns the trimmed path, passing the socket; nil on miss."
   (should (null (gascity-terminal-pane-cwd "")))

@@ -100,6 +100,16 @@
 
 (declare-function gascity--log "gascity")
 
+;; The scroll sub-mode's per-backend raw-key adapters (see the scroll
+;; section below).  Each is called only when the buffer's major mode is
+;; that backend's, which means the package is loaded; the declares only
+;; satisfy the byte-compile gate (soft `require' would load the world).
+(declare-function vterm-send-string "vterm" (string &optional use-all-inputs))
+(declare-function term-send-raw-string "term" (string))
+(declare-function eat-self-input "eat" (n &optional e))
+(declare-function ghostel-send-key "ghostel" (key-name &optional mods))
+(declare-function ghostel-send-string "ghostel" (string))
+
 ;; The spawn-free bead-store resolver lives in gascity-section (which
 ;; requires this module); it is only ever handed on as a function value.
 (declare-function gascity-beads--bead-path-cached "gascity-section" (id))
@@ -395,6 +405,10 @@ so starting it does no remote I/O.  Returns the process, or nil."
 
 ;;; tmux status in the mode line
 
+;; Forward declaration: the scroll section below defines the minor mode;
+;; its buffer-local variable is read here (the segment's marker).
+(defvar gascity-terminal-scroll-mode)
+
 (defvar-local gascity-terminal--status-session nil
   "Tmux session name mirrored in this buffer's mode line, or nil.")
 
@@ -499,10 +513,14 @@ while the bar is off, and its residual clock duplicates `display-time'."
 (defun gascity-terminal--status-segment ()
   "Mode-line segment for this buffer's cached tmux status, or \"\".
 Read on every redisplay; the value is refreshed out-of-band by
-`gascity-terminal--status-refresh', not recomputed here."
+`gascity-terminal--status-refresh', not recomputed here.  While
+`gascity-terminal-scroll-mode' is active the segment carries a
+`[scroll]' marker (REQ-010) — the same status-mirror segment, not a
+new one, evaluated live so the marker never lags a refresh tick."
   (if (and gascity-terminal--status-string
            (not (string-empty-p gascity-terminal--status-string)))
-      (concat " " gascity-terminal--status-string)
+      (concat " " gascity-terminal--status-string
+              (and gascity-terminal-scroll-mode " [scroll]"))
     ""))
 
 ;;; The status mirror, asynchronous
@@ -767,7 +785,190 @@ Active wherever `gascity-terminal--attach-keys' is set (see
 here: vterm forwards everything else to the pty
 \(`vterm-keymap-exceptions'), and the backends' copy modes own the
 plain keys."
-  "C-c b" #'gascity-bead-show-at-point)
+  "C-c b" #'gascity-bead-show-at-point
+  "C-c s" #'gascity-terminal-scroll-toggle)
+
+;;; The Emacs-keys scroll sub-mode (DESIGN-agent-scrolling.md D1)
+
+;; `C-c s' toggles `gascity-terminal-scroll-mode' in an attach buffer.
+;; While it is active, the Emacs scroll keys of the mode map are
+;; translated to tmux copy-mode byte sequences (the pure table of
+;; `gascity-terminal--scroll-sequence', evidence E6/E7) and sent through
+;; the per-backend raw-key adapter `gascity-terminal--send-raw'; the
+;; agent's pty receives no other keys (E9).  State is optimistic and
+;; self-healing: activation sends the copy-mode entry bytes `C-b [' and
+;; assumes it took, a re-toggle sends `q' first to recover from an
+;; out-of-band copy-mode exit, and the `q'/Esc translations leave both.
+
+(defconst gascity-terminal--scroll-bottom-repeat 100
+  "C-Down presses `M->' sends to settle at copy mode's bottom.
+A C-Down (`\\e[1;5B') scrolls the viewport one line and is a no-op at
+the bottom, so any run at least as long as the distance to the bottom
+lands there; the surplus presses cost nothing.  Chosen over `End' per
+requirements Open Question 1; revisit when the live pass (WI-4) locks
+the feel.")
+
+(defun gascity-terminal--scroll-sequence (event)
+  "Return the tmux copy-mode byte sequence for Emacs scroll key EVENT.
+EVENT is the single event that invoked a scroll command (as
+`last-command-event'): ?\\C-p / ?\\C-n scroll a line — sent as
+C-Up/C-Down bytes, since C-p/C-n in tmux copy mode are cursor moves,
+not scrolls (E7); ?\\C-v / ?\\M-v and `next'/`prior' page; ?\\M-<
+jumps to the top through the goto prompt (`g' `0' `RET'); ?\\M->
+repeats C-Down `gascity-terminal--scroll-bottom-repeat' times to
+settle at the bottom; ?q and `escape' leave copy mode.  Nil for any
+other event — those keys keep the backend's own behaviour.  Pure:
+this is the whole D1 table, so tests are table-driven.
+(DESIGN-agent-scrolling.md D1, evidence E6/E7.)"
+  (pcase event
+    (?\C-p "\e[1;5A")
+    (?\C-n "\e[1;5B")
+    ((or ?\C-v 'next) "\e[6~")
+    ((or ?\M-v 'prior) "\e[5~")
+    (?\M-< "g0\r")
+    (?\M-> (mapconcat #'identity
+                      (make-list gascity-terminal--scroll-bottom-repeat
+                                 "\e[1;5B")))
+    (?q "q")
+    ('escape "\e")
+    (_ nil)))
+
+(defun gascity-terminal--scroll-backend ()
+  "Return the raw-key backend symbol of the current terminal buffer, or nil.
+vterm → `vterm', term/ansi-term → `term', eat → `eat', ghostel →
+`ghostel' (DESIGN-agent-scrolling.md D1); any other major mode has no
+adapter (REQ-007)."
+  (pcase major-mode
+    ('vterm-mode 'vterm)
+    ((or 'term-mode 'ansi-term-mode) 'term)
+    ('eat-mode 'eat)
+    ('ghostel-mode 'ghostel)))
+
+(defun gascity-terminal--ghostel-control-key (char)
+  "Return (KEY-NAME . MODS) for the control byte CHAR, or nil.
+E6: ghostel's semi-char mode drops control bytes sent as a string —
+`C-b' had to go through `ghostel-send-key' — so the adapter encodes
+them.  The Latin letters become their `ctrl' keys, RET is `return',
+TAB is `tab', DEL is `backspace'; escape sequences (which DO pass as
+a string, E6) and printable characters are not control bytes."
+  (cond
+   ((eq char ?\r) '("return" . nil))
+   ((eq char ?\t) '("tab" . nil))
+   ((eq char 127) '("backspace" . nil))
+   ((and (>= char 1) (<= char 26))
+    (cons (char-to-string (+ ?a (1- char))) "ctrl"))
+   (t nil)))
+
+(defun gascity-terminal--ghostel-send (seq)
+  "Send byte sequence SEQ through ghostel's key/string split (E6).
+Runs in the ghostel buffer.  Control bytes go through
+`ghostel-send-key' (a bare control byte sent as a string does not
+arrive in semi-char mode), everything else — printable runs and
+escape sequences alike — through `ghostel-send-string'."
+  (let ((chunk ""))
+    (dolist (ch (append seq nil))
+      (if-let* ((key (gascity-terminal--ghostel-control-key ch)))
+          (progn
+            (unless (string-empty-p chunk)
+              (ghostel-send-string chunk)
+              (setq chunk ""))
+            (ghostel-send-key (car key) (cdr key)))
+        (setq chunk (concat chunk (char-to-string ch)))))
+    (unless (string-empty-p chunk)
+      (ghostel-send-string chunk))))
+
+(defun gascity-terminal--send-raw (buffer seq)
+  "Send the raw byte sequence SEQ to terminal BUFFER's pty.
+The sender is the backend's raw-key API, selected from BUFFER's major
+mode (E6): vterm → `vterm-send-string', term/ansi-term →
+`term-send-raw-string', eat → `eat-self-input' (one character event
+per byte — eat's encoder passes plain characters through), ghostel →
+`gascity-terminal--ghostel-send'.  Returns non-nil when sent.  A
+backend without an adapter never errors: it deactivates
+`gascity-terminal-scroll-mode' with an echo-area message and returns
+nil (REQ-007)."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (pcase (gascity-terminal--scroll-backend)
+        ('vterm (vterm-send-string seq) t)
+        ('term (term-send-raw-string seq) t)
+        ('eat (dolist (ch (append seq nil))
+                (eat-self-input 1 ch))
+               t)
+        ('ghostel (gascity-terminal--ghostel-send seq) t)
+        (_
+         (when gascity-terminal-scroll-mode
+           (gascity-terminal-scroll-mode -1)
+           (message "scroll mode off: no raw-key adapter for %s" major-mode))
+         nil)))))
+
+(defun gascity-terminal-scroll-key ()
+  "Send the translation of the scroll key that invoked this command.
+The event (`last-command-event') is looked up in the pure table
+\(`gascity-terminal--scroll-sequence') and its bytes go to the pty via
+`gascity-terminal--send-raw'.  The `q' and Esc entries also deactivate
+`gascity-terminal-scroll-mode': leaving copy mode hands the keys back
+to the agent (REQ-009).  A key with no table entry sends nothing and
+keeps the mode."
+  (interactive)
+  (let ((event last-command-event))
+    (when-let* ((seq (gascity-terminal--scroll-sequence event)))
+      (gascity-terminal--send-raw (current-buffer) seq)
+      (when (memq event '(?q escape))
+        (gascity-terminal-scroll-mode -1)
+        (message "scroll mode off")))))
+
+(defun gascity-terminal-scroll-toggle ()
+  "Toggle `gascity-terminal-scroll-mode' in this attach buffer (`C-c s').
+Activation sends the copy-mode entry bytes `C-b [' — the only bytes
+the agent can see on entry — and arms the map.  Re-toggling while the
+mode thinks it is active sends `q' first, recovering from an
+out-of-band copy-mode exit, then re-enters: optimistic +
+self-healing, with no async `pane_in_mode' resync in v1 (REQ-008).
+The way out of the mode is its own `q'/Esc translations.  A backend
+without a raw-key adapter deactivates the mode with an echo-area
+message instead of erroring (REQ-007)."
+  (interactive)
+  (if (null (gascity-terminal--scroll-backend))
+      (progn
+        (when gascity-terminal-scroll-mode
+          (gascity-terminal-scroll-mode -1))
+        (message "scroll mode: no raw-key adapter for %s" major-mode))
+    (when gascity-terminal-scroll-mode
+      ;; Self-healing: whatever tmux's pane state actually is, leave
+      ;; copy mode first — then the entry below always enters it.
+      (gascity-terminal--send-raw (current-buffer) "q"))
+    (gascity-terminal--send-raw (current-buffer) "\C-b[")
+    (gascity-terminal-scroll-mode 1)
+    (message "scroll mode on")))
+
+(defvar-keymap gascity-terminal-scroll-mode-map
+  :doc "Keymap of `gascity-terminal-scroll-mode' (DESIGN-agent-scrolling.md D1).
+Every binding translates through `gascity-terminal--scroll-sequence'
+and sends via `gascity-terminal--send-raw'; the agent's pty receives
+nothing else while the mode is active (E9)."
+  "C-p" #'gascity-terminal-scroll-key
+  "C-n" #'gascity-terminal-scroll-key
+  "C-v" #'gascity-terminal-scroll-key
+  "M-v" #'gascity-terminal-scroll-key
+  "<next>" #'gascity-terminal-scroll-key
+  "<prior>" #'gascity-terminal-scroll-key
+  "M-<" #'gascity-terminal-scroll-key
+  "M->" #'gascity-terminal-scroll-key
+  "q" #'gascity-terminal-scroll-key
+  "<escape>" #'gascity-terminal-scroll-key)
+
+(define-minor-mode gascity-terminal-scroll-mode
+  "Emacs-keys scroll sub-mode for a gascity tmux attach buffer (D1).
+Toggled with `C-c s' (`gascity-terminal-scroll-toggle').  While
+active, the Emacs scroll keys of `gascity-terminal-scroll-mode-map'
+are translated to tmux copy-mode byte sequences and sent to the pty;
+the agent receives no keys (E9).  `q' and Esc leave copy mode and
+deactivate the mode.  The status mirror's segment gains a `[scroll]'
+marker while the mode is active (REQ-010)."
+  :init-value nil
+  :lighter nil
+  :keymap gascity-terminal-scroll-mode-map)
 
 (defvar-local gascity-terminal--attach-keys nil
   "Non-nil in a gascity attach buffer: activates `gascity-terminal-attach-map'.")
