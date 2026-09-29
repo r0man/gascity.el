@@ -432,22 +432,62 @@ send · `a` archive · `u` unread. Main `gascity` transient gains a
 **“Bead/Mail”** group entry for each dispatcher. (Exact letters are the
 proposal; final assignment is fixed in each phase’s review.)
 
-### Unified sling transient (supersedes the two-menu sling flow)
+### Unified sling transient (the staged adaptive menu — sling redesign)
 
-`gascity-sling-dispatch` is the **single** sling menu — the separate
-formula prefix (`gascity-sling-formula-dispatch`) and its up-front target
-prompt are absorbed. Sections stack vertically: header info (city, Arg,
-Formula, Target), Formula, Destination, Routing flags, Actions, then the
-picked formula’s full-width Variables section once `-f` has picked in
-place. Inner keys: `-f` pick formula (re-renders the same menu) · `g`
-refresh catalog · `-T` target session (visible in the header; never
-prompted up front) · `A` edit the sling arg (bead id / task text; in
-place, shown in the header) · `-c -a -n -m -t` routing flags · `s` sling · `p`
-preview (`--dry-run`) · `r` preview recipe · `q` quit. **Routing flags are
-consumed only by the plain path** — a picked formula’s sling ignores them
-(its command is built from target/arg/formula/`--on`/vars only). Generated
-variable keys are deterministic and avoid every single-letter static
-binding (`f g T A c a n m t s p r q`).
+`gascity-sling-dispatch` remains the **single** sling menu; the sling
+redesign (approved design `plans/sling-command/design.md`, signed-off
+mockups `plans/sling-command/menu-mockups.md`, 2026-09-27 — this
+subsection describes that redesign and supersedes the earlier unified
+layout above) reshapes it into staged, adaptive groups —
+What → Who → How → Preview → Launch → Follow — where a stage collapses
+to its one line whenever context pre-seeds its answer. A fully
+pre-seeded plain dispatch is exactly `S` then `s`, zero prompts.
+
+The first group is the **one-sentence shape header** — inferred from
+the work + formula selections (`plain` / `--formula` / `--on`), never
+a flag, never a toggle — plus the **live footer**: the launch summary
+(shape · target · vars set) and ✓/⚠ validation status, recomputed on
+every change, from cached data only (nothing on the render path runs
+gc).
+
+Stages: **What** (`A` the work picker — completing read over the
+city’s open beads + convoys, `C-u A` or empty-RET freeform text,
+point pre-seeds · `f` the formula picker — catalog ∪ `gc formula
+list`; picking with work in scope infers `--on`, without work
+`--formula`) · **Who** (`T` the agent picker — agents, not sessions,
+grouped city-first then per rig, annotated scope + live state, free
+entry works; the default is derived — rig `default_sling_target` →
+per-(city, formula) target memory → the single rig-scoped
+`gc.implementation-worker` convention — shown with a `derived` tag,
+and `s` never re-prompts when one is derivable) · **How** (one typed
+infix per declared formula var, full width, titled
+`How — <formula> vars`: file completion for `context_path`/`*_path`
+relative to the target rig’s workdir, directory completion for
+`artifact_root` seeded `plans/<title-slug>/`, the agent picker for
+`*_target`, digit validation for numerics, restricted choices for
+enum/methodology/pattern vars, bool toggles — heuristics overridable
+per var via `gascity-sling-var-readers`, anything unrecognized fails
+soft to string) · **Actions** (`s P r g x q`). Routing flags
+(`-c -a -n -m -t`) render **only on the plain shape** and are consumed
+only by the plain path, as before.
+
+Beyond the earlier unified menu: `P` opens the **full preview buffer**
+(header sentence, every validation check in full, the recipe DAG,
+and the `--dry-run` routing plan when it answers — first paint is
+client-side and never blocks; `s` launches from the buffer; preview
+is never a gate), the client-side **pre-launch warnings** fire in the
+footer (the bl-bdj formulas-v2 trap on a v2 formula with
+binding-qualified step run targets + a city-scoped target; cross-store
+routes — unmissable, never blocking, gc stays the authority), and a
+successful formula launch echoes the created workflow root with a
+momentary **follow offer** (`F` → `gascity-run-show` on the root bead;
+any other key dismisses; stay put by default; plain routes keep the
+plain echo, no offer).
+
+Generated variable keys are deterministic and avoid the reserved set
+`A f T c a n m t s P r g x q` (`p` is freed — the preview moved to
+`P`). User documentation: the “The Sling Command” chapter of the
+manual (`doc/gascity.texi`).
 
 ---
 

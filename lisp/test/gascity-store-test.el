@@ -1187,6 +1187,27 @@ City start/stop keep their streaming `async-shell-command' buffer.")
             (gascity-sling-formula--dispatch
              (gascity-domain-decode 'gascity-formula '((name . "do-work")))
              "r/a" nil nil)))
+      (gascity-sling-dispatch-full-preview
+       . ,(lambda ()
+            (gascity-sling--full-preview
+             (list :city "/tmp/city/" :formula nil
+                   :target "r/a" :arg "task text")
+             nil)))
+      (gascity-sling-preview-launch
+       . ,(lambda ()
+            (with-current-buffer
+                (gascity-view-get-buffer-create "*gc-sling: preview*")
+              (gascity-sling-preview-mode)
+              (setq gascity-sling-preview--data
+                    (list :city "/tmp/city/"
+                          :launch (lambda ()
+                                    (let ((command (gascity-command-sling
+                                                    :target "r/a"
+                                                    :arg "task text")))
+                                      (oset command json t)
+                                      (gascity-command-act-async command)))))
+              (cl-letf (((symbol-function 'quit-window) #'ignore))
+                (gascity-sling-preview-launch)))))
       (gascity-mail-send
        . ,(lambda ()
             (gascity-mail-send "mayor" "subject")
@@ -1205,7 +1226,31 @@ City start/stop keep their streaming `async-shell-command' buffer.")
                                                 (gascity-context-scope-key)))
                 (goto-char (point-max))
                 (insert "body")
-                (gascity-compose-finish))))))))
+                (gascity-compose-finish)))))
+      ;; The redesign's `P' full preview (plans/sling-command WI-7): an
+      ;; input-free suffix that paints its buffer client-side and starts
+      ;; the dry-run on the action lane.  It joins the guard when the
+      ;; redesigned layout is loaded (`gascity-test-sling-redesign-p').
+      ,@(when (and (fboundp 'gascity-sling-dispatch-preview)
+                   (gascity-test-sling-redesign-p))
+          `((gascity-sling-dispatch-preview
+             . ,(lambda ()
+                  (cl-letf (((symbol-function 'transient-args)
+                             (lambda (_prefix) nil))
+                            ((symbol-function 'transient-scope)
+                             (lambda () (list :city "/tmp/city/" :formula nil
+                                              :target "r/a" :work "task text")))
+                            ((symbol-function 'gascity-view-get-buffer-create)
+                             (lambda (&rest _)
+                               (get-buffer-create " *gc-sling-preview*")))
+                            ;; The re-setup renders the live menu, whose
+                            ;; footer peeks the roster (TTL-gated reads
+                            ;; covered by the footer tests) and leaves a
+                            ;; transient active — the verb's own gc call
+                            ;; is the dry run; the render is parked.
+                            ((symbol-function 'transient-setup)
+                             (lambda (&rest _))))
+                    (call-interactively #'gascity-sling-dispatch-preview)))))))))
 
 (ert-deftest gascity-test-store-non-blocking-guard ()
   "Every input-free action verb returns having only started a process (D9).
@@ -1257,7 +1302,9 @@ exceptions (city start/stop) are exempt by name."
                 ;; still pending.
                 (should (gascity-store-pending-targets))))))))
     (dolist (b (buffer-list))
-      (when (string-match-p "\\`\\*\\(gc-\\(mail\\|peek\\)\\|gascity-mail-thread\\)" (buffer-name b))
+      (when (string-match-p
+             "\\`\\*\\(gc-\\(mail\\|peek\\|sling\\)\\|gascity-mail-thread\\)"
+             (buffer-name b))
         (kill-buffer b)))))
 
 (provide 'gascity-store-test)

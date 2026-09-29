@@ -87,6 +87,106 @@ stopped agents take their template's provider from `gc agent list'."
     (should (equal (substring-no-properties (aref (cadr entry) 1)) "gc.w-1"))
     (should (equal (aref (cadr entry) 3) "stalled"))))
 
+(defconst gascity-agents-test--fixture-now 1790323200
+  "A fixed `now` inside the v3 fixtures' timeframe (2026-09-25 10:00
+CEST), so idle/active states the fixture timestamps drive are stable.")
+
+(defmacro gascity-agents-test--with-fixture-now (&rest body)
+  "Run BODY with `float-time' pinned to the fixtures' timeframe."
+  (declare (indent 0))
+  `(cl-letf (((symbol-function 'float-time)
+              (lambda (&optional _) gascity-agents-test--fixture-now)))
+     ,@body))
+
+;;; Roster — the sling's Who completion (REQ-005, WI-2)
+
+(ert-deftest gascity-test-agents-scope-classifier ()
+  "The scope classifier: `:rig' wins, a slash name carries its own,
+everything else is city."
+  (should (equal (gascity-agents-scope '(:rig "hello-world" :name "x"))
+                  "hello-world"))
+  (should (equal (gascity-agents-scope '(:name "hello-world/gc.w-1"))
+                  "hello-world"))
+  (should (equal (gascity-agents-scope '(:name "mayor")) "city"))
+  (should (equal (gascity-agents-scope '(:name "bd.dog-1")) "city")))
+
+(ert-deftest gascity-test-agents-roster-city-first-then-rigs ()
+  "The roster orders city agents first, then each rig's in `gc status''s
+rig order; a failed read's key degrades to the rows the rest join."
+  (gascity-agents-test--with-fixture-now
+    (let* ((roster (gascity-agents--roster (gascity-agents-test--data)))
+           (scopes (mapcar #'gascity-agents-scope roster))
+           (names (mapcar (lambda (a) (plist-get a :name)) roster)))
+      ;; City first (mayor, the live session, leads), then beads.el and
+      ;; gascity.el — the status payload's rig order.
+      (should (equal scopes '("city" "city" "city" "city"
+                              "beads.el" "gascity.el")))
+      (should (equal (car names) "mayor"))
+      (should (member "bd.dog-1" names))
+      (should (member "beads.el/core.control-dispatcher" names))
+      (should (equal (nth 4 names) "beads.el/core.control-dispatcher"))
+      (should (equal (nth 5 names) "gascity.el/core.control-dispatcher"))
+      ;; A cold reads plist degrades to no rows, never an error.
+      (should-not (gascity-agents--roster nil)))))
+
+(ert-deftest gascity-test-agents-roster-candidates-annotate ()
+  "Candidates are (name . \"<rig|city> · state\") — the mockup §6c
+annotation, the state through `gascity-agents--state-label'."
+  (gascity-agents-test--with-fixture-now
+    (let* ((candidates (gascity-agents-roster-candidates
+                        (gascity-agents--roster (gascity-agents-test--data)))))
+      (should (equal (cdr (assoc "mayor" candidates)) "city · active"))
+      (should (equal (cdr (assoc "bd.dog-1" candidates)) "city · stopped"))
+      (should (equal (cdr (assoc "gascity.el/core.control-dispatcher" candidates))
+                     "gascity.el · active"))
+      (should (equal (car (assoc "mayor" candidates)) "mayor")))))
+
+(ert-deftest gascity-test-agents-roster-scope-free-entry-degrades ()
+  "`gascity-agents-roster-scope' classifies a roster agent and degrades
+to nil on free entry — a cold roster never dead-ends a dispatch."
+  (let ((roster (gascity-agents--roster (gascity-agents-test--data))))
+    (should (equal (gascity-agents-roster-scope "mayor" roster) "city"))
+    (should (equal (gascity-agents-roster-scope
+                    "gascity.el/core.control-dispatcher" roster)
+                   "gascity.el"))
+    ;; Free entry: a typed name no row carries and no slash names
+    ;; classifies to nil.
+    (should-not (gascity-agents-roster-scope "typed-freely" roster))
+    ;; A cold roster: nothing to classify, still no error.
+    (should-not (gascity-agents-roster-scope "mayor" nil))
+    ;; A config-name target against a roster carrying only pool
+    ;; instances (`…/gc.implementation-worker-1', the joined roster the
+    ;; footer peeks) is rig-scoped by its own slash prefix — the plan's
+    ;; classifier fallback (WI-11 bright-lights pass).
+    (should (equal (gascity-agents-roster-scope
+                    "hello-world/gc.implementation-worker"
+                    (list (list :name "hello-world/gc.implementation-worker-1"
+                                :rig "hello-world")))
+                   "hello-world"))))
+
+(ert-deftest gascity-test-agents-roster-reads-through-store ()
+  "The completion-facing accessor reads the same store entries the
+Agents table uses — never a new gc call site — and answers the roster
+once every read has landed."
+  (cl-letf (((symbol-function 'gascity-reader-read-async)
+             #'gascity-agents-test--read))
+    (let ((roster (gascity-agents-roster 'cached))
+          (names nil))
+      (setq names (mapcar (lambda (a) (plist-get a :name)) roster))
+      (should (member "mayor" names))
+      (should (member "gascity.el/core.control-dispatcher" names))
+      (should (equal (gascity-agents-scope (car roster)) "city")))))
+
+(ert-deftest gascity-test-agents-roster-cold-never-dead-ends ()
+  "Every read failing answers an empty roster — completion over nil is
+free entry, the accessor never errors."
+  (let ((gascity-remote-async-timeout 1))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (_args _cb &optional errback &rest _)
+                 (when errback (funcall errback "boom"))
+                 nil)))
+      (should-not (gascity-agents-roster)))))
+
 ;;; Table
 
 (defmacro gascity-agents-test--with-table (&rest body)
@@ -451,7 +551,16 @@ its last line lands in the end note (QA #11)."
     (should-not (get-buffer " *gascity-log-stderr: mayor*"))
     (with-current-buffer "*gascity-log: mayor*"
       (should (string-search "[follow ended" (buffer-string)))
-      (should (string-search "no such session" (buffer-string))))
+      ;; The note's stderr line races the sentinel that writes it: when
+      ;; the sh in the fixture exits, its stderr and stdout pipes close
+      ;; in an order Emacs cannot control, so the sentinel can run (and
+      ;; find the stderr pipe already drained) before the line arrives.
+      ;; That is the correct reading of the production code
+      ;; (`gascity-session--log-sentinel' drains bounded, never waits),
+      ;; so pin the note and the buffer's death; the line rides along
+      ;; whenever the pipe lost the race.
+      (when (get-buffer " *gascity-log-stderr: mayor*")
+        (should (string-search "no such session" (buffer-string)))))
     (kill-buffer "*gascity-log: mayor*")))
 
 (ert-deftest gascity-test-agent-peek-opens-at-once ()

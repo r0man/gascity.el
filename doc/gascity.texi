@@ -92,6 +92,7 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 * Live Refresh::            One event stream per city.
 * Events and Mail::         The event log, inbox, threads, compose.
 * The Lists::               Tabulated rigs, sessions, convoys, orders, mail, Dolt.
+* The Sling Command::      Dispatching work: the unified sling menu.
 * Actions::                 Mutating commands, run asynchronously.
 * Bookmarks::               Every view as an Emacs bookmark.
 * Remote Cities::           Cities on other hosts, over TRAMP and ssh.
@@ -1606,6 +1607,463 @@ filter transient.
 @shot{dolt-list-dark, The Dolt database list (ef-elea-dark)}
 
 @c ====================================================================
+@node The Sling Command
+@chapter The Sling Command
+@cindex sling
+@cindex dispatching work
+@findex gascity-sling
+@kindex S
+
+The sling is gascity's one command for putting work in front of an
+agent.  @kbd{S} from any gascity view --- or @kbd{M-x gascity-sling}
+anywhere --- opens @code{gascity-sling-dispatch}, a single adaptive
+menu that routes a bead, a formula run, or freeform task text to the
+agent that should take it.  The menu asks only the questions context
+has not already answered: with a bead at point and a remembered
+target, the whole dispatch is two keystrokes, @kbd{S} then @kbd{s},
+with zero prompts.  A cold menu walks six conceptual stages with
+typed completion:
+
+@example
+What → Who → How → Preview → Launch → Follow
+@end example
+
+@noindent
+What is the work, Who is the agent that takes it, How is the picked
+formula's variables, Preview is the always-on summary plus the
+on-demand full picture, Launch runs @command{gc sling} asynchronously,
+and Follow is the momentary offer to jump to the workflow a launch
+created.  The menu works the same over TRAMP (@pxref{Remote
+Cities}): every reader keeps the city the menu was opened for.
+
+@menu
+* The sling shapes::    Plain, formula and targeted — inferred, never flagged.
+* The sling menu::       Stages, the header sentence, the live footer.
+* Picking work::         @kbd{A}: beads, convoys, or freeform text.
+* Picking a formula::    @kbd{f}: the catalog, and the shape it implies.
+* Picking the target::   @kbd{T}: agents, and the derived default.
+* Typed variables::      File, directory, agent, numeric, choice and bool readers.
+* The live footer::      The always-on summary and its warnings.
+* Validation warnings::  The bl-bdj trap and cross-store routes.
+* The preview buffer::   @kbd{P}: the full picture, on demand.
+* Launch and follow::    @kbd{s}, and the momentary @kbd{F}.
+* Remembered state::     History, target memory, city pinning.
+* Sling key summary::    Every key in the menu.
+@end menu
+
+@node The sling shapes
+@section The sling shapes
+@cindex sling shapes
+@cindex shape inference
+
+@command{gc sling} comes in three forms, and the menu infers which one
+you mean from the work and the formula you select.  There is no shape
+flag and no toggle key:
+
+@table @asis
+@item Plain
+@code{gc sling @var{agent} @var{bead-or-text}}: hand an agent a bead,
+or a task described in free text.  The header sentence reads
+@samp{Sling bead bl-5ja to mayor}.
+@item Formula
+@option{--formula}: run a formula itself on the target agent, with no
+work attached.  @samp{Run pancakes (formula) on mayor}.
+@item Targeted
+@option{--on}: run a formula against a bead --- the formula's steps
+drain the bead.  @samp{Run build-basic against bead bl-5ja, drained
+by hello-world/gc.implementation-worker}.
+@end table
+
+The shape is a pure function of two answers.  No formula picked is
+the plain route.  A formula picked with work in scope is the targeted
+@option{--on} shape; without work, the targetless @option{--formula}
+shape.  Picking a formula (@pxref{Picking a formula}) flips the
+header sentence immediately --- the sentence @emph{is} the shape
+display.  A formula whose steps drain the bead renders the
+@samp{drained by} clause above; one that does not renders @samp{on}
+the target instead (@samp{Run build-basic against bead bl-5ja, on
+mayor}).
+
+The sentence is display only: the dispatch itself follows the picked
+formula's own convoy rule, so a formula that requires a convoy with no
+work chosen never gets a new prompt --- it surfaces as a footer
+warning (@pxref{Validation warnings}).
+
+The shape also decides what the menu shows.  The formula's typed
+variables (@pxref{Typed variables}) appear only once a formula is
+picked, and the routing flags render only on the plain shape
+(@pxref{The sling menu}) --- @command{gc} consumes them only there.
+
+@node The sling menu
+@section The sling menu
+@cindex sling menu
+
+The menu is a stack of full-width groups.  The first group carries
+the city's title, the one-sentence header, and the live footer
+(@pxref{The live footer}) --- the summary is always on screen and
+recomputes as each answer changes.  Then one group per stage, then
+the actions:
+
+@table @asis
+@item What
+The work and the formula: @kbd{A} picks the work (@pxref{Picking
+work}), @kbd{f} the formula (@pxref{Picking a formula}).
+@item Who
+The target agent: @kbd{T} (@pxref{Picking the target}).
+@item How
+The picked formula's typed variables (@pxref{Typed variables}), full
+width, and absent without a formula.
+@item Routing flags
+@option{-c} skip auto-convoy, @option{-a} reassign (clear the human
+assignee), @option{-n} nudge the target after routing, @option{-m}
+merge strategy, @option{-t} wisp root title --- rendered only on the
+plain shape.
+@item Actions
+@kbd{s} launch, @kbd{P} full preview, @kbd{r} recipe preview,
+@kbd{g} refresh formulas, @kbd{x} reset, @kbd{q} quit.
+@end table
+
+An answered stage collapses to its one line: the answer is visible,
+and the binding stays live, so the key that answered it changes it
+again.  An unanswered stage shows its pick hint.  With a bead at
+point and a remembered target, every stage holds an answer:
+
+@shot{sling-plain, The sling menu pre-seeded for a plain dispatch (mockup rendering)}
+
+Pressing @kbd{S} with nothing pre-seeded shows the hints instead ---
+and the header sentence still reads as one line:
+
+@shot{sling-cold, A cold sling entry with nothing pre-seeded (mockup rendering)}
+
+@node Picking work
+@section Picking work
+@cindex work picker
+
+@kbd{A} answers the What stage's work slot.  It is a completing read
+over the city's open, in-progress and blocked beads plus its
+convoys, each annotated with its title, status and store:
+
+@example
+Work (bead or convoy; RET-empty or C-u for freeform text): bl-5ja
+  bl-5ja    e2e sling-v2: verify unified plain sling over TRAMP · open · city
+  bl-70ac   e2e demo latch — gce-e2e demo · open · city
+  hw-3fd    … · in_progress · hello-world
+@end example
+
+Two escapes cover what the roster cannot list: a prefix argument
+(@kbd{C-u A}) goes straight to freeform text, and @key{RET} on empty
+input falls through to the same text prompt (@samp{Bead id or task
+text:}).  Freeform text becomes the plain shape's task text.  A bead
+or convoy at point pre-seeds the slot before the menu even opens ---
+that is where the @kbd{S} @kbd{s} fast path gets its work.
+
+@node Picking a formula
+@section Picking a formula
+@cindex formula picker
+
+@kbd{f} picks from the union of the local formula catalog and the
+city's @code{gc formula list}, annotated: the description where the
+catalog has one, @samp{(city)} for city-local formulas, @samp{(not
+in catalog)} for the rest.  The catalog refreshes asynchronously
+behind the menu; @kbd{g} forces a refresh now.
+
+@example
+Formula: pancakes
+  build-basic       Run the default Gas City full-lifecycle build …
+  pancakes          Make pancakes from scratch
+  e2e-demo          (city)
+  mol-extra         (not in catalog)
+@end example
+
+Picking a formula is also how the shape changes (@pxref{The sling
+shapes}): with work in scope the run is targeted (@option{--on});
+without work, targetless (@option{--formula}).  A formula that
+declares no variables --- @samp{pancakes} --- keeps the How stage out
+of the menu entirely; the flow is What, Who, @kbd{s}.
+
+@shot{sling-formula, The formula shape with no work attached (mockup rendering)}
+
+@node Picking the target
+@section Picking the target
+@cindex target picker
+@cindex derived target
+
+@kbd{T} answers Who.  Completion runs over @emph{agents}, not
+sessions --- city agents first, then one group per rig, each
+candidate annotated with its scope and live state:
+
+@example
+Target agent: hello-world/gc.implementation-worker
+  mayor                                    city · active
+  pi                                       city · provider pi
+  hello-world/gc.implementation-worker     hello-world · derived default
+  hello-world/gc.run-operator              hello-world · stopped
+  hello-world/gc.requirements-planner      hello-world · idle
+@end example
+
+Free entry still works: a typed name is used verbatim, so a cold
+roster never dead-ends the menu.
+
+The default is derived, and you press @kbd{T} only to disagree with
+it.  The derivation, in order:
+
+@enumerate
+@item
+The work bead's rig declares a @samp{default_sling_target} (or
+@samp{default_sling_targets}) --- in its city.toml, when gascity can
+resolve the rig.
+@item
+Per-(city, formula) target memory: the target you last launched this
+formula with on this city, recorded at launch.
+@item
+The implementation-worker convention: when the roster confirms
+exactly one rig-scoped @code{gc.implementation-worker}, it is the
+target for build formulas.
+@end enumerate
+
+A derived target shows with a @samp{derived} tag in the header and
+is the @kbd{T} picker's initial input --- @key{RET} keeps it --- and
+@kbd{s} uses it without prompting.  When nothing is derivable the
+header says so, and @kbd{s} prompts for a target instead of guessing.
+
+@node Typed variables
+@section Typed variables
+@cindex typed variables
+@cindex variables, formula
+
+The How group appears full width once a formula is picked: one infix
+per declared variable, titled @samp{How — @var{formula} vars}.  Each
+variable reads with the reader it calls for, so an illegal value is
+unrepresentable at entry:
+
+@table @asis
+@item File
+@code{context_path} and every @code{*_path} read with file
+completion relative to the target rig's workdir --- TRAMP-safe
+(@pxref{Remote Cities}).
+@item Directory
+@code{artifact_root} reads with directory completion, seeded with
+@file{plans/@var{slug}/} where the slug derives from the work bead's
+@emph{title} --- lower-cased, runs of non-alphanumerics collapsed to
+one dash, the house convention behind @file{plans/dashboard-v3/} ---
+never from the bare bead id.  Freeform work text, or the formula
+name, seeds it when there is no bead.
+@item Agent
+Every @code{*_target} reads with the same roster completion as
+@kbd{T} (@pxref{Picking the target}); @code{implementation_target}
+seeds from the chosen target's rig.
+@item Numeric
+Numbers validate digits and refuse a bad entry before any
+@command{gc} call: @samp{Var max_iterations must be numeric (got
+lots)}.
+@item Choice
+Enum, methodology and pattern variables offer their restricted
+choices --- @samp{separate|same-session} --- plus the
+(formula, variable) pair's own history, so a value @command{gc}
+would reject cannot be entered.
+@item Bool
+Boolean variables toggle on their key press.
+@item String
+Anything unrecognized fails soft to plain string entry.
+@end table
+
+@noindent
+Two more conventions fill the common cases: @code{rig_name}
+auto-derives from the chosen target's rig and stays editable like
+any other answer, and a variable whose declared default is all digits
+--- or whose name follows the @code{max_*} or @code{*_iterations}
+convention --- reads as numeric.  The heuristics are overridable:
+an alist mapping variable name to a reader function
+(@code{gascity-sling-var-readers}) wins over every convention above.
+
+Variable keys are assigned deterministically and avoid the reserved
+single letters (@pxref{Sling key summary}), so a formula's variables
+bind the same keys in every session.
+
+@shot{sling-on, The targeted shape with its typed How group (mockup rendering)}
+
+@node The live footer
+@section The live footer
+@cindex live footer
+
+The footer is the menu's second header line.  It is always visible,
+and it recomputes as each answer changes.  It carries the launch
+summary --- the shape, the target with its scope, the count of set
+variables --- and the client-side validation status:
+
+@example
+  ✓ Ready — plain route · target mayor (city) · no vars
+  ✓ Ready — formula run · target mayor (city) · 0 vars
+  ✓ Ready — on run · target rig-scoped · 6 of 18 vars set
+@end example
+
+@noindent
+or the reason it has something to say:
+
+@example
+  ⚠ No work chosen — pick work before launching
+@end example
+
+The footer renders from cached data only: nothing on the menu's
+render path runs @command{gc}.  A warning never blocks @kbd{s} ---
+@command{gc} remains the authority --- but it is unmissable, and the
+full detail is one @kbd{P} away (@pxref{The preview buffer}).
+
+@node Validation warnings
+@section Validation warnings
+@cindex bl-bdj trap
+@cindex cross-store route
+
+Two of @command{gc}'s known failure modes are caught client-side,
+before launch:
+
+@table @asis
+@item The formulas-v2 target trap
+A v2 formula whose steps name binding-qualified run targets ---
+@code{gc.run-operator}, not @code{run-operator} --- needs a
+@emph{rig-scoped} target.  The same dispatch to a city-scoped agent
+fails at instantiation with @samp{unknown formulas v2 target}; the
+dry run does not exercise the trap, so the client warns.  With the
+city-scoped @code{mayor} as target the footer reads:
+
+@example
+  ⚠ formulas v2 target: this formula needs a rig-scoped target — the chosen
+    city agent will fail with "unknown formulas v2 target" (bl-bdj); pick a
+    hello-world/* agent with T
+@end example
+
+@noindent
+and with a rig-scoped agent it reads @samp{✓ Ready — on run · target
+rig-scoped · @dots{}}.  (@samp{bl-bdj} names the 2026-09-16 incident
+that taught this warning.)
+
+@item Cross-store routes
+@command{gc} refuses a route whose work bead and target agent read
+different stores --- a bead in the hello-world store cannot route to
+an agent of another rig.  The footer warns first:
+
+@example
+  ⚠ cross-store route: bead hw-ab12 lives in the hello-world store but the
+    target reads the gascity.el store — gc will refuse (pick a city agent or
+    a hello-world agent)
+@end example
+@end table
+
+Missing pieces warn the same way: a convoy-requiring formula with no
+work (@samp{build-basic drains a bead — pick work with A}), missing
+required variables (@samp{Missing required vars: artifact_root}), and
+no target at all (@samp{No target — T to choose, or s will prompt}).
+
+@shot{sling-trap, The trap warning below the healthy footer (mockup rendering)}
+
+@node The preview buffer
+@section The preview buffer
+@cindex preview buffer
+
+@kbd{P} opens the full preview: everything gascity can compute
+client-side renders at once, and @command{gc}'s routing plan --- from
+@command{gc sling @dots{} --dry-run} --- fills in when it answers.
+First paint never blocks on the dry run.  The buffer opens through
+the same host-qualified, city-pinned machinery as every gascity view
+(@pxref{Remote buffers}), titled @samp{Sling preview — @var{CITY}},
+and holds:
+
+@itemize @bullet
+@item
+The header sentence, exactly as the menu shows it.
+@item
+A @emph{Validation} section: every client-side check, full text,
+passing or warning.
+@item
+A @emph{Recipe} section: the formula's steps and what each needs ---
+the recipe DAG, from the cached recipe.
+@item
+A @emph{Routing plan} section: which agent or session gets each step,
+from the dry run.
+@end itemize
+
+@kbd{s} launches directly from the preview buffer; @kbd{q} closes
+it.  @kbd{r} keeps its old job, the server-substituted recipe
+preview.  The preview is never a gate: @kbd{s} works in the menu at
+any time, warning or not.
+
+@shot{sling-preview, The P full preview buffer (mockup rendering)}
+
+@node Launch and follow
+@section Launch and follow
+@cindex follow offer
+
+@kbd{s} launches.  The call runs asynchronously like every gascity
+action (@pxref{Actions}): the menu closes, the echo area
+reports, and the views the launch touched re-read.
+
+A plain route echoes the routing (@samp{Routed bl-5ja to mayor}) ---
+no workflow is created, so there is nothing to follow.  A formula
+launch echoes the workflow it created and offers to jump to it:
+
+@example
+Launched workflow bl-9xyz (build-basic on bl-5ja) — F: run view
+@end example
+
+@noindent
+The offer is momentary: @kbd{F} opens the run view
+(@code{gascity-run-show}) on the created workflow's root bead
+(@pxref{Runs}), and any other key dismisses the offer.  Nothing is
+yanked away --- you stay where you are unless you take it.
+
+@shot{sling-follow, The follow offer and the plain echo (mockup rendering)}
+
+@node Remembered state
+@section Remembered state
+@cindex sling history
+@cindex target memory
+
+The menu keeps three kinds of state, all scoped per city and all
+preserved across openings:
+
+@itemize @bullet
+@item
+Per-(formula, variable) history: the choices made for this formula
+before, offered by every typed reader.
+@item
+Per-(city, formula) target memory: the target of the last real launch
+of this formula on this city.  It is recorded at launch and drives
+the derived default (@pxref{Picking the target}).
+@item
+The remembered menu state: work, formula, target and values, so the
+menu re-opens with every answered stage still answered.
+@kbd{x} clears all four and forgets them; a real launch forgets them
+too.
+@end itemize
+
+The menu also keeps the city it was opened for (@pxref{Remote
+Cities}): completion, the roster, and the file and directory readers
+all keep reading that city, so a menu opened for a remote city never
+completes against the local one.
+
+@node Sling key summary
+@section Sling key summary
+
+@example
+A   Work (open beads + convoys; C-u for freeform text; point pre-seeds)
+f   Formula (with work the run is targeted; without it targetless)
+T   Target (agents grouped by rig; the derived default heads the header)
+--  one typed infix per declared formula var (file, directory, agent,
+    numeric, choice, bool; keys deterministic, outside the reserved set)
+s   Launch (anytime — the preview is never a gate)
+P   Full preview buffer (validation, recipe DAG, routing plan)
+r   Recipe preview (server-side substituted, as today)
+g   Refresh formulas
+x   Reset (clear work, formula, target, vars)
+q   Quit
+@end example
+
+@noindent
+The generated variable keys avoid the reserved single letters
+@samp{A f T c a n m t s P r g x q} --- @kbd{p} is free, the preview
+moved to @kbd{P}.
+
+@c ====================================================================
 @node Actions
 @chapter Actions
 @cindex actions
@@ -1720,7 +2178,8 @@ at point in the rig list:
 @item Sling --- dispatcher @kbd{S}
 @findex gascity-sling
 @code{gc sling}: route a bead id, a formula, or free task text to an
-agent.  Supports a formula, a nudge, and a dry run.
+agent --- one unified, adaptive menu covering all three shapes
+(@pxref{The Sling Command}).
 @item Run order --- dispatcher @kbd{O}, list @kbd{x}
 @findex gascity-order-run
 @code{gc order run}: run an order now, bypassing its trigger.
