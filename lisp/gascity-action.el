@@ -1550,6 +1550,25 @@ end)."
         (accept-process-output nil 0.05)))
     (and payload (gascity-sling--work-choices payload))))
 
+(defun gascity-sling--work-title (work)
+  "Return the title of bead or convoy WORK, or nil (F6).
+The `artifact_root' convention default seeds `plans/<slug>/' from a
+work title (`gascity-sling--title-slug'); a work picked with `A' must
+re-seed it exactly as a bead at point does (WI-11 finding F6b).  The
+title is peeked from the picker's cached composite read (never a gc
+call, D9); an unknown, freeform or cold WORK yields nil."
+  (when (and (stringp work) (not (string-empty-p work)))
+    (let* ((default-directory (gascity-sling--city-dir))
+           (payload (gascity-store-peek gascity-sling--work-choices-key)))
+      (when payload
+        (when-let* ((row (or (seq-find (lambda (b)
+                                         (equal (alist-get 'id b) work))
+                                       (plist-get payload :beads))
+                             (seq-find (lambda (c)
+                                         (equal (alist-get 'id c) work))
+                                       (plist-get payload :convoys)))))
+          (alist-get 'title row))))))
+
 ;;; The launch follow offer (plans/sling-command WI-8, REQ-009)
 ;;
 ;; A successful formula sling creates a workflow, and its root —
@@ -2297,12 +2316,18 @@ answer changes: a var infix edit redraws the menu and the count
 follows without a re-setup (mockup §1 note).  SCOPE and RECIPE are
 captured here — a re-pick re-setups and re-creates the closure with
 fresh ones — while the roster and the live values are read at format
-time, all cached, no gc on the render path (D9).  Like
+time, all cached, no gc on the render path (D9).  The same format
+time snapshots the menu state into `gascity-sling--remembered' (F2):
+a value typed after the last re-setup redraws the menu, so it is
+saved with the answers instead of dying with the menu.  Like
 `gascity-sling--scope-info' the spec is passed unwrapped and must not
 be a group's first element (a leading `(:info …)' parses as a group
 argument and breaks setup)."
   (list :info
         (lambda ()
+          (when (plist-get scope :city)
+            (gascity-sling--remember
+             scope (transient-args 'gascity-sling-dispatch)))
           (gascity-sling--footer
            scope
            (gascity-sling--roster-cached (plist-get scope :city))
@@ -2327,6 +2352,17 @@ the header (ga-4ia4)."
   (let* ((default-directory (gascity-sling--city-dir scope))
          (formula (plist-get scope :formula))
          (work (gascity-sling--work scope))
+         ;; The var seeds name what `s' would actually launch: inject
+         ;; the derived Who default as `:derived-target' when the user
+         ;; has not set one, so `*_target'/`rig_name' seeds answer
+         ;; from the derivation (F5).
+         (seed-scope
+          (if (plist-get scope :target)
+              scope
+            (let ((derived (gascity-sling--derived-target scope)))
+              (if-let* ((target (plist-get derived :target)))
+                  (plist-put (copy-sequence scope) :derived-target target)
+                scope))))
          (recipe (and formula
                       (gascity-formula-recipe-cached
                        (plist-get scope :formula)))))
@@ -2345,7 +2381,7 @@ the header (ga-4ia4)."
      ;; What and Who; absent until a formula with vars is picked
      ;; (REQ-A/REQ-B).
      (when-let* ((group (gascity-sling-formula--var-children
-                         recipe gascity-sling--reserved-keys scope)))
+                         recipe gascity-sling--reserved-keys seed-scope)))
        (list group))
      (list
       ;; The Who stage (mockup §1): one target line.
@@ -2436,25 +2472,39 @@ the freeform `Bead id or task text' prompt, and `C-u' goes straight
 to freeform.  The answer lives in the scope's `:work' — the slot the
 derivation, the header sentence and the dispatch read (`:arg' is the
 legacy name, still read) — so it survives a formula re-pick; set var
-values carry across the re-setup like re-pick/refresh.  The plain
+values carry across the re-setup like re-pick/refresh.  A picked
+bead or convoy also carries its title into the scope's `:work-title'
+so the `artifact_root' convention default re-seeds from it, exactly
+as a bead at point does (WI-11 finding F6b).  The plain
 path keeps its own picker fallback — this is purely scope editing,
 not dispatch."
   :transient t
   (interactive "P")
   (let ((default-directory (gascity-sling--city-dir)))
-    (let* ((picked (and (not freeform)
+    (let* ((old-scope (transient-scope))
+           (picked (and (not freeform)
                         (condition-case nil
                             (completing-read
                              "Work (bead or convoy; RET-empty or C-u for freeform text): "
                              (gascity-sling--work-choices-wait)
-                             nil nil (gascity-sling--work (transient-scope)))
+                             nil nil (gascity-sling--work old-scope))
                           (error nil))))
            (work (if (and picked (not (string-empty-p picked)))
                      picked
                    (read-string "Bead id or task text: "
-                                (plist-get (transient-scope) :work)))))
-      (gascity-sling--resetup
-       (plist-put (copy-sequence (transient-scope)) :work work)))))
+                                (plist-get old-scope :work))))
+           ;; The title the seed needs; an unchanged work keeps the one
+           ;; already in scope when the picker's payload is cold.
+           (title (or (gascity-sling--work-title work)
+                      (and (equal (gascity-sling--work old-scope) work)
+                           (plist-get old-scope :work-title))))
+           (scope (plist-put (copy-sequence old-scope) :work work)))
+      ;; Carry the title only when one is known; drop a stale one the
+      ;; new (freeform) work replaced, but never add an empty key.
+      (cond (title (setq scope (plist-put scope :work-title title)))
+            ((plist-get old-scope :work-title)
+             (setq scope (plist-put scope :work-title nil))))
+      (gascity-sling--resetup scope))))
 
 (defun gascity-sling--read-work (&optional initial)
   "Read the What answer at dispatch (mockup §6a): the work picker.

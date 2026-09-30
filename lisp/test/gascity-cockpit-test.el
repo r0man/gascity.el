@@ -904,5 +904,24 @@ not running) and shows ▲ when gc reports degraded (QA #7)."
     (let ((title (substring-no-properties (gascity-dispatch--title))))
       (should (string-match-p "Gas City  city  .*● live" title)))))
 
+(ert-deftest gascity-test-dashboard-remembers-full-rig-list ()
+  "The cockpit seeds the rig memo from the full `gc rig list' when it
+has landed — it carries the HQ rig `gc status' omits — and falls back
+to the status rows only while the rig-list read is in flight (WI-11
+finding F4)."
+  (let (seen)
+    (cl-letf (((symbol-function 'gascity-rigs-remember)
+               (lambda (rigs &rest _) (setq seen rigs) rigs)))
+      (gascity-dashboard--remember-rigs
+       (vector '((name . "emacs-city") (prefix . "ec") (hq . t))
+               '((name . "gascity.el") (prefix . "ga")))
+       (vector '((name . "gascity.el") (prefix . "ga"))))
+      (should (equal (mapcar #'gascity-rig-name seen) '("emacs-city" "gascity.el")))
+      ;; Cold rig list: the status rows seed the memo as before.
+      (setq seen nil)
+      (gascity-dashboard--remember-rigs
+       nil (vector '((name . "gascity.el") (prefix . "ga"))))
+      (should (equal (mapcar #'gascity-rig-name seen) '("gascity.el"))))))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here

@@ -822,13 +822,30 @@ its declared default \(REQ-007\)."
     (oset obj value (or (oref obj var-seed)
                         (oref obj var-default)))))
 
+(defun gascity-sling-formula--read-guarded (obj read)
+  "Run infix READ for OBJ, surviving a refused or aborted entry (F1).
+A validation `user-error' (an illegal numeric, a pattern mismatch) or
+an aborted read (`C-g', which signals `quit') reports in the echo
+area and leaves OBJ's value unchanged, so the menu stays open
+instead of quitting the whole transient with its answers (WI-11
+finding F1).  A successful READ's value is returned as-is."
+  (condition-case err
+      (funcall read)
+    ((user-error quit)
+     (message "%s" (error-message-string err))
+     (oref obj value))))
+
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--enum-option))
   "Read one of the var's declared choices from OBJ only (REQ-005).
-Illegal values are unrepresentable; history is per (formula, var)."
-  (completing-read (transient-prompt obj)
-                   (oref obj var-choices) nil t
-                   (or (oref obj value) (oref obj var-default))
-                   (gascity-sling-formula--history obj)))
+Illegal values are unrepresentable; history is per (formula, var).
+An aborted read reports and keeps the current value (F1)."
+  (gascity-sling-formula--read-guarded
+   obj
+   (lambda ()
+     (completing-read (transient-prompt obj)
+                      (oref obj var-choices) nil t
+                      (or (oref obj value) (oref obj var-default))
+                      (gascity-sling-formula--history obj)))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--bool-option))
   "Cycle the boolean var of OBJ true -> false -> true (REQ-006).
@@ -839,33 +856,47 @@ Nothing is read: illegal values are unrepresentable by construction."
     (_ (or (oref obj var-default) "true"))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--string-option))
-  "Read the string var of OBJ through the shared string read (REQ-009)."
-  (gascity-sling-formula--read-string obj))
+  "Read the string var of OBJ through the shared string read (REQ-009).
+An aborted read keeps the current value (F1)."
+  (gascity-sling-formula--read-guarded
+   obj (lambda () (gascity-sling-formula--read-string obj))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--file-option))
-  "Read the file var of OBJ through the shared file read (REQ-006)."
-  (gascity-sling-formula--read-file obj))
+  "Read the file var of OBJ through the shared file read (REQ-006).
+An aborted read keeps the current value (F1)."
+  (gascity-sling-formula--read-guarded
+   obj (lambda () (gascity-sling-formula--read-file obj))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--directory-option))
-  "Read the directory var of OBJ through the shared directory read (REQ-006)."
-  (gascity-sling-formula--read-directory obj))
+  "Read the directory var of OBJ through the shared directory read (REQ-006).
+An aborted read keeps the current value (F1)."
+  (gascity-sling-formula--read-guarded
+   obj (lambda () (gascity-sling-formula--read-directory obj))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--agent-option))
-  "Read the agent var of OBJ through the shared roster read (REQ-006)."
-  (gascity-sling-formula--read-agent obj))
+  "Read the agent var of OBJ through the shared roster read (REQ-006).
+An aborted read keeps the current value (F1)."
+  (gascity-sling-formula--read-guarded
+   obj (lambda () (gascity-sling-formula--read-agent obj))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--numeric-option))
-  "Read the numeric var of OBJ through the shared numeric read (REQ-006)."
-  (gascity-sling-formula--read-numeric obj))
+  "Read the numeric var of OBJ through the shared numeric read (REQ-006).
+A refused non-numeric entry reports and keeps the current value, so
+the menu stays open (F1)."
+  (gascity-sling-formula--read-guarded
+   obj (lambda () (gascity-sling-formula--read-numeric obj))))
 
 (cl-defmethod transient-infix-read ((obj gascity-sling-formula--function-option))
   "Read OBJ's var through its override reader (REQ-006).
 The reader is `gascity-sling-var-readers' entry for this var's name,
 called with OBJ itself; an absent reader degrades to the string read
-\(REQ-016)."
-  (if (functionp (oref obj var-reader))
-      (funcall (oref obj var-reader) obj)
-    (gascity-sling-formula--read-string obj)))
+\(REQ-016).  An aborted read keeps the current value (F1)."
+  (gascity-sling-formula--read-guarded
+   obj
+   (lambda ()
+     (if (functionp (oref obj var-reader))
+         (funcall (oref obj var-reader) obj)
+       (gascity-sling-formula--read-string obj)))))
 
 ;;; ---- The typed readers (REQ-006) -----------------------------
 
@@ -907,6 +938,9 @@ required check stays with dispatch.  History is per (formula, var)."
 pinned `default-directory' — over TRAMP that is the rig's host-local
 path re-prefixed (`gascity-remote-localize-path' through the store
 helper), so completion never touches the menu buffer's directory.
+The returned name is reduced to its host-local form
+\(`file-local-name'), since gc runs host-side and cannot consume a
+`/ssh:HOST:…' name (WI-11 finding F3).
 The current value (or declared default or seed) pre-fills the
 minibuffer as the plain-RET answer; an erased, empty answer unsets
 the var.  File names keep `file-name-history' — `read-file-name' has
@@ -915,20 +949,25 @@ minibuffer-read types."
   (let* ((dir (gascity-sling-formula--rig-workdir))
          (default-directory dir)
          (insert-default-directory nil)
-         (value (read-file-name (transient-prompt obj) dir nil nil
-                                (gascity-sling-formula--var-initial obj))))
+         (value (file-local-name
+                 (read-file-name (transient-prompt obj) dir nil nil
+                                 (gascity-sling-formula--var-initial obj)))))
     (if (and (stringp value) (string-empty-p value))
         nil value)))
 
 (defun gascity-sling-formula--read-directory (obj)
   "Read the directory var of OBJ over the target rig's workdir (REQ-006).
 `read-directory-name' with the same pinned workdir, defaulting and
-empty-answer rules as the file read (`gascity-sling-formula--read-file')."
+empty-answer rules as the file read (`gascity-sling-formula--read-file').
+The returned name is host-localized like the file read's
+\(`file-local-name'), since gc runs host-side and cannot consume a
+`/ssh:HOST:…' name (WI-11 finding F3)."
   (let* ((dir (gascity-sling-formula--rig-workdir))
          (default-directory dir)
          (insert-default-directory nil)
-         (value (read-directory-name (transient-prompt obj) dir nil nil
-                                    (gascity-sling-formula--var-initial obj))))
+         (value (file-local-name
+                 (read-directory-name (transient-prompt obj) dir nil nil
+                                      (gascity-sling-formula--var-initial obj)))))
     (if (and (stringp value) (string-empty-p value))
         nil value)))
 
@@ -1392,13 +1431,18 @@ The convention defaults the How group shows: `artifact_root' seeds
 `plans/<slug>/' from the work bead's title
 \(`gascity-sling--title-slug'), `rig_name' the chosen target's rig,
 and any `*_target' var the chosen target itself when it is a
-qualified agent name.  A seed overrides the var's declared default —
-the convention IS the default — and stays editable like any value;
-nothing derivable leaves the var to its declared default (REQ-016
-fail-soft).  Pure: SCOPE is data, no reads."
+qualified agent name.  A target set with `T'/`:target' wins, and a
+derived Who default (`:derived-target', injected by the menu's setup
+from `gascity-sling--derived-target') answers in its place, so the
+var seed names what `s' would actually launch instead of the declared
+default (WI-11 finding F5).  A seed overrides the var's declared
+default — the convention IS the default — and stays editable like
+any value; nothing derivable leaves the var to its declared default
+\(REQ-016 fail-soft).  Pure: SCOPE is data, no reads."
   (when scope
     (let* ((name (or (gascity-formula-var-name var) ""))
-           (target (plist-get scope :target))
+           (target (or (plist-get scope :target)
+                       (plist-get scope :derived-target)))
            (work (or (plist-get scope :work) (plist-get scope :arg)))
            (formula (plist-get scope :formula))
            (title (plist-get scope :work-title)))

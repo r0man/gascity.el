@@ -1828,7 +1828,16 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
          (last-convoys (vui-use-ref nil))
          (last-escalations (vui-use-ref nil))
          (last-runs (vui-use-ref nil))
+         (last-rigs (vui-use-ref nil))
          (work (gascity-dashboard--effective-load work-res last-work))
+         ;; The full rig list seeds the rig memo (`gascity-rigs-remember'):
+         ;; `gc status' omits the city HQ rig, so a status-only memo
+         ;; lacks the HQ prefix and prefix-routing checks (the sling
+         ;; §5b cross-store warning, the work reads) degrade until
+         ;; some `gc rig list' warms it (WI-11 finding F4).  Shared
+         ;; with every other rig-list read through the store.
+         (rigs-res (gascity-store-use '("rig" "list") :tick refresh-tick))
+         (rigs (gascity-dashboard--effective-load rigs-res last-rigs))
          ;; Every run bead, the Runs view's own store entry: the Moving
          ;; ladders are computed from the very data the Runs view shows
          ;; (§3.2 one ladder rule), and share its read.
@@ -1845,6 +1854,7 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
                                                                   last-convoys)
                       :escalations (gascity-dashboard--effective-load escalations-res
                                                                       last-escalations)
+                      :rigs rigs
                       :runs (gascity-dashboard--effective-load runs-res
                                                                last-runs)))
          (ctx (gascity-dashboard--context loads filters (float-time))))
@@ -1855,14 +1865,17 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
     (let ((at (apply #'max 0 (delq nil (mapcar (lambda (r) (plist-get r :updated-at))
                                                (list status-res sessions-res mail-res
                                                      events-res work-res convoys-res
-                                                     escalations-res))))))
+                                                     escalations-res rigs-res))))))
       (when (> at 0)
         (setq gascity-dashboard--refreshed-at at)))
     (when-let* ((status (plist-get ctx :status)))
-      ;; Seed the rig memo from the payload in hand: the rig prompts
-      ;; and the next work read then never spawn `gc rig list'.
-      (gascity-rigs-remember
-       (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status)))
+      ;; Seed the rig memo: the full `gc rig list' answers when it has
+      ;; landed — it carries the HQ rig `gc status' omits (F4) — and
+      ;; the status payload is the fallback until then.
+      (let* ((full (plist-get rigs :data))
+             (rig-list-rigs (and full (alist-get 'rigs full))))
+        (gascity-dashboard--remember-rigs
+         rig-list-rigs (alist-get 'rigs status)))
       (gascity-dashboard--publish ctx))
     (setq ctx (plist-put ctx :view (list :collapsed collapsed :drawers drawers
                                          :expanded expanded :extra extra)))
@@ -1871,6 +1884,21 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
     (vui-text (string-join (gascity-dashboard--lines ctx) "\n"))))
 
 ;;; Pulse (§7.11, §7.12): what other views may show without a gc call
+
+(defun gascity-dashboard--remember-rigs (rig-list-rigs status-rigs)
+  "Seed the rig memo from the cockpit's rig reads.
+RIG-LIST-RIGS is the raw `rigs' vector of `gc rig list', STATUS-RIGS
+that of `gc status'.  The full rig list is preferred whenever it has
+landed: `gc status' omits the city HQ rig, so a status-only memo lacks
+the HQ's id prefix and the prefix-routing checks that read
+`gascity-rigs-cached' degrade until some rig-list read warms it
+\(WI-11 finding F4).  Falls back to the status rows while the rig-list
+read is still in flight.  Returns the remembered rig objects."
+  (let ((raw (if (and rig-list-rigs (not (seq-empty-p rig-list-rigs)))
+                 rig-list-rigs
+               status-rigs)))
+    (gascity-rigs-remember
+     (gascity-domain-decode-list 'gascity-rig raw))))
 
 (defun gascity-dashboard--publish (ctx)
   "Publish this cockpit's Needs you totals, runs and store size (CTX).

@@ -1960,5 +1960,153 @@ menu's state is remembered for the city (bug S-2)."
               (setq bound (nth 2 spec))))))
       (should (eq bound 'gascity-sling-dispatch-full-preview)))))
 
+;;; WI-11 post-approval findings F1–F6: regression tests
+
+(ert-deftest gascity-test-sling-refused-read-survives ()
+  "A refused numeric entry or an aborted read reports and keeps the
+current value instead of quitting the whole menu (WI-11 finding F1)."
+  (let ((obj (gascity-sling-formula--numeric-option
+              :var-name "max_iterations" :var-seed "5")))
+    (oset obj value "5")
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work")))
+              ((symbol-function 'read-from-minibuffer)
+               (lambda (&rest _) "10abc")))
+      ;; The validation `user-error' no longer escapes the guarded read.
+      (should (equal (gascity-sling-formula--read-guarded
+                      obj (lambda () (gascity-sling-formula--read-numeric obj)))
+                     "5")))
+    (cl-letf (((symbol-function 'transient-scope)
+               (lambda () (list :formula "do-work")))
+              ((symbol-function 'read-from-minibuffer)
+               (lambda (&rest _) (signal 'quit nil))))
+      ;; `C-g' (a `quit' signal) no longer escapes either.
+      (should (equal (gascity-sling-formula--read-guarded
+                      obj (lambda () (gascity-sling-formula--read-numeric obj)))
+                     "5")))
+    ;; The generated numeric infix reads through that guard (F1).
+    (cl-letf (((symbol-function 'gascity-sling-formula--read-guarded)
+               (lambda (_obj _read) :guarded))
+              ((symbol-function 'transient--show) #'ignore)
+              ((symbol-function 'transient--post-exit) #'ignore))
+      (should (eq (transient-infix-read obj) :guarded)))))
+(ert-deftest gascity-test-sling-footer-redraw-remembers-late-values ()
+  "A var answer typed after the last re-setup is snapshotted when the
+footer redraws, so `S' re-entry restores it (WI-11 finding F2)."
+  (let ((gascity-sling--remembered nil)
+        (scope (list :city gascity-sling-test--city :formula "do-work"
+                     :target "mayor" :work "bl-1"))
+        (value '("--var artifact_root=plans/late/")))
+    (cl-letf (((symbol-function 'transient-args)
+               (lambda (_p) value))
+              ((symbol-function 'gascity-sling--footer)
+               (lambda (&rest _) "✓ Ready"))
+              ((symbol-function 'gascity-sling--roster-cached)
+               (lambda (&optional _) nil)))
+      (funcall (plist-get (gascity-sling--footer-info scope nil) :info)))
+    (should (equal (cdr (assoc gascity-sling-test--city gascity-sling--remembered))
+                   (cons scope value)))))
+
+(ert-deftest gascity-test-sling-file-dir-reads-host-localize ()
+  "A typed path var read over a remote workdir is reduced to its
+host-local form, since gc runs host-side and cannot consume a
+`/ssh:HOST:…' name (WI-11 finding F3)."
+  (let ((file (gascity-sling-formula--file-option :var-name "context_path"))
+        (dir (gascity-sling-formula--directory-option
+              :var-name "artifact_root"))
+        (scope (list :city gascity-sling-test--city
+                     :target "hello-world/gc.implementation-worker")))
+    (gascity-test-ensure-mock-method)
+    (cl-letf (((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'gascity-beads--rig-path)
+               (lambda (_rig) "/mock::/tmp/hello-world/"))
+              ((symbol-function 'read-file-name)
+               (lambda (&rest _) "/mock::/tmp/hello-world/x.md"))
+              ((symbol-function 'read-directory-name)
+               (lambda (&rest _) "/mock::/tmp/hello-world/plans/y/")))
+      (should (equal (gascity-sling-formula--read-file file)
+                     "/tmp/hello-world/x.md"))
+      (should (equal (gascity-sling-formula--read-directory dir)
+                     "/tmp/hello-world/plans/y/")))))
+
+(ert-deftest gascity-test-sling-var-seed-uses-derived-target ()
+  "The `*_target' and `rig_name' seeds answer from the derived Who
+default (injected as `:derived-target'), not only a `T'-set target
+(WI-11 finding F5)."
+  (let ((scope (list :derived-target "hello-world/gc.implementation-worker"
+                     :work "hw-aij" :formula "build-basic")))
+    (should (equal (gascity-sling-formula--var-seed
+                    (gascity-formula-var :name "rig_name") scope)
+                   "hello-world"))
+    (should (equal (gascity-sling-formula--var-seed
+                    (gascity-formula-var :name "implementation_target") scope)
+                   "hello-world/gc.implementation-worker"))))
+
+(ert-deftest gascity-test-sling-children-specs-seed-derived-target ()
+  "`gascity-sling--children-specs' injects the derived Who default into
+the var seeds, so the How group names what `s' would launch (F5)."
+  (skip-unless (gascity-test-sling-redesign-p))
+  (let* ((formula (gascity-test--formula-with-vars
+                   (vector '((name . "implementation_target")))))
+         (scope (list :city gascity-sling-test--city :formula "do-work"
+                      :target nil :work "hw-aij")))
+    (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_name) formula))
+              ((symbol-function 'gascity-context-city-name)
+               (lambda (&optional _dir) "testcity"))
+              ((symbol-function 'gascity-sling--derived-target)
+               (lambda (_scope)
+                 (list :target "hello-world/gc.implementation-worker"
+                       :source 'implementation-worker))))
+      (let* ((groups (gascity-sling--children-specs scope))
+             (specs (apply #'append
+                           (mapcar (lambda (group)
+                                     (if (vectorp group) (append group nil)
+                                       (list group)))
+                                   groups)))
+             (infix (seq-find (lambda (s)
+                                (and (consp s) (stringp (nth 1 s))
+                                     (string-prefix-p "implementation_target"
+                                                      (nth 1 s))))
+                              specs)))
+        (should infix)
+        (should (equal (plist-get (nthcdr 3 infix) :var-seed)
+                       "hello-world/gc.implementation-worker"))))))
+
+(ert-deftest gascity-test-sling-work-title-peeks-picker-payload ()
+  "The work title is peeked from the picker's cached composite read,
+never a gc call (F6)."
+  (cl-letf (((symbol-function 'transient-scope)
+             (lambda () (list :city gascity-sling-test--city)))
+            ((symbol-function 'gascity-store-peek)
+             (lambda (&rest _)
+               '(:beads (((id . "hw-1") (title . "Fix login")))
+                 :convoys (((id . "cv-1") (title . "Convoy thing")))))))
+    (should (equal (gascity-sling--work-title "hw-1") "Fix login"))
+    (should (equal (gascity-sling--work-title "cv-1") "Convoy thing"))
+    (should-not (gascity-sling--work-title "missing"))
+    (should-not (gascity-sling--work-title "freeform text"))))
+
+(ert-deftest gascity-test-sling-work-picker-carries-title ()
+  "A bead picked with `A' carries its title into the scope, so the
+`artifact_root' seed re-derives exactly as a bead at point does
+(WI-11 finding F6b)."
+  (let ((scope (list :city gascity-sling-test--city :formula "build-basic"
+                     :target "mayor" :work nil))
+        (captured nil))
+    (cl-letf (((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'transient-args) (lambda (_p) '("--var a=1")))
+              ((symbol-function 'gascity-sling--work-choices-wait)
+               (lambda () '(("hw-aij" . "Fix it · open · hello-world"))))
+              ((symbol-function 'completing-read) (lambda (&rest _) "hw-aij"))
+              ((symbol-function 'gascity-sling--work-title)
+               (lambda (work) (and (equal work "hw-aij") "Fix the thing")))
+              ((symbol-function 'transient-setup)
+               (lambda (_name _l _s &rest args) (setq captured args))))
+      (call-interactively #'gascity-sling-dispatch-work))
+    (should (equal (plist-get (plist-get captured :scope) :work) "hw-aij"))
+    (should (equal (plist-get (plist-get captured :scope) :work-title)
+                   "Fix the thing"))))
+
 (provide 'gascity-sling-test)
 ;;; gascity-sling-test.el ends here
