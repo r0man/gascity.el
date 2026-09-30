@@ -2121,7 +2121,9 @@ jump echoes instead of failing."
       (message "The %s view is not available yet" name))))
 
 (defun gascity-jump--scoped-call (candidates name)
-  "Scoped `gascity-jump--call': the city at point in a multi-city view."
+  "Scoped `gascity-jump--call': the city at point in a multi-city view.
+CANDIDATES is the jump target list passed through to
+`gascity-jump--call'; NAME names the target for messages."
   (gascity-jump--scoped
    (lambda () (gascity-jump--call candidates name))))
 
