@@ -901,8 +901,11 @@ happens to accept a file name there, while TRAMP's direct-async handler
 \(`tramp-handle-make-process', enabled per connection through the
 connection-local variable `tramp-direct-async-process') accepts only nil
 or a buffer and signals `wrong-type-argument bufferp'.  Locally, stderr
-is captured in a hidden scratch buffer (killed on exit — its content is
-never read).  On a remote directory the separation happens ON the host
+is captured in a hidden scratch buffer (killed on exit); on failure its
+text feeds `gascity-reader--failure-message', so gc's real diagnostic
+(a rig that `gc rig status' rejects, say) is shown even though the JSON
+envelope carries only the generic sentinel phrase.  On a remote
+directory the separation happens ON the host
 instead: the command is wrapped (`gascity-reader--command') as
 
   /bin/sh -c \"PATH=…:$PATH exec \\\"$0\\\" \\\"$@\\\" 2>/dev/null\"
@@ -1081,12 +1084,26 @@ turns it on, at the cost of a fresh ssh per read."
                                           (mapconcat #'identity args " ")))
                           (when errback
                             ;; The same envelope-aware message builder as the
-                            ;; sync path, fed with the accumulated output (and
-                            ;; no stderr: it is not captured here) — a remote
-                            ;; 127 still gets the setup hint via REMOTE.
+                            ;; sync path.  A LOCAL run captures gc's stderr
+                            ;; in the scratch buffer, so read it: gc reports
+                            ;; most failures on stderr while its JSON envelope
+                            ;; only carries the generic sentinel phrase, and
+                            ;; the builder prefers specific stderr over that
+                            ;; phrase.  Remotely the separation happened on
+                            ;; the host (`2>/dev/null') and, under
+                            ;; direct-async, the scratch buffer holds the
+                            ;; local login program's chatter — neither is
+                            ;; gc's own diagnostic.  A remote 127 still gets
+                            ;; the setup hint via REMOTE.
                             (funcall errback
                                      (gascity-reader--failure-message
-                                      executable args code output nil remote))))
+                                      executable args code output
+                                      (and (not remote)
+                                           (bufferp stderr-buffer)
+                                           (buffer-live-p stderr-buffer)
+                                           (with-current-buffer stderr-buffer
+                                             (string-trim (buffer-string))))
+                                      remote))))
                          (t
                           (condition-case perr
                               (let ((data (if lines

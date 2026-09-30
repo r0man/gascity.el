@@ -554,6 +554,58 @@ The HQ guard must not disturb the normal path: a real rig still routes to
         (gascity-rig-dashboard-at-point)
         (should (equal opened '("gascity.el")))))))
 
+(ert-deftest gascity-test-rig-dashboard-shows-gc-error-line ()
+  "A failed `gc rig status' renders gc's own diagnostic line (ga-94fvy.1).
+The store carries the async reader's failure text into the section's
+`:error', and the dashboard's ■ line must show that text — gc's stderr
+message (`rig … not found in city.toml'), not the generic `command
+failed; see stderr for diagnostics' sentinel phrase."
+  (let ((vui-render-delay nil)
+        (gascity-store-synchronous-delivery t)
+        (reads nil))
+    (cl-letf (((symbol-function 'gascity-reader-read-async)
+               (lambda (args callback &optional errback &rest _)
+                 (push (list args callback errback) reads)
+                 nil)))
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (vui-mount (vui-component 'gascity-rig-dashboard-app
+                                        :rig-name "bright-lights")
+                         "*gascity-rig-error-test*")
+              (let* ((job (seq-find
+                           (lambda (r)
+                             (equal (car r) '("rig" "status" "bright-lights")))
+                           reads))
+                     (errback (nth 2 job)))
+                (should job)
+                (funcall errback
+                         (concat "gc rig status bright-lights failed: "
+                                 "gc rig status: rig \"bright-lights\" not "
+                                 "found in city.toml (exit 1)")))
+              (with-current-buffer "*gascity-rig-error-test*"
+                (goto-char (point-min))
+                (should (re-search-forward
+                         "rig .bright-lights. not found in city.toml" nil t))
+                (should-not (re-search-forward
+                             "see stderr for diagnostics" nil t))))
+          (when (get-buffer "*gascity-rig-error-test*")
+            (kill-buffer "*gascity-rig-error-test*")))))))
+
+(ert-deftest gascity-test-rig-dashboard-refuses-hq-direct ()
+  "The picker/direct entry refuses the HQ, not just the RET path (ga-94fvy.1).
+Selecting the HQ in `gascity-rig-dashboard''s prompt must not mount the
+un-retryable `gc rig status' error screen."
+  (let ((hq (gascity-domain-decode
+             'gascity-rig
+             '((name . "bright-lights") (prefix . "bl") (hq . t)))))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _) (list hq)))
+              ((symbol-function 'gascity-view-get-buffer-create)
+               (lambda (&rest _) (error "mounted a dashboard for the HQ"))))
+      (should-error (gascity-rig-dashboard "bright-lights")
+                    :type 'user-error))))
+
 ;;; gce-4hk — RET on an agent attaches its terminal; `i' opens its info view
 
 (defun gascity-test--with-agent-at-point (thunk)
@@ -6490,6 +6542,28 @@ same `gc <args> failed: <msg> (exit N)' text the sync path builds
      (lambda (msg) (setcar result msg)))
     (should (equal (gascity-test--wait-for result)
                    "gc -c echo '{\"ok\":false,\"message\":\"table not found: leases\"}'; exit 1 --json failed: table not found: leases (exit 1)"))))
+
+(ert-deftest gascity-test-local-reader-read-async-generic-envelope-stderr-wins ()
+  "A local async failure surfaces gc's stderr over a generic envelope.
+gc reports most failures on stderr while its JSON envelope carries only
+the sentinel phrase (the bright-lights `gc rig status' rejection: ga-94fvy.1).
+The async sentinel must read the captured stderr scratch buffer so the
+errback text names the real diagnostic, not `command failed; see stderr
+for diagnostics'."
+  (let ((default-directory temporary-file-directory)
+        (gascity-executable "/bin/sh")
+        (result (list nil)))
+    (gascity-reader-read-async
+     '("-c" "echo '{\"ok\":false,\"error\":{\"code\":\"command_failed\",\"message\":\"command failed; see stderr for diagnostics\"}}'; echo 'gc rig status: rig \"bright-lights\" not found in city.toml' >&2; exit 1"
+       "--json")
+     (lambda (_data) (setcar result :called))
+     (lambda (msg) (setcar result msg)))
+    (let ((msg (gascity-test--wait-for result)))
+      ;; The reason after "failed: " is gc's stderr, not the envelope's
+      ;; sentinel phrase (which the echoed argv itself also contains).
+      (should (string-match-p
+               "failed: gc rig status: rig \"bright-lights\" not found in city.toml (exit 1)"
+               msg)))))
 
 (ert-deftest gascity-test-error-detail-preference ()
   "`gascity-error-detail' prefers non-empty :stderr over the message.

@@ -354,6 +354,20 @@ point — the whole dashboard is one rig."
   (gascity-rig-beads (or gascity-rig-dashboard--rig-name
                          (user-error "No rig dashboard here"))))
 
+(defun gascity-rig--refuse-hq (rig-name)
+  "Signal a `user-error' when RIG-NAME is the city HQ, else return nil.
+The city HQ is not a `city.toml' rig: `gc rig list' lists it for its
+beads, but `gc rig status' rejects it, so mounting a rig dashboard only
+yields an un-retryable error screen.  Answered from the rig memo, so a
+cold memo (no `hq' flag known) lets the mount proceed and show gc's own
+error instead."
+  (let ((rig (seq-find (lambda (r) (equal (gascity-rig-name r) rig-name))
+                       (gascity-rigs-cached))))
+    (when (and rig (gascity-rig-hq rig))
+      (user-error
+       "%s is the city HQ, not a rig — no rig dashboard; use M-x gascity-dashboard, or `b' for its beads"
+       rig-name))))
+
 (cl-defmethod gascity-at-point-visit ((rig gascity-rig))
   "Visit RIG: open its dashboard.
 Refuses the city HQ (e.g. bright-lights): `gc rig list' lists it for its
@@ -438,12 +452,18 @@ rig path is host-qualified first, so a remote rig logs on its host."
 (defun gascity-rig-dashboard (rig-name)
   "Show the dashboard for rig RIG-NAME.
 Prompts for the rig when called interactively, defaulting to the
-contextual rig."
+contextual rig.  Refuses the city HQ (see `gascity-rig--refuse-hq'):
+it has no rig dashboard, so opening one only yields gc's `not found in
+city.toml' error."
   (interactive
    ;; Candidates and default from memory only (§8.5: a prompt never
    ;; runs gc synchronously); the rig list refreshes in the background.
    (list (completing-read "Rig: " (gascity-rig-names-for-prompt)
                           nil nil nil nil (gascity-context-rig-name-cached))))
+  ;; The direct/picker entry (unlike the RET path through
+  ;; `gascity-at-point-visit') must refuse the HQ too, so selecting it in
+  ;; the prompt cannot mount the un-retryable error screen (ga-94fvy.1).
+  (gascity-rig--refuse-hq rig-name)
   (let ((buf (gascity-view-get-buffer-create
               (gascity-rig-dashboard--buffer-name rig-name))))
     (with-current-buffer buf
