@@ -427,8 +427,12 @@ without a new read."
   (setq tabulated-list-sort-key nil)
   (setq gascity-tabulated--base-name "Cities")
   ;; `W' toggles the stream of the city at point: this list belongs to
-  ;; no city, so it joins no stream itself.
+  ;; no city, so it joins no stream itself.  The city-scoped `j'/`?'
+  ;; jumps are pinned to that same city at point, not the list's
+  ;; contextless `default-directory' (ga-4hvvi.2).
   (setq-local gascity-live-city-function
+              (lambda () (alist-get 'dir (tabulated-list-get-id))))
+  (setq-local gascity-jump-city-function
               (lambda () (alist-get 'dir (tabulated-list-get-id))))
   (tabulated-list-init-header))
 

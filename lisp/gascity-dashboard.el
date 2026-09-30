@@ -2089,6 +2089,27 @@ Pure: reads buffer-local state and the TRAMP name only (§8.3 R2)."
 
 ;;; Jump prefix `j' (§5.2) and the `?' dispatch (§6.2)
 
+(defvar-local gascity-jump-city-function nil
+  "Function of no arguments returning the city a jump should act on, or nil.
+The Cities list binds it (as it binds `gascity-live-city-function'): the
+list belongs to no city, so its city-scoped `j'/`?' jumps run with
+`default-directory' bound to the city on the row at point instead of
+the list's contextless one (§7.11).  Nil in every other view: there a
+jump uses the view's own pinned city directory.")
+
+(defun gascity-jump--scoped (fn)
+  "Call FN with `default-directory' at the city this jump targets.
+In a view that scopes jumps (`gascity-jump-city-function' non-nil, the
+Cities list) that is the city at point, and point must hold one, else
+FN would open a contextless view whose gc reads fail and whose live
+indicator spins.  Elsewhere FN runs in the view's own directory."
+  (let ((dir (if gascity-jump-city-function
+                 (or (funcall gascity-jump-city-function)
+                     (user-error "No city selected — RET to open one"))
+               default-directory)))
+    (let ((default-directory dir))
+      (funcall fn))))
+
 (defun gascity-jump--call (candidates name)
   "Call the first defined command of CANDIDATES, else say NAME is pending.
 Views built by later phases are reached by name; until one exists the
@@ -2099,45 +2120,67 @@ jump echoes instead of failing."
         (call-interactively cmd)
       (message "The %s view is not available yet" name))))
 
+(defun gascity-jump--scoped-call (candidates name)
+  "Scoped `gascity-jump--call': the city at point in a multi-city view."
+  (gascity-jump--scoped
+   (lambda () (gascity-jump--call candidates name))))
+
 (defun gascity-jump-cockpit ()
   "Jump to this city's cockpit (`j j')."
   (interactive)
-  (gascity-dashboard))
+  (gascity-jump--scoped #'gascity-dashboard))
 
 (defun gascity-jump-agents ()
   "Jump to the Agents view (`j a')."
   (interactive)
-  (gascity-jump--call '(gascity-agents gascity-session-list) "Agents"))
+  (gascity-jump--scoped-call '(gascity-agents gascity-session-list) "Agents"))
 
 (defun gascity-jump-runs ()
   "Jump to the Runs view (`j r')."
   (interactive)
-  (gascity-jump--call '(gascity-runs) "Runs"))
+  (gascity-jump--scoped-call '(gascity-runs) "Runs"))
 
 (defun gascity-jump-events ()
   "Jump to the Events view (`j e')."
   (interactive)
-  (gascity-jump--call '(gascity-events) "Events"))
+  (gascity-jump--scoped-call '(gascity-events) "Events"))
 
 (defun gascity-jump-health ()
   "Jump to the Health view (`j h')."
   (interactive)
-  (gascity-jump--call '(gascity-health) "Health"))
+  (gascity-jump--scoped-call '(gascity-health) "Health"))
 
 (defun gascity-jump-cities ()
-  "Jump to the Cities view (`j c')."
+  "Jump to the Cities view (`j c').
+The Cities list is every city, not one: this jump is never scoped to
+`gascity-jump-city-function'."
   (interactive)
   (gascity-jump--call '(gascity-cities) "Cities"))
 
 (defun gascity-jump-mail ()
   "Jump to the Mail inbox (`j m')."
   (interactive)
-  (gascity-jump--call '(gascity-mail gascity-mail-inbox) "Mail"))
+  (gascity-jump--scoped-call '(gascity-mail gascity-mail-inbox) "Mail"))
 
 (defun gascity-jump-costs ()
   "Show `gc costs' output (`j $')."
   (interactive)
-  (gascity-jump--call '(gascity-costs) "Costs"))
+  (gascity-jump--scoped-call '(gascity-costs) "Costs"))
+
+(defun gascity-jump-orders ()
+  "Jump to this city's Orders view (`j o')."
+  (interactive)
+  (gascity-jump--scoped #'gascity-order-list))
+
+(defun gascity-jump-convoys ()
+  "Jump to this city's Convoys view (`j v')."
+  (interactive)
+  (gascity-jump--scoped #'gascity-convoy-list))
+
+(defun gascity-jump-dolt ()
+  "Jump to this city's Dolt view (`j d')."
+  (interactive)
+  (gascity-jump--scoped #'gascity-dolt-list))
 
 (defun gascity-jump-rig ()
   "Open the rig dashboard of the rig at point, else prompt (`j g').
@@ -2145,34 +2188,38 @@ The prompt reads the rig memo only — never a synchronous `gc' — and
 refreshes it in the background (`gascity-rig-names-for-prompt'), so a
 cold memo fills in for the next prompt; \"city\" opens the cockpit."
   (interactive)
-  (let ((rig (or (gascity-rig-at-point)
-                 (completing-read "Rig: "
-                                  (cons "city" (gascity-rig-names-for-prompt))
-                                  nil t))))
-    (if (equal rig "city")
-        (gascity-dashboard)
-      (gascity-rig-dashboard rig))))
+  (gascity-jump--scoped
+   (lambda ()
+     (let ((rig (or (gascity-rig-at-point)
+                    (completing-read "Rig: "
+                                     (cons "city" (gascity-rig-names-for-prompt))
+                                     nil t))))
+       (if (equal rig "city")
+           (gascity-dashboard)
+         (gascity-rig-dashboard rig))))))
 
 (defun gascity-jump-beads ()
   "Open beads.el for the rig at point, else chosen: a rig or the city (`j b').
 Candidates come from the rig memo only (§8.5), refreshed in the
 background for the next prompt."
   (interactive)
-  (let ((rig (or (gascity-rig-at-point)
-                 (let ((choice (completing-read
-                                "Beads for: "
-                                (cons "city" (progn
-                                               ;; Background refresh of the memo.
-                                               (gascity-rig-names-for-prompt)
-                                               (gascity-dashboard--rig-store-names
-                                                (gascity-rigs-cached))))
-                                nil t)))
-                   (and (not (equal choice "city")) choice)))))
-    (if rig
-        (gascity-rig-beads rig)
-      (let ((store (gascity-beads--city-store)))
-        (unless (fboundp 'beads-dashboard) (require 'beads-dashboard nil t))
-        (beads-dashboard :directory store)))))
+  (gascity-jump--scoped
+   (lambda ()
+     (let ((rig (or (gascity-rig-at-point)
+                    (let ((choice (completing-read
+                                   "Beads for: "
+                                   (cons "city" (progn
+                                                  ;; Background refresh of the memo.
+                                                  (gascity-rig-names-for-prompt)
+                                                  (gascity-dashboard--rig-store-names
+                                                   (gascity-rigs-cached))))
+                                   nil t)))
+                      (and (not (equal choice "city")) choice)))))
+       (if rig
+           (gascity-rig-beads rig)
+         (let ((store (gascity-beads--city-store)))
+           (unless (fboundp 'beads-dashboard) (require 'beads-dashboard nil t))
+           (beads-dashboard :directory store)))))))
 
 (defvar-keymap gascity-jump-map
   :doc "The `j' jump prefix of every gascity view (dashboard-v3 §5.2)."
@@ -2184,9 +2231,9 @@ background for the next prompt."
   "e" #'gascity-jump-events
   "h" #'gascity-jump-health
   "c" #'gascity-jump-cities
-  "o" #'gascity-order-list
-  "v" #'gascity-convoy-list
-  "d" #'gascity-dolt-list
+  "o" #'gascity-jump-orders
+  "v" #'gascity-jump-convoys
+  "d" #'gascity-jump-dolt
   "g" #'gascity-jump-rig
   "$" #'gascity-jump-costs)
 
@@ -2207,9 +2254,9 @@ teaches the view keys."
     ("j e" "events" gascity-jump-events)
     ("j h" "health" gascity-jump-health)
     ("j c" "cities" gascity-jump-cities)
-    ("j o" "orders" gascity-order-list)
-    ("j v" "convoys" gascity-convoy-list)
-    ("j d" "dolt" gascity-dolt-list)
+    ("j o" "orders" gascity-jump-orders)
+    ("j v" "convoys" gascity-jump-convoys)
+    ("j d" "dolt" gascity-jump-dolt)
     ("j g" "rig dashboard" gascity-jump-rig)
     ("j $" "costs" gascity-jump-costs)]
    ["Agent at point"

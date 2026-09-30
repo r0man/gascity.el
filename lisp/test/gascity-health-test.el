@@ -596,6 +596,59 @@ store (another view read it); the column appears then (QA A2)."
         (should (equal (nth 3 (cadr (gascity-health-test--rows))) "1 ⬣"))
         (should (equal (nth 3 (car (gascity-health-test--rows))) ""))))))
 
+(ert-deftest gascity-test-cities-jumps-target-city-at-point ()
+  "City-scoped `j'/`?' jumps in the Cities list act on the city at point.
+The list buffer's own `default-directory' is contextless (local home),
+so without scoping these jumps opened views that read gc with no city,
+failed, and spun `connecting' forever (ga-4hvvi.2)."
+  (let ((gascity-remote-hosts nil))
+    (gascity-health-test--with-cities
+      ;; Point at the first city row (host and header lines hold no city).
+      (goto-char (point-min))
+      (while (and (not (eobp))
+                  (not (alist-get 'dir (tabulated-list-get-id))))
+        (forward-line 1))
+      (let* ((dir (alist-get 'dir (tabulated-list-get-id)))
+             (seen nil)
+             (stub (lambda () (interactive) (setq seen default-directory))))
+        (should dir)
+        (dolist (cmd '(gascity-jump-cockpit gascity-jump-convoys
+                       gascity-jump-orders gascity-jump-dolt gascity-jump-mail
+                       gascity-jump-agents gascity-jump-runs gascity-jump-events
+                       gascity-jump-health gascity-jump-costs))
+          (ert-info ((symbol-name cmd))
+            (setq seen nil)
+            (cl-letf (((symbol-function 'gascity-dashboard) stub)
+                      ((symbol-function 'gascity-convoy-list) stub)
+                      ((symbol-function 'gascity-order-list) stub)
+                      ((symbol-function 'gascity-dolt-list) stub)
+                      ((symbol-function 'gascity-mail) stub)
+                      ((symbol-function 'gascity-agents) stub)
+                      ((symbol-function 'gascity-runs) stub)
+                      ((symbol-function 'gascity-events) stub)
+                      ((symbol-function 'gascity-health) stub)
+                      ((symbol-function 'gascity-costs) stub))
+              (call-interactively cmd))
+            (ert-info ((format "bound to %S, want %S" seen dir))
+              (should (equal seen dir)))))))))
+
+(ert-deftest gascity-test-cities-jumps-no-city-at-point ()
+  "A city-scoped jump with no city on the row says so instead of opening
+a contextless view whose reads fail and whose live indicator spins
+\(ga-4hvvi.2).  The Cities jump itself stays unscoped: it lists them all."
+  (gascity-health-test--with-cities
+    (let ((gascity-jump-city-function (lambda () nil)))
+      (dolist (cmd '(gascity-jump-cockpit gascity-jump-mail gascity-jump-convoys))
+        (ert-info ((symbol-name cmd))
+          (should-error (call-interactively cmd) :type 'user-error))))
+    ;; `j c' is every city, not one: it never consults the row.
+    (let ((gascity-jump-city-function (lambda () nil))
+          (called nil))
+      (cl-letf (((symbol-function 'gascity-cities)
+                 (lambda () (interactive) (setq called default-directory))))
+        (gascity-jump-cities)
+        (should called)))))
+
 ;;; Costs (`j $')
 
 (ert-deftest gascity-test-costs-shows-text ()
