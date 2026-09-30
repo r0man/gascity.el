@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "firefox-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "firefox-devtools-mcp@latest",
+        "--firefox-path", "/home/roman/.guix-home/profile/bin/librewolf",
+        "--profile-path", "/tmp/asahi-guix-website"
+      ],
+      "env": {}
+    }
+  }
+}

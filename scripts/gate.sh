@@ -1,7 +1,7 @@
 #!/bin/sh
 # scripts/gate.sh - the standard quality gate for gascity.el.
 #
-# Runs the three halves of the offline gate that, together, catch the
+# Runs the two halves of the offline gate that, together, catch the
 # regression classes the test suite alone cannot:
 #
 #   1. eldev compile --warnings-as-errors
@@ -13,11 +13,11 @@
 #        `eldev test' never sees them at all.
 #   2. eldev test
 #        Runs the ERT suite.
-#   3. eldev lint
-#        The doc/re/package linters - the same run the CI `lint' job does
-#        (`eldev -p -dtT lint').  Without it, docstring/style defects pass
-#        the gate locally and main goes lint-red on push (three times in
-#        two days: ga-2rf1r, ga-4hvvi.2, ga-94fvy.1).  Fast (~2 s).
+#
+# Lint is NOT part of this gate: the doc linter's checkdoc rules differ
+# between supported Emacs versions (29.4/30.2 flag verbs 31.1 accepts),
+# so a lint step here would fail CI on four Emacs versions.  Run the CI
+# lint job's exact command before pushing instead: scripts/lint.sh.
 #
 # Either half failing exits non-zero, so a diff that reintroduces such a
 # reference fails the gate before it can reach the refinery.
@@ -40,10 +40,7 @@ cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 echo ">>> gate: eldev compile --warnings-as-errors"
 eldev compile --warnings-as-errors
 
-echo "<<< gate: eldev test"
+echo ">>> gate: eldev test"
 eldev test
 
-echo ">>> gate: eldev lint"
-eldev lint
-
-echo ">>> gate: PASS (compile clean + tests green + lint clean)"
+echo ">>> gate: PASS (compile clean + tests green)"

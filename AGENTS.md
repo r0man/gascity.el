@@ -24,7 +24,14 @@ The standard quality gate, run from the repo root before every push:
 
 ```bash
 scripts/gate.sh   # eldev compile --warnings-as-errors  +  eldev test
+scripts/lint.sh   # the CI lint job's exact command (eldev -p -dtT lint)
 ```
+
+Run `scripts/lint.sh` too: its warnings are a CI failure (the `lint`
+workflow runs the same command on Emacs 31.1), but lint is deliberately
+not part of `gate.sh` - the doc linter's checkdoc rules differ across the
+Emacs versions in the test matrix (29.4/30.2 flag docstring verbs that
+31.1 accepts).
 
 The halves, and how to narrow them:
 
@@ -227,7 +234,8 @@ unbounded blocking call.
 
 ## Session completion
 
-Before ending a session with code changes: run `scripts/gate.sh`, commit, then
+Before ending a session with code changes: run `scripts/gate.sh` and
+`scripts/lint.sh`, commit, then
 `git pull --rebase && git push` and confirm `git status` is up to date with
 origin. Work left only in the working tree or a local branch is considered
 stranded.
