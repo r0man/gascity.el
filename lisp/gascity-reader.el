@@ -903,7 +903,7 @@ connection-local variable `tramp-direct-async-process') accepts only nil
 or a buffer and signals `wrong-type-argument bufferp'.  Locally, stderr
 is captured in a hidden scratch buffer (killed on exit); on failure its
 text feeds `gascity-reader--failure-message', so gc's real diagnostic
-(a rig that `gc rig status' rejects, say) is shown even though the JSON
+\(a rig that `gc rig status' rejects, say) is shown even though the JSON
 envelope carries only the generic sentinel phrase.  On a remote
 directory the separation happens ON the host
 instead: the command is wrapped (`gascity-reader--command') as
