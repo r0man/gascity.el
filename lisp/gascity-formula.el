@@ -26,8 +26,8 @@
 ;; Caches (plan decision D3): the catalog and the per-formula compiled
 ;; recipes are memoized for the Emacs session, keyed by the ONE
 ;; city-scoped identity `gascity-context-scope-key' — the governing city
-;; root (which embeds the remote prefix), so a local city and
-;; /ssh:localhost:/home/roman/bright-lights never share an entry, a rig
+;; root (which embeds the remote prefix), so a local city and its
+;; remote `/ssh:HOST:DIR' alias never share an entry, a rig
 ;; repo inside a city shares its city's entry, and
 ;; `gascity-context-city' overrides are honoured (REQ-009/REQ-003: one
 ;; keying scheme across the package).  Nothing

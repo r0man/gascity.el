@@ -277,7 +277,7 @@ Then clear the echo area, so the export shows no stray message."
         (set-frame-size (selected-frame) 200 58)
         (setq default-directory
               (file-name-as-directory
-               (gascity-shots-getenv "GASCITY_SHOT_DIR" "/home/roman/emacs-city")))
+               (gascity-shots-getenv "GASCITY_SHOT_DIR" (expand-file-name "~/emacs-city"))))
         (gascity-shots--progress "theme=%s outdir=%s rig=%s dir=%s"
                                  screenshot-theme screenshot-output-dir
                                  gascity-shots-rig default-directory)

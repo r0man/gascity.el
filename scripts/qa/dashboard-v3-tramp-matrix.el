@@ -31,10 +31,13 @@
                                 (tramp-direct-async ("-c")) (tramp-remote-shell "/bin/sh")
                                 (tramp-remote-shell-args ("-c")) (tramp-connection-timeout 10)))
   (add-to-list 'tramp-default-host-alist `("\\`mock\\'" nil ,(system-name))))
+(defvar mx-home (file-name-as-directory
+                  (or (getenv "HOME") (expand-file-name "~"))))
+(defvar mx-bl (file-name-as-directory (expand-file-name "bright-lights" mx-home)))
 (defvar mx-dir (pcase mx-mode
-                 ("local" "/home/roman/bright-lights/")
-                 ("mock" "/mock::/home/roman/bright-lights/")
-                 (_ "/ssh:localhost:/home/roman/bright-lights/")))
+                 ("local" mx-bl)
+                 ("mock" (concat "/mock::" mx-bl))
+                 (_ (concat "/ssh:localhost:" mx-bl))))
 (defvar mx-phase "init")
 (defvar mx-last (float-time))
 (defvar mx-gaps nil)

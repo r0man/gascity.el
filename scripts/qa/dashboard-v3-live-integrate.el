@@ -16,7 +16,7 @@
       (setq cap (1- cap)) (accept-process-output nil 0.05))))
 (defun li-gc (&rest args)
   (with-temp-buffer
-    (let ((default-directory "/home/roman/bright-lights/"))
+    (let ((default-directory li-dir))
       (apply #'call-process "gc" nil t nil args))
     (buffer-string)))
 (defun li-buf-has (buf s) (and (buffer-live-p buf) (with-current-buffer buf (string-search s (buffer-string)))))

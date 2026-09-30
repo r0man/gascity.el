@@ -18,7 +18,7 @@
       (setq cap (1- cap)) (accept-process-output nil 0.05))))
 (defun lt-gc (&rest args)
   (with-temp-buffer
-    (let ((default-directory "/home/roman/bright-lights/"))
+    (let ((default-directory lt-dir))
       (apply #'call-process "gc" nil t nil args))
     (buffer-string)))
 (add-hook 'gascity-live-invalidate-functions

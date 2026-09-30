@@ -178,9 +178,9 @@ a finish closure; it knows nothing about gc.
 
 ## Remote test city & end-to-end testing
 
-`bright-lights` is a real second city at `/home/roman/bright-lights`, kept as
+`bright-lights` is a real second city at `~/bright-lights`, kept as
 the TRAMP test target. Open it from a local Emacs as the remote file name
-`/ssh:localhost:/home/roman/bright-lights` (the default user) — every gascity view must
+`/ssh:localhost:~/bright-lights` (the default user) — every gascity view must
 work identically there (status dashboard, rig dashboards, lists, sling,
 formula dispatch, mail). When a feature touches anything gc-invocation or
 path related, verify it against that city over TRAMP, not only locally.
@@ -188,7 +188,7 @@ path related, verify it against that city over TRAMP, not only locally.
 The end-to-end test protocol for user-facing features (e.g. the formula
 sling UI) is interactive, not ERT: launch a **fresh Emacs inside tmux**
 (`tmux new-session -d -s gce-e2e 'emacs'`, or `emacs -Q` with `lisp/` on the
-`load-path`), connect it to `/ssh:localhost:/home/roman/bright-lights`,
+`load-path`), connect it to `/ssh:localhost:~/bright-lights`,
 and exercise the real flow — dispatch a sling with a formula, set its vars
 through the transient, confirm the workflow root appears in the store. Do not
 call the feature "done" until this pass has run; record the result in a
@@ -246,7 +246,7 @@ stranded.
   the `parenmedic` CLI instead of eyeballing — `parenmedic diagnose <files>`
   to locate (stdin via `-`; `-f json`; `-d elisp` / `-d scheme` force a
   dialect), `parenmedic fix <files-or-globs>` to auto-fix.
-  Installed at /home/roman/.guix-profile/bin/parenmedic. `parenmedic` has
+  On `PATH` as `parenmedic` (Guix: `~/.guix-profile/bin/parenmedic`). `parenmedic` has
   exactly two subcommands (`diagnose`, `fix`) — it does not compile anything;
   byte-compilation is `eldev compile --warnings-as-errors` (or just
   `scripts/gate.sh`).

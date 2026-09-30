@@ -22,7 +22,7 @@
                 (buffer-substring-no-properties (line-beginning-position) (line-end-position)))))))
 (defun ls-state ()
   (with-temp-buffer
-    (let ((default-directory "/home/roman/bright-lights/"))
+    (let ((default-directory ls-dir))
       (call-process "gc" nil t nil "session" "list" "--json"))
     (let ((d (json-parse-string (buffer-string) :object-type 'alist)))
       (alist-get 'state (seq-find (lambda (s) (equal (alist-get 'agent_name s) ls-agent))

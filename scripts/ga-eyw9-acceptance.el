@@ -1,7 +1,7 @@
 ;;; ga-eyw9-acceptance.el --- scripted TRAMP acceptance for ga-eyw9 -*- lexical-binding: t; -*-
 
 ;; Batch-Emacs acceptance check for bead ga-eyw9 against the real
-;; bright-lights city over TRAMP (/ssh:localhost:/home/roman/bright-lights):
+;; bright-lights city over TRAMP (/ssh:localhost:~/bright-lights):
 ;;
 ;;   1. open the session list for the remote city, wait for a live read;
 ;;   2. kill the pooled TRAMP connection mid-session (the dropped-link
@@ -19,7 +19,9 @@
 (require 'tramp)
 (require 'gascity)
 
-(defconst ga-eyw9--city "/ssh:localhost:/home/roman/bright-lights/")
+(defconst ga-eyw9--city
+  (concat "/ssh:localhost:" (expand-file-name "~/bright-lights/"))
+  "The real bright-lights city over TRAMP (see AGENTS.md).")
 
 (defvar ga-eyw9--messages nil
   "Every echo-area message text recorded during the run.")

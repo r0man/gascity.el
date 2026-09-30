@@ -5,6 +5,8 @@
 (require 'gascity)
 (setq gascity-live-in-batch t gascity-live-debounce 0.5)
 (defvar e2e-cm (expand-file-name "v3live-%C" (getenv "XDG_RUNTIME_DIR")))
+(defvar e2e-city (expand-file-name "~/bright-lights/")
+  "Local path of the real bright-lights test city (see AGENTS.md).")
 ;; Private ssh master for the remote stream, so `ssh -O exit' only
 ;; affects this test (the user's shared master stays up).
 (advice-add 'gascity-live-command :filter-return
@@ -39,7 +41,9 @@
     (e2e-log "[%s] invalidations: %d" label invals)
     ;; 2. kill the gc stream → resume with no missed seq
     (let ((before (length seqs)) (last-seq (car seqs)))
-      (call-process "pkill" nil nil nil "-f" "^(/[^ ]*/)?g[c] events --follow.*--city /home/roman/bright-lights")
+      (call-process "pkill" nil nil nil "-f"
+                    (format "^(/[^ ]*/)?g[c] events --follow.*--city %s"
+                            (regexp-quote (directory-file-name e2e-city))))
       (e2e-wait (lambda () (not (eq (gascity-live--stream-state stream) 'live))) 10)
       (e2e-log "[%s] after pkill: %s (%s)" label (gascity-live--stream-state stream)
                (gascity-live--stream-reason stream))
@@ -79,6 +83,6 @@
         (setq ok nil)))
     (e2e-log "[%s] RESULT: %s" label (if ok "PASS" "FAIL"))
     ok))
-(let ((local (e2e-run "/home/roman/bright-lights/" "local"))
-      (remote (e2e-run "/ssh:localhost:/home/roman/bright-lights/" "remote")))
+(let ((local (e2e-run e2e-city "local"))
+      (remote (e2e-run (concat "/ssh:localhost:" e2e-city) "remote")))
   (kill-emacs (if (and local remote) 0 1)))
