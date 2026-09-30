@@ -246,4 +246,7 @@ stranded.
   the `parenmedic` CLI instead of eyeballing — `parenmedic diagnose <files>`
   to locate (stdin via `-`; `-f json`; `-d elisp` / `-d scheme` force a
   dialect), `parenmedic fix <files-or-globs>` to auto-fix.
-  Installed at /home/roman/.guix-profile/bin/parenmedic.
+  Installed at /home/roman/.guix-profile/bin/parenmedic. `parenmedic` has
+  exactly two subcommands (`diagnose`, `fix`) — it does not compile anything;
+  byte-compilation is `eldev compile --warnings-as-errors` (or just
+  `scripts/gate.sh`).
