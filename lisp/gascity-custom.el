@@ -108,15 +108,17 @@ Only consulted when `gascity-enable-debug' is non-nil.
   "Terminal backend for attaching to an agent's tmux session.
 gascity delegates the actual spawn to beads.el's terminal module
 \(`beads-terminal-spawn'); this choice selects which backend class it
-uses.  When nil, beads auto-detects the best available backend in the
-order vterm > eat > term.  (Future interactive commands such as peek or
+uses.  When nil, gascity auto-detects the best available backend:
+ghostel when it is installed (attempted/loaded, not merely already
+`featurep' — see `gascity-terminal--ghostel-available-p'), otherwise
+vterm > eat > term.  (Future interactive commands such as peek or
 shell will share this setting.)
 
-- nil:   auto-detect (vterm, then eat, then the built-in term).
+- nil:   auto-detect (ghostel when installed, then vterm, eat, term).
 - vterm: requires the `vterm' package.
 - eat:   requires the `eat' package.
 - term:  the built-in `term-mode' (always available)."
-  :type '(choice (const :tag "Auto-detect (vterm > eat > term)" nil)
+  :type '(choice (const :tag "Auto-detect (ghostel > vterm > eat > term)" nil)
                  (const :tag "Vterm (requires vterm package)" vterm)
                  (const :tag "Eat (requires eat package)" eat)
                  (const :tag "Term mode (built-in)" term))

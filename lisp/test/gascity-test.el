@@ -3557,6 +3557,104 @@ later notches the run only.  A reporting backend is never driven (REQ-004)."
                                            "\e[1;5B\e[1;5B\e[1;5B")))))))
       (kill-buffer buf))))
 
+(ert-deftest gascity-test-terminal-ghostel-available-probe ()
+  "`gascity-terminal--ghostel-available-p' probes by loading ghostel,
+not merely `featurep' — the load-order dependency the bug was about."
+  (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
+            ((symbol-function 'beads-terminal-available-p)
+             (lambda (_t) t)))
+    (should (gascity-terminal--ghostel-available-p)))
+  ;; Not installed (or broken): the load attempt answers nil.
+  (cl-letf (((symbol-function 'require) (lambda (&rest _) nil)))
+    (should-not (gascity-terminal--ghostel-available-p))))
+
+(ert-deftest gascity-test-terminal-backend-class-deterministic ()
+  "Unset backend resolves to ghostel when it is available, else to the
+beads.el auto walk; an explicit choice is never overridden (ga-eqpxs)."
+  (let ((gascity-terminal-backend nil))
+    (cl-letf (((symbol-function 'gascity-terminal--ghostel-available-p)
+               (lambda () t)))
+      (should (eq (gascity-terminal--backend-class) 'beads-terminal-ghostel)))
+    (cl-letf (((symbol-function 'gascity-terminal--ghostel-available-p)
+               (lambda () nil)))
+      (should (eq (gascity-terminal--backend-class) 'beads-terminal-auto))))
+  (let ((gascity-terminal-backend 'vterm))
+    (should (eq (gascity-terminal--backend-class) 'beads-terminal-vterm)))
+  (let ((gascity-terminal-backend 'eat))
+    (should (eq (gascity-terminal--backend-class) 'beads-terminal-eat)))
+  (let ((gascity-terminal-backend 'term))
+    (should (eq (gascity-terminal--backend-class) 'beads-terminal-term))))
+
+(ert-deftest gascity-test-terminal-wheel-mouse-sequence ()
+  "The injected wheel event is SGR button 64 (up) / 65 (down) at the
+pane's top-left — exactly what a reporting terminal sends tmux."
+  (should (equal (gascity-terminal--wheel-mouse-sequence t) "\e[<64;1;1M"))
+  (should (equal (gascity-terminal--wheel-mouse-sequence nil) "\e[<65;1;1M")))
+
+(ert-deftest gascity-test-terminal-wheel-armed-by-default ()
+  "`gascity-terminal--arm-wheel' enables the wheel mode on vterm/term,
+leaves ghostel/eat to their native passthrough, and honours
+`gascity-terminal-ensure-mouse' (ga-eqpxs)."
+  (let ((buf (generate-new-buffer "*gc-wheel-arm*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq major-mode 'vterm-mode)
+          (gascity-terminal--arm-wheel buf)
+          (should gascity-terminal-wheel-mode)
+          (should (eq (cdr (assq 'gascity-terminal-wheel-mode
+                                 minor-mode-overriding-map-alist))
+                      gascity-terminal-wheel-map))
+          ;; Reporting backends: never armed (no double-driving).
+          (dolist (mode '(ghostel-mode eat-mode))
+            (gascity-terminal-wheel-mode -1)
+            (setq major-mode mode)
+            (gascity-terminal--arm-wheel buf)
+            (should-not gascity-terminal-wheel-mode))
+          ;; ensure-mouse nil: the injected event would be meaningless.
+          (setq major-mode 'vterm-mode)
+          (gascity-terminal-wheel-mode -1)
+          (let ((gascity-terminal-ensure-mouse nil))
+            (gascity-terminal--arm-wheel buf)
+            (should-not gascity-terminal-wheel-mode)))
+      (kill-buffer buf))))
+
+(ert-deftest gascity-test-terminal-install-keys-arms-wheel ()
+  "`gascity-terminal--install-keys' arms the wheel mode on a
+non-reporting backend, so an attach buffer scrolls with no toggle."
+  (with-temp-buffer
+    (setq major-mode 'vterm-mode)
+    (gascity-terminal--install-keys (current-buffer))
+    (should (eq (key-binding (kbd "<wheel-up>"))
+                #'gascity-terminal-scroll-wheel))
+    (should gascity-terminal-wheel-mode)))
+
+(ert-deftest gascity-test-terminal-wheel-default-injects-mouse ()
+  "With no scroll mode active, a wheel notch on vterm/term injects tmux's
+own SGR mouse event (64 up / 65 down) instead of copy-mode keys, so
+tmux's own enter/scroll/leave-at-bottom handling runs (ga-eqpxs).  A
+reporting backend is never driven."
+  (let ((buf (generate-new-buffer "*gc-wheel-default*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (setq major-mode 'vterm-mode)
+          (let (sent)
+            (cl-letf (((symbol-function 'vterm-send-string)
+                       (lambda (s &optional _p) (push s sent))))
+              (setq last-command-event 'wheel-up)
+              (gascity-terminal-scroll-wheel)
+              (should (equal (nreverse sent) '("\e[<64;1;1M")))
+              (setq sent nil last-command-event 'mouse-5)
+              (gascity-terminal-scroll-wheel)
+              (should (equal (nreverse sent) '("\e[<65;1;1M")))))
+          ;; A reporting backend keeps its passthrough: nothing is sent.
+          (setq major-mode 'ghostel-mode)
+          (let (sent)
+            (cl-letf (((symbol-function 'gascity-terminal--send-raw)
+                       (lambda (&rest _) (setq sent t))))
+              (gascity-terminal-scroll-wheel)
+              (should-not sent))))
+      (kill-buffer buf))))
+
 (ert-deftest gascity-test-terminal-pane-cwd ()
   "The pane-cwd query returns the trimmed path, passing the socket; nil on miss."
   (should (null (gascity-terminal-pane-cwd "")))

@@ -74,9 +74,12 @@
 ;; receives no keys while the mode is on (E9); q/Esc leave both.  The
 ;; toggle is optimistic + self-healing: a re-toggle sends q first,
 ;; then re-enters.  On backends that do not report the mouse (vterm,
-;; term) the effective map also carries wheel notches (D2, ~10
-;; lines/notch); on ghostel/eat the native tmux passthrough wins, so
-;; their map never gets wheel bindings.  The attach pre-step, one
+;; term) a wheel-only minor mode is armed on attach — no `C-c s'
+;; needed: a notch is injected as the SGR mouse event tmux would have
+;; received, so tmux's own copy-mode handling runs (D2, ga-eqpxs),
+;; while the explicit scroll mode keeps the key translation.  On
+;; ghostel/eat the native tmux passthrough wins, so no wheel mode is
+;; armed.  The attach pre-step, one
 ;; async round trip, also ensures the session's tmux `mouse' option
 ;; and a copy-mode wheel-to-bottom binding (D3), restored on teardown
 ;; (`gascity-terminal-ensure-mouse'), and the status mirror's segment
@@ -143,15 +146,35 @@
 
 ;;; Backend selection
 
+(defun gascity-terminal--ghostel-available-p ()
+  "Return non-nil when ghostel is installed and can actually be used.
+beads.el's own check for ghostel is strict about the package being
+ALREADY loaded (`featurep'), so an `auto' backend would resolve
+differently depending on whether some earlier command happened to load
+ghostel — the load-order bug this fixes (ga-eqpxs).  Probing here,
+from a local `default-directory' (never a TRAMP one), makes the choice
+deterministic: ghostel when it is installed, otherwise the beads.el
+priority walk.  The sibling beads.el is deliberately not edited; the
+policy lives on the gascity side."
+  (let ((default-directory (file-name-as-directory temporary-file-directory)))
+    (and (ignore-errors (require 'ghostel nil t))
+         (ignore-errors
+           (beads-terminal-available-p
+            (make-instance 'beads-terminal-ghostel))))))
+
 (defun gascity-terminal--backend-class ()
   "Return the `beads-terminal' class for `gascity-terminal-backend'.
-Maps the user's backend choice to a concrete beads terminal class, or
-`beads-terminal-auto' (which probes vterm > eat > term) when unset."
+Maps the user's backend choice to a concrete beads terminal class.
+Unset means auto: ghostel when it is installed (probed, not merely
+`featurep' — see `gascity-terminal--ghostel-available-p'), otherwise
+`beads-terminal-auto' (which walks vterm > eat > term)."
   (pcase gascity-terminal-backend
     ('vterm 'beads-terminal-vterm)
     ('eat   'beads-terminal-eat)
     ('term  'beads-terminal-term)
-    (_      'beads-terminal-auto)))
+    (_      (if (gascity-terminal--ghostel-available-p)
+                'beads-terminal-ghostel
+              'beads-terminal-auto))))
 
 (defun gascity-terminal--client-term ()
   "Return the TERM the selected terminal backend advertises, or nil.
@@ -1011,29 +1034,53 @@ Pure: the D2 table."
   "C-Up/Down presses per wheel notch (≈10 lines, tmux's `-N 5' feel).
 Adjustable per requirements Open Question 2; the live pass locks it.")
 
+(defun gascity-terminal--wheel-mouse-sequence (up)
+  "Return the SGR mouse sequence for one wheel notch, wheel-up when UP.
+tmux receives exactly the bytes a mouse-reporting terminal would send
+after `mouse on': SGR button 64 is wheel-up, 65 wheel-down, at the
+pane's top-left (agent sessions are single-pane).  tmux's own
+WheelUpPane/WheelDownPane handling then runs unchanged — entering copy
+mode on wheel-up, scrolling, and leaving at the bottom on wheel-down,
+the D3 behaviour, so gascity keeps no Emacs-side copy-mode state for
+the wheel and a mouse-claiming agent still gets the event (E5)."
+  (format "\e[<%d;%d;%dM" (if up 64 65) 1 1))
+
 (defun gascity-terminal-scroll-wheel ()
-  "Send the intercepted wheel notch as tmux copy-mode scroll bytes.
-The first notch after (re-)entry re-sends the copy-mode entry bytes
-before a full run of `gascity-terminal--scroll-wheel-notch' C-Ups or
-C-Downs (REQ-011); later notches send only the run.  Wheel-down relies
-on the D3 binding to leave copy mode at the bottom.  A no-op on a
-backend that reports the mouse natively — its wheel goes to tmux
-without gascity (E5, REQ-004)."
+  "Send an intercepted wheel notch to the tmux session.
+A no-op on a backend that reports the mouse natively — its wheel goes
+to tmux without gascity (E5, REQ-004).  On vterm/term the wheel never
+reaches tmux (E3), so gascity acts as the reporting terminal:
+
+- with no scroll mode active it injects the SGR wheel event tmux would
+  have received (`gascity-terminal--wheel-mouse-sequence'), letting
+  tmux's own copy-mode handling scroll the transcript; only one wheel
+  up enters copy mode, and wheeling back to the bottom returns to the
+  live tail (D2, D3, ga-eqpxs);
+- with `gascity-terminal-scroll-mode' active it keeps the D2 key
+  translation: the first notch after (re-)entry re-sends the copy-mode
+  entry bytes before a full run of `gascity-terminal--scroll-wheel-notch'
+  C-Ups or C-Downs (REQ-011), later notches the run only — an explicit
+  scroll request is not stolen by a mouse-claiming agent."
   (interactive)
   (unless (gascity-terminal--backend-reports-mouse-p
            (gascity-terminal--scroll-backend))
-    (let* ((up (memq (event-basic-type last-command-event)
-                     '(mouse-4 wheel-up)))
-           (run (mapconcat #'identity
-                           (make-list gascity-terminal--scroll-wheel-notch
-                                      (if up "\e[1;5A" "\e[1;5B"))))
-           (first gascity-terminal--scroll-wheel-first))
-      (setq gascity-terminal--scroll-wheel-first nil)
+    (if gascity-terminal-scroll-mode
+        (let* ((up (memq (event-basic-type last-command-event)
+                         '(mouse-4 wheel-up)))
+               (run (mapconcat #'identity
+                               (make-list gascity-terminal--scroll-wheel-notch
+                                          (if up "\e[1;5A" "\e[1;5B"))))
+               (first gascity-terminal--scroll-wheel-first))
+          (setq gascity-terminal--scroll-wheel-first nil)
+          (gascity-terminal--send-raw
+           (current-buffer)
+           (if first
+               (concat gascity-terminal--copy-mode-entry run)
+             run)))
       (gascity-terminal--send-raw
        (current-buffer)
-       (if first
-           (concat gascity-terminal--copy-mode-entry run)
-         run)))))
+       (gascity-terminal--wheel-mouse-sequence
+        (memq (event-basic-type last-command-event) '(mouse-4 wheel-up)))))))
 
 (defvar-keymap gascity-terminal-scroll-mode-map
   :doc "Keymap of `gascity-terminal-scroll-mode' (DESIGN-agent-scrolling.md D1).
@@ -1062,6 +1109,47 @@ passthrough must not be double-driven (E5, REQ-004)."
   "<mouse-5>" #'gascity-terminal-scroll-wheel
   "<wheel-up>" #'gascity-terminal-scroll-wheel
   "<wheel-down>" #'gascity-terminal-scroll-wheel)
+
+;;; Wheel-only mode, armed on attach (DESIGN-agent-scrolling.md D2, ga-eqpxs)
+
+;; The scroll mode's wheel extension is only active after `C-c s'; that
+;; made the first attach's wheel a no-op on vterm/term.  This separate
+;; wheel-only mode is enabled by `gascity-terminal--arm-wheel' in every
+;; attach buffer whose backend does not report the mouse, so a notch
+;; scrolls with no toggle while every non-wheel key still reaches the
+;; agent.  It carries no D1 keyboard bindings; ghostel/eat never get
+;; it (their native passthrough must not be double-driven).
+
+(defvar-keymap gascity-terminal-wheel-map
+  :doc "Wheel bindings armed on attach out of the box (D2).
+Carried by `gascity-terminal-wheel-mode' on backends that do not
+report the mouse (vterm, term); never installed on ghostel/eat.  No
+D1 keyboard bindings — the agent keeps every key (E9, REQ-004)."
+  "<mouse-4>" #'gascity-terminal-scroll-wheel
+  "<mouse-5>" #'gascity-terminal-scroll-wheel
+  "<wheel-up>" #'gascity-terminal-scroll-wheel
+  "<wheel-down>" #'gascity-terminal-scroll-wheel)
+
+(define-minor-mode gascity-terminal-wheel-mode
+  "Out-of-the-box wheel support for a non-reporting attach buffer.
+Active on vterm/term attach buffers (`gascity-terminal--arm-wheel');
+carries only the wheel bindings, so the agent's keys are untouched.
+Never enabled on ghostel/eat — the backend reports the mouse to tmux
+itself and must not be double-driven (REQ-004)."
+  :init-value nil
+  :lighter nil
+  :keymap gascity-terminal-wheel-map
+  ;; As with the scroll mode, install through
+  ;; `minor-mode-overriding-map-alist': vterm's copy mode swaps the
+  ;; buffer's local map, and this must survive that.
+  (setq-local minor-mode-overriding-map-alist
+              (assq-delete-all 'gascity-terminal-wheel-mode
+                               minor-mode-overriding-map-alist))
+  (when gascity-terminal-wheel-mode
+    (setq-local minor-mode-overriding-map-alist
+                (cons (cons 'gascity-terminal-wheel-mode
+                            gascity-terminal-wheel-map)
+                      minor-mode-overriding-map-alist))))
 
 (define-minor-mode gascity-terminal-scroll-mode
   "Emacs-keys scroll sub-mode for a gascity tmux attach buffer (D1).
@@ -1102,11 +1190,27 @@ active (REQ-010)."
 (add-to-list 'emulation-mode-map-alists
              `((gascity-terminal--attach-keys . ,gascity-terminal-attach-map)))
 
+(defun gascity-terminal--arm-wheel (buffer)
+  "Enable `gascity-terminal-wheel-mode' in attach BUFFER when it helps.
+Only on a backend that does not report the mouse natively and only
+when `gascity-terminal-ensure-mouse' is on — the injected SGR event is
+meaningless without tmux's `mouse on'.  A reporting backend keeps its
+passthrough (no double-driving).  Returns BUFFER."
+  (when (and (buffer-live-p buffer) gascity-terminal-ensure-mouse)
+    (with-current-buffer buffer
+      (unless (gascity-terminal--backend-reports-mouse-p
+               (gascity-terminal--scroll-backend))
+        (gascity-terminal-wheel-mode 1))))
+  buffer)
+
 (defun gascity-terminal--install-keys (buffer)
-  "Activate `gascity-terminal-attach-map' in BUFFER.  Returns BUFFER."
+  "Wire BUFFER as an attach buffer.  Returns BUFFER.
+Activates `gascity-terminal-attach-map' and arms the out-of-the-box
+wheel mode when the backend needs it (`gascity-terminal--arm-wheel')."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (setq gascity-terminal--attach-keys t)))
+      (setq gascity-terminal--attach-keys t)
+      (gascity-terminal--arm-wheel buffer)))
   buffer)
 
 (defun gascity-terminal--project-root (dir store)
