@@ -25,17 +25,18 @@
   to derive for that half of the WI-11 scenario wording; it is a
   formula-schema observation, not a gascity.el defect.
 
-## Remaining, proposed for a follow-up bead
+## Decided design follow-up
 
 - **F9 — the formula launch path never nudges the routed agent.**
   Routing flags are deliberately consumed only by the plain path
   (design F-5), so the formula shape exposes no `--nudge`. The finding
   offers two remedies (nudge on formula routing, or make the wait
   visible); the run view already surfaces an idle run in the cockpit's
-  Needs-you, so the second is arguably satisfied. Choosing between an
-  always-on formula nudge and exposing a formula routing flag is a
-  design decision that belongs in its own reviewed change, not this
-  fix lane. Recommend a per-item bead.
+  Needs-you, so the second is arguably satisfied. **Decision (ga-ls1hw):
+  expose `--nudge` as an opt-in routing flag on the formula shape; do
+  not nudge automatically.** The full rationale and the implementation
+  sketch for the follow-up bead are in
+  `plans/sling-command/f9-formula-nudge-decision.md`.
 
 ## Notes
 
