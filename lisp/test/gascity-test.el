@@ -2025,9 +2025,11 @@ does not pin its command symbol.)"
 group (city title, one-sentence header, live footer), then `What'
 (`A' work picker, `f' formula picker), the picked formula's
 `How — <formula> vars' group, `Who' (`T'), the routing flags —
-plain shape with work only — and `Actions' (`s P r g x q').  A cold
-entry shows What, Who and Actions only; a formula shape has no
-routing flags.  The header's sentence and footer stay raw unwrapped
+the full plain group on the plain shape with work, the one `-n'
+nudge flag on a targeted formula shape (F9) — and `Actions'
+(`s P r g x q').  A cold entry shows What, Who and Actions only; a
+formula shape with no target has no routing flags.  The header's
+sentence and footer stay raw unwrapped
 `:info …' specs (nested `((:info …))' crashes setup — kept from the
 pre-unification fix)."
   (skip-unless (gascity-test-sling-redesign-p))
@@ -2068,20 +2070,36 @@ pre-unification fix)."
             (should (assoc "g" specs))
             (should (assoc "x" specs))
             (should (assoc "q" specs))))
-        ;; §4: a drain formula with work — the How group between What
-        ;; and Who, no routing flags (formula shape).  The fixture
-        ;; declares a var: a formula with none renders no How group at
-        ;; all (mockup §3, `gascity-test-formula-sling-var-children
-        ;; -shapes').
+        ;; §4: a drain formula with work and a target — the How group
+        ;; between What and Who, then the formula shape's one carved-out
+        ;; routing flag (F9: nudge only, `-n').  The fixture declares a
+        ;; var: a formula with none renders no How group at all (mockup
+        ;; §3, `gascity-test-formula-sling-var-children-shapes').
         (let ((groups (gascity-sling--children-specs
                        (list :city "/city/" :formula "do-work"
                              :work "bl-5ja"
                              :target "hello-world/gc.implementation-worker"))))
-          (should (= (length groups) 5))
+          (should (= (length groups) 6))
           (should (equal (aref (nth 1 groups) 0) "What"))
           (should (string-prefix-p "How — do-work vars"
                                    (aref (nth 2 groups) 0)))
           (should (equal (aref (nth 3 groups) 0) "Who"))
+          (should (equal (aref (nth 4 groups) 0) "Routing flags"))
+          ;; Only the nudge flag rides this shape (F9); the rest of the
+          ;; plain group stays off it (F-5).
+          (let ((specs (append (nth 4 groups) nil)))
+            (should (equal (nth 2 (assoc "-n" specs)) "--nudge"))
+            (should-not (assoc "-c" specs))
+            (should-not (assoc "-a" specs))
+            (should-not (assoc "-m" specs))
+            (should-not (assoc "-t" specs)))
+          (should (equal (aref (nth 5 groups) 0) "Actions")))
+        ;; §4 without a target: no routing flags group at all — the
+        ;; default formula render is unchanged (F9).
+        (let ((groups (gascity-sling--children-specs
+                       (list :city "/city/" :formula "do-work"
+                             :work "bl-5ja" :target nil))))
+          (should (= (length groups) 5))
           (should (equal (aref (nth 4 groups) 0) "Actions")))
         ;; §2: a cold entry — What, Who, Actions only, no flags.
         (let ((groups (gascity-sling--children-specs

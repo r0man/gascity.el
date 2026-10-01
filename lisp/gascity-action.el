@@ -1424,10 +1424,14 @@ records under FORMULA nil); a preview records nothing."
                         (gascity-sling--roster-cached
                          (gascity-sling--city-dir scope))))))
       (if formula
-          (progn
-            (gascity-sling-formula--dispatch
-             (gascity-formula-recipe-cached formula)
-             target arg (gascity-sling-formula--current-values) preview))
+          ;; The formula shape's one carved-out routing flag (F9):
+          ;; `--nudge' is parsed off the same transient args the plain
+          ;; path uses and threaded into the built command; the rest of
+          ;; the flag group stays plain-only (F-5).
+          (gascity-sling-formula--dispatch
+           (gascity-formula-recipe-cached formula)
+           target arg (gascity-sling-formula--current-values) preview
+           (plist-get (gascity-sling--parse-transient-args args) :nudge))
         (let* ((plist (gascity-sling--parse-transient-args args))
                (command (apply #'gascity-command-sling
                                :target target :arg arg
@@ -2027,6 +2031,10 @@ S-2), so a later `S s' slings exactly what was previewed."
          (values (and formula (gascity-sling-formula--current-values)))
          (target (plist-get scope :target))
          (arg (gascity-sling--work scope))
+         ;; The formula shape's one carved-out routing flag (F9): the
+         ;; preview's launch and dry run carry it too, so `P' previews
+         ;; exactly what `s' would sling.
+         (nudge (plist-get (gascity-sling--parse-transient-args args) :nudge))
          (buf (gascity-view-get-buffer-create
                gascity-sling-preview-buffer-name)))
     (with-current-buffer buf
@@ -2045,7 +2053,7 @@ S-2), so a later `S s' slings exactly what was previewed."
                                       "Target agent: " nil
                                       (gascity-sling--roster-cached
                                        (gascity-sling--city-dir scope))))
-                                 arg values))
+                                 arg values nil nudge))
                             ;; The plain path, exactly `gascity-sling--run':
                             ;; the city pin travels with the launch (the
                             ;; buffer is host-pinned, but its caller may
@@ -2083,7 +2091,7 @@ S-2), so a later `S s' slings exactly what was previewed."
                            (condition-case nil
                                (if formula
                                    (gascity-sling-formula--command
-                                    recipe target arg values t)
+                                    recipe target arg values t nudge)
                                  (apply #'gascity-command-sling
                                         :target target :arg arg
                                         (append (list :dry-run t)
@@ -2398,6 +2406,18 @@ the header (ga-4ia4)."
                 '("-n" "Nudge target after routing" "--nudge")
                 '("-m" "Merge strategy" "--merge=" :choices ("direct" "mr" "local"))
                 '("-t" "Wisp root title" "--title="))))
+     ;; The formula shape's one carved-out routing flag (F9): nudge
+     ;; the target after routing, rendered once a target is known —
+     ;; explicit or derived — so the switch names the agent it wakes.
+     ;; The rest of the plain flag group (`-c', `-a', `-m', `-t')
+     ;; stays off this shape (F-5).
+     (when (and formula
+                (gascity-formula--nonblank
+                 (or (plist-get seed-scope :target)
+                     (plist-get seed-scope :derived-target))))
+       (list
+        (vector "Routing flags"
+                '("-n" "Nudge target after routing" "--nudge"))))
      (list
       (vector "Actions"
               '("s" "Sling…" gascity-sling-dispatch-run)

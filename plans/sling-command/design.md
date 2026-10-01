@@ -162,7 +162,9 @@ three rendering-level decisions (now part of this design):
   `Who` (`T`), the picked formula's `How` var group, then `Actions`.
   An answered stage collapses to its one line (answer visible, key
   still changes it); unanswered shows its pick hint.  Routing flags
-  render only on the plain shape (F-5 kept).  Keys: `A f T c a n m t
+  render only on the plain shape, except the one `-n' nudge flag
+  carved out for a targeted formula shape (F-5, amended by F9: see
+  `f9-formula-nudge-decision.md`).  Keys: `A f T c a n m t
   s P r g x q` — `p` is freed (preview is now `P`); `r` stays as the
   server-substituted recipe preview alongside `P`'s client-side DAG.
 - **Derived Who default presentation**: the derived target carries a
