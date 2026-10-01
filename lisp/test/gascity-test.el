@@ -2071,10 +2071,11 @@ pre-unification fix)."
             (should (assoc "x" specs))
             (should (assoc "q" specs))))
         ;; §4: a drain formula with work and a target — the How group
-        ;; between What and Who, then the formula shape's one carved-out
-        ;; routing flag (F9: nudge only, `-n').  The fixture declares a
-        ;; var: a formula with none renders no How group at all (mockup
-        ;; §3, `gascity-test-formula-sling-var-children-shapes').
+        ;; between What and Who, then the formula shape's two carved-out
+        ;; routing flags (F9 nudge, F9-adjacent title).  The fixture
+        ;; declares a var: a formula with none renders no How group at
+        ;; all (mockup §3, `gascity-test-formula-sling-var-children
+        ;; -shapes').
         (let ((groups (gascity-sling--children-specs
                        (list :city "/city/" :formula "do-work"
                              :work "bl-5ja"
@@ -2085,14 +2086,15 @@ pre-unification fix)."
                                    (aref (nth 2 groups) 0)))
           (should (equal (aref (nth 3 groups) 0) "Who"))
           (should (equal (aref (nth 4 groups) 0) "Routing flags"))
-          ;; Only the nudge flag rides this shape (F9); the rest of the
-          ;; plain group stays off it (F-5).
+          ;; Only the carved-out flags ride this shape (F9 nudge,
+          ;; F9-adjacent title); the rest of the plain group stays off
+          ;; it (F-5).
           (let ((specs (append (nth 4 groups) nil)))
             (should (equal (nth 2 (assoc "-n" specs)) "--nudge"))
+            (should (equal (nth 2 (assoc "-t" specs)) "--title="))
             (should-not (assoc "-c" specs))
             (should-not (assoc "-a" specs))
-            (should-not (assoc "-m" specs))
-            (should-not (assoc "-t" specs)))
+            (should-not (assoc "-m" specs)))
           (should (equal (aref (nth 5 groups) 0) "Actions")))
         ;; §4 without a target: no routing flags group at all — the
         ;; default formula render is unchanged (F9).

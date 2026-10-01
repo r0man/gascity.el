@@ -1691,8 +1691,12 @@ warning (@pxref{Validation warnings}).
 
 The shape also decides what the menu shows.  The formula's typed
 variables (@pxref{Typed variables}) appear only once a formula is
-picked, and the routing flags render only on the plain shape
-(@pxref{The sling menu}) --- @command{gc} consumes them only there.
+picked.  The routing flags render only on the plain shape
+(@pxref{The sling menu}) --- @command{gc} consumes the whole group
+only there --- except the two flags carved out for a targeted formula
+shape: @option{-n} nudge and @option{-t} wisp root title, which
+the formula shapes (@option{--formula} and @option{--on}) forward
+too.
 
 @node The sling menu
 @section The sling menu
@@ -1714,10 +1718,11 @@ The target agent: @kbd{T} (@pxref{Picking the target}).
 The picked formula's typed variables (@pxref{Typed variables}), full
 width, and absent without a formula.
 @item Routing flags
-@option{-c} skip auto-convoy, @option{-a} reassign (clear the human
-assignee), @option{-n} nudge the target after routing, @option{-m}
-merge strategy, @option{-t} wisp root title --- rendered only on the
-plain shape.
+The full group --- @option{-c} skip auto-convoy, @option{-a} reassign
+(clear the human assignee), @option{-n} nudge the target after
+routing, @option{-m} merge strategy, @option{-t} wisp root title ---
+renders only on the plain shape.  A targeted formula shape renders
+just the two flags carved out for it: @option{-n} and @option{-t}.
 @item Actions
 @kbd{s} launch, @kbd{P} full preview, @kbd{r} recipe preview,
 @kbd{g} refresh formulas, @kbd{x} reset, @kbd{q} quit.
@@ -1847,7 +1852,10 @@ completion relative to the target rig's workdir --- TRAMP-safe
 @emph{title} --- lower-cased, runs of non-alphanumerics collapsed to
 one dash, the house convention behind @file{plans/dashboard-v3/} ---
 never from the bare bead id.  Freeform work text, or the formula
-name, seeds it when there is no bead.
+name, seeds it when there is no bead.  The slug is independent of the
+routing flag @option{-t/--title}: that flag names the routed wisp
+root bead and never re-seeds @code{artifact_root}, so renaming the
+root bead cannot move the plans directory.
 @item Agent
 Every @code{*_target} reads with the same roster completion as
 @kbd{T} (@pxref{Picking the target}); @code{implementation_target}

@@ -721,7 +721,7 @@ records the (city, formula) target."
                 ((symbol-function 'gascity-sling-formula--current-values)
                  (lambda () nil))
                 ((symbol-function 'gascity-sling-formula--dispatch)
-                 (lambda (_r _t _a _v &optional preview _nudge)
+                 (lambda (_r _t _a _v &optional preview _nudge _title)
                    (setq previewed preview))))
         (call-interactively #'gascity-sling-dispatch-preview)
         (should previewed)
@@ -1262,7 +1262,7 @@ formula) target memory."
                   ((symbol-function 'gascity-sling-formula--current-values)
                    (lambda () nil))
                   ((symbol-function 'gascity-sling-formula--dispatch)
-                   (lambda (_recipe target _arg _values &optional _dry _nudge)
+                   (lambda (_recipe target _arg _values &optional _dry _nudge _title)
                      (setq dispatched target))))
           (call-interactively #'gascity-sling-dispatch-run)
           (should (equal dispatched "hello-world/gc.implementation-worker"))
@@ -2117,7 +2117,7 @@ never a gc call (F6)."
     (should (equal (plist-get (plist-get captured :scope) :work-title)
                    "Fix the thing"))))
 
-;;; F9: the formula shape's opt-in `--nudge' routing flag
+;;; F9: the formula shape's opt-in `--nudge' and `--title' routing flags
 
 (ert-deftest gascity-test-sling-formula-command-carries-nudge ()
   "F9: `gascity-sling-formula--command' threads `--nudge' into both
@@ -2144,6 +2144,45 @@ the default (off) command untouched (no `--nudge')."
       (should-not (member "--nudge" off))
       (should (member "--on" nudged))
       (should (member "--nudge" nudged)))))
+
+(ert-deftest gascity-test-sling-formula-command-carries-title ()
+  "F9-adjacent: `gascity-sling-formula--command' threads `--title'
+into both the `--formula' and `--on' shapes when the flag is
+non-blank, and emits no `--title' for a blank value, so the default
+command stays byte-identical."
+  (let ((plain gascity-sling-test--pancakes)
+        (on (gascity-sling-test--recipe "drain-demo"
+                                        gascity-sling-test--drain-steps)))
+    ;; `--formula' shape (no convoy): off then on.
+    (let ((off (gascity-command-line
+                (gascity-sling-formula--command plain "sess-1" nil nil)))
+          (titled (gascity-command-line
+                   (gascity-sling-formula--command
+                    plain "sess-1" nil nil nil nil "Wisp root"))))
+      (should (member "--formula" off))
+      (should-not (member "--title" off))
+      (should (member "--formula" titled))
+      (should (member "--title" titled))
+      (should (member "Wisp root" titled)))
+    ;; `--on' shape (convoy-requiring): off then on.
+    (let ((off (gascity-command-line
+                (gascity-sling-formula--command on "sess-1" "gce-1" nil)))
+          (titled (gascity-command-line
+                   (gascity-sling-formula--command
+                    on "sess-1" "gce-1" nil nil nil "Wisp root"))))
+      (should (member "--on" off))
+      (should-not (member "--title" off))
+      (should (member "--on" titled))
+      (should (member "--title" titled))
+      (should (member "Wisp root" titled)))
+    ;; A blank title emits no `--title' on either shape (default
+    ;; command byte-identical).
+    (let ((blank (gascity-command-line
+                  (gascity-sling-formula--command plain "sess-1" nil nil)))
+          (spaces (gascity-command-line
+                   (gascity-sling-formula--command
+                    plain "sess-1" nil nil nil nil "   "))))
+      (should (equal blank spaces)))))
 
 (ert-deftest gascity-test-sling-full-preview-formula-nudge-default ()
   "F9: with the switch off the formula full preview is unchanged — its
@@ -2177,6 +2216,28 @@ and its launch when the menu's switch is on."
         (should (member "--nudge" args))
         (should-not (member "--dry-run" args))))))
 
+(ert-deftest gascity-test-sling-full-preview-formula-carries-title ()
+  "F9-adjacent: the formula full preview threads `--title' into both
+its dry run and its launch when the menu's flag is set."
+  (gascity-sling-test--with-preview reads actions
+      '(("summary_path" . "build/summary.md"))
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target "rig/agent" :arg "bl-1")))
+      ;; Flag set: the dry run carries `--title'.
+      (gascity-sling--full-preview scope '("--title=Wisp root"))
+      (let ((args (car (car actions))))
+        (should (member "--title" args))
+        (should (member "Wisp root" args))
+        (should (member "--dry-run" args)))
+      ;; Launch: the previewed command minus `--dry-run', title kept.
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      (let ((args (car (car actions))))
+        (should (member "--title" args))
+        (should (member "Wisp root" args))
+        (should-not (member "--dry-run" args))))))
+
 (ert-deftest gascity-test-sling-run-threads-formula-nudge ()
   "F9: `gascity-sling--run' parses the transient args on the formula
 branch and threads `--nudge' into the dispatch; with the switch off
@@ -2191,7 +2252,7 @@ no nudge is passed."
               ((symbol-function 'gascity-sling-formula--current-values)
                (lambda () nil))
               ((symbol-function 'gascity-sling-formula--dispatch)
-               (lambda (_recipe _target _arg _values &optional _dry nudge)
+               (lambda (_recipe _target _arg _values &optional _dry nudge _title)
                  (setq captured nudge))))
       (gascity-sling--run '("--nudge") nil)
       (should (eq captured t))
@@ -2199,49 +2260,76 @@ no nudge is passed."
       (gascity-sling--run nil nil)
       (should (null captured)))))
 
-(ert-deftest gascity-test-sling-formula-shape-renders-nudge ()
-  "F9: the formula shape renders the `-n/--nudge' switch once a target
-is known — explicit or derived — while the default shape (no target)
-and the plain-only flag group are unchanged."
-  (let ((nudge '("-n" "Nudge target after routing" "--nudge")))
+(ert-deftest gascity-test-sling-run-threads-formula-title ()
+  "F9-adjacent: `gascity-sling--run' parses `--title=' on the formula
+branch and threads it into the dispatch; with no flag no title is
+passed."
+  (let ((scope (list :city gascity-sling-test--city :formula "pancakes"
+                     :target "sess-1" :work "bl-1"))
+        (gascity-sling--target-memory nil)
+        captured)
+    (cl-letf (((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'gascity-formula-recipe-cached)
+               (lambda (_name) gascity-sling-test--pancakes))
+              ((symbol-function 'gascity-sling-formula--current-values)
+               (lambda () nil))
+              ((symbol-function 'gascity-sling-formula--dispatch)
+               (lambda (_recipe _target _arg _values &optional _dry _nudge title)
+                 (setq captured title))))
+      (gascity-sling--run '("--title=Wisp root") nil)
+      (should (equal captured "Wisp root"))
+      (setq captured :unset)
+      (gascity-sling--run nil nil)
+      (should (null captured)))))
+
+(ert-deftest gascity-test-sling-formula-shape-renders-carved-flags ()
+  "F9/F9-adjacent: the formula shape renders the carved-out `-n' and
+`-t' flags once a target is known — explicit or derived — while the
+default shape (no target) and the plain-only flags are unchanged."
+  (let ((nudge '("-n" "Nudge target after routing" "--nudge"))
+        (title '("-t" "Wisp root title" "--title=")))
     (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
                (lambda (_name) gascity-sling-test--pancakes))
               ((symbol-function 'gascity-context-city-name)
                (lambda (&optional _dir) "testcity"))
               ((symbol-function 'gascity-sling--derived-target)
                (lambda (_scope) (list :target nil :source nil))))
-      ;; Formula shape with an explicit target: nudge renders; the
-      ;; rest of the plain-only flag group stays off this shape.
+      ;; Formula shape with an explicit target: both carved flags
+      ;; render; the rest of the plain-only flag group stays off.
       (let ((specs (gascity-sling-test--all-specs
                     (gascity-sling--children-specs
                      (list :city gascity-sling-test--city :formula "pancakes"
                            :target "sess-1" :work "bl-1")))))
         (should (member nudge specs))
+        (should (member title specs))
         (should-not (member '("-c" "Skip auto-convoy" "--no-convoy") specs))
         (should-not (member '("-a" "Reassign (clear human assignee)" "--reassign") specs))
-        (should-not (member '("-t" "Wisp root title" "--title=") specs)))
-      ;; Formula shape with only a derived target: nudge renders too.
+        (should-not (member '("-m" "Merge strategy" "--merge=" :choices ("direct" "mr" "local")) specs)))
+      ;; Formula shape with only a derived target: both render too.
       (cl-letf (((symbol-function 'gascity-sling--derived-target)
                  (lambda (_scope)
                    (list :target "hello-world/gc.implementation-worker"
                          :source 'implementation-worker))))
-        (should (member nudge
-                        (gascity-sling-test--all-specs
-                         (gascity-sling--children-specs
-                          (list :city gascity-sling-test--city :formula "pancakes"
-                                :target nil :work "bl-1"))))))
+        (let ((specs (gascity-sling-test--all-specs
+                      (gascity-sling--children-specs
+                       (list :city gascity-sling-test--city :formula "pancakes"
+                             :target nil :work "bl-1")))))
+          (should (member nudge specs))
+          (should (member title specs))))
       ;; Formula shape with no target at all: the pre-F9 render is unchanged.
-      (should-not (member nudge
-                          (gascity-sling-test--all-specs
-                           (gascity-sling--children-specs
-                            (list :city gascity-sling-test--city :formula "pancakes"
-                                  :target nil :work nil)))))
+      (let ((specs (gascity-sling-test--all-specs
+                    (gascity-sling--children-specs
+                     (list :city gascity-sling-test--city :formula "pancakes"
+                           :target nil :work nil)))))
+        (should-not (member nudge specs))
+        (should-not (member title specs)))
       ;; The plain shape keeps its full routing-flag group unchanged.
       (let ((specs (gascity-sling-test--all-specs
                     (gascity-sling--children-specs
                      (list :city gascity-sling-test--city :formula nil
                            :target nil :work "bl-1")))))
         (should (member nudge specs))
+        (should (member title specs))
         (should (member '("-c" "Skip auto-convoy" "--no-convoy") specs))))))
 
 (provide 'gascity-sling-test)

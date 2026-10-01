@@ -1525,17 +1525,19 @@ the store (`gascity-formula-choices-wait'); nothing to offer is a clear
     (completing-read "Formula: " (mapcar #'car choices)
                      nil t nil 'gascity-sling-formula-picker-history)))
 
-(defun gascity-sling-formula--command (recipe target arg values &optional dry-run nudge)
+(defun gascity-sling-formula--command (recipe target arg values &optional dry-run nudge title)
   "Validate RECIPE's VALUES against TARGET and ARG; return the command.
 The result is a `gascity-command-sling' to act on.  The one command
 builder behind the dispatch and the full preview
 buffer's routing plan (sling-command WI-7): exactly the command
 `gascity-sling-formula--dispatch' starts, with `--dry-run' when
-DRY-RUN is non-nil and `--nudge' when NUDGE is non-nil (the formula
-shape's one carved-out routing flag, F9).  Validation runs first — a
-missing required var refuses before any gc invocation (REQ-008), and
-a convoy-requiring formula with no bead or convoy at point refuses
-too (REQ-013)."
+DRY-RUN is non-nil, `--nudge' when NUDGE is non-nil (the formula
+shape's F9 carved-out routing flag), and `--title' when TITLE is
+non-blank (the F9-adjacent wisp root title, off by default so the
+default command is byte-identical; it never re-seeds `artifact_root').
+Validation runs first — a missing required var refuses before any gc
+invocation (REQ-008), and a convoy-requiring formula with no bead or
+convoy at point refuses too (REQ-013)."
   (gascity-formula--validate-values recipe values)
   (let* ((name (gascity-formula-name recipe))
          (varlist (mapcar (lambda (kv) (format "%s=%s" (car kv) (cdr kv)))
@@ -1552,6 +1554,8 @@ too (REQ-013)."
                                 (list :arg arg :on name)
                                 (when varlist (list :var varlist))
                                 (when nudge (list :nudge t))
+                                (when (gascity-formula--nonblank title)
+                                  (list :title title))
                                 (when dry-run (list :dry-run t)))))
                     (apply #'gascity-command-sling
                            (append
@@ -1560,10 +1564,12 @@ too (REQ-013)."
                             (list :arg name :formula t)
                             (when varlist (list :var varlist))
                             (when nudge (list :nudge t))
+                            (when (gascity-formula--nonblank title)
+                              (list :title title))
                             (when dry-run (list :dry-run t)))))))
     command))
 
-(defun gascity-sling-formula--dispatch (recipe target arg values &optional dry-run nudge)
+(defun gascity-sling-formula--dispatch (recipe target arg values &optional dry-run nudge title)
   "Validate and sling RECIPE with VALUES; return the command acted on.
 TARGET is the session target, ARG the bead/convoy pre-seeded at point.
 Validation and the command shape live in
@@ -1574,9 +1580,10 @@ workflow root with the momentary `F' follow jump
 \(`gascity-sling--launch-handler', REQ-009).
 With DRY-RUN non-nil the same command carries `--dry-run' and gc's
 routing plan is shown instead of acting; NUDGE threads `--nudge'
-through to the built command (F9)."
+through to the built command (F9) and TITLE threads `--title' when
+non-blank (F9-adjacent)."
   (let* ((name (gascity-formula-name recipe))
-         (command (gascity-sling-formula--command recipe target arg values dry-run nudge)))
+         (command (gascity-sling-formula--command recipe target arg values dry-run nudge title)))
     (if dry-run
         (gascity-sling--show-plan command)
       ;; Started asynchronously (D9): `gc sling --json' reports its
