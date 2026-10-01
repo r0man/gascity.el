@@ -37,6 +37,14 @@
   not nudge automatically.** The full rationale and the implementation
   sketch for the follow-up bead are in
   `plans/sling-command/f9-formula-nudge-decision.md`.
+- **F9-adjacent — `-t/--title` on the formula shape.**  Same
+  "documented but not carved out" class: `gc sling --help` documents
+  `-t` for `--formula`/`--on` and the command layer models it, but
+  only the plain shape renders and threads it. **Decision (`ga-ybtm3`):
+  expose `-t/--title` as an opt-in formula-shape routing flag and keep
+  the `artifact_root` seed independent of it.**  Rationale,
+  interaction table and implementation sketch are in
+  `plans/sling-command/formula-title-decision.md`.
 
 ## Notes
 
