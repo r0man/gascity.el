@@ -58,6 +58,15 @@
 ;; `beads-from-json' (the reflective JSON->object decoder) and the advice that
 ;; preserves the `:json-key' slot property the classes below rely on.
 (require 'beads-meta)
+;; The cross-repo ownership seams (WI-SF-19 / REQ-SF-100): beads.el owns the
+;; generic typed formula shape and its var reader/choices/validation.
+;; `gascity-formula-var' subclasses `beads-formula-var' so those seams
+;; dispatch on gc-decoded vars; the `gascity-formula' recipe class stays
+;; standalone because its raw `steps'/`deps' and its `gascity-formula-var'
+;; objects would not survive `beads-from-json' against beads' typed slots, so
+;; it specializes `beads-formula-methodology' instead.
+(require 'beads-formula)
+(require 'beads-formula-var-reader)
 
 ;;; ============================================================
 ;;; Classes
@@ -388,41 +397,51 @@ command (`j m', dashboard-v3 §7.9).")
     :documentation "One-line description for completion annotation."))
   :documentation "One formula as reported by `gc formula catalog --json'.")
 
-(defclass gascity-formula-var ()
-  ((name
-    :initarg :name :initform nil :type (or null string) :json-key name
-    :accessor gascity-formula-var-name
-    :documentation "Variable name — the `--var name=value' key and the
-`{{name}}' placeholder in the recipe's steps.")
-   (description
-    :initarg :description :initform nil :type (or null string)
-    :json-key description :accessor gascity-formula-var-description
-    :documentation "What the variable means; the infix prompt/description.")
-   (default
-    :initarg :default :initform nil :type (or null string) :json-key default
-    :accessor gascity-formula-var-default
-    :documentation "Default value as a string; nil when the var has none.")
-   (required
-    :initarg :required :initform nil :type (or null boolean) :json-key required
-    :accessor gascity-formula-var-required
-    :documentation "Non-nil when dispatch must refuse to run without a
-value.  Typed nullable: a decoded `false' stays nil.")
-   (enum
-    :initarg :enum :initform nil :type (or null (list-of string))
-    :json-key enum :accessor gascity-formula-var-enum
-    :documentation "Allowed values when the formula declares an enum var;
-nil otherwise.  When present it wins over the metadata-derived choice
-lists.")
-   (pattern
-    :initarg :pattern :initform nil :type (or null string) :json-key pattern
-    :accessor gascity-formula-var-pattern
-    :documentation "Regexp the value must match, when declared; nil
-otherwise.  Compiled as an Emacs regexp; a pattern that does not compile
-degrades to no validation."))
+(defclass gascity-formula-var (beads-formula-var)
+  ()
   :documentation "One declared variable of a compiled formula recipe.
-Optional slots are `(or null …)' because gascity's JSON reader decodes
-both `false' and `null' to nil: an absent field must read as "unset",
-never as a typed zero value.")
+A subclass of the beads.el `beads-formula-var' (WI-SF-19 / REQ-SF-100):
+beads owns the generic typed shape, so the beads var reader, choices and
+validation seams dispatch on it.  gascity adds no var fields; the
+`gascity-formula-var-*' accessors below alias the inherited slots.  The
+`beads-from-json' method below restores gascity's nil-wins boolean
+decoding for the inherited `boolean' `required' slot.")
+
+(defun gascity-formula-var-name (var)
+  "Return VAR's declared name (the inherited beads `name' slot)."
+  (oref var name))
+
+(defun gascity-formula-var-description (var)
+  "Return VAR's description (the inherited beads `description' slot)."
+  (oref var description))
+
+(defun gascity-formula-var-default (var)
+  "Return VAR's declared default (the inherited beads `default' slot)."
+  (oref var default))
+
+(defun gascity-formula-var-required (var)
+  "Return non-nil when VAR is required (the inherited beads `required' slot)."
+  (oref var required))
+
+(defun gascity-formula-var-enum (var)
+  "Return VAR's declared enum values (the inherited beads `enum' slot)."
+  (oref var enum))
+
+(defun gascity-formula-var-pattern (var)
+  "Return VAR's declared regexp pattern (the inherited beads `pattern' slot)."
+  (oref var pattern))
+
+(cl-defmethod beads-from-json ((_class (eql 'gascity-formula-var)) json-alist)
+  "Decode a `gascity-formula-var' from JSON-ALIST, preserving nil booleans.
+The inherited beads `required' slot is typed `boolean', whose coercion
+turns gascity's decoded nil (gc's `false'/`null') into t; restore nil
+when the raw JSON value is nil so an explicit false still reads unset.
+gc omits `required' when it is false, but the reader stays total."
+  (let ((obj (cl-call-next-method))
+        (pair (assq 'required json-alist)))
+    (when (and pair (null (cdr pair)))
+      (oset obj required nil))
+    obj))
 
 (defclass gascity-formula ()
   ((name
@@ -455,6 +474,18 @@ preview, never joined on here.")
 the recipe's steps, as a list of alists."))
   :documentation "A compiled formula recipe as reported by
 `gc formula show <name> --json'.")
+
+;; The recipe class keeps its raw `steps'/`deps' (the preview renderer
+;; reads them as alists) and its `gascity-formula-var' objects, so it is
+;; not a `beads-formula' subclass — beads' typed `steps'/`vars' would
+;; change the decode.  Instead it specializes the beads methodology seam
+;; so `beads-formula-var-choices' resolves gc's metadata without a second
+;; enum implementation (WI-SF-19 / REQ-SF-100).
+(cl-defmethod beads-formula-methodology ((formula gascity-formula))
+  "Return FORMULA's `metadata.gc.methodology' alist, or nil.
+The gascity specialization of the beads.el seam (WI-SF-19 /
+REQ-SF-100); absent or differently shaped metadata degrades to nil."
+  (alist-get 'methodology (alist-get 'gc (gascity-formula-metadata formula))))
 
 ;;; ============================================================
 ;;; Decoding
