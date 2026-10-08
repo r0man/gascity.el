@@ -1218,6 +1218,40 @@ pattern and absent fields degrade to no check.  Nothing runs gc."
                   '(("whatever" . "x")))
                  nil)))
 
+(ert-deftest gascity-test-formula-beads-seams ()
+  "The gascity formula helpers delegate to the beads.el seams (WI-SF-19
+/ REQ-SF-100): the typed var is a `beads-formula-var' subclass, and the
+enum/validation/reader-kind helpers call the beads functions instead of
+carrying a second implementation."
+  (should (child-of-class-p 'gascity-formula-var 'beads-formula-var))
+  (let (seen)
+    (cl-letf (((symbol-function 'beads-formula-var-choices)
+               (lambda (&rest _) (setq seen t) '("sentinel"))))
+      (should (equal (gascity-formula--enum-choices 'v 'f) '("sentinel")))
+      (should seen)))
+  (let (seen)
+    (cl-letf (((symbol-function 'beads-formula-missing-required-vars)
+               (lambda (&rest _) (setq seen t) '("sentinel"))))
+      (should (equal (gascity-sling--missing-required-vars 'f nil)
+                     '("sentinel")))
+      (should seen)
+      ;; A nil recipe is handled before the seam is reached.
+      (setq seen nil)
+      (should (null (gascity-sling--missing-required-vars nil nil)))
+      (should-not seen)))
+  (let (seen)
+    (cl-letf (((symbol-function 'beads-formula-validate-vars)
+               (lambda (&rest _) (setq seen t) 'formula)))
+      (should (null (gascity-formula--validate-values 'f nil)))
+      (should seen)))
+  (let ((formula (gascity-test--formula-with-vars
+                  (vector '((name . "artifact_root"))))))
+    (cl-letf (((symbol-function 'beads-formula-var-kind)
+               (lambda (&rest _) 'directory)))
+      (should (eq (gascity-sling-formula--var-class
+                   (car (gascity-formula-vars formula)) formula)
+                  'gascity-sling-formula--directory-option)))))
+
 (ert-deftest gascity-test-formula-history-var ()
   "History naming (REQ-010/011): one ordinary history symbol per
 (formula, var), non-word characters sanitized, distinct across formulas

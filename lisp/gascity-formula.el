@@ -36,11 +36,12 @@
 ;; explicit, via `gascity-formula-invalidate'.
 ;;
 ;; The pure helpers enforce gc's declared constraints client-side so
-;; mistakes surface before a gc round trip (REQ-008/009):
-;; `gascity-formula--validate-values' checks `required' and `pattern' over
-;; a var→value alist; `gascity-formula--enum-choices' resolves a var's
-;; allowed values (`vars[].enum' when declared, else the built-in name →
-;; `metadata.gc.methodology' mapping — plan decision D1); and
+;; mistakes surface before a gc round trip (REQ-008/009), but the logic
+;; itself is the beads.el cross-repo seam (WI-SF-19 / REQ-SF-100):
+;; `gascity-formula--validate-values' calls `beads-formula-validate-vars'
+;; and `gascity-formula--enum-choices' calls `beads-formula-var-choices'
+;; (`vars[].enum' when declared, else the name → `metadata.gc.methodology'
+;; mapping — plan decision D1, both owned by beads.el); and
 ;; `gascity-formula--needs-convoy' detects which sling shape a formula
 ;; requires (drain step or `{{convoy_id}}' reference — plan decision D2,
 ;; matching gc's own documented sling rule verbatim).  Absent payload
@@ -84,6 +85,12 @@
 (require 'gascity-error)
 (require 'gascity-domain)   ; typed payload classes + decode
 (require 'gascity-types)    ; formula-catalog/formula-show bang executors
+;; Cross-repo ownership seams (WI-SF-19 / REQ-SF-100): beads.el owns the
+;; typed formula var reader, the enum/methodology resolution and the
+;; required/pattern validation; gascity calls those seams instead of
+;; carrying a second implementation.
+(require 'beads-formula)
+(require 'beads-formula-var-reader)
 (require 'gascity-context)  ; the shared city-scoped cache key
 (require 'gascity-store)    ; async catalog refresh (shared reads)
 
@@ -322,41 +329,17 @@ when there is still nothing to offer."
             (user-error "No formulas to pick — gc formula catalog/list returned none or failed")))))
 
 ;;; ============================================================
-;;; Enum mapping (plan D1, REQ-005)
+;;; Enum mapping (plan D1, REQ-005) — the beads.el seam
 ;;; ============================================================
-
-(defvar gascity-formula--enum-metadata-keys
-  '(("drain_policy" . allowed_drain_policies)
-    ("interaction_mode" . interaction_modes)
-    ("review_mode" . review_modes))
-  "Built-in mapping of formula var name to its methodology choice key.
-No shipped gc formula declares `vars[].enum' (plan D1); enum-like value
-sets live in the formula's `metadata.gc.methodology' instead, and this
-maps the known var names onto them.  A var with neither an explicit
-`enum' nor an entry here degrades to plain string input.")
-
-(defun gascity-formula--methodology (formula)
-  "Return FORMULA's `metadata.gc.methodology' alist, or nil.
-The raw metadata is gc's nested JSON object; anything absent or shaped
-differently degrades to nil (REQ-016)."
-  (when-let* ((metadata (gascity-formula-metadata formula))
-              (gc-meta (alist-get 'gc metadata)))
-    (alist-get 'methodology gc-meta)))
 
 (defun gascity-formula--enum-choices (var formula)
   "Return the list of values FORMULA's VAR allows, or nil.
-VAR is a `gascity-formula-var', FORMULA its `gascity-formula'.  An
-explicit `vars[].enum' wins when gc ever ships it; otherwise the
-built-in name → methodology-key mapping
-\(`gascity-formula--enum-metadata-keys') consults FORMULA's
-`metadata.gc.methodology'.  A var with neither returns nil — the caller
-degrades to plain string input (REQ-016)."
-  (or (gascity-formula-var-enum var)
-      (when-let* ((var-name (gascity-formula-var-name var))
-                  (key (cdr (assoc var-name
-                                   gascity-formula--enum-metadata-keys)))
-                  (choices (alist-get key (gascity-formula--methodology formula))))
-        (append choices nil))))
+A thin caller of the beads.el seam `beads-formula-var-choices'
+\(WI-SF-19 / REQ-SF-100): an explicit `vars[].enum' wins, else the
+name -> `metadata.gc.methodology' mapping lives in beads.el.  A var
+with neither returns nil — the caller degrades to plain string input
+\(REQ-016)."
+  (beads-formula-var-choices var formula))
 
 ;;; ============================================================
 ;;; Shape detection (plan D2, REQ-013 detection half)
@@ -603,17 +586,13 @@ RECIPE names the drain formula the warning is about."
 
 (defun gascity-sling--missing-required-vars (recipe values)
   "Return RECIPE's required vars missing from VALUES, in declared order.
-The non-signaling half of `gascity-formula--validate-values': the
+A thin caller of the beads.el seam
+`beads-formula-missing-required-vars' (WI-SF-19 / REQ-SF-100): the
 live footer warns (mockup §5c) while dispatch still refuses with the
 `user-error'.  VALUES is a (VAR-NAME . VALUE) alist; a var absent
-from it counts as empty."
-  (delq nil
-        (mapcar (lambda (var)
-                  (and (gascity-formula-var-required var)
-                       (gascity-formula--blank
-                        (cdr (assoc (gascity-formula-var-name var) values)))
-                       (gascity-formula-var-name var)))
-                (or (and recipe (gascity-formula-vars recipe)) '()))))
+from it, or whose value is blank, counts as empty.  A nil RECIPE has
+no vars to miss."
+  (and recipe (beads-formula-missing-required-vars recipe values)))
 
 (defun gascity-sling--missing-vars-warning (names)
   "Return the missing-vars footer warning (mockup §5c wording), or nil.
@@ -637,29 +616,18 @@ renders, and `s' prompts when nothing is derivable."
 
 (defun gascity-formula--validate-values (formula values)
   "Check VALUES against FORMULA's declared vars, before any gc call.
-VALUES is an alist of (VAR-NAME . VALUE); a var absent from it counts
-as empty.  A missing required var signals `user-error' naming every
-missing var (the same list `gascity-sling--missing-required-vars'
-collects for the live footer's ⚠); a value that fails its var's
-`pattern' signals `user-error' naming the var and the pattern.
-Nothing here runs gc — the point is to fail fast, client-side
-\(REQ-008/009)."
-  (let ((missing (gascity-sling--missing-required-vars formula values)))
-    (when missing
-      (user-error "Missing required formula vars: %s"
-                  (mapconcat #'identity missing ", ")))
-    (dolist (var (or (gascity-formula-vars formula) '()))
-      (let ((pattern (gascity-formula-var-pattern var))
-            (value (cdr (assoc (gascity-formula-var-name var) values))))
-        ;; Only a value actually entered is pattern-checked; a blank one
-        ;; is the required check's business.  A pattern that does not
-        ;; compile as an Emacs regexp degrades to no validation (REQ-016).
-        (when (and pattern (gascity-formula--nonblank value))
-          (condition-case _err
-              (unless (string-match pattern value)
-                (user-error "Var %s does not match pattern %s"
-                            (gascity-formula-var-name var) pattern))
-            (invalid-regexp nil)))))))
+A thin caller of the beads.el seam `beads-formula-validate-vars'
+\(WI-SF-19 / REQ-SF-100): VALUES is an alist of (VAR-NAME . VALUE); a
+var absent from it, or whose value is blank, counts as empty.  A
+missing required var signals `user-error' naming every missing var —
+the same list `gascity-sling--missing-required-vars' collects for the
+live footer's ⚠; a value that fails its var's `pattern' signals
+`user-error' naming the var and the pattern.  Nothing here runs gc —
+the point is to fail fast, client-side (REQ-008/009).  Returns nil;
+the beads seam itself returns the formula."
+  (when formula
+    (beads-formula-validate-vars formula values))
+  nil)
 
 (defun gascity-formula--blank (value)
   "Return non-nil when VALUE is nil or all whitespace."
@@ -1064,19 +1032,21 @@ The override alist `gascity-sling-var-readers' first — a var mapped
 to one of the typed readers reads as that type no matter what any
 convention says; a mapped infix class passes through; any other
 function wraps as the var's custom reader (the function-option
-class).  Without an override, the var's declared shape wins — a
-declared choice list reads as the restricted enum option, a
-`true'/`false' default as the toggle — then the naming conventions:
-`context_path' and any `*_path' a file option (completion relative
-to the target rig's workdir), `artifact_root' a directory option (the
-`plans/<slug>/' seed), any `*_target' an agent option (the roster
-completion), and numeric vars — an all-digit declared default, a
-`max_' prefix or an `_iterations' suffix — a numeric option refusing
-non-digits.  Anything unrecognized fails soft to the plain string
-option (REQ-016).  Pure."
+class).  Without an override, the reader kind comes from the beads.el
+seam `beads-formula-var-kind' (WI-SF-19 / REQ-SF-100): beads owns the
+declared-metadata -> reader-kind inference — an explicit `enum', the
+`bool'/`int' declared `type's, and the `context_path'/`*_path' file,
+`artifact_root' directory, `*_target' agent and numeric name
+conventions.  This function keeps only the kind -> infix class
+mapping, plus gascity's long-standing toggle convention: a var whose
+declared default is `true'/`false' reads as a toggle.  (beads' kind
+inference is default-agnostic, so the toggle stays gascity's own
+presentation of a boolean default — every shipped gc boolean var
+declares only `default = \"false\"', never a `type'.)  Anything
+unrecognized fails soft to the plain string option (REQ-016).  Pure."
   (let* ((name (or (gascity-formula-var-name var) ""))
-         (default (gascity-formula-var-default var))
-         (override (cdr (assoc name gascity-sling-var-readers))))
+         (override (cdr (assoc name gascity-sling-var-readers)))
+         (kind (beads-formula-var-kind var formula)))
     (or (cdr (assq override gascity-sling-formula--reader-classes))
         (and (symbolp override)
              (ignore-errors
@@ -1085,23 +1055,15 @@ option (REQ-016).  Pure."
                     override)))
         (and (functionp override)
              'gascity-sling-formula--function-option)
-        (and (gascity-formula--enum-choices var formula)
-             'gascity-sling-formula--enum-option)
-        (and (member default '("true" "false"))
-             'gascity-sling-formula--bool-option)
-        (and (or (equal name "context_path")
-                 (string-suffix-p "_path" name))
-             'gascity-sling-formula--file-option)
-        (and (equal name "artifact_root")
-             'gascity-sling-formula--directory-option)
-        (and (string-suffix-p "_target" name)
-             'gascity-sling-formula--agent-option)
-        (and (or (and (gascity-formula--nonblank default)
-                      (string-match-p "\\`[0-9]+\\'" default))
-                 (string-prefix-p "max_" name)
-                 (string-suffix-p "_iterations" name))
-             'gascity-sling-formula--numeric-option)
-        'gascity-sling-formula--string-option)))
+        (cond
+         ((eq kind 'enum) 'gascity-sling-formula--enum-option)
+         ((member (gascity-formula-var-default var) '("true" "false"))
+          'gascity-sling-formula--bool-option)
+         ((eq kind 'file) 'gascity-sling-formula--file-option)
+         ((eq kind 'directory) 'gascity-sling-formula--directory-option)
+         ((eq kind 'agent) 'gascity-sling-formula--agent-option)
+         ((eq kind 'numeric) 'gascity-sling-formula--numeric-option)
+         (t 'gascity-sling-formula--string-option)))))
 
 (defun gascity-sling-formula--class-tag (class)
   "Return CLASS's type tag for the infix description, or nil (REQ-006).
