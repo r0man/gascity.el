@@ -3157,105 +3157,6 @@ tmux server."
   (should (null (gascity-terminal--socket-args "")))
   (should (null (gascity-terminal--socket-args nil))))
 
-(ert-deftest gascity-test-terminal-mouse-ensure-script ()
-  "`gascity-terminal--mouse-ensure-script' turns the session's tmux mouse
-option on and installs the wheel-to-bottom copy-mode binding
-(DESIGN-agent-scrolling.md D2/D3)."
-  (let ((script (gascity-terminal--mouse-ensure-script "sess" "sock")))
-    (should (string-search "tmux -L sock set-option -t sess mouse on" script))
-    (should (string-search
-             "tmux -L sock bind -T copy-mode WheelDownPane" script))
-    ;; The compound command must reach tmux as ONE argv word in the
-    ;; shape of `gascity-terminal--mouse-wheel-command' (verified live,
-    ;; tmux 3.7c): a word ending in plain ";" is tmux's command
-    ;; separator - the `if' then runs at bind time ("not in a mode",
-    ;; exit 1) and the key is bound to bare select-pane; an embedded
-    ;; "\;" is a LITERAL `;' once the binding fires ("too many
-    ;; arguments").  Don't string-match the quoting style - assert the
-    ;; bound VALUE through a real tmux on a scratch socket, and fire
-    ;; the binding in copy mode.  WheelDownPane itself needs a real
-    ;; mouse, so the functional pass binds the same command to C-o,
-    ;; which `send-keys' dispatches through the same key table.
-    (skip-unless (executable-find "tmux"))
-    (let* ((socket (concat "gc-mouse-ensure-" (number-to-string (emacs-pid))))
-           (tmux (concat (executable-find "tmux") " -L " socket))
-           (kill (concat tmux " kill-server >/dev/null 2>&1"))
-           ;; The live pass runs the ensure script for its OWN scratch
-           ;; socket, so the tmux invocations and the bound script agree.
-           (script (gascity-terminal--mouse-ensure-script "probe" socket))
-           (out (generate-new-buffer " *gc-mouse-ensure-probe*"))
-           pane read)
-      (unwind-protect
-          (progn
-            (call-process "sh" nil nil nil "-c"
-                          (concat tmux " new-session -d -s probe"))
-            (call-process "sh" nil nil nil "-c"
-                          (concat tmux " send-keys -t probe 'seq 1 200' Enter"))
-            (call-process "sh" nil nil nil "-c" script)
-            ;; The binding is installed and its value is the compound:
-            ;; if-shell with the cancel-then-scroll brace group - not
-            ;; bare select-pane, and not a literal-`;'-argument.
-            (with-current-buffer out
-              (erase-buffer)
-              (call-process "sh" nil t nil "-c"
-                            (concat tmux " list-keys -T copy-mode"))
-              (should (string-match-p
-                       (concat "WheelDownPane[ \\t]+if-shell -F"
-                               "[ \\t]+\\\"#{==:#{scroll_position},0}\\\""
-                               "[ \\t]+\\\"send -X cancel\\\""
-                               "[ \\t]+{ select-pane ; send-keys -X -N 5"
-                               " scroll-down }")
-                       (buffer-substring (point-min) (point-max)))))
-            ;; Fire the same command through a sendable key: scrolling
-            ;; keeps copy mode, and at the bottom it leaves for the
-            ;; live tail.
-            (call-process "sh" nil nil nil "-c"
-                          (gascity-terminal--tmux-sh
-                           socket "bind" "-T" "copy-mode" "C-o"
-                           gascity-terminal--mouse-wheel-command))
-            (with-current-buffer out
-              (erase-buffer)
-              (call-process "sh" nil t nil "-c"
-                            (concat tmux " list-panes -t probe"
-                                    " -F '#{pane_id}'"))
-              (setq pane (string-trim
-                          (buffer-substring (point-min) (point-max)))))
-            (should (string-prefix-p "%" pane))
-            (setq read (lambda (fmt)
-                         (with-current-buffer out
-                           (erase-buffer)
-                           (call-process "sh" nil t nil "-c"
-                                         (concat tmux " display-message -p -t "
-                                                 pane " '" fmt "'"))
-                           (string-trim (buffer-substring
-                                         (point-min) (point-max))))))
-            ;; Wait (bounded) for the shell to have produced the
-            ;; scrollback before entering copy mode.
-            (let ((deadline (+ (float-time) 10)))
-              (while (and (< (float-time) deadline)
-                          (< (string-to-number
-                              (funcall read "#{history_size}"))
-                             50))
-                (sit-for 0.1)))
-            (call-process "sh" nil nil nil "-c"
-                          (concat tmux " copy-mode -t " pane))
-            (call-process "sh" nil nil nil "-c"
-                          (concat tmux " send -X -t " pane " -N 10 scroll-up"))
-            (call-process "sh" nil nil nil "-c"
-                          (concat tmux " send-keys -t " pane " C-o"))
-            (should (equal (funcall read "#{scroll_position}") "5"))
-            (should (equal (funcall read "#{pane_in_mode}") "1"))
-            ;; Wheel to the bottom: the position clamps at 0, and the
-            ;; next wheel leaves copy mode (E8).
-            (call-process "sh" nil nil nil "-c"
-                          (concat tmux " send -X -t " pane
-                                  " -N 20 scroll-down"))
-            (call-process "sh" nil nil nil "-c"
-                          (concat tmux " send-keys -t " pane " C-o"))
-            (should (equal (funcall read "#{pane_in_mode}") "0")))
-        (call-process "sh" nil nil nil "-c" kill)
-        (kill-buffer out)))))
-
 (ert-deftest gascity-test-terminal-attach-script-mouse ()
   "The attach pre-step ensures tmux mouse only under
 `gascity-terminal-ensure-mouse'; with the option nil the script is
@@ -3275,70 +3176,6 @@ unchanged."
                      (string-replace
                       (gascity-terminal--mouse-ensure-script "sess" "sock")
                       "" script))))))
-
-(ert-deftest gascity-test-terminal-status-teardown-restores-mouse ()
-  "The teardown restores what the attach installed: the `status' override
-\(when the mirror was installed) and, under
-`gascity-terminal-ensure-mouse', the session's `mouse' option and the
-copy-mode `WheelDownPane' binding.  With the option nil only the status
-override is reverted."
-  (let ((buf (generate-new-buffer "*gc-agent-teardown-mouse*")))
-    (unwind-protect
-        (progn
-          (with-current-buffer buf
-            (setq gascity-terminal--status-session "sess"
-                  gascity-terminal--status-socket "sock"
-                  gascity-terminal--status-mirrored t))
-          (let (script)
-            (cl-letf (((symbol-function 'gascity-terminal--run-async)
-                       (lambda (_dir s _cb) (setq script s) nil)))
-              (with-current-buffer buf (gascity-terminal--status-teardown))
-              (should (string-search
-                       "tmux -L sock set-option -t sess -u status" script))
-              (should (string-search
-                       "tmux -L sock set-option -t sess -u mouse" script))
-              (should (string-search
-                       "tmux -L sock unbind -T copy-mode WheelDownPane"
-                       script))))
-          ;; Option nil: the mouse overrides are left alone.
-          (let (script)
-            (cl-letf (((symbol-function 'gascity-terminal--run-async)
-                       (lambda (_dir s _cb) (setq script s) nil))
-                      (gascity-terminal-ensure-mouse nil))
-              (with-current-buffer buf (gascity-terminal--status-teardown))
-              (should (string-search
-                       "tmux -L sock set-option -t sess -u status" script))
-              (should-not (string-search "mouse" script))
-              (should-not (string-search "unbind" script))))
-          ;; No session recorded: no host round trip at all.
-          (with-current-buffer buf
-            (setq gascity-terminal--status-session nil))
-          (let (called)
-            (cl-letf (((symbol-function 'gascity-terminal--run-async)
-                       (lambda (&rest _) (setq called t) nil)))
-              (with-current-buffer buf (gascity-terminal--status-teardown))
-              (should-not called))))
-      (kill-buffer buf))))
-
-(ert-deftest gascity-test-terminal-status-install-no-mirror-installs-teardown ()
-  "With `gascity-terminal-mode-line-status' nil the mirror is off, but the
-buffer still gets the session locals and the kill-buffer teardown, so the
-mouse ensure is restored even without the mirror (REQ-013)."
-  (let ((buf (generate-new-buffer "*gc-agent-nomirror*")))
-    (unwind-protect
-        (progn
-          (cl-letf (((symbol-function 'gascity-terminal--run-async)
-                     (lambda (&rest _) nil))
-                    (gascity-terminal-mode-line-status nil))
-            (with-current-buffer buf
-              (gascity-terminal--status-install buf "sess" "sock" nil t))
-            (with-current-buffer buf
-              (should (equal gascity-terminal--status-session "sess"))
-              (should-not gascity-terminal--status-mirrored)
-              (should (memq #'gascity-terminal--status-teardown
-                            kill-buffer-hook))
-              (should-not gascity-terminal--status-timer))))
-      (kill-buffer buf))))
 
 ;;; The Emacs-keys scroll sub-mode (DESIGN-agent-scrolling.md D1, WI-2)
 
@@ -3422,95 +3259,6 @@ control bytes (E6's semi-char strictness)."
               (should (equal keys '(("return")))))))
       (kill-buffer buf))))
 
-(ert-deftest gascity-test-terminal-scroll-unknown-backend ()
-  "A backend without a raw-key adapter never errors (REQ-007):
-`gascity-terminal--send-raw' returns nil and deactivates the mode with
-a message, and the toggle reports without arming anything."
-  (let ((buf (generate-new-buffer "*gc-scroll-unknown*")))
-    (unwind-protect
-        (with-current-buffer buf
-          ;; fundamental-mode: no adapter.
-          (should-not (gascity-terminal--send-raw buf "\e[1;5A"))
-          (should-not gascity-terminal-scroll-mode)
-          ;; With the mode armed by hand, a send deactivates it.
-          (gascity-terminal-scroll-mode 1)
-          (should-not (gascity-terminal--send-raw buf "q"))
-          (should-not gascity-terminal-scroll-mode)
-          ;; The toggle reports and stays off.
-          (gascity-terminal-scroll-toggle)
-          (should-not gascity-terminal-scroll-mode))
-      (kill-buffer buf))))
-
-(ert-deftest gascity-test-terminal-scroll-toggle ()
-  "Toggle semantics (REQ-008): activation sends the copy-mode entry
-bytes `C-b [' and arms the map; a re-toggle sends `q' first
-(self-healing after an out-of-band copy-mode exit) then re-enters;
-`q' and Esc leave copy mode and deactivate the mode (REQ-009)."
-  (let ((buf (generate-new-buffer "*gc-scroll-toggle*")))
-    (unwind-protect
-        (with-current-buffer buf
-          (setq major-mode 'vterm-mode)
-          (let (sent)
-            (cl-letf (((symbol-function 'vterm-send-string)
-                       (lambda (s &optional _p) (push s sent))))
-              ;; Activation: exactly the entry bytes.
-              (gascity-terminal-scroll-toggle)
-              (should gascity-terminal-scroll-mode)
-              (should (equal (nreverse sent) '("\C-b[")))
-              ;; Re-toggle: q first, then re-entry; the mode stays on.
-              (setq sent nil)
-              (gascity-terminal-scroll-toggle)
-              (should gascity-terminal-scroll-mode)
-              (should (equal (nreverse sent) '("q" "\C-b[")))
-              ;; q: translated, and the mode deactivates.
-              (setq sent nil last-command-event ?q)
-              (gascity-terminal-scroll-key)
-              (should (equal (nreverse sent) '("q")))
-              (should-not gascity-terminal-scroll-mode)
-              ;; Esc likewise.
-              (gascity-terminal-scroll-toggle)
-              (should gascity-terminal-scroll-mode)
-              (setq sent nil last-command-event 'escape)
-              (gascity-terminal-scroll-key)
-              (should (equal (nreverse sent) '("\e")))
-              (should-not gascity-terminal-scroll-mode)
-              ;; A key with no table entry sends nothing, keeps the mode.
-              (gascity-terminal-scroll-mode 1)
-              (setq sent nil last-command-event ?a)
-              (gascity-terminal-scroll-key)
-              (should-not sent)
-              (should gascity-terminal-scroll-mode))))
-      (kill-buffer buf))))
-
-(ert-deftest gascity-test-terminal-scroll-status-marker ()
-  "The status mirror's segment carries the `[scroll]' marker exactly
-while `gascity-terminal-scroll-mode' is active in the buffer (REQ-010):
-same segment, nothing appended by tmux."
-  (let ((buf (generate-new-buffer "*gc-scroll-marker*")))
-    (unwind-protect
-        (with-current-buffer buf
-          (setq gascity-terminal--status-string "mayor  1:claude*")
-          (should (equal (gascity-terminal--status-segment)
-                         " mayor  1:claude*"))
-          (gascity-terminal-scroll-mode 1)
-          (should (equal (gascity-terminal--status-segment)
-                         " mayor  1:claude* [scroll]"))
-          (gascity-terminal-scroll-mode -1)
-          (should (equal (gascity-terminal--status-segment)
-                         " mayor  1:claude*")))
-      (kill-buffer buf))))
-
-(ert-deftest gascity-test-terminal-scroll-bindings ()
-  "The attach map binds `C-c s' to the toggle (no §10 collision — the
-attach map owns only `C-c' keys), and the scroll-mode map owns the D1
-keys through the one translator command."
-  (should (eq (lookup-key gascity-terminal-attach-map (kbd "C-c s"))
-              #'gascity-terminal-scroll-toggle))
-  (dolist (key '("C-p" "C-n" "C-v" "M-v" "<next>" "<prior>" "M-<" "M->"
-                 "q" "<escape>"))
-    (should (eq (lookup-key gascity-terminal-scroll-mode-map (kbd key))
-                #'gascity-terminal-scroll-key))))
-
 ;;; Wheel translation for non-reporting backends (DESIGN-agent-scrolling.md D2)
 
 (ert-deftest gascity-test-terminal-scroll-backend-reports-mouse ()
@@ -3523,74 +3271,6 @@ unknown backend do not."
   (should-not (gascity-terminal--backend-reports-mouse-p 'term))
   (should-not (gascity-terminal--backend-reports-mouse-p nil)))
 
-(ert-deftest gascity-test-terminal-scroll-wheel-map-selection ()
-  "The scroll mode's effective map carries the wheel bindings only on
-backends that do not report the mouse (REQ-004): ghostel/eat keep the
-base map — no wheel bindings to interfere with the native tmux
-passthrough — while vterm gets the wheel extension."
-  ;; The base map never carries wheel bindings.
-  (should (null (lookup-key gascity-terminal-scroll-mode-map
-                            (kbd "<mouse-4>"))))
-  (should (null (lookup-key gascity-terminal-scroll-mode-map
-                            (kbd "<wheel-down>"))))
-  (let ((buf (generate-new-buffer "*gc-scroll-wheel-map*")))
-    (unwind-protect
-        (with-current-buffer buf
-          ;; A reporting backend: enabling the mode installs no wheel map.
-          (setq major-mode 'ghostel-mode)
-          (gascity-terminal-scroll-mode 1)
-          (should gascity-terminal-scroll-mode)
-          (should-not (assq 'gascity-terminal-scroll-mode
-                            minor-mode-overriding-map-alist))
-          (gascity-terminal-scroll-mode -1)
-          (should-not (assq 'gascity-terminal-scroll-mode
-                            minor-mode-overriding-map-alist))
-          ;; A non-reporting backend: the effective map is the wheel map.
-          (setq major-mode 'vterm-mode)
-          (gascity-terminal-scroll-mode 1)
-          (should (eq (cdr (assq 'gascity-terminal-scroll-mode
-                                 minor-mode-overriding-map-alist))
-                      gascity-terminal-scroll-wheel-map))
-          ;; Deactivating removes the buffer-local entry again.
-          (gascity-terminal-scroll-mode -1)
-          (should-not (assq 'gascity-terminal-scroll-mode
-                            minor-mode-overriding-map-alist)))
-      (kill-buffer buf))))
-
-(ert-deftest gascity-test-terminal-scroll-wheel-notch ()
-  "A wheel notch sends a run of `gascity-terminal--scroll-wheel-notch'
-C-Ups (wheel up) or C-Downs (wheel down); the first notch after
-(re-)entry re-sends the copy-mode entry bytes before the run (REQ-011),
-later notches the run only.  A reporting backend is never driven (REQ-004)."
-  (let ((buf (generate-new-buffer "*gc-scroll-wheel*")))
-    (unwind-protect
-        (with-current-buffer buf
-          (setq major-mode 'vterm-mode)
-          (let (sent)
-            (cl-letf (((symbol-function 'vterm-send-string)
-                       (lambda (s &optional _p) (push s sent))))
-              ;; Toggle arms the first-notch state (and sends the entry).
-              (gascity-terminal-scroll-toggle)
-              (setq sent nil)
-              (setq last-command-event 'mouse-4)
-              (gascity-terminal-scroll-wheel)
-              (should (equal (nreverse sent)
-                             (list (concat gascity-terminal--copy-mode-entry
-                                           "\e[1;5A\e[1;5A\e[1;5A"))))
-              ;; Later notches: the run only.
-              (setq sent nil)
-              (gascity-terminal-scroll-wheel)
-              (should (equal (nreverse sent) '("\e[1;5A\e[1;5A\e[1;5A")))
-              ;; Wheel down is the C-Down mirror; the notch constant is
-              ;; the adjustable knob of requirements Open Question 2.
-              (setq gascity-terminal--scroll-wheel-first t sent nil)
-              (setq last-command-event 'mouse-5)
-              (gascity-terminal-scroll-wheel)
-              (should (equal (nreverse sent)
-                             (list (concat gascity-terminal--copy-mode-entry
-                                           "\e[1;5B\e[1;5B\e[1;5B")))))))
-      (kill-buffer buf))))
-
 (ert-deftest gascity-test-terminal-ghostel-available-probe ()
   "`gascity-terminal--ghostel-available-p' probes by loading ghostel,
 not merely `featurep' — the load-order dependency the bug was about."
@@ -3602,65 +3282,11 @@ not merely `featurep' — the load-order dependency the bug was about."
   (cl-letf (((symbol-function 'require) (lambda (&rest _) nil)))
     (should-not (gascity-terminal--ghostel-available-p))))
 
-(ert-deftest gascity-test-terminal-backend-class-deterministic ()
-  "Unset backend resolves to ghostel when it is available, else to the
-beads.el auto walk; an explicit choice is never overridden (ga-eqpxs)."
-  (let ((gascity-terminal-backend nil))
-    (cl-letf (((symbol-function 'gascity-terminal--ghostel-available-p)
-               (lambda () t)))
-      (should (eq (gascity-terminal--backend-class) 'beads-terminal-ghostel)))
-    (cl-letf (((symbol-function 'gascity-terminal--ghostel-available-p)
-               (lambda () nil)))
-      (should (eq (gascity-terminal--backend-class) 'beads-terminal-auto))))
-  (let ((gascity-terminal-backend 'vterm))
-    (should (eq (gascity-terminal--backend-class) 'beads-terminal-vterm)))
-  (let ((gascity-terminal-backend 'eat))
-    (should (eq (gascity-terminal--backend-class) 'beads-terminal-eat)))
-  (let ((gascity-terminal-backend 'term))
-    (should (eq (gascity-terminal--backend-class) 'beads-terminal-term))))
-
 (ert-deftest gascity-test-terminal-wheel-mouse-sequence ()
   "The injected wheel event is SGR button 64 (up) / 65 (down) at the
 pane's top-left — exactly what a reporting terminal sends tmux."
   (should (equal (gascity-terminal--wheel-mouse-sequence t) "\e[<64;1;1M"))
   (should (equal (gascity-terminal--wheel-mouse-sequence nil) "\e[<65;1;1M")))
-
-(ert-deftest gascity-test-terminal-wheel-armed-by-default ()
-  "`gascity-terminal--arm-wheel' enables the wheel mode on vterm/term,
-leaves ghostel/eat to their native passthrough, and honours
-`gascity-terminal-ensure-mouse' (ga-eqpxs)."
-  (let ((buf (generate-new-buffer "*gc-wheel-arm*")))
-    (unwind-protect
-        (with-current-buffer buf
-          (setq major-mode 'vterm-mode)
-          (gascity-terminal--arm-wheel buf)
-          (should gascity-terminal-wheel-mode)
-          (should (eq (cdr (assq 'gascity-terminal-wheel-mode
-                                 minor-mode-overriding-map-alist))
-                      gascity-terminal-wheel-map))
-          ;; Reporting backends: never armed (no double-driving).
-          (dolist (mode '(ghostel-mode eat-mode))
-            (gascity-terminal-wheel-mode -1)
-            (setq major-mode mode)
-            (gascity-terminal--arm-wheel buf)
-            (should-not gascity-terminal-wheel-mode))
-          ;; ensure-mouse nil: the injected event would be meaningless.
-          (setq major-mode 'vterm-mode)
-          (gascity-terminal-wheel-mode -1)
-          (let ((gascity-terminal-ensure-mouse nil))
-            (gascity-terminal--arm-wheel buf)
-            (should-not gascity-terminal-wheel-mode)))
-      (kill-buffer buf))))
-
-(ert-deftest gascity-test-terminal-install-keys-arms-wheel ()
-  "`gascity-terminal--install-keys' arms the wheel mode on a
-non-reporting backend, so an attach buffer scrolls with no toggle."
-  (with-temp-buffer
-    (setq major-mode 'vterm-mode)
-    (gascity-terminal--install-keys (current-buffer))
-    (should (eq (key-binding (kbd "<wheel-up>"))
-                #'gascity-terminal-scroll-wheel))
-    (should gascity-terminal-wheel-mode)))
 
 (ert-deftest gascity-test-terminal-wheel-default-injects-mouse ()
   "With no scroll mode active, a wheel notch on vterm/term injects tmux's
@@ -3868,35 +3494,6 @@ or reused a live one (gce-43c)."
   (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 1)))
     (should (null (gascity-terminal--window-list "gone" nil)))))
 
-(ert-deftest gascity-test-terminal-status-string ()
-  "`gascity-terminal--status-string' shows the `status-left' name and the
-window list with the current window emphasised; nil when the session is gone."
-  (cl-letf (((symbol-function 'call-process)
-             (lambda (_prog _in buf _disp &rest args)
-               (when (eq buf t)
-                 (cond
-                  ((equal (car args) "list-windows")
-                   (insert "0\t0:bash\n1\t1:claude*\n"))
-                  ((equal (car args) "display-message")
-                   ;; `status-left' value, with trailing space to trim.
-                   (insert "gastown.mayor \n"))))
-               0)))
-    (let ((s (gascity-terminal--status-string "sess" nil)))
-      (should (stringp s))
-      ;; Friendly name (trimmed) faced as the session identity.
-      (should (string-match "gastown.mayor" s))
-      (should (eq (get-text-property (string-match "gastown.mayor" s) 'face s)
-                  'gascity-city))
-      ;; Active window emphasised; inactive window not.
-      (should (string-match "1:claude" s))
-      (should (eq (get-text-property (string-match "1:claude" s) 'face s)
-                  'gascity-header))
-      (should (string-match "0:bash" s))
-      (should (eq (get-text-property (string-match "0:bash" s) 'face s)
-                  'default))))
-  (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 1)))
-    (should (null (gascity-terminal--status-string "gone" nil)))))
-
 ;;; The tmux host stub: every attach/status tmux call is one async
 ;;; host script (`gascity-terminal--run-async'); tests answer it.
 
@@ -3904,15 +3501,16 @@ window list with the current window emphasised; nil when the session is gone."
   "(DIR SCRIPT) of every host script the terminal ran, newest first.")
 
 (defun gascity-test--tmux-answer (script)
-  "Default answer of a healthy host to SCRIPT: (EXIT . STDOUT)."
+  "Default answer of a healthy host to SCRIPT: (EXIT . STDOUT).
+The tags are beads.el's: the attach script is `beads-terminal-tmux--attach-script'."
   (cond
    ((string-match-p "has-session" script)
-    (cons 0 (concat "gascity-tmux:/opt/bin/tmux\n"
-                    (if (string-match-p "\\[ -d " script) "gascity-dir-ok\n" "")
-                    (if (string-match-p "infocmp" script) "gascity-term-ok\n" "")
-                    "gascity-ok\n")))
+    (cons 0 (concat "beads-tmux:/opt/bin/tmux\n"
+                    (if (string-match-p "\\[ -d " script) "beads-dir-ok\n" "")
+                    (if (string-match-p "infocmp" script) "beads-term-ok\n" "")
+                    "beads-ok\n")))
    ((string-match-p "list-windows" script)
-    (cons 0 "1\t1:claude*\n0\t0:bash\ngascity-status-left\ngastown.mayor\n"))
+    (cons 0 "1\t1:claude*\n0\t0:bash\nbeads-status-left\ngastown.mayor\n"))
    (t (cons 0 ""))))
 
 (defmacro gascity-test--with-tmux-host (answer &rest body)
@@ -3937,99 +3535,6 @@ for `gascity-test--tmux-answer'.  The callback runs at once."
 (defun gascity-test--host-script-p (regexp)
   "Return non-nil when a recorded host script matches REGEXP."
   (seq-some (lambda (e) (string-match-p regexp (nth 1 e))) gascity-test--host-scripts))
-
-(ert-deftest gascity-test-terminal-status-install-teardown ()
-  "Install turns the session's tmux status bar off, adds a mode-line segment
-and a refresh timer; teardown (via `kill-buffer-hook') cancels the timer and
-reverts the override with `set-option -u'.  All tmux ops are session-scoped
-and asynchronous (one host script each), never a synchronous process."
-  (let ((buf (generate-new-buffer "*gc-agent-install-test*"))
-        (gascity-terminal-status-interval 3600)) ; far enough to never fire
-    (unwind-protect
-        (gascity-test--with-tmux-host nil
-          (gascity-terminal--status-install buf "sess" "sock")
-          (with-current-buffer buf
-            (should (gascity-test--host-script-p
-                     "tmux -L sock set-option -t sess status off"))
-            ;; Segment present AND before the trailing fill, or it renders
-            ;; off-screen (gce-hjj regression: appending after
-            ;; `mode-line-end-spaces' hid it).
-            (let ((seg (member gascity-terminal--status-mode-line-segment
-                               mode-line-format))
-                  (end (member 'mode-line-end-spaces mode-line-format)))
-              (should seg)
-              (should end)
-              (should (> (length seg) (length end))))
-            (should (timerp gascity-terminal--status-timer))
-            (should (equal gascity-terminal--status-session "sess"))
-            (should (equal (substring-no-properties gascity-terminal--status-string)
-                           "gastown.mayor  1:claude* 0:bash")))
-          ;; Killing the buffer must revert the override, scoped to the session.
-          (setq gascity-test--host-scripts nil)
-          (kill-buffer buf)
-          (should (gascity-test--host-script-p
-                   "tmux -L sock set-option -t sess -u status")))
-      (when (buffer-live-p buf) (kill-buffer buf)))))
-
-(ert-deftest gascity-test-terminal-status-refresh-async ()
-  "The status refresh runs one host script, skips a tick while one is in
-flight, keeps the last string on a failure and stops once the session is
-gone (exit 3)."
-  (let ((buf (generate-new-buffer "*gc-agent-refresh-test*"))
-        (answers nil) (pending nil))
-    (unwind-protect
-        (cl-letf (((symbol-function 'gascity-terminal--run-async)
-                   (lambda (_dir script callback)
-                     (push script answers)
-                     (setq pending callback)
-                     ;; A live process stands for the query in flight.
-                     (start-process "gascity-test-inflight" nil "sleep" "5")))
-                  ((symbol-function 'process-file)
-                   (lambda (&rest a) (error "Synchronous process-file %S" a))))
-          (with-current-buffer buf
-            (setq gascity-terminal--status-session "sess"
-                  gascity-terminal--status-timer (run-with-timer 3600 nil #'ignore))
-            (gascity-terminal--status-refresh)
-            (should (= (length answers) 1))
-            ;; In flight: the next tick starts nothing.
-            (gascity-terminal--status-tick buf)
-            (should (= (length answers) 1))
-            (delete-process gascity-terminal--status-process)
-            (funcall pending (cons 0 "1\t1:claude*\ngascity-status-left\nmayor\n"))
-            (should (equal (substring-no-properties gascity-terminal--status-string)
-                           "mayor  1:claude*"))
-            ;; A timeout keeps the last good string.
-            (gascity-terminal--status-refresh)
-            (delete-process gascity-terminal--status-process)
-            (funcall pending (cons nil ""))
-            (should (equal (substring-no-properties gascity-terminal--status-string)
-                           "mayor  1:claude*"))
-            ;; The session is gone: cleared, timer stopped.
-            (gascity-terminal--status-refresh)
-            (delete-process gascity-terminal--status-process)
-            (funcall pending (cons 3 ""))
-            (should (null gascity-terminal--status-string))
-            (should (null gascity-terminal--status-timer))))
-      (kill-buffer buf))))
-
-(ert-deftest gascity-test-terminal-run-async-remote-is-local-ssh ()
-  "A remote host script runs as a LOCAL ssh pipe from a local directory,
-with no file handler: starting it does no TRAMP I/O."
-  (gascity-test-ensure-mock-method)
-  (let (spawned)
-    (cl-letf (((symbol-function 'make-process)
-               (lambda (&rest plist) (setq spawned plist) nil))
-              ((symbol-function 'gascity-remote-ssh-pipe-argv)
-               (lambda (dir argv &rest keys) (list 'ssh dir argv keys))))
-      (let ((tramp-verbose 0))
-        (gascity-test-with-render-guard
-          (gascity-terminal--run-async "/ssh:u@h:/city/" "tmux list-sessions" #'ignore)
-          (should (null gascity-test-render-guard-violations)))))
-    (should (equal (plist-get spawned :command)
-                   '(ssh "/ssh:u@h:/city/" ("sh" "-c" "tmux list-sessions")
-                         (:resolve nil))))
-    (should (null (plist-get spawned :file-handler)))
-    (should (eq (plist-get spawned :connection-type) 'pipe))))
 
 (ert-deftest gascity-test-terminal-attach-honours-status-toggle ()
   "`gascity-terminal-attach-tmux' turns the session's tmux status bar off
@@ -4063,7 +3568,7 @@ mouse ensure regardless of the mirror)."
   "A missing session is echoed from the pre-step's answer; nothing is
 spawned and nothing signals (the callback runs from a timer)."
   (let (spawned said)
-    (gascity-test--with-tmux-host (lambda (_s) (cons 0 "gascity-no-session\n"))
+    (gascity-test--with-tmux-host (lambda (_s) (cons 0 "beads-no-session\n"))
       (cl-letf (((symbol-function 'gascity-terminal-run)
                  (lambda (&rest _) (setq spawned t)))
                 ((symbol-function 'message)
@@ -4101,7 +3606,7 @@ pre-step: missing forces the fallback, found is cached (no probe next time)."
       (gascity-test--with-tmux-host
           (lambda (script)
             (should (string-match-p "infocmp xterm-ghostty" script))
-            (cons 0 "gascity-tmux:/opt/bin/tmux\ngascity-term-missing\ngascity-ok\n"))
+            (cons 0 "beads-tmux:/opt/bin/tmux\nbeads-term-missing\nbeads-ok\n"))
         (gascity-terminal-attach-tmux "sess" nil nil))
       (should (member (shell-quote-argument "TERM=xterm-256color") (car argvs)))
       ;; Found: nothing forced, and remembered.
@@ -4113,72 +3618,6 @@ pre-step: missing forces the fallback, found is cached (no probe next time)."
             (should-not (string-match-p "infocmp" script))
             (gascity-test--tmux-answer script))
         (gascity-terminal-attach-tmux "sess" nil nil)))))
-
-(ert-deftest gascity-test-terminal-preload-backend-once ()
-  "The first view schedules a one-shot idle preload of the terminal
-backend; later views and a loaded backend schedule nothing; batch never."
-  (let ((gascity-terminal--preload-state nil)
-        (scheduled 0) (loaded 0) (noninteractive nil)
-        (gascity-terminal-backend 'vterm))
-    (cl-letf (((symbol-function 'run-with-idle-timer)
-               (lambda (_secs _repeat fn &rest _) (cl-incf scheduled) (funcall fn)))
-              ((symbol-function 'gascity-terminal--client-term)
-               (lambda () (should-not (file-remote-p default-directory))
-                 (cl-incf loaded) "xterm-256color"))
-              ((symbol-function 'featurep)
-               (lambda (f &rest _) (and (eq f 'vterm) (> loaded 0)))))
-      (let ((default-directory "/ssh:u@h:/city/"))
-        (run-hook-with-args 'gascity-view-created-functions (current-buffer))
-        (run-hook-with-args 'gascity-view-created-functions (current-buffer)))
-      (should (= scheduled 1))
-      (should (= loaded 1))
-      (should (eq gascity-terminal--preload-state 'done))))
-  ;; Already loaded: nothing scheduled.
-  (let ((gascity-terminal--preload-state nil) (noninteractive nil) (scheduled 0)
-        (gascity-terminal-backend 'term))
-    (cl-letf (((symbol-function 'run-with-idle-timer)
-               (lambda (&rest _) (cl-incf scheduled)))
-              ((symbol-function 'featurep) (lambda (f &rest _) (eq f 'term))))
-      (gascity-terminal--schedule-preload)
-      (should (= scheduled 0))))
-  ;; Batch: never.
-  (let ((gascity-terminal--preload-state nil) (scheduled 0))
-    (cl-letf (((symbol-function 'run-with-idle-timer)
-               (lambda (&rest _) (cl-incf scheduled))))
-      (gascity-terminal--schedule-preload)
-      (should (= scheduled 0)))))
-
-(ert-deftest gascity-test-terminal-preload-waits-for-idle ()
-  "The preload arms after `gascity-terminal-preload-idle' idle seconds,
-re-arms instead of loading while input is pending, and is off with nil."
-  (let ((gascity-terminal--preload-state nil) (noninteractive nil)
-        (gascity-terminal-backend 'vterm)
-        (gascity-terminal-preload-idle 10)
-        (armed nil) (loaded 0) (pending t))
-    (cl-letf (((symbol-function 'run-with-idle-timer)
-               (lambda (secs _repeat fn &rest _) (push (cons secs fn) armed)))
-              ((symbol-function 'input-pending-p) (lambda (&rest _) pending))
-              ((symbol-function 'gascity-terminal--client-term)
-               (lambda () (cl-incf loaded) "xterm-256color"))
-              ((symbol-function 'featurep) (lambda (&rest _) (> loaded 0))))
-      (gascity-terminal--schedule-preload)
-      (should (equal (mapcar #'car armed) '(10)))
-      ;; Typing: not loaded, re-armed.
-      (funcall (cdr (pop armed)))
-      (should (= loaded 0))
-      (should (= (length armed) 1))
-      ;; Genuine idle: loaded once.
-      (setq pending nil)
-      (funcall (cdr (pop armed)))
-      (should (= loaded 1))
-      (should (null armed))))
-  (let ((gascity-terminal--preload-state nil) (noninteractive nil)
-        (gascity-terminal-preload-idle nil) (armed 0))
-    (cl-letf (((symbol-function 'run-with-idle-timer)
-               (lambda (&rest _) (cl-incf armed)))
-              ((symbol-function 'featurep) (lambda (&rest _) nil)))
-      (gascity-terminal--schedule-preload)
-      (should (= armed 0)))))
 
 (ert-deftest gascity-test-agent-dired-prefers-recorded-work-dir ()
   "A recorded `:work-dir' is used directly, without a tmux pane query."
@@ -6437,36 +5876,6 @@ methods/names one plain ssh cannot reach."
                    "env" "-u" "TMUX"
                    ,(shell-quote-argument "TERM=xterm-256color") "/opt/tmux"
                    "attach-session" "-t" "sess"))))
-
-(ert-deftest gascity-test-terminal-remote-term ()
-  "TERM fallback decision: forced only when the feature is on, the
-client's TERM differs from the fallback, and the host lacks (or gascity
-cannot name) that TERM's terminfo."
-  (let ((client "xterm-ghostty") (host-has nil) (probes 0))
-    (cl-letf (((symbol-function 'gascity-terminal--client-term)
-               (lambda () client))
-              ((symbol-function 'gascity-remote-terminfo-p)
-               (lambda (_term _dir) (cl-incf probes) host-has)))
-      (let ((gascity-terminal-remote-term "xterm-256color"))
-        ;; Host lacks the client's terminfo: force the fallback.
-        (should (equal (gascity-terminal--remote-term "/ssh:u@h:/c/")
-                       "xterm-256color"))
-        ;; Host has it: keep the native TERM.
-        (setq host-has t)
-        (should-not (gascity-terminal--remote-term "/ssh:u@h:/c/"))
-        ;; Client TERM equals the fallback: nothing to change, no probe.
-        (setq client "xterm-256color" probes 0)
-        (should-not (gascity-terminal--remote-term "/ssh:u@h:/c/"))
-        (should (= probes 0))
-        ;; Unknown client TERM: force the fallback, again without probing.
-        (setq client nil)
-        (should (equal (gascity-terminal--remote-term "/ssh:u@h:/c/")
-                       "xterm-256color"))
-        (should (= probes 0)))
-      ;; Feature off: never force.
-      (let ((gascity-terminal-remote-term nil))
-        (setq client "xterm-ghostty")
-        (should-not (gascity-terminal--remote-term "/ssh:u@h:/c/"))))))
 
 (ert-deftest gascity-test-remote-terminfo-p ()
   "Terminfo probe: infocmp first, then the compiled-entry sweep;
