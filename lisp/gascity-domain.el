@@ -59,10 +59,12 @@
 ;; preserves the `:json-key' slot property the classes below rely on.
 (require 'beads-meta)
 ;; The cross-repo ownership seams (WI-SF-19 / REQ-SF-100): beads.el owns the
-;; generic typed formula shape and its var reader/choices/validation.  The
-;; `gascity-formula' classes below subclass the beads classes so those seams
-;; dispatch on gc-decoded objects; gascity adds only its `gc'-specific fields
-;; (raw `steps'/`deps' for the recipe preview) and keeps its accessor names.
+;; generic typed formula shape and its var reader/choices/validation.
+;; `gascity-formula-var' subclasses `beads-formula-var' so those seams
+;; dispatch on gc-decoded vars; the `gascity-formula' recipe class stays
+;; standalone because its raw `steps'/`deps' and its `gascity-formula-var'
+;; objects would not survive `beads-from-json' against beads' typed slots, so
+;; it specializes `beads-formula-methodology' instead.
 (require 'beads-formula)
 (require 'beads-formula-var-reader)
 
@@ -398,9 +400,12 @@ command (`j m', dashboard-v3 §7.9).")
 (defclass gascity-formula-var (beads-formula-var)
   ()
   :documentation "One declared variable of a compiled formula recipe.
-Optional slots are `(or null …)' because gascity's JSON reader decodes
-both `false' and `null' to nil: an absent field must read as "unset",
-never as a typed zero value.")
+A subclass of the beads.el `beads-formula-var' (WI-SF-19 / REQ-SF-100):
+beads owns the generic typed shape, so the beads var reader, choices and
+validation seams dispatch on it.  gascity adds no var fields; the
+`gascity-formula-var-*' accessors below alias the inherited slots.  The
+`beads-from-json' method below restores gascity's nil-wins boolean
+decoding for the inherited `boolean' `required' slot.")
 
 (defun gascity-formula-var-name (var)
   "Return VAR's declared name (the inherited beads `name' slot)."
