@@ -104,67 +104,18 @@ Only consulted when `gascity-enable-debug' is non-nil.
 
 ;;; Terminal backend
 
-(defcustom gascity-terminal-backend nil
-  "Terminal backend for attaching to an agent's tmux session.
-gascity delegates the actual spawn to beads.el's terminal module
-\(`beads-terminal-spawn'); this choice selects which backend class it
-uses.  When nil, gascity auto-detects the best available backend:
-ghostel when it is installed (attempted/loaded, not merely already
-`featurep' — see `gascity-terminal--ghostel-available-p'), otherwise
-vterm > eat > term.  (Future interactive commands such as peek or
-shell will share this setting.)
+;; The tmux terminal moved to beads.el (WI-14); gascity's options are now
+;; aliases of the beads ones, so existing configurations keep working and
+;; there is one source of truth (WI-15).
 
-- nil:   auto-detect (ghostel when installed, then vterm, eat, term).
-- vterm: requires the `vterm' package.
-- eat:   requires the `eat' package.
-- term:  the built-in `term-mode' (always available)."
-  :type '(choice (const :tag "Auto-detect (ghostel > vterm > eat > term)" nil)
-                 (const :tag "Vterm (requires vterm package)" vterm)
-                 (const :tag "Eat (requires eat package)" eat)
-                 (const :tag "Term mode (built-in)" term))
-  :group 'gascity)
+(define-obsolete-variable-alias 'gascity-terminal-backend
+  'beads-terminal-tmux-backend "0.2.0")
 
-(defcustom gascity-terminal-remote-term "xterm-256color"
-  "Fallback TERM for the remote side of a tmux attach, or nil for none.
-A remote attach runs `ssh -t HOST … tmux attach …', and ssh forwards
-the TERM the local terminal backend advertises (e.g. ghostel's
-\"xterm-ghostty\").  A city host with no terminfo entry for that name
-makes the remote tmux client exit instantly with \"missing or
-unsuitable terminal\" (gce-25q).  When the host appears to lack the
-entry (a best-effort probe — `gascity-remote-terminfo-p'), gascity
-forces this TERM onto the remote command line instead; the default
-\"xterm-256color\" ships with every ncurses.  Purely local attaches
-never touch TERM — the terminal backend owns it (beads.el's env
-contract).
+(define-obsolete-variable-alias 'gascity-terminal-remote-term
+  'beads-terminal-tmux-remote-term "0.2.0")
 
-Set to nil to never force a TERM; an exotic-terminal attach then fails
-on hosts missing its terminfo until the entry is installed there
-\(e.g. `infocmp -x $TERM | ssh HOST tic -x -')."
-  :type '(choice (const :tag "Never force a TERM" nil)
-                 (string :tag "TERM name"))
-  :group 'gascity)
-
-(defcustom gascity-terminal-unshadow-minor-modes '(pixel-scroll-precision-mode)
-  "Global minor modes whose keymaps are neutralised in gascity terminals.
-A terminal buffer is a full-screen application, not text: every key the
-buffer does not need for Emacs itself belongs to the program on the far
-end of the pty.  The backends do bind those keys — ghostel's semi-char
-map and vterm's `vterm-mode-map' both forward `<prior>'/`<next>' to the
-terminal — but that is the buffer's LOCAL map, which every enabled
-minor-mode map outranks.  A global minor mode binding the same key
-therefore swallows it: with `pixel-scroll-precision-mode' on,
-PageUp/PageDown scroll the Emacs window instead of paging tmux's
-copy-mode — and the Emacs window has nothing to scroll, since a tmux
-client runs on the alternate screen and the buffer holds only the
-visible screen.
-
-Each mode named here is given an empty keymap in the terminal buffer's
-`minor-mode-overriding-map-alist': its bindings are suppressed in that
-buffer only, letting the backend's own forwarding win.  The mode stays
-enabled everywhere else, and an entry another package already made for
-the same mode is left alone.  Set to nil to touch no keymaps at all."
-  :type '(repeat symbol)
-  :group 'gascity)
+(define-obsolete-variable-alias 'gascity-terminal-unshadow-minor-modes
+  'beads-terminal-tmux-unshadow-minor-modes "0.2.0")
 
 (defcustom gascity-tmux-socket nil
   "Name of the tmux server socket the city's agents run on (tmux -L).
@@ -178,56 +129,17 @@ the default tmux server (no -L flag)."
 
 ;;; Terminal mode-line status
 
-(defcustom gascity-terminal-mode-line-status t
-  "When non-nil, mirror an attached agent's tmux status bar in the mode line.
-On attaching to an agent's tmux session, gascity turns that session's own
-tmux status bar off (`status off', scoped to the session) and renders the
-same information — the friendly session name from `status-left' and the
-window list with the current window emphasised — as a buffer-local
-segment of the Emacs mode line.  The terminal then shows one status line
-instead of two.  The tmux change is reverted when the terminal buffer is
-killed, so an external `tmux attach' still sees its own status bar.
+(define-obsolete-variable-alias 'gascity-terminal-mode-line-status
+  'beads-terminal-tmux-mode-line-status "0.2.0")
 
-Set to nil to leave tmux's status bar untouched and add no mode-line
-segment."
-  :type 'boolean
-  :group 'gascity)
+(define-obsolete-variable-alias 'gascity-terminal-ensure-mouse
+  'beads-terminal-tmux-ensure-mouse "0.2.0")
 
-(defcustom gascity-terminal-ensure-mouse t
-  "When non-nil, ensure tmux mouse scrolling for attached agent sessions.
-The attach pre-step then turns the session's tmux `mouse' option on
- (session-scoped) and installs one copy-mode `WheelDownPane' binding
-that leaves copy mode when it is already at the bottom — so wheeling
-through the transcript ends back at the live tail (tmux does not do
-that on its own).  Killing the terminal buffer restores both, so an
-external `tmux attach' sees tmux's defaults again (DESIGN-agent-scrolling.md
-D2/D3).  Requires no new process paths: the changes ride the attach
-pre-step's existing single host round trip.
+(define-obsolete-variable-alias 'gascity-terminal-preload-idle
+  'beads-terminal-tmux-preload-idle "0.2.0")
 
-Set to nil to leave tmux's mouse configuration untouched."
-  :type 'boolean
-  :group 'gascity)
-
-(defcustom gascity-terminal-preload-idle 10
-  "Seconds of idle after the first gascity view before the terminal preload.
-The first attach of a session would otherwise load the terminal
-backend's library (vterm, eat, term …) — 240–380 ms of blocked command
-loop, once.  gascity loads it ahead of time instead, after this many
-seconds without input (and not while input is pending), so the one-off
-cost falls on genuine idle time, never on typing.  Nil disables the
-preload: the first attach then pays it."
-  :type '(choice (number :tag "Seconds") (const :tag "Never" nil))
-  :group 'gascity)
-
-(defcustom gascity-terminal-status-interval 5
-  "Seconds between refreshes of the tmux status mode-line segment.
-gascity polls the attached session with `tmux list-windows' /
-`display-message' on this interval and updates the mode line, mirroring
-tmux's own `status-interval'.  Only consulted when
-`gascity-terminal-mode-line-status' is non-nil; values at or below zero
-fall back to 5."
-  :type 'number
-  :group 'gascity)
+(define-obsolete-variable-alias 'gascity-terminal-status-interval
+  'beads-terminal-tmux-status-interval "0.2.0")
 
 ;;; Events and mail (dashboard-v3 §7.8, §7.9)
 
