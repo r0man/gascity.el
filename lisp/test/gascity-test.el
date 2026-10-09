@@ -3596,7 +3596,9 @@ pre-step: missing forces the fallback, found is cached (no probe next time)."
         (gascity-terminal-remote-term "xterm-256color")
         (gascity-remote--executable-cache (make-hash-table :test 'equal))
         argvs)
-    (cl-letf (((symbol-function 'gascity-terminal--client-term)
+    ;; The TERM decision is delegated to beads.el (WI-15): the probe asks
+    ;; its `beads-terminal-tmux--client-term' for the backend TERM.
+    (cl-letf (((symbol-function 'beads-terminal-tmux--client-term)
                (lambda () "xterm-ghostty"))
               ((symbol-function 'gascity-terminal--status-install) #'ignore)
               ((symbol-function 'gascity-context-city-root) #'ignore)
