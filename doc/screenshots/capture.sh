@@ -62,7 +62,7 @@ THUMB_COLORS=128  # a preview needs fewer colours
 # The suffix is the "-<theme>" half of the committed name, so the output is
 # exactly <view>-<theme>.png and <view>-<theme>-thumb.png.
 read -r -d '' MANIFEST <<'EOF' || true
-ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach
+ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 ef-cyprus     -light  cockpit agents-tree agent-detail mail-inbox mail-thread cities rig-list order-list remote-cities
 EOF
 
@@ -94,6 +94,11 @@ declare -A VIEW_SOURCES=(
   [bookmarks]="lisp/gascity-bookmark.el"
   [remote-cities]="lisp/gascity-remote.el lisp/gascity-cities.el"
   [terminal-attach]="lisp/gascity-terminal.el lisp/gascity-session.el"
+  [sling-plain]="lisp/gascity-action.el"
+  [sling-cold]="lisp/gascity-action.el"
+  [sling-formula]="lisp/gascity-action.el"
+  [sling-on]="lisp/gascity-action.el"
+  [sling-preview]="lisp/gascity-action.el"
 )
 
 log() { printf '\033[1;36m[capture]\033[0m %s\n' "$*" >&2; }
@@ -142,6 +147,12 @@ for _var in BEADS_DIR BEADS_DOLT_PORT BEADS_DOLT_SERVER_PORT GC_DOLT_PORT; do
   unset "$_var"
 done
 unset _var
+# The terminal-attach shot creates and attaches to a fixture tmux session.
+# A leaked TMUX from a developer's own tmux client would split the pre-step
+# and the terminal across two servers (the terminal backend does not forward
+# it), and a leaked default socket would touch the developer's sessions.
+# Use a fixture-private tmux server instead.
+unset TMUX
 
 # ---- Scope resolution --------------------------------------------------
 
@@ -269,15 +280,32 @@ ensure_project() {
     # FIXTURE_RIG_NAME= for the throwaway city and records it; `--seed' loads
     # the role-addressed data; `--teardown --city' removes it.  Parse the
     # FIXTURE_CITY line, not the first line of output.
-    local created city
+    local created city gc_home
     created="$("$FIXTURE_SH" --create)"
     city="$(printf '%s\n' "$created" | sed -n 's/^FIXTURE_CITY=//p')"
     [ -n "$city" ] && [ -d "$city" ] || usage_error "fixture.sh --create returned no FIXTURE_CITY"
     PROJECT="$city"
     CREATED_PROJECT="$PROJECT"
     "$FIXTURE_SH" --seed --city "$PROJECT" >&2
+    # Point gc's user-level state (the machine-wide city registry) at the
+    # fixture, so the Cities view lists the fixture city and never the
+    # developer's live cities.  GC_HOME is inherited by the capture Emacs.
+    gc_home="$(printf '%s\n' "$created" | sed -n 's/^FIXTURE_GC_HOME=//p')"
+    if [ -n "$gc_home" ] && [ -d "$gc_home" ]; then
+      export GC_HOME="$gc_home"
+      export GASCITY_SHOT_GC_HOME="$gc_home"
+      log "fixture GC_HOME: $GC_HOME"
+    fi
+    # The fixture's only rig is demo-rig; the rig dashboard and rig
+    # bookmark shots must feature it, not the historical live-city default.
+    export GASCITY_SHOT_RIG="$(printf '%s\n' "$created" | sed -n 's/^FIXTURE_RIG_NAME=//p')"
+    GASCITY_SHOT_RIG="${GASCITY_SHOT_RIG:-demo-rig}"
+    # A fixture-private tmux server for the terminal-attach shot (see the
+    # TMUX unset above): both the shot's `new-session' and the attach use it.
+    export TMUX_TMPDIR="$PROJECT/tmux"
+    mkdir -p "$TMUX_TMPDIR"
     export GASCITY_SHOT_DIR="$PROJECT"
-    log "fixture city: $PROJECT"
+    log "fixture city: $PROJECT (rig $GASCITY_SHOT_RIG)"
   else
     export GASCITY_SHOT_DIR="$HOME/emacs-city"
     log "GASCITY_SHOT_DIR default: $GASCITY_SHOT_DIR (no fixture.sh)"
@@ -286,6 +314,7 @@ ensure_project() {
 
 teardown_project() {
   if [ -n "$CREATED_PROJECT" ] && [ -r "$FIXTURE_SH" ]; then
+    [ -n "$TMUX_TMPDIR" ] && tmux kill-server >/dev/null 2>&1 || true
     "$FIXTURE_SH" --teardown --city "$CREATED_PROJECT" >/dev/null 2>&1 || true
   fi
 }

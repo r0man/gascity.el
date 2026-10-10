@@ -148,6 +148,22 @@ TOML
 }
 
 # ---------------------------------------------------------------------------
+# Usage facts
+# ---------------------------------------------------------------------------
+
+# The `costs' view reads the city's local usage sink `.gc/usage.jsonl'
+# (`gc costs').  Two pinned compute facts give the view real rows: fixed
+# run ids (`demo-run-*'), fixed wall-seconds and a fixed epoch.  No token
+# pricing is invented, so gc reports the wall-seconds it can price and the
+# rest as unpriced, exactly as it would for a real city.
+seed_usage() {
+  cat >"$CITY/.gc/usage.jsonl" <<'JSONL'
+{"run_id":"demo-run-build","session_id":"demo-run-build","worker":"demo-rig/gc.implementation-worker","city":"gascity-fixture","kind":"compute","wall_seconds":42.5,"upstream_req_id":"demo-run-build:2025-01-01T00:00:00Z","at":1735689600000,"idempotency_key":"demo-run-build"}
+{"run_id":"demo-run-review","session_id":"demo-run-review","worker":"demo-rig/gc.reviewer","city":"gascity-fixture","kind":"compute","wall_seconds":17.25,"upstream_req_id":"demo-run-review:2025-01-01T00:00:01Z","at":1735689601000,"idempotency_key":"demo-run-review"}
+JSONL
+}
+
+# ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
 
@@ -195,6 +211,7 @@ main() {
   seed_beads
   seed_orders
   seed_events
+  seed_usage
   printf 'gascity-fixture.sh: seeded %s (rig %s) at %s\n' \
     "$FIXTURE_RIG_NAME" "$RIG" "$CITY" >&2
 }

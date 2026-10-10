@@ -35,6 +35,15 @@
   (let ((v (getenv name)))
     (if (and v (not (string-empty-p v))) v default)))
 
+;; gc reads its user-level state (the machine-wide city registry) from
+;; GC_HOME, defaulting to ~/.gc.  The fixture provides a throwaway GC_HOME
+;; registering only the fixture city, so the Cities view lists the fixture
+;; and never the developer's live cities.  capture.sh exports it; the
+;; fallback keeps a standalone `emacs -l gascity-shots.el' run working.
+(let ((gc-home (getenv "GASCITY_SHOT_GC_HOME")))
+  (when (and gc-home (not (string-empty-p gc-home)))
+    (setenv "GC_HOME" gc-home)))
+
 (let* ((repo (gascity-shots-getenv
               "GASCITY_REPO" (expand-file-name "../.." gascity-shots-dir)))
        (beads (gascity-shots-getenv "BEADS_REPO" (expand-file-name "~/workspace/beads.el"))))
@@ -264,8 +273,26 @@ Then clear the echo area, so the export shows no stray message."
   (lambda () (call-interactively command) (gascity-shots--selected-buffer)))
 
 (defun gascity-shots--bookmarks-buffer ()
-  "Open the Emacs Bookmark List showing the fixture's gascity bookmarks."
+  "Open the Emacs Bookmark List showing fixture-owned gascity bookmarks.
+`emacs -Q' would otherwise list the developer's own bookmarks, so the
+list is built in-session from the fixture views: the cockpit and the
+fixture rig dashboard are bookmarked through the normal
+`bookmark-make-record-function', then listed.  `bookmark-default-file' is
+pointed at a throwaway path, so nothing is read from or written to the
+user's bookmark file."
   (require 'bookmark)
+  (setq bookmark-default-file
+        (gascity-shots-getenv "GASCITY_SHOT_BOOKMARKS"
+                              (expand-file-name "gascity-shots-bookmarks.el"
+                                                temporary-file-directory))
+        bookmark-alist nil)
+  (with-current-buffer (gascity-shots--await (gascity-shots--cockpit-buffer))
+    (bookmark-set "gascity: cockpit (fixture)"))
+  (with-current-buffer
+      (gascity-shots--await
+       (funcall (lambda () (gascity-rig-dashboard gascity-shots-rig)
+                  (gascity-shots--selected-buffer))))
+    (bookmark-set (format "gascity-rig: %s (fixture)" gascity-shots-rig)))
   (bookmark-bmenu-list)
   (or (get-buffer "*Bookmark List*") (gascity-shots--selected-buffer)))
 
@@ -280,8 +307,11 @@ Remote Cities chapter shows; the command is the same list as `cities'."
   "Open a terminal attached to the fixture's fixed tmux session.
 The session name comes from GASCITY_SHOT_TERMINAL_SESSION (default
 `demo-agent'); when tmux is present and the session is absent it is created
-first, so the attach has something to render.  Environment-dependent (a
-host without tmux logs the shot as skipped rather than failing the run)."
+first, so the attach has something to render.  The attach runs a pre-step
+asynchronously (D9), so this waits for the live terminal buffer and
+returns it, rather than the buffer that happened to be selected before.
+Environment-dependent (a host without tmux logs the shot as skipped rather
+than failing the run)."
   (let* ((session (gascity-shots-getenv "GASCITY_SHOT_TERMINAL_SESSION" "demo-agent"))
          (tmux (executable-find "tmux")))
     (when tmux
@@ -289,7 +319,69 @@ host without tmux logs the shot as skipped rather than failing the run)."
         (ignore-errors
           (call-process tmux nil nil nil "new-session" "-d" "-s" session))))
     (gascity-terminal-attach-tmux session)
-    (gascity-shots--selected-buffer)))
+    (let ((deadline (+ (float-time) 20)) found)
+      (while (and (not found) (< (float-time) deadline))
+        (accept-process-output nil 0.2)
+        (setq found (cl-find-if
+                     (lambda (b)
+                       (string-match-p (format "\\*gc-agent-.*%s\\*"
+                                               (regexp-quote session))
+                                       (buffer-name b)))
+                     (buffer-list))))
+      (if found
+          (progn (switch-to-buffer found) found)
+        (gascity-shots--selected-buffer)))))
+
+(defun gascity-shots--sling-frame (&optional scope)
+  "Show the sling dispatch transient over the fixture cockpit.
+SCOPE is a plist merged over the base scope (`:city' plus nils); nil is
+the cold menu.  Returns nil so the whole frame is captured
+\(:whole-frame)."
+  (switch-to-buffer (gascity-shots--await (gascity-shots--cockpit-buffer)))
+  (delete-other-windows)
+  (set-frame-size (selected-frame) 150 46)
+  (redisplay t)
+  (transient-setup 'gascity-sling-dispatch nil nil
+                   :scope (append scope
+                                  (list :city default-directory
+                                        :formula nil :target nil :work nil
+                                        :work-title nil))
+                   :value nil)
+  (redisplay t)
+  nil)
+
+(defun gascity-shots--sling-plain-frame ()
+  "The sling menu pre-seeded with fixture work: the plain shape."
+  (gascity-shots--sling-frame
+   (list :work "demo-task-manual"
+         :work-title "Write the task-organized manual")))
+
+(defun gascity-shots--sling-cold-frame ()
+  "The sling menu with nothing pre-seeded."
+  (gascity-shots--sling-frame))
+
+(defun gascity-shots--sling-formula-frame ()
+  "The formula shape: a formula picked with no work attached."
+  (gascity-shots--sling-frame (list :formula "mol-do-work")))
+
+(defun gascity-shots--sling-on-frame ()
+  "The targeted shape: a formula picked with fixture work in scope."
+  (gascity-shots--sling-frame
+   (list :work "demo-task-manual"
+         :work-title "Write the task-organized manual"
+         :formula "mol-do-work")))
+
+(defun gascity-shots--sling-preview-buffer ()
+  "The full preview buffer (`P') for a fixture dispatch."
+  (switch-to-buffer (gascity-shots--await (gascity-shots--cockpit-buffer)))
+  (gascity-sling--full-preview
+   (list :city default-directory
+         :work "demo-task-manual"
+         :work-title "Write the task-organized manual"
+         :formula "mol-do-work"
+         :target "demo-rig/gc.implementation-worker")
+   nil)
+  (gascity-shots--await (gascity-shots--selected-buffer)))
 
 (defun gascity-shots-all ()
   "Return the full alist of shots: (NAME THUNK . PROPS)."
@@ -327,6 +419,11 @@ host without tmux logs the shot as skipped rather than failing the run)."
    (list "dolt-list" (gascity-shots--view #'gascity-dolt-list) :settle 8 :row-pad 4)
    ;; overlay / frame UI — capture the whole frame.
    (list "dispatch" #'gascity-shots--dispatch-frame :whole-frame t)
+   (list "sling-plain" #'gascity-shots--sling-plain-frame :whole-frame t)
+   (list "sling-cold" #'gascity-shots--sling-cold-frame :whole-frame t)
+   (list "sling-formula" #'gascity-shots--sling-formula-frame :whole-frame t)
+   (list "sling-on" #'gascity-shots--sling-on-frame :whole-frame t)
+   (list "sling-preview" #'gascity-shots--sling-preview-buffer :settle 15)
    (list "terminal-attach" #'gascity-shots--terminal-attach-buffer :settle 12)
    (list "lighter" #'gascity-shots--lighter-frame :whole-frame t)))
 

@@ -129,6 +129,16 @@ unchanged.
 | `GASCITY_SHOT_BASE` | `HEAD` | git ref for `--scope changed` |
 | `GASCITY_SHOT_ENGINE` | — | capture executable override for tests |
 | `GASCITY_SHOT_TERMINAL_SESSION` | `demo-agent` | tmux session for `terminal-attach` |
+| `GASCITY_SHOT_GC_HOME` | — | fixture `GC_HOME` for the Cities view |
+| `GASCITY_SHOT_BOOKMARKS` | temp file | bookmark file for the `bookmarks` shot |
+| `TMUX_TMPDIR` | fixture `tmux/` | private tmux server for `terminal-attach` |
+
+When the capture creates its own fixture, `capture.sh` also exports
+`GC_HOME` at the fixture's `gc-home/` (whose `cities.toml` names only the
+fixture city), points `TMUX_TMPDIR` at a fixture-private tmux server, and
+unsets any inherited `TMUX`: the Cities view and the terminal-attach shot
+are then scoped to the fixture and never read or touch the developer's own
+cities or tmux sessions.
 
 Source→view ownership for `--scope changed` is the `VIEW_SOURCES` map in
 `capture.sh`; keep it in sync with the `@shot` invocations in
@@ -138,7 +148,7 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach
+ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 ef-cyprus     -light  cockpit agents-tree agent-detail mail-inbox mail-thread cities rig-list order-list remote-cities
 ```
 

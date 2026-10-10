@@ -14,10 +14,11 @@
 #   fixture.sh print-isolation-vars
 #                          Print the hardcoded isolation variable names.
 #
-# The fixture lives under `mktemp -d' (TMPDIR, default /tmp) and is removed by
-# --teardown.  It never touches the repository's own .beads store, the live
-# city (~/emacs-city), or the remote test city (~/bright-lights); a marker file
-# and a path-prefix check make --teardown refuse to delete anything else.
+# The fixture lives at a fixed path under TMPDIR (default
+# `/tmp/gascity-fixture') and is removed by --teardown.  It never touches the
+# repository's own .beads store, the live city (~/emacs-city), or the remote
+# test city (~/bright-lights); a marker file and a path-prefix check make
+# --teardown refuse to delete anything else.
 #
 # Isolation: the four variables below can reroute `bd'/`gc' at a shared
 # production store.  They are unset before every `bd'/`gc' call and hardcoded
@@ -46,8 +47,18 @@ readonly SEED_SCRIPT="$SCRIPT_DIR/fixtures/gascity-fixture.sh"
 readonly CITY_CONFIG="$SCRIPT_DIR/fixtures/city.toml"
 
 readonly TMP_ROOT="${TMPDIR:-/tmp}"
-readonly FIXTURE_DIR_PREFIX="gascity-fixture."
+# A FIXED directory name, not `mktemp -d': gc derives the city name and every
+# header/mode line from the directory basename, and header lines are not buffer
+# text, so a random suffix could not be normalized out of a committed image.
+# A stable path keeps every capture byte-reproducible.  `--create' removes a
+# stale fixture at this path first; `FIXTURE_STATE' still lets two runs coexist.
+readonly FIXTURE_DIR_PREFIX="gascity-fixture"
 readonly FIXTURE_MARKER=".gascity-fixture-city"
+# Name the fixture city in the fixture `GC_HOME' registry, so the Cities
+# view (`gc cities', which reads `$GC_HOME/cities.toml') lists the fixture
+# and never the machine's live cities.  capture.sh exports GC_HOME to the
+# engine; see doc/screenshots/README.md.
+readonly FIXTURE_CITY_NAME="gascity-fixture"
 # Where --create records the current fixture for --seed/--teardown.  Override
 # with FIXTURE_STATE to run two fixtures side by side.
 readonly STATE_FILE="${FIXTURE_STATE:-$TMP_ROOT/gascity-fixture.current}"
@@ -73,7 +84,8 @@ Usage: fixture.sh <command> [--city <dir>]
 
 Commands:
   --create, create       Create the throwaway city + rig and print
-                         FIXTURE_CITY=<path> / FIXTURE_RIG=<path>.
+                         FIXTURE_CITY=<path> / FIXTURE_RIG=<path> /
+                         FIXTURE_GC_HOME=<path>.
   --seed, seed           Seed the fixture (beads, mail, orders, events).
   --teardown, teardown   Remove the fixture and report the removed path.
   --verify, verify       create + seed + assert role ids + teardown.
@@ -144,8 +156,13 @@ create_fixture() {
   [ -r "$CITY_CONFIG" ] || die "city config not found: $CITY_CONFIG"
 
   local city rig
-  city=$(mktemp -d "$TMP_ROOT/$FIXTURE_DIR_PREFIX"XXXXXX) \
-    || die "mktemp -d failed under $TMP_ROOT"
+  city="$TMP_ROOT/$FIXTURE_DIR_PREFIX"
+  if [ -e "$city" ]; then
+    [ -f "$city/$FIXTURE_MARKER" ] \
+      || die "refusing to reuse non-fixture path: $city"
+    rm -rf -- "$city"
+  fi
+  mkdir -p "$city" || die "mkdir failed under $TMP_ROOT"
   rig="$city/rig"
 
   if ! {
@@ -167,9 +184,24 @@ create_fixture() {
     die "fixture city has no city.toml: $city"
   }
   : >"$city/$FIXTURE_MARKER"
+  seed_gc_home "$city"
   record_fixture "$city"
-  printf 'FIXTURE_CITY=%s\nFIXTURE_RIG=%s\nFIXTURE_RIG_NAME=%s\n' \
-    "$city" "$rig" "$FIXTURE_RIG_NAME"
+  printf 'FIXTURE_CITY=%s\nFIXTURE_RIG=%s\nFIXTURE_RIG_NAME=%s\nFIXTURE_GC_HOME=%s\n' \
+    "$city" "$rig" "$FIXTURE_RIG_NAME" "$city/gc-home"
+}
+
+# A throwaway `GC_HOME' (gc's user-level state dir, normally ~/.gc) whose
+# `cities.toml' registers only the fixture city.  Every view that reads the
+# machine-wide city registry is then scoped to the fixture instead of the
+# developer's live cities.
+seed_gc_home() {
+  local city="$1" home="$city/gc-home"
+  mkdir -p "$home"
+  cat >"$home/cities.toml" <<EOF
+[[cities]]
+  path = "$city"
+  name = "$FIXTURE_CITY_NAME"
+EOF
 }
 
 # ---------------------------------------------------------------------------

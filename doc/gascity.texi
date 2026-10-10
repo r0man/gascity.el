@@ -337,6 +337,8 @@ toggles @code{gascity-terminal-scroll-mode}, which translates the Emacs
 scroll keys into copy-mode sequences so the agent receives no keys.
 @xref{Actions}.
 
+@shot{terminal-attach-dark, A terminal buffer attached to a fixture tmux session (ef-elea-dark)}
+
 @node Work Remotely
 @section Work Remotely
 
@@ -372,10 +374,9 @@ documents it.  Where an area has no window of its own --- a key-binding
 or visual-language area, or the live event stream, whose state is a
 header line rather than a view --- the table names a proxy: an image of
 a view that exercises the same rendering or shows the state in
-question.  The @emph{Why this image} column says which.  The four areas
-whose dedicated images the screenshot pipeline adds --- costs,
-bookmarks, remote cities and terminal attach --- are proxied here by the
-closest existing view until those images land.
+question.  The @emph{Why this image} column says which.  Every image is
+captured from the throwaway fixture city by @code{doc/screenshots/}
+(@pxref{Contributing}); none is hand-drawn or taken from a live store.
 
 @multitable @columnfractions .30 .40 .30
 @headitem Feature area @tab Screenshot(s) @tab Why this image
@@ -387,17 +388,17 @@ closest existing view until those images land.
 @item Rig dashboard @tab rig-dashboard-dark @tab The single-rig counterpart to the cockpit.
 @item Health @tab health-dark @tab Plumbing, versions, store and doctor.
 @item Cities @tab cities-light @tab Every reachable city and host.
-@item Costs @tab run-detail-dark @tab Proxy: costs are recorded per run; a dedicated image is added with the screenshot-pipeline work.
+@item Costs @tab costs-dark @tab Recorded usage by run, wall-seconds and list-price estimate.
 @item Mode-line lighter @tab lighter-dark @tab The lighter in a mode line.
 @item Runs and run detail @tab runs-dark, run-detail-dark @tab The run cards and one run's steps.
 @item Live refresh @tab cockpit-dark, events-dark @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
 @item Events @tab events-dark @tab The event log.
 @item Mail (inbox, thread, compose) @tab mail-inbox-light, mail-thread-light @tab Inbox and thread; compose is the same buffer family.
 @item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-light, session-list-dark, convoy-list-dark, order-list-light, mail-inbox-light, dolt-list-dark @tab One image per list.
-@item Formula sling and dispatch @tab sling-plain, sling-cold, sling-formula, sling-on, sling-trap, sling-preview, sling-follow @tab The dispatch transient across its shapes.
-@item Session/polecat detail and terminal attach @tab agent-detail-light, session-list-dark @tab Proxy for attach: @kbd{t} opens a tmux client over a session; a dedicated image is added with the screenshot-pipeline work.
-@item Remote/TRAMP cities @tab cities-light @tab Proxy: a remote city is a host-qualified Cities row and an @@host header; a dedicated image is added with the screenshot-pipeline work.
-@item Bookmarks @tab cockpit-dark @tab Proxy: any view can be bookmarked; a dedicated image is added with the screenshot-pipeline work.
+@item Formula sling and dispatch @tab sling-plain-dark, sling-cold-dark, sling-formula-dark, sling-on-dark, sling-preview-dark @tab The dispatch transient across its shapes and the full preview buffer.
+@item Session/polecat detail and terminal attach @tab agent-detail-light, session-list-dark, terminal-attach-dark @tab The agent views, and a terminal buffer attached to a tmux session.
+@item Remote/TRAMP cities @tab remote-cities-light @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
+@item Bookmarks @tab bookmarks-dark @tab The bookmark list with gascity views.
 @end multitable
 
 @c ====================================================================
@@ -1449,6 +1450,8 @@ prints it.  It is read in the background; @kbd{g}
 (@code{gascity-costs-refresh}) re-reads it and the header line says how
 long ago it did.
 
+@shot{costs-dark, The Costs view --- recorded usage by run (ef-elea-dark)}
+
 @c ====================================================================
 @node The Mode-Line Lighter
 @chapter The Mode-Line Lighter
@@ -2030,12 +2033,12 @@ and the binding stays live, so the key that answered it changes it
 again.  An unanswered stage shows its pick hint.  With a bead at
 point and a remembered target, every stage holds an answer:
 
-@shot{sling-plain, The sling menu pre-seeded for a plain dispatch (mockup rendering)}
+@shot{sling-plain-dark, The sling menu pre-seeded for a plain dispatch (ef-elea-dark)}
 
 Pressing @kbd{S} with nothing pre-seeded shows the hints instead ---
 and the header sentence still reads as one line:
 
-@shot{sling-cold, A cold sling entry with nothing pre-seeded (mockup rendering)}
+@shot{sling-cold-dark, A cold sling entry with nothing pre-seeded (ef-elea-dark)}
 
 @node Picking work
 @section Picking work
@@ -2083,7 +2086,7 @@ without work, targetless (@option{--formula}).  A formula that
 declares no variables --- @samp{pancakes} --- keeps the How stage out
 of the menu entirely; the flow is What, Who, @kbd{s}.
 
-@shot{sling-formula, The formula shape with no work attached (mockup rendering)}
+@shot{sling-formula-dark, The formula shape with no work attached (ef-elea-dark)}
 
 @node Picking the target
 @section Picking the target
@@ -2185,7 +2188,7 @@ Variable keys are assigned deterministically and avoid the reserved
 single letters (@pxref{Sling key summary}), so a formula's variables
 bind the same keys in every session.
 
-@shot{sling-on, The targeted shape with its typed How group (mockup rendering)}
+@shot{sling-on-dark, The targeted shape with its typed How group (ef-elea-dark)}
 
 @node The live footer
 @section The live footer
@@ -2259,8 +2262,6 @@ work (@samp{build-basic drains a bead — pick work with A}), missing
 required variables (@samp{Missing required vars: artifact_root}), and
 no target at all (@samp{No target — T to choose, or s will prompt}).
 
-@shot{sling-trap, The trap warning below the healthy footer (mockup rendering)}
-
 @node The preview buffer
 @section The preview buffer
 @cindex preview buffer
@@ -2292,7 +2293,7 @@ it.  @kbd{r} keeps its old job, the server-substituted recipe
 preview.  The preview is never a gate: @kbd{s} works in the menu at
 any time, warning or not.
 
-@shot{sling-preview, The P full preview buffer (mockup rendering)}
+@shot{sling-preview-dark, The P full preview buffer (ef-elea-dark)}
 
 @node Launch and follow
 @section Launch and follow
@@ -2315,8 +2316,6 @@ The offer is momentary: @kbd{F} opens the run view
 (@code{gascity-run-show}) on the created workflow's root bead
 (@pxref{Runs}), and any other key dismisses the offer.  Nothing is
 yanked away --- you stay where you are unless you take it.
-
-@shot{sling-follow, The follow offer and the plain echo (mockup rendering)}
 
 @node Remembered state
 @section Remembered state
@@ -2612,6 +2611,8 @@ run, agent, thread) and its filters.  Making it reads buffer state
 only; nothing runs, locally or on the host.  A thread's bookmark keeps
 its first message's headers, never a body.
 
+@shot{bookmarks-dark, The bookmark list with two fixture gascity views (ef-elea-dark)}
+
 @findex gascity-bookmark-jump
 A jump opens the view the usual way, in its city: at once, @samp{…}
 while its reads run, the offline state when the host is unreachable
@@ -2634,6 +2635,8 @@ silent local fallback:
 C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
 M-x gascity-dashboard
 @end example
+
+@shot{remote-cities-light, The Cities list with one row per city and host (ef-cyprus)}
 
 @menu
 * Remote buffers::        Host-qualified names, paths, attach.
