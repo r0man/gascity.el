@@ -1,0 +1,109 @@
+description = """
+Capture and verify the gascity.el user-manual screenshots from a deterministic,
+throwaway fixture city.
+
+`scope` selects what to regenerate:
+- `all` (default): every view in the capture manifest
+- `changed`: only the views whose source files changed since GASCITY_SHOT_BASE
+- a comma-separated view list: a named subset
+
+A subset run never rewrites or deletes an out-of-scope image. The executable
+substance of the pipeline lives in doc/screenshots/capture.sh, fixture.sh, and
+gascity-shots.el, so it is testable without an agent.
+"""
+formula = "user-manual-screenshots"
+version = 1
+contract = "graph.v2"
+target_required = false
+
+[catalog]
+name = "user-manual-screenshots"
+description = "Capture and verify the gascity.el manual screenshots."
+
+[vars.scope]
+description = """
+Capture scope: `all` regenerates every screenshot, `changed` regenerates only
+the affected images, and a comma-separated view list is a named subset.
+Non-selected images stay byte-for-byte untouched.
+"""
+default = "all"
+
+[[steps]]
+id = "prepare"
+title = "Prepare the throwaway fixture city"
+metadata = { "gc.run_target" = "gc.run-operator" }
+description = """
+Create the deterministic, isolated fixture city the capture runs against:
+
+    doc/screenshots/fixture.sh --create
+
+The command prints the absolute city path as FIXTURE_CITY and the rig path as
+FIXTURE_RIG, and remembers the fixture so the seed and teardown steps need no
+argument. Nothing under the repository `.beads` store, the live city, or the
+remote test city is read or written (REQ-005).
+"""
+
+[[steps]]
+id = "seed"
+title = "Seed and validate the fixture city"
+needs = ["prepare"]
+metadata = { "gc.run_target" = "gc.run-operator" }
+description = """
+Seed the fixture with role-addressed data (beads, orders, pinned events) from
+the deterministic fixture under doc/screenshots/fixtures/:
+
+    doc/screenshots/fixture.sh --seed
+
+The seed is GUI-free, so it also runs in CI.
+"""
+
+[[steps]]
+id = "capture"
+title = "Capture the selected screenshots"
+needs = ["seed"]
+metadata = { "gc.run_target" = "gc.run-operator" }
+description = """
+Capture the selected scope against the fixture and write the committed images
+under doc/images/ as <view>-<theme>[-thumb].png:
+
+    GASCITY_SHOT_DIR=<FIXTURE_CITY> doc/screenshots/capture.sh --scope {{scope}}
+
+Only the selected views are captured and compressed, so a subset run leaves
+every other image untouched (REQ-004).
+"""
+
+[[steps]]
+id = "verify"
+title = "Verify the selected screenshots are reproducible"
+needs = ["capture"]
+metadata = { "gc.run_target" = "gc.run-operator" }
+description = """
+Re-run the same scope twice and fail, naming every image that is not
+byte-identical:
+
+    doc/screenshots/capture.sh --verify {{scope}}
+
+The orchestrator runs the exec-mode check below after this iteration; it is
+the same two-run comparison, driven without an agent. Set GASCITY_SHOT_SCOPE
+to narrow the automated check (default: all).
+"""
+
+[steps.check]
+max_attempts = 1
+
+[steps.check.check]
+mode = "exec"
+path = "doc/screenshots/formula-verify.sh"
+timeout = "30m"
+
+[[steps]]
+id = "teardown"
+title = "Remove the throwaway fixture city"
+needs = ["verify"]
+metadata = { "gc.run_target" = "gc.run-operator" }
+description = """
+Remove the temporary fixture city created by the prepare step so the store is
+never reused or left behind:
+
+    doc/screenshots/fixture.sh --teardown
+"""
