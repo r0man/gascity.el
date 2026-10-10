@@ -40,7 +40,11 @@
        (beads (gascity-shots-getenv "BEADS_REPO" (expand-file-name "~/workspace/beads.el"))))
   (add-to-list 'load-path (expand-file-name "lisp" repo))
   (add-to-list 'load-path (expand-file-name "lisp" beads))
-  (add-to-list 'load-path gascity-shots-dir))
+  (add-to-list 'load-path gascity-shots-dir)
+  ;; vui is not on ELPA; beads.el vendors it under its Eldev package dir.
+  (dolist (vui (file-expand-wildcards
+                (expand-file-name ".eldev/*/packages/vui-*" beads)))
+    (add-to-list 'load-path vui)))
 
 (require 'cl-lib)
 (require 'screenshot)
@@ -67,6 +71,59 @@
       screenshot-theme-library "ef-themes"
       screenshot-async-process-regexp "gascity-gc"
       screenshot-log-function #'gascity-shots--progress)
+
+;;; Deterministic role ids and terminal normalization (defense in depth)
+;;
+;; The fixture pins bead ids to `demo-<role>' (see fixtures/README.md), and
+;; pins timestamps/ports, but a view can still render a run-generated id,
+;; an ephemeral port, or a clock value.  The engine is reused verbatim, so
+;; the normalization is installed as advice from this call site rather
+;; than a change to screenshot.el.
+
+(defvar gascity-shots-role-prefix "demo"
+  "Fixture id prefix.  Ids outside it are left alone by normalization.")
+
+(defvar gascity-shots-normalization-rules
+  `((,(concat "\\b" (regexp-quote gascity-shots-role-prefix) "-[0-9a-f]\\{6,\\}\\b")
+     . ,(concat gascity-shots-role-prefix "-role"))
+    ("/tmp/gascity-fixture\\.[A-Za-z0-9]\\{6,\\}" . "/tmp/gascity-fixture")
+    ("[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T[0-9:.]\\{8,\\}Z?"
+     . "1970-01-01T00:00:00Z"))
+  "Post-render text rules mapping generated values to stable tokens.
+Each entry is (REGEXP . REPLACEMENT); REPLACEMENT is a literal string.
+The default covers run-generated `<prefix>-<hash>' bead ids, the throwaway
+fixture path, and ISO-8601 timestamps.  Any drift the fixture genuinely
+cannot pin must be enumerated in README.md and asserted by `--verify', not
+silently normalized here.")
+
+(defun gascity-shots--normalize-buffer (buffer)
+  "Apply `gascity-shots-normalization-rules' to BUFFER's text.
+Text properties are preserved and the buffer is left unmodified."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t)
+            (inhibit-modification-hooks t)
+            (was-modified (buffer-modified-p)))
+        (save-excursion
+          (dolist (rule gascity-shots-normalization-rules)
+            (goto-char (point-min))
+            (while (re-search-forward (car rule) nil t)
+              (replace-match (cdr rule) t t))))
+        (set-buffer-modified-p was-modified)))))
+
+(defun gascity-shots--normalize-frame (frame)
+  "Normalize every buffer displayed in a window of FRAME."
+  (dolist (window (window-list frame nil))
+    (gascity-shots--normalize-buffer (window-buffer window))))
+
+;; The engine is copied verbatim, so the normalization is a post-render
+;; hook installed from this call site rather than a change to the engine.
+(advice-add 'screenshot-export :before
+            (lambda (buffer _name &optional _fixed-rows)
+              (gascity-shots--normalize-buffer (get-buffer buffer))))
+(advice-add 'screenshot-export-frame :before
+            (lambda (_name)
+              (gascity-shots--normalize-frame (selected-frame))))
 
 ;;; View thunks
 ;;
@@ -206,6 +263,34 @@ Then clear the echo area, so the export shows no stray message."
   "Return a thunk calling COMMAND and returning the buffer it shows."
   (lambda () (call-interactively command) (gascity-shots--selected-buffer)))
 
+(defun gascity-shots--bookmarks-buffer ()
+  "Open the Emacs Bookmark List showing the fixture's gascity bookmarks."
+  (require 'bookmark)
+  (bookmark-bmenu-list)
+  (or (get-buffer "*Bookmark List*") (gascity-shots--selected-buffer)))
+
+(defun gascity-shots--remote-cities-buffer ()
+  "Open the Cities list, which includes the remote hosts (`j c').
+The fixture city plus one fixture remote context is what the manual's
+Remote Cities chapter shows; the command is the same list as `cities'."
+  (gascity-cities)
+  (gascity-shots--selected-buffer))
+
+(defun gascity-shots--terminal-attach-buffer ()
+  "Open a terminal attached to the fixture's fixed tmux session.
+The session name comes from GASCITY_SHOT_TERMINAL_SESSION (default
+`demo-agent'); when tmux is present and the session is absent it is created
+first, so the attach has something to render.  Environment-dependent (a
+host without tmux logs the shot as skipped rather than failing the run)."
+  (let* ((session (gascity-shots-getenv "GASCITY_SHOT_TERMINAL_SESSION" "demo-agent"))
+         (tmux (executable-find "tmux")))
+    (when tmux
+      (unless (eq 0 (call-process tmux nil nil nil "has-session" "-t" session))
+        (ignore-errors
+          (call-process tmux nil nil nil "new-session" "-d" "-s" session))))
+    (gascity-terminal-attach-tmux session)
+    (gascity-shots--selected-buffer)))
+
 (defun gascity-shots-all ()
   "Return the full alist of shots: (NAME THUNK . PROPS)."
   (list
@@ -216,6 +301,7 @@ Then clear the echo area, so the export shows no stray message."
    (list "runs" (gascity-shots--view #'gascity-runs) :settle 15)
    (list "run-detail" #'gascity-shots--run-detail-buffer :settle 15)
    (list "health" (gascity-shots--view #'gascity-health) :settle 15)
+   (list "costs" (gascity-shots--view #'gascity-costs) :settle 12)
    (list "rig-dashboard"
          (lambda () (gascity-rig-dashboard gascity-shots-rig)
            (gascity-shots--selected-buffer))
@@ -225,8 +311,11 @@ Then clear the echo area, so the export shows no stray message."
    (list "agents" (gascity-shots--view #'gascity-agents) :settle 12 :row-pad 2)
    (list "events" (gascity-shots--view #'gascity-events) :settle 12 :fixed-rows 30)
    (list "mail-inbox" (gascity-shots--view #'gascity-mail) :settle 8 :fixed-rows 14)
+   (list "bookmarks" #'gascity-shots--bookmarks-buffer :settle 6 :fixed-rows 20)
    (list "cities" (gascity-shots--view #'gascity-cities) :settle 15 :row-pad 2
          :col-pad 6)
+   (list "remote-cities" #'gascity-shots--remote-cities-buffer :settle 15
+         :row-pad 2 :col-pad 6)
    (list "rig-list" (gascity-shots--view #'gascity-rig-list) :settle 8 :row-pad 4)
    (list "session-list" (gascity-shots--view #'gascity-session-list)
          :settle 8 :row-pad 4)
@@ -238,6 +327,7 @@ Then clear the echo area, so the export shows no stray message."
    (list "dolt-list" (gascity-shots--view #'gascity-dolt-list) :settle 8 :row-pad 4)
    ;; overlay / frame UI — capture the whole frame.
    (list "dispatch" #'gascity-shots--dispatch-frame :whole-frame t)
+   (list "terminal-attach" #'gascity-shots--terminal-attach-buffer :settle 12)
    (list "lighter" #'gascity-shots--lighter-frame :whole-frame t)))
 
 (defun gascity-shots--wrapped ()
