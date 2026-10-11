@@ -384,19 +384,19 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 @item Buffers and navigation (move/toggle, jump prefix, filter menus, visual language, objects at point) @tab cockpit-dark, cockpit-light, dispatch-dark @tab Non-visual keys and glyphs; the cockpit and its dispatch menu exercise them.
 @item Lists: pagination, sorting, detail @tab order-list-light @tab A paginated tabulated list with the shared list keys.
 @item Cockpit @tab cockpit-dark, cockpit-light @tab The triage buffer, in both themes.
-@item Agents (list, tree, detail) @tab agents-dark, agents-tree-light, agent-detail-light @tab The three agent views.
+@item Agents (list, tree, detail) @tab agents-dark, agents-tree-light @tab The agents list and tree; the detail opens from the list.
 @item Rig dashboard @tab rig-dashboard-dark @tab The single-rig counterpart to the cockpit.
 @item Health @tab health-dark @tab Plumbing, versions, store and doctor.
 @item Cities @tab cities-light @tab Every reachable city and host.
 @item Costs @tab costs-dark @tab Recorded usage by run, wall-seconds and list-price estimate.
 @item Mode-line lighter @tab lighter-dark @tab The lighter in a mode line.
-@item Runs and run detail @tab runs-dark, run-detail-dark @tab The run cards and one run's steps.
+@item Runs and run detail @tab runs-dark @tab The run cards; a run's steps open from them.
 @item Live refresh @tab cockpit-dark, events-dark @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
 @item Events @tab events-dark @tab The event log.
-@item Mail (inbox, thread, compose) @tab mail-inbox-light, mail-thread-light @tab Inbox and thread; compose is the same buffer family.
+@item Mail (inbox, thread, compose) @tab mail-inbox-light @tab The inbox; thread and compose are the same buffer family.
 @item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-light, session-list-dark, convoy-list-dark, order-list-light, mail-inbox-light, dolt-list-dark @tab One image per list.
 @item Formula sling and dispatch @tab sling-plain-dark, sling-cold-dark, sling-formula-dark, sling-on-dark, sling-preview-dark @tab The dispatch transient across its shapes and the full preview buffer.
-@item Session/polecat detail and terminal attach @tab agent-detail-light, session-list-dark, terminal-attach-dark @tab The agent views, and a terminal buffer attached to a tmux session.
+@item Session/polecat detail and terminal attach @tab session-list-dark, terminal-attach-dark @tab The session list, and a terminal buffer attached to a tmux session.
 @item Remote/TRAMP cities @tab remote-cities-light @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
 @item Bookmarks @tab bookmarks-dark @tab The bookmark list with gascity views.
 @end multitable
@@ -1157,8 +1157,6 @@ tree is a vui view with the section keys.
 
 @kbd{i} on an agent anywhere opens @file{*gascity-agent:@: NAME*}:
 
-@shot{agent-detail-light, The mayor in detail (ef-cyprus)}
-
 @table @asis
 @item The header
 Glyph, name, state and last activity; the session id and tmux name,
@@ -1580,8 +1578,6 @@ Steps  1/10                                    C show control nodes
       ▸ build-basic-review-loop   be-zdon   loop
 @end example
 
-@shot{run-detail-dark, A failed build-basic run in detail (ef-elea-dark)}
-
 @noindent
 The steps are the run's beads arranged by step: iterations hang under
 their step, nested steps under theirs.  A step whose children are
@@ -1734,8 +1730,6 @@ The mail actions menu (compose new mail and more).
 Filter to unread (@kbd{-u}), by sender (@kbd{-a}), window (@kbd{-W}) or
 search (@kbd{-q}).
 @end table
-
-@shot{mail-thread-light, A mail thread (ef-cyprus)}
 
 @noindent
 A reply or a new message opens a compose buffer: write the body,

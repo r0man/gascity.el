@@ -144,32 +144,6 @@ Text properties are preserved and the buffer is left unmodified."
   "Return the buffer the selected window shows (views pop to theirs)."
   (window-buffer (selected-window)))
 
-(defun gascity-shots--goto (buffer regexps &optional prop)
-  "In BUFFER, move point to the first line matching one of REGEXPS.
-With PROP, only a line carrying text property PROP counts.  Falls back
-to the first line that carries PROP (or the second line)."
-  (with-current-buffer buffer
-    (goto-char (point-min))
-    (let ((pos (cl-some (lambda (re)
-                          (save-excursion
-                            (goto-char (point-min))
-                            (let (found)
-                              (while (and (not found) (re-search-forward re nil t))
-                                (when (or (null prop)
-                                          (get-text-property (line-beginning-position) prop)
-                                          (get-text-property (point) prop))
-                                  (setq found (line-beginning-position))))
-                              found)))
-                        regexps)))
-      (goto-char (or pos
-                     (and prop (let ((p (text-property-not-all
-                                         (point-min) (point-max) prop nil)))
-                                 (and p (save-excursion (goto-char p)
-                                                        (line-beginning-position)))))
-                     (progn (forward-line 1) (point))))
-      (beginning-of-line)
-      (set-window-point (get-buffer-window buffer) (point)))))
-
 (defun gascity-shots--cockpit-buffer ()
   "Open the city cockpit and return its (city-keyed) buffer."
   (gascity-dashboard)
@@ -199,40 +173,9 @@ to the first line that carries PROP (or the second line)."
     (redisplay t))
   nil)
 
-(defun gascity-shots--agent-detail-buffer ()
-  "Open the detail of a running agent through the Agents table (`i')."
-  (gascity-agents)
-  (let ((table (gascity-shots--await (gascity-shots--selected-buffer))))
-    (gascity-shots--goto table '("● .*active" "mayor" "●") 'tabulated-list-id)
-    (with-current-buffer table (gascity-polecat-detail-at-point)))
-  (gascity-shots--selected-buffer))
-
 (defun gascity-shots--agents-tree-buffer ()
   "Open the Agents tree (`T')."
   (gascity-agents-tree)
-  (gascity-shots--selected-buffer))
-
-(defun gascity-shots--run-detail-buffer ()
-  "Open a run's detail through the Runs view's history (`H', `RET')."
-  (gascity-runs)
-  (let ((runs (gascity-shots--await (gascity-shots--selected-buffer))))
-    (with-current-buffer runs
-      (unless (text-property-not-all (point-min) (point-max) 'gascity-run-rig nil)
-        (gascity-runs-history)
-        (gascity-shots--await runs)))
-    (gascity-shots--goto runs '("^  [⬣✕◆] ") 'gascity-run-rig)
-    (with-current-buffer runs (gascity-runs-activate)))
-  (gascity-shots--selected-buffer))
-
-(defun gascity-shots--mail-thread-buffer ()
-  "Open a message from the inbox the cheap way (`RET': cached, no gc call,
-stays unread)."
-  (gascity-mail)
-  (let* ((inbox (gascity-shots--await (gascity-shots--selected-buffer))))
-    (gascity-shots--goto inbox '(".") 'tabulated-list-id)
-    (with-current-buffer inbox
-      (let ((message (tabulated-list-get-id)))
-        (gascity-mail-thread-show message inbox t))))
   (gascity-shots--selected-buffer))
 
 (defun gascity-shots--loading-p (buffer)
@@ -389,16 +332,13 @@ the cold menu.  Returns nil so the whole frame is captured
    ;; vui views — auto-fit height.
    (list "cockpit" #'gascity-shots--cockpit-buffer :settle 15)
    (list "agents-tree" #'gascity-shots--agents-tree-buffer :settle 12)
-   (list "agent-detail" #'gascity-shots--agent-detail-buffer :settle 15)
    (list "runs" (gascity-shots--view #'gascity-runs) :settle 15)
-   (list "run-detail" #'gascity-shots--run-detail-buffer :settle 15)
    (list "health" (gascity-shots--view #'gascity-health) :settle 15)
    (list "costs" (gascity-shots--view #'gascity-costs) :settle 12)
    (list "rig-dashboard"
          (lambda () (gascity-rig-dashboard gascity-shots-rig)
            (gascity-shots--selected-buffer))
          :settle 15)
-   (list "mail-thread" #'gascity-shots--mail-thread-buffer :settle 6)
    ;; tabulated lists — extra row pad so short lists stay on one page.
    (list "agents" (gascity-shots--view #'gascity-agents) :settle 12 :row-pad 2)
    (list "events" (gascity-shots--view #'gascity-events) :settle 12 :fixed-rows 30)

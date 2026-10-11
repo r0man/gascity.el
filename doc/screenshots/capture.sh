@@ -62,8 +62,8 @@ THUMB_COLORS=128  # a preview needs fewer colours
 # The suffix is the "-<theme>" half of the committed name, so the output is
 # exactly <view>-<theme>.png and <view>-<theme>-thumb.png.
 read -r -d '' MANIFEST <<'EOF' || true
-ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus     -light  cockpit agents-tree agent-detail mail-inbox mail-thread cities rig-list order-list remote-cities
+ef-elea-dark  -dark   cockpit dispatch agents runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+ef-cyprus     -light  cockpit agents-tree mail-inbox cities rig-list order-list remote-cities
 EOF
 
 # Owning source file(s) per view, for `--scope changed` (plan-review P2).
@@ -75,9 +75,7 @@ declare -A VIEW_SOURCES=(
   [dispatch]="lisp/gascity-dashboard.el lisp/gascity-action.el"
   [agents]="lisp/gascity-agents.el lisp/gascity-tabulated.el"
   [agents-tree]="lisp/gascity-agents.el"
-  [agent-detail]="lisp/gascity-session.el lisp/gascity-section.el"
   [runs]="lisp/gascity-runs.el lisp/gascity-tabulated.el"
-  [run-detail]="lisp/gascity-run.el lisp/gascity-runs.el"
   [events]="lisp/gascity-events.el lisp/gascity-tabulated.el"
   [health]="lisp/gascity-health.el"
   [rig-dashboard]="lisp/gascity-rig.el"
@@ -86,7 +84,6 @@ declare -A VIEW_SOURCES=(
   [dolt-list]="lisp/gascity-tabulated.el"
   [lighter]="lisp/gascity-pulse.el lisp/gascity-dashboard.el"
   [mail-inbox]="lisp/gascity-mail.el lisp/gascity-tabulated.el"
-  [mail-thread]="lisp/gascity-mail.el"
   [cities]="lisp/gascity-cities.el"
   [rig-list]="lisp/gascity-rig.el lisp/gascity-tabulated.el"
   [order-list]="lisp/gascity-tabulated.el"
@@ -457,6 +454,27 @@ verify_runs() {
   log "verify: byte-identical for $count image(s) (scope $SCOPE)"
 }
 
+# Every selected manifest view must actually produce its image.  A thunk that
+# errors (or a view the fixture cannot render) writes no file, and
+# `verify_runs' would otherwise pass the scope silently.  `--verify' fails
+# loudly on a missing selected output instead of treating "produced no image"
+# as success.
+coverage_check() {
+  local outdir="$1" name missing=0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if [ ! -f "$outdir/$name.png" ]; then
+      log "coverage: MISSING image for selected view: $name"
+      missing=1
+    fi
+  done < <(selected_output_names)
+  if [ "$missing" -ne 0 ]; then
+    printf 'capture.sh: coverage FAILED for scope %s; missing image(s) above\n' "$SCOPE" >&2
+    exit 1
+  fi
+  log "coverage: every selected view produced an image (scope $SCOPE)"
+}
+
 # ---- Subset isolation -------------------------------------------------
 # Snapshot the digest+mtime of every committed image a scope does NOT write.
 snapshot_unselected() {
@@ -656,6 +674,7 @@ if [ "$VERIFY" = 1 ]; then
   rm -rf "$STAGING/verify-a" "$STAGING/verify-b"
   capture_into "$STAGING/verify-a"
   capture_into "$STAGING/verify-b"
+  coverage_check "$STAGING/verify-a"
   verify_runs "$STAGING/verify-a" "$STAGING/verify-b"
   isolation_check "$STAGING/verify-a"
 elif [ "$CHECK_ISOLATION" = 1 ]; then
