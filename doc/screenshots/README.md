@@ -110,9 +110,20 @@ and asserted by `--verify`; it must never be passed unconditionally.
 `screenshot-export-frame` (the engine is reused verbatim, so the hook lives
 at the call site). `gascity-shots-normalization-rules` maps
 `demo-<hash>` run-generated bead ids to `demo-role`, the throwaway fixture
-path to `/tmp/gascity-fixture`, and ISO-8601 timestamps to a fixed epoch.
-All rewrites preserve text properties and leave the buffer's modified flag
-unchanged.
+path to `/tmp/gascity-fixture`, ISO-8601 timestamps to a fixed epoch,
+wall-clock relative ages (`3m ago`) to `0s ago`, the live stream's
+`reconnecting (Ns)` countdown to `(0s)`, and the `(exit N)` suffix (present
+only when a child reported a status) to nothing. The cockpit **header
+line** is a `(:eval ...)` form outside the buffer text, so
+`gascity-shots--normalize-header-line` freezes it to a normalized literal
+string before export. All rewrites preserve text properties and leave the
+buffer's modified flag unchanged.
+
+Two timing hazards are settled before export: `gascity-shots--await-stable`
+pumps the event loop until the buffer text stops changing, so a late async
+repaint cannot land between `screenshot-settle` and `x-export-frames`, and
+`gascity-shots--await-frame-resize` waits for the pgtk/Wayland surface to
+catch up with `set-frame-size`.
 
 ## Configuration (environment variables)
 

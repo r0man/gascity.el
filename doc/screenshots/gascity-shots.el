@@ -97,13 +97,34 @@
      . ,(concat gascity-shots-role-prefix "-role"))
     ("/tmp/gascity-fixture\\.[A-Za-z0-9]\\{6,\\}" . "/tmp/gascity-fixture")
     ("[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T[0-9:.]\\{8,\\}Z?"
-     . "1970-01-01T00:00:00Z"))
+     . "1970-01-01T00:00:00Z")
+    ("\\b[0-9]+[smhd] ago\\b" . "0s ago")
+    ("reconnecting ([0-9]+s)" . "reconnecting (0s)")
+    ;; A failed gc call renders its exit status only when the process
+    ;; reported one, so the suffix appears or vanishes between runs.
+    (" (exit [0-9]+)" . ""))
   "Post-render text rules mapping generated values to stable tokens.
 Each entry is (REGEXP . REPLACEMENT); REPLACEMENT is a literal string.
 The default covers run-generated `<prefix>-<hash>' bead ids, the throwaway
-fixture path, and ISO-8601 timestamps.  Any drift the fixture genuinely
-cannot pin must be enumerated in README.md and asserted by `--verify', not
+fixture path, ISO-8601 timestamps, wall-clock relative ages (`3m ago',
+which no fixture can pin), the live stream's `reconnecting (Ns)'
+retry countdown, and the `(exit N)' suffix a failed gc call renders only
+when the child reported a status.  Any drift the fixture genuinely cannot
+pin must be enumerated in README.md and asserted by `--verify', not
 silently normalized here.")
+
+(defun gascity-shots--normalize-string (string)
+  "Return STRING with `gascity-shots-normalization-rules' applied.
+Text properties on STRING are preserved; a non-string is returned as is."
+  (if (not (stringp string))
+      string
+    (with-temp-buffer
+      (insert string)
+      (dolist (rule gascity-shots-normalization-rules)
+        (goto-char (point-min))
+        (while (re-search-forward (car rule) nil t)
+          (replace-match (cdr rule) t t)))
+      (buffer-substring (point-min) (point-max)))))
 
 (defun gascity-shots--normalize-buffer (buffer)
   "Apply `gascity-shots-normalization-rules' to BUFFER's text.
@@ -120,18 +141,88 @@ Text properties are preserved and the buffer is left unmodified."
               (replace-match (cdr rule) t t))))
         (set-buffer-modified-p was-modified)))))
 
-(defun gascity-shots--normalize-frame (frame)
-  "Normalize every buffer displayed in a window of FRAME."
-  (dolist (window (window-list frame nil))
-    (gascity-shots--normalize-buffer (window-buffer window))))
+(defun gascity-shots--normalize-header-line (window)
+  "Freeze WINDOW's buffer header line to a normalized literal string.
+The header line is usually a `(:eval ...)' form that recomputes a
+wall-clock age (`↻ 3s ago') on every redisplay, which the buffer-text
+normalization cannot reach.  Evaluating it once to a normalized string
+makes the exported pixels reproducible."
+  (let ((buffer (window-buffer window)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (when (and header-line-format (not (equal header-line-format "")))
+          (let ((frozen (ignore-errors
+                          (with-selected-window window
+                            (gascity-shots--normalize-string
+                             (format-mode-line header-line-format))))))
+            (when (stringp frozen)
+              (setq header-line-format frozen))))))))
 
-;; The engine is copied verbatim, so the normalization is a post-render
-;; hook installed from this call site rather than a change to the engine.
+(defun gascity-shots--normalize-frame (frame)
+  "Normalize every buffer and header line displayed in a window of FRAME."
+  (dolist (window (window-list frame nil))
+    (gascity-shots--normalize-buffer (window-buffer window))
+    (gascity-shots--normalize-header-line window)))
+
+;;; Frame-resize settling
+;;
+;; `set-frame-size' updates the Lisp frame at once, but the pgtk/Wayland
+;; surface `x-export-frames' reads is resized by a later configure event.
+;; Exporting in between wrote the previous frame's pixels, which made the
+;; first fitted shot of a session non-reproducible (a 220x88 baseline image
+;; where the 231x26 fit was expected).  The engine stays verbatim, so the
+;; wait lives here, like the normalization advice below.
+
+(defun gascity-shots--await-frame-resize (&optional seconds)
+  "Pump the event loop until the selected frame's pixel size is stable.
+Wait at most SECONDS (default 1) for the pixel geometry to stop changing,
+so `x-export-frames' cannot export the pre-resize surface."
+  (let* ((frame (selected-frame))
+         (deadline (+ (float-time) (or seconds 1.0)))
+         (last-w -1) (last-h -1) (stable 0))
+    ;; Always pump twice: the configure event for this resize may still be
+    ;; queued behind the pixel size we just observed.
+    (while (and (< stable 2) (< (float-time) deadline))
+      (accept-process-output nil 0.05)
+      (redisplay t)
+      (let ((w (frame-pixel-width frame))
+            (h (frame-pixel-height frame)))
+        (setq stable (if (and (= w last-w) (= h last-h)) (1+ stable) 0))
+        (setq last-w w last-h h)))))
+
+(defun gascity-shots--await-stable (buffer &optional seconds)
+  "Pump the event loop until BUFFER's text stops changing.
+A late async completion can repaint a section after `screenshot-settle'
+has returned, changing the content and the fitted frame between runs.
+Waits until the text is unchanged for five consecutive 0.2 s samples,
+at most SECONDS (default 20)."
+  (let ((prev nil) (stable 0) (deadline (+ (float-time) (or seconds 20))))
+    (while (and (< (float-time) deadline) (< stable 5))
+      (accept-process-output nil 0.2)
+      (redisplay t)
+      (let ((cur (and (buffer-live-p buffer)
+                      (with-current-buffer buffer
+                        (buffer-substring-no-properties (point-min) (point-max))))))
+        (if (equal cur prev)
+            (setq stable (1+ stable))
+          (setq prev cur stable 0))))))
+
+;; The engine is copied verbatim, so these hooks are installed from this
+;; call site rather than as changes to the engine.
 (advice-add 'screenshot-export :before
             (lambda (buffer _name &optional _fixed-rows)
+              (when-let ((buf (get-buffer buffer)))
+                (gascity-shots--await-stable buf))
               (gascity-shots--normalize-buffer (get-buffer buffer))))
+(advice-add 'screenshot-fit-frame :after
+            (lambda (&rest _)
+              (gascity-shots--await-frame-resize)
+              (gascity-shots--normalize-header-line (selected-window))))
 (advice-add 'screenshot-export-frame :before
             (lambda (_name)
+              (dolist (window (window-list (selected-frame) nil))
+                (gascity-shots--await-stable (window-buffer window)))
+              (gascity-shots--await-frame-resize)
               (gascity-shots--normalize-frame (selected-frame))))
 
 ;;; View thunks
