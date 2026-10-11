@@ -172,15 +172,51 @@ manifest, and `VIEW_SOURCES`) may change.
 
 ## Cross-repo contract (sibling `beads.el`)
 
-The shared interface, fixed in both repos:
+The gascity.el manual and the parallel `beads.el` manual are one system.
+This is the shared interface, fixed in both repos and reconciled here (in
+this section) whenever it changes:
 
-- formula name `user-manual-screenshots`;
-- one `scope` variable with the values `all` | `changed` | a
-  comma-separated view list (the same D3 semantics);
-- fixture ids `demo-<role>` (never run-generated ids);
-- image naming `<view>-<theme>.png` and `<view>-<theme>-thumb.png`, with
-  the repo-local directory prefix (`doc/images/` here, `docs/manual/images/`
-  in `beads.el`).
+- **Formula name** `user-manual-screenshots`, tracked at
+  `.beads/formulas/user-manual-screenshots.formula.toml` (with a
+  byte-identical `.toml` alias). It runs prepare → seed → capture →
+  verify → teardown; the executable substance stays in this directory.
+- **Scope variable** `scope`, one value per run: `all` (every manifest
+  view), `changed` (views whose owning source changed since `HEAD` or
+  `GASCITY_SHOT_BASE`), or a comma-separated `<subset>` of view names. An
+  unknown view is an error. A subset run never rewrites or deletes an
+  out-of-scope image.
+- **Fixture** a throwaway deterministic Gas City workspace with a
+  `demo-rig`, under `TMPDIR`, seeded by role: bead ids are `demo-<role>`,
+  never a run-generated id, and every timestamp is pinned (see
+  `fixtures/` and `fixtures/README.md`).
+- **Capture layout and naming** the reusable engine `screenshot.el` and
+  the per-package shot list live here; committed images are
+  `images/<view>-<theme>.png` plus the `<view>-<theme>-thumb.png`
+  preview, under the repo-local image directory (`doc/images/` here,
+  `docs/manual/images/` in `beads.el`).
+
+Regenerate and verify (from the repo root):
+
+```sh
+make -C doc screenshots                     # scope all
+./doc/screenshots/capture.sh --scope changed  # only the changed views
+./doc/screenshots/capture.sh --scope cockpit,health
+./doc/screenshots/capture.sh --verify all     # two runs, byte-identical
+./doc/screenshots/capture.sh --check-isolation cockpit
+eldev test gascity-test-manual             # offline unit checks
+```
+
+**Allowed differences:** none. The fixture pins role ids and timestamps,
+the post-render normalization hook maps any residual generated id, port or
+clock value to a stable token, and `--verify` asserts byte-identical
+output. A view proven genuinely nondeterministic must be enumerated here
+and asserted by `--verify`, never passed unconditionally.
+
+**Reused engine provenance:** `screenshot.el` is copied verbatim from the
+sibling pipeline (see [Provenance](#provenance-reused-engine)) and must
+stay byte-identical. Upstream
+`beads.el/docs/manual/screenshots/screenshot.el`, digest
+`sha256:dd8b3313a1f440d04bd48986aa0c02e6bcbc4fa73fbe26d8e31bd3f3775459b1`.
 
 Reconcile any divergence here, in one place.
 
