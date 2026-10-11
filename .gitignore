@@ -47,4 +47,12 @@
 # Gas City
 .beads/*
 !.beads/identity.toml
+
+# Project-owned formulas are real, tracked files; every other entry under
+# .beads/formulas/ is a generated symlink into the pack cache. Re-include the
+# directory, ignore its contents, then track only the project-owned pair.
+!.beads/formulas/
+.beads/formulas/*
+!.beads/formulas/user-manual-screenshots.formula.toml
+!.beads/formulas/user-manual-screenshots.toml
 .pi/extensions/gc-hooks.js

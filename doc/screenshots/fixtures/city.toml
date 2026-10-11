@@ -1,0 +1,26 @@
+# Minimal city config for the deterministic screenshot fixture.
+#
+# `fixture.sh --create' runs
+#
+#   gc init --no-start --skip-provider-readiness --file city.toml <tmpdir>
+#
+# so no controller, live provider, or network is contacted: the builtin
+# `claude' provider is referenced only because gc requires a default
+# provider, never started.  The seed data (beads, orders, events) is written
+# by `gascity-fixture.sh' after init.
+#
+# Keep this file free of machine-specific paths, versions, or URLs so the
+# fixture stays reproducible from a clean checkout.
+
+[workspace]
+name = "gascity-fixture"
+provider = "claude"
+
+[providers.claude]
+base = "builtin:claude"
+
+[daemon]
+patrol_interval = "30s"
+max_restarts = 3
+restart_window = "5m"
+shutdown_timeout = "5s"

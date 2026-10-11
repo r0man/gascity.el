@@ -77,6 +77,7 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 @end ifnottex
 
 @menu
+* Task Guide::              The things you do, in the order you do them.
 * Introduction::            What gascity.el is.
 * Installation::            Requirements and loading.
 * Getting Started::         Your first dashboard.
@@ -102,6 +103,303 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 * Key Index::               Keystrokes.
 * Command and Variable Index:: Commands, functions and user options.
 @end menu
+
+@c ====================================================================
+@node Task Guide
+@chapter Task Guide
+@cindex task guide
+@cindex by task
+
+The reference chapters that follow document every view, key and user
+option.  This chapter is the other order.  It starts from something you
+want to do --- install the package, route work to an agent, read the
+cockpit, drive a city on another host --- and points at the view and
+keys that do it.  Read a section when you are trying to get something
+done, then follow its cross-reference to the chapter that documents the
+view in full.  @xref{Area to Screenshot Map} says which screenshot shows
+each feature area.
+
+@menu
+* Install and Start::       Load gascity.el and open a dashboard.
+* Route Work::              Hand a bead, a formula or free text to an agent.
+* Watch the Cockpit::       Read city triage at a glance.
+* Inspect Agents and Sessions::  Find one agent and act on it.
+* Manage Rigs::             Suspend, resume and restart rigs.
+* Cities and Costs::        Every city, and what runs cost.
+* Runs and Live Events::    Follow a workflow run and the event log.
+* Read Mail::               Inbox, threads and a compose buffer.
+* Dispatch a Formula::      The sling menu, its shapes and its keys.
+* Attach to a Terminal::    Drive an agent's tmux session from Emacs.
+* Work Remotely::           Open and drive a city on another host.
+* Area to Screenshot Map::  Which image documents which feature area.
+@end menu
+
+@node Install and Start
+@section Install and Start
+
+gascity.el is an Emacs package that shells out to the @command{gc}
+CLI: load it from your init file, make sure @command{gc} is on
+@code{PATH}, and start a city before you open a view.  The
+requirements and the checkout load path are in @ref{Installation} and
+@ref{Getting Started}.
+
+The fastest way in is the cockpit:
+
+@example
+M-x gascity-dashboard
+@end example
+
+@noindent
+@code{gascity-dashboard} resolves the city by walking up from
+@code{default-directory} for @file{city.toml}, so open it from inside
+the city tree.  @kbd{M-x gascity} raises the dispatcher transient, whose
+left columns open the porcelain views and whose @strong{City} column
+starts and stops the city (@pxref{The Cockpit}, @pxref{Actions},
+@pxref{Customization}).
+
+Inside any gascity buffer one set of keys means the same thing:
+@key{TAB}/@kbd{S-@key{TAB}} move between things, @key{SPC} toggles the
+thing at point, @key{RET} acts on it, @kbd{g} reloads, @kbd{q} buries,
+@kbd{j} jumps to another view, @kbd{/} filters and @kbd{?} lists every
+verb under its view key.  @xref{Buffers and Navigation}.
+
+@node Route Work
+@section Route Work
+
+Routing work means putting a bead, a formula run or free task text in
+front of the agent that should take it.  gascity has one command for
+it: the sling, @kbd{S} from any view (or @kbd{M-x gascity-sling}
+anywhere).  @xref{The Sling Command}.
+
+The menu asks what, who and how, in typed completion: @kbd{A} picks the
+work (beads and convoys; @kbd{C-u} for free text), @kbd{f} a formula,
+@kbd{T} the target agent, the generated infix keys fill the formula's
+variables, and @kbd{s} launches.  With a bead at point and a remembered
+target, @kbd{S} @kbd{s} dispatches with no prompts at all; @kbd{P}
+opens the full preview first.  @xref{Sling key summary}.
+
+Beads themselves are managed in beads.el.  @kbd{j b} opens the beads of
+the rig at point (or a chosen rig) in beads.el, and @kbd{c} opens the
+bead-actions menu; ready work also shows in the cockpit's @strong{Work}
+section and the rig dashboard's @strong{Ready} section
+(@pxref{The ? dispatch}, @pxref{The Cockpit}, @pxref{The Rig Dashboard}).
+
+@node Watch the Cockpit
+@section Watch the Cockpit
+
+@kbd{M-x gascity-dashboard} opens the city's cockpit, one short triage
+buffer whose six sections answer, top to bottom, what needs you, what is
+moving, who is working, what is queued and what just happened:
+@strong{Needs you}, @strong{Moving}, @strong{Agents}, @strong{Work},
+@strong{Activity} and @strong{Rigs}.  @xref{The Cockpit}.
+
+The shared navigation keys carry you through it; @key{RET} opens the
+view behind a section header, an agent, a run, a bead or a rig;
+@kbd{+}/@kbd{-} show more or fewer rows of a capped section; @kbd{/}
+opens the filter; @kbd{W} toggles the city's live event stream; @kbd{S},
+@kbd{c} and @kbd{m} sling, act on a bead or act on mail; and @kbd{C} is
+the city lifecycle menu, @kbd{O} runs an order.
+
+If you want the counts in every mode line, turn on the global, opt-in
+lighter (it never runs @command{gc} of its own):
+
+@lisp
+(gascity-mode-line-mode 1)
+@end lisp
+
+@noindent
+@xref{The Mode-Line Lighter}.  With live refresh on, the cockpit
+re-renders when an event arrives (@pxref{Live Refresh}).
+
+@node Inspect Agents and Sessions
+@section Inspect Agents and Sessions
+
+@kbd{j a} lists every agent of the city, or @kbd{M-x gascity-agents};
+@kbd{T} switches to the city/rigs/pools/agents tree.  Each row shows the
+agent's state, last activity, current bead and provider, with stalled
+agents pinned to the top.  @xref{The Agents view}.
+
+@key{RET} (or @kbd{t}) attaches the agent's terminal; @kbd{i} opens its
+detail view with its work, current run, transcript, mail and history;
+@kbd{M} nudges, @kbd{s} suspends, @kbd{w} wakes, @kbd{K} kills,
+@kbd{D} drains, @kbd{R} resets and @kbd{v} peeks at recent output.
+@xref{Agent Detail}, @ref{Actions}.
+
+The same agents appear in the @strong{Sessions} tabulated list, with
+their rig, state, provider and working directory; @key{RET} and @kbd{t}
+attach, @kbd{i} opens the detail, and @kbd{d} opens Dired in the
+worktree.  @xref{Sessions}.
+
+@node Manage Rigs
+@section Manage Rigs
+
+A rig is a repository that owns a beads store and runs its own pool of
+agents.  The @strong{Rigs} tabulated list shows each rig's prefix,
+status, branch and store; @key{RET} opens its dashboard, @kbd{b} opens
+its beads in beads.el, @kbd{s}/@kbd{r}/@kbd{R} suspend, resume and
+restart it (restart confirms, since it kills the rig's sessions), and
+@kbd{d} opens Dired in the rig directory.  @xref{Rigs}.
+
+@kbd{M-x gascity-rig-dashboard} (or @kbd{j g}) opens the single-rig
+counterpart to the cockpit: header, agents, ready and in-progress beads,
+orders and Dolt, each section loaded independently.  @kbd{b} opens the
+whole rig's bead board, and the agent keys act on the rig's agents.
+@xref{The Rig Dashboard}.
+
+Adding a rig, removing one and editing the city configuration are
+@command{gc} commands (@command{gc rig add}, @command{gc rig remove}),
+not porcelain verbs; gascity renders their result.  @xref{Installation},
+@pxref{Customization}.
+
+@node Cities and Costs
+@section Cities and Costs
+
+@kbd{j c} lists every city gascity can reach --- the local one, each
+host in @code{gascity-remote-hosts}, and any host a view has already
+read from --- with each city's agents, unread mail and health;
+@key{RET} opens that city's cockpit in place.  @xref{Cities}.
+
+@kbd{j $} shows @command{gc costs} --- model tokens and compute
+wall-seconds recorded per run, with a list-price estimate.  @command{gc}
+has no JSON form for it, so the view shows its text table verbatim and
+@kbd{g} re-reads it.  @xref{Costs}.
+
+Starting and stopping a city is the dispatcher's @strong{City}
+lifecycle (@kbd{C} in a view); both confirm first and stream their
+long-running output.  @xref{Actions}, @pxref{Remote Cities}.
+
+@node Runs and Live Events
+@section Runs and Live Events
+
+@kbd{j r} shows the city's workflow runs as cards grouped into Active,
+Waiting and Failed, each with its step ladder and workers, derived from
+the run's bead graph.  @key{RET} opens the run's detail (its steps,
+iterations, nested and drain-member runs, plan files and control nodes),
+@kbd{H} pages the history, @kbd{b} opens the run's root bead and
+@kbd{/} filters by rig, formula, state and window.  @xref{Runs},
+@xref{Run Detail}.
+
+@kbd{j e} lists the city's events, newest first, folding routine churn
+into @samp{×N} rows and never folding signal events; @key{RET} drills
+into a bead, a session or a churn group.  @xref{Events}.
+
+Nothing polls.  While a view of a city is open, one
+@code{gc events --follow} stream per city refreshes only the sections
+the events touch; @kbd{W} turns the stream off and on and the header
+line shows its state (live, off, reconnecting, supervisor down,
+offline).  @xref{Live Refresh}.
+
+@node Read Mail
+@section Read Mail
+
+@kbd{j m} opens the city's inbox.  @key{RET} previews a message in its
+thread from data already loaded --- no @command{gc} call, and it stays
+unread --- while @kbd{r} reads the thread and marks it read, @kbd{R}
+replies, @kbd{a} archives, @kbd{u} marks unread and @kbd{c} opens the
+mail actions menu.  @xref{Mail View}.
+
+A reply or a new message opens a compose buffer: write the body,
+@kbd{C-c C-c} sends, @kbd{C-c C-k} cancels, @kbd{C-c C-n} toggles
+@option{--notify}.  The @strong{Mail} list is the same inbox in
+tabulated-list form (@pxref{Mail}).  Agents prefer ephemeral nudges to
+mail for routine signalling (@pxref{Actions}).
+
+@node Dispatch a Formula
+@section Dispatch a Formula
+
+A formula is a reusable workflow; dispatching it to an agent (or
+against a bead) is the sling's job.  @kbd{S} from any view, or
+@kbd{M-x gascity-sling}, opens the one adaptive menu.
+@xref{The Sling Command}.
+
+The shape is inferred, never flagged: work with no formula is the plain
+route, a formula with work is the targeted @option{--on} shape, and a
+formula without work is the targetless @option{--formula} shape.
+@kbd{A} picks work, @kbd{f} picks the formula (whose declared variables
+become typed infix keys), @kbd{T} picks the target, the live footer
+summarizes the dispatch and warns about traps, @kbd{s} launches (the
+preview is never a gate), @kbd{P} opens the full preview and the
+momentary @kbd{F} follows the run a launch created.
+@xref{The sling shapes}, @xref{Sling key summary}.
+
+@node Attach to a Terminal
+@section Attach to a Terminal
+
+@kbd{t} on an agent --- in the cockpit, the Agents view, the session
+list, the rig dashboard or the agent detail --- opens a terminal buffer
+holding a live @command{tmux} client attached to the agent's session.
+@xref{The Agents view}, @ref{Agent Detail}.
+
+A tmux client draws on the alternate screen, so scrolling goes through
+tmux: @kbd{C-b [} enters copy-mode and @key{PageUp}/@key{PageDown}
+page through the history.  For Magit-flavoured reading, @kbd{C-c s}
+toggles @code{gascity-terminal-scroll-mode}, which translates the Emacs
+scroll keys into copy-mode sequences so the agent receives no keys.
+@xref{Actions}.
+
+@shot{terminal-attach-dark, A terminal buffer attached to a fixture tmux session (ef-elea-dark)}
+
+@node Work Remotely
+@section Work Remotely
+
+Every view works the same on a city on another host.  Open any directory
+of the city over TRAMP and start a view from there; every read, action
+and refresh then runs @command{gc} on that host, never a silent local
+fallback:
+
+@example
+C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
+M-x gascity-dashboard
+@end example
+
+@noindent
+Buffer names are host-qualified, so a local and a remote view of the
+same city coexist; the header line shows @samp{@@host}.
+@xref{Remote Cities}.
+
+For a single-hop ssh-family host, background reads run as local
+@code{ssh -T} pipes rather than TRAMP processes, with a per-host
+scheduler, a deadline on every process and an @samp{○ offline} state
+with backoff probes when a host cannot be reached; tmux attach spawns a
+local @code{ssh -t HOST} in the terminal backend.  @xref{Transport},
+@xref{Scheduling}, @xref{Remote buffers}.
+
+@node Area to Screenshot Map
+@section Area to Screenshot Map
+
+The manual embeds its screenshots with the @code{@@shot} macro (in HTML a
+click-to-enlarge thumbnail, in Info a plain image).  This table maps
+each feature area named in the manual requirements to the image that
+documents it.  Where an area has no window of its own --- a key-binding
+or visual-language area, or the live event stream, whose state is a
+header line rather than a view --- the table names a proxy: an image of
+a view that exercises the same rendering or shows the state in
+question.  The @emph{Why this image} column says which.  Every image is
+captured from the throwaway fixture city by @code{doc/screenshots/}
+(@pxref{Contributing}); none is hand-drawn or taken from a live store.
+
+@multitable @columnfractions .30 .40 .30
+@headitem Feature area @tab Screenshot(s) @tab Why this image
+@item Getting started; the dispatcher @tab dispatch-dark @tab The @kbd{?} dispatch transient over the cockpit.
+@item Buffers and navigation (move/toggle, jump prefix, filter menus, visual language, objects at point) @tab cockpit-dark, cockpit-light, dispatch-dark @tab Non-visual keys and glyphs; the cockpit and its dispatch menu exercise them.
+@item Lists: pagination, sorting, detail @tab order-list-light @tab A paginated tabulated list with the shared list keys.
+@item Cockpit @tab cockpit-dark, cockpit-light @tab The triage buffer, in both themes.
+@item Agents (list, tree, detail) @tab agents-dark, agents-tree-light @tab The agents list and tree; the detail opens from the list.
+@item Rig dashboard @tab rig-dashboard-dark @tab The single-rig counterpart to the cockpit.
+@item Health @tab health-dark @tab Plumbing, versions, store and doctor.
+@item Cities @tab cities-light @tab Every reachable city and host.
+@item Costs @tab costs-dark @tab Recorded usage by run, wall-seconds and list-price estimate.
+@item Mode-line lighter @tab lighter-dark @tab The lighter in a mode line.
+@item Runs and run detail @tab runs-dark @tab The run cards; a run's steps open from them.
+@item Live refresh @tab cockpit-dark, events-dark @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
+@item Events @tab events-dark @tab The event log.
+@item Mail (inbox, thread, compose) @tab mail-inbox-light @tab The inbox; thread and compose are the same buffer family.
+@item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-light, session-list-dark, convoy-list-dark, order-list-light, mail-inbox-light, dolt-list-dark @tab One image per list.
+@item Formula sling and dispatch @tab sling-plain-dark, sling-cold-dark, sling-formula-dark, sling-on-dark, sling-preview-dark @tab The dispatch transient across its shapes and the full preview buffer.
+@item Session/polecat detail and terminal attach @tab session-list-dark, terminal-attach-dark @tab The session list, and a terminal buffer attached to a tmux session.
+@item Remote/TRAMP cities @tab remote-cities-light @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
+@item Bookmarks @tab bookmarks-dark @tab The bookmark list with gascity views.
+@end multitable
 
 @c ====================================================================
 @node Introduction
@@ -859,8 +1157,6 @@ tree is a vui view with the section keys.
 
 @kbd{i} on an agent anywhere opens @file{*gascity-agent:@: NAME*}:
 
-@shot{agent-detail-light, The mayor in detail (ef-cyprus)}
-
 @table @asis
 @item The header
 Glyph, name, state and last activity; the session id and tmux name,
@@ -1152,6 +1448,8 @@ prints it.  It is read in the background; @kbd{g}
 (@code{gascity-costs-refresh}) re-reads it and the header line says how
 long ago it did.
 
+@shot{costs-dark, The Costs view --- recorded usage by run (ef-elea-dark)}
+
 @c ====================================================================
 @node The Mode-Line Lighter
 @chapter The Mode-Line Lighter
@@ -1279,8 +1577,6 @@ Steps  1/10                                    C show control nodes
       · setup-build-basic-review  be-bdcr
       ▸ build-basic-review-loop   be-zdon   loop
 @end example
-
-@shot{run-detail-dark, A failed build-basic run in detail (ef-elea-dark)}
 
 @noindent
 The steps are the run's beads arranged by step: iterations hang under
@@ -1434,8 +1730,6 @@ The mail actions menu (compose new mail and more).
 Filter to unread (@kbd{-u}), by sender (@kbd{-a}), window (@kbd{-W}) or
 search (@kbd{-q}).
 @end table
-
-@shot{mail-thread-light, A mail thread (ef-cyprus)}
 
 @noindent
 A reply or a new message opens a compose buffer: write the body,
@@ -1733,12 +2027,12 @@ and the binding stays live, so the key that answered it changes it
 again.  An unanswered stage shows its pick hint.  With a bead at
 point and a remembered target, every stage holds an answer:
 
-@shot{sling-plain, The sling menu pre-seeded for a plain dispatch (mockup rendering)}
+@shot{sling-plain-dark, The sling menu pre-seeded for a plain dispatch (ef-elea-dark)}
 
 Pressing @kbd{S} with nothing pre-seeded shows the hints instead ---
 and the header sentence still reads as one line:
 
-@shot{sling-cold, A cold sling entry with nothing pre-seeded (mockup rendering)}
+@shot{sling-cold-dark, A cold sling entry with nothing pre-seeded (ef-elea-dark)}
 
 @node Picking work
 @section Picking work
@@ -1786,7 +2080,7 @@ without work, targetless (@option{--formula}).  A formula that
 declares no variables --- @samp{pancakes} --- keeps the How stage out
 of the menu entirely; the flow is What, Who, @kbd{s}.
 
-@shot{sling-formula, The formula shape with no work attached (mockup rendering)}
+@shot{sling-formula-dark, The formula shape with no work attached (ef-elea-dark)}
 
 @node Picking the target
 @section Picking the target
@@ -1888,7 +2182,7 @@ Variable keys are assigned deterministically and avoid the reserved
 single letters (@pxref{Sling key summary}), so a formula's variables
 bind the same keys in every session.
 
-@shot{sling-on, The targeted shape with its typed How group (mockup rendering)}
+@shot{sling-on-dark, The targeted shape with its typed How group (ef-elea-dark)}
 
 @node The live footer
 @section The live footer
@@ -1962,8 +2256,6 @@ work (@samp{build-basic drains a bead — pick work with A}), missing
 required variables (@samp{Missing required vars: artifact_root}), and
 no target at all (@samp{No target — T to choose, or s will prompt}).
 
-@shot{sling-trap, The trap warning below the healthy footer (mockup rendering)}
-
 @node The preview buffer
 @section The preview buffer
 @cindex preview buffer
@@ -1995,7 +2287,7 @@ it.  @kbd{r} keeps its old job, the server-substituted recipe
 preview.  The preview is never a gate: @kbd{s} works in the menu at
 any time, warning or not.
 
-@shot{sling-preview, The P full preview buffer (mockup rendering)}
+@shot{sling-preview-dark, The P full preview buffer (ef-elea-dark)}
 
 @node Launch and follow
 @section Launch and follow
@@ -2018,8 +2310,6 @@ The offer is momentary: @kbd{F} opens the run view
 (@code{gascity-run-show}) on the created workflow's root bead
 (@pxref{Runs}), and any other key dismisses the offer.  Nothing is
 yanked away --- you stay where you are unless you take it.
-
-@shot{sling-follow, The follow offer and the plain echo (mockup rendering)}
 
 @node Remembered state
 @section Remembered state
@@ -2315,6 +2605,8 @@ run, agent, thread) and its filters.  Making it reads buffer state
 only; nothing runs, locally or on the host.  A thread's bookmark keeps
 its first message's headers, never a body.
 
+@shot{bookmarks-dark, The bookmark list with two fixture gascity views (ef-elea-dark)}
+
 @findex gascity-bookmark-jump
 A jump opens the view the usual way, in its city: at once, @samp{…}
 while its reads run, the offline state when the host is unreachable
@@ -2337,6 +2629,8 @@ silent local fallback:
 C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
 M-x gascity-dashboard
 @end example
+
+@shot{remote-cities-light, The Cities list with one row per city and host (ef-cyprus)}
 
 @menu
 * Remote buffers::        Host-qualified names, paths, attach.

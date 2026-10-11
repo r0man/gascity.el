@@ -35,12 +35,25 @@
   (let ((v (getenv name)))
     (if (and v (not (string-empty-p v))) v default)))
 
+;; gc reads its user-level state (the machine-wide city registry) from
+;; GC_HOME, defaulting to ~/.gc.  The fixture provides a throwaway GC_HOME
+;; registering only the fixture city, so the Cities view lists the fixture
+;; and never the developer's live cities.  capture.sh exports it; the
+;; fallback keeps a standalone `emacs -l gascity-shots.el' run working.
+(let ((gc-home (getenv "GASCITY_SHOT_GC_HOME")))
+  (when (and gc-home (not (string-empty-p gc-home)))
+    (setenv "GC_HOME" gc-home)))
+
 (let* ((repo (gascity-shots-getenv
               "GASCITY_REPO" (expand-file-name "../.." gascity-shots-dir)))
        (beads (gascity-shots-getenv "BEADS_REPO" (expand-file-name "~/workspace/beads.el"))))
   (add-to-list 'load-path (expand-file-name "lisp" repo))
   (add-to-list 'load-path (expand-file-name "lisp" beads))
-  (add-to-list 'load-path gascity-shots-dir))
+  (add-to-list 'load-path gascity-shots-dir)
+  ;; vui is not on ELPA; beads.el vendors it under its Eldev package dir.
+  (dolist (vui (file-expand-wildcards
+                (expand-file-name ".eldev/*/packages/vui-*" beads)))
+    (add-to-list 'load-path vui)))
 
 (require 'cl-lib)
 (require 'screenshot)
@@ -68,6 +81,150 @@
       screenshot-async-process-regexp "gascity-gc"
       screenshot-log-function #'gascity-shots--progress)
 
+;;; Deterministic role ids and terminal normalization (defense in depth)
+;;
+;; The fixture pins bead ids to `demo-<role>' (see fixtures/README.md), and
+;; pins timestamps/ports, but a view can still render a run-generated id,
+;; an ephemeral port, or a clock value.  The engine is reused verbatim, so
+;; the normalization is installed as advice from this call site rather
+;; than a change to screenshot.el.
+
+(defvar gascity-shots-role-prefix "demo"
+  "Fixture id prefix.  Ids outside it are left alone by normalization.")
+
+(defvar gascity-shots-normalization-rules
+  `((,(concat "\\b" (regexp-quote gascity-shots-role-prefix) "-[0-9a-f]\\{6,\\}\\b")
+     . ,(concat gascity-shots-role-prefix "-role"))
+    ("/tmp/gascity-fixture\\.[A-Za-z0-9]\\{6,\\}" . "/tmp/gascity-fixture")
+    ("[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T[0-9:.]\\{8,\\}Z?"
+     . "1970-01-01T00:00:00Z")
+    ("\\b[0-9]+[smhd] ago\\b" . "0s ago")
+    ("reconnecting ([0-9]+s)" . "reconnecting (0s)")
+    ;; A failed gc call renders its exit status only when the process
+    ;; reported one, so the suffix appears or vanishes between runs.
+    (" (exit [0-9]+)" . ""))
+  "Post-render text rules mapping generated values to stable tokens.
+Each entry is (REGEXP . REPLACEMENT); REPLACEMENT is a literal string.
+The default covers run-generated `<prefix>-<hash>' bead ids, the throwaway
+fixture path, ISO-8601 timestamps, wall-clock relative ages (`3m ago',
+which no fixture can pin), the live stream's `reconnecting (Ns)'
+retry countdown, and the `(exit N)' suffix a failed gc call renders only
+when the child reported a status.  Any drift the fixture genuinely cannot
+pin must be enumerated in README.md and asserted by `--verify', not
+silently normalized here.")
+
+(defun gascity-shots--normalize-string (string)
+  "Return STRING with `gascity-shots-normalization-rules' applied.
+Text properties on STRING are preserved; a non-string is returned as is."
+  (if (not (stringp string))
+      string
+    (with-temp-buffer
+      (insert string)
+      (dolist (rule gascity-shots-normalization-rules)
+        (goto-char (point-min))
+        (while (re-search-forward (car rule) nil t)
+          (replace-match (cdr rule) t t)))
+      (buffer-substring (point-min) (point-max)))))
+
+(defun gascity-shots--normalize-buffer (buffer)
+  "Apply `gascity-shots-normalization-rules' to BUFFER's text.
+Text properties are preserved and the buffer is left unmodified."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t)
+            (inhibit-modification-hooks t)
+            (was-modified (buffer-modified-p)))
+        (save-excursion
+          (dolist (rule gascity-shots-normalization-rules)
+            (goto-char (point-min))
+            (while (re-search-forward (car rule) nil t)
+              (replace-match (cdr rule) t t))))
+        (set-buffer-modified-p was-modified)))))
+
+(defun gascity-shots--normalize-header-line (window)
+  "Freeze WINDOW's buffer header line to a normalized literal string.
+The header line is usually a `(:eval ...)' form that recomputes a
+wall-clock age (`↻ 3s ago') on every redisplay, which the buffer-text
+normalization cannot reach.  Evaluating it once to a normalized string
+makes the exported pixels reproducible."
+  (let ((buffer (window-buffer window)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (when (and header-line-format (not (equal header-line-format "")))
+          (let ((frozen (ignore-errors
+                          (with-selected-window window
+                            (gascity-shots--normalize-string
+                             (format-mode-line header-line-format))))))
+            (when (stringp frozen)
+              (setq header-line-format frozen))))))))
+
+(defun gascity-shots--normalize-frame (frame)
+  "Normalize every buffer and header line displayed in a window of FRAME."
+  (dolist (window (window-list frame nil))
+    (gascity-shots--normalize-buffer (window-buffer window))
+    (gascity-shots--normalize-header-line window)))
+
+;;; Frame-resize settling
+;;
+;; `set-frame-size' updates the Lisp frame at once, but the pgtk/Wayland
+;; surface `x-export-frames' reads is resized by a later configure event.
+;; Exporting in between wrote the previous frame's pixels, which made the
+;; first fitted shot of a session non-reproducible (a 220x88 baseline image
+;; where the 231x26 fit was expected).  The engine stays verbatim, so the
+;; wait lives here, like the normalization advice below.
+
+(defun gascity-shots--await-frame-resize (&optional seconds)
+  "Pump the event loop until the selected frame's pixel size is stable.
+Wait at most SECONDS (default 1) for the pixel geometry to stop changing,
+so `x-export-frames' cannot export the pre-resize surface."
+  (let* ((frame (selected-frame))
+         (deadline (+ (float-time) (or seconds 1.0)))
+         (last-w -1) (last-h -1) (stable 0))
+    ;; Always pump twice: the configure event for this resize may still be
+    ;; queued behind the pixel size we just observed.
+    (while (and (< stable 2) (< (float-time) deadline))
+      (accept-process-output nil 0.05)
+      (redisplay t)
+      (let ((w (frame-pixel-width frame))
+            (h (frame-pixel-height frame)))
+        (setq stable (if (and (= w last-w) (= h last-h)) (1+ stable) 0))
+        (setq last-w w last-h h)))))
+
+(defun gascity-shots--await-stable (buffer &optional seconds)
+  "Pump the event loop until BUFFER's text stops changing.
+A late async completion can repaint a section after `screenshot-settle'
+has returned, changing the content and the fitted frame between runs.
+Waits until the text is unchanged for five consecutive 0.2 s samples,
+at most SECONDS (default 20)."
+  (let ((prev nil) (stable 0) (deadline (+ (float-time) (or seconds 20))))
+    (while (and (< (float-time) deadline) (< stable 5))
+      (accept-process-output nil 0.2)
+      (redisplay t)
+      (let ((cur (and (buffer-live-p buffer)
+                      (with-current-buffer buffer
+                        (buffer-substring-no-properties (point-min) (point-max))))))
+        (if (equal cur prev)
+            (setq stable (1+ stable))
+          (setq prev cur stable 0))))))
+
+;; The engine is copied verbatim, so these hooks are installed from this
+;; call site rather than as changes to the engine.
+(advice-add 'screenshot-export :before
+            (lambda (buffer _name &optional _fixed-rows)
+              (when-let ((buf (get-buffer buffer)))
+                (gascity-shots--await-stable buf))
+              (gascity-shots--normalize-buffer (get-buffer buffer))))
+(advice-add 'screenshot-fit-frame :after
+            (lambda (&rest _)
+              (gascity-shots--await-frame-resize)
+              (gascity-shots--normalize-header-line (selected-window))))
+(advice-add 'screenshot-export-frame :before
+            (lambda (_name)
+              (dolist (window (window-list (selected-frame) nil))
+                (gascity-shots--await-stable (window-buffer window)))
+              (gascity-shots--await-frame-resize)
+              (gascity-shots--normalize-frame (selected-frame))))
+
 ;;; View thunks
 ;;
 ;; Each thunk opens a porcelain view and returns the buffer to capture.
@@ -77,32 +234,6 @@
 (defun gascity-shots--selected-buffer ()
   "Return the buffer the selected window shows (views pop to theirs)."
   (window-buffer (selected-window)))
-
-(defun gascity-shots--goto (buffer regexps &optional prop)
-  "In BUFFER, move point to the first line matching one of REGEXPS.
-With PROP, only a line carrying text property PROP counts.  Falls back
-to the first line that carries PROP (or the second line)."
-  (with-current-buffer buffer
-    (goto-char (point-min))
-    (let ((pos (cl-some (lambda (re)
-                          (save-excursion
-                            (goto-char (point-min))
-                            (let (found)
-                              (while (and (not found) (re-search-forward re nil t))
-                                (when (or (null prop)
-                                          (get-text-property (line-beginning-position) prop)
-                                          (get-text-property (point) prop))
-                                  (setq found (line-beginning-position))))
-                              found)))
-                        regexps)))
-      (goto-char (or pos
-                     (and prop (let ((p (text-property-not-all
-                                         (point-min) (point-max) prop nil)))
-                                 (and p (save-excursion (goto-char p)
-                                                        (line-beginning-position)))))
-                     (progn (forward-line 1) (point))))
-      (beginning-of-line)
-      (set-window-point (get-buffer-window buffer) (point)))))
 
 (defun gascity-shots--cockpit-buffer ()
   "Open the city cockpit and return its (city-keyed) buffer."
@@ -133,40 +264,9 @@ to the first line that carries PROP (or the second line)."
     (redisplay t))
   nil)
 
-(defun gascity-shots--agent-detail-buffer ()
-  "Open the detail of a running agent through the Agents table (`i')."
-  (gascity-agents)
-  (let ((table (gascity-shots--await (gascity-shots--selected-buffer))))
-    (gascity-shots--goto table '("● .*active" "mayor" "●") 'tabulated-list-id)
-    (with-current-buffer table (gascity-polecat-detail-at-point)))
-  (gascity-shots--selected-buffer))
-
 (defun gascity-shots--agents-tree-buffer ()
   "Open the Agents tree (`T')."
   (gascity-agents-tree)
-  (gascity-shots--selected-buffer))
-
-(defun gascity-shots--run-detail-buffer ()
-  "Open a run's detail through the Runs view's history (`H', `RET')."
-  (gascity-runs)
-  (let ((runs (gascity-shots--await (gascity-shots--selected-buffer))))
-    (with-current-buffer runs
-      (unless (text-property-not-all (point-min) (point-max) 'gascity-run-rig nil)
-        (gascity-runs-history)
-        (gascity-shots--await runs)))
-    (gascity-shots--goto runs '("^  [⬣✕◆] ") 'gascity-run-rig)
-    (with-current-buffer runs (gascity-runs-activate)))
-  (gascity-shots--selected-buffer))
-
-(defun gascity-shots--mail-thread-buffer ()
-  "Open a message from the inbox the cheap way (`RET': cached, no gc call,
-stays unread)."
-  (gascity-mail)
-  (let* ((inbox (gascity-shots--await (gascity-shots--selected-buffer))))
-    (gascity-shots--goto inbox '(".") 'tabulated-list-id)
-    (with-current-buffer inbox
-      (let ((message (tabulated-list-get-id)))
-        (gascity-mail-thread-show message inbox t))))
   (gascity-shots--selected-buffer))
 
 (defun gascity-shots--loading-p (buffer)
@@ -206,27 +306,139 @@ Then clear the echo area, so the export shows no stray message."
   "Return a thunk calling COMMAND and returning the buffer it shows."
   (lambda () (call-interactively command) (gascity-shots--selected-buffer)))
 
+(defun gascity-shots--bookmarks-buffer ()
+  "Open the Emacs Bookmark List showing fixture-owned gascity bookmarks.
+`emacs -Q' would otherwise list the developer's own bookmarks, so the
+list is built in-session from the fixture views: the cockpit and the
+fixture rig dashboard are bookmarked through the normal
+`bookmark-make-record-function', then listed.  `bookmark-default-file' is
+pointed at a throwaway path, so nothing is read from or written to the
+user's bookmark file."
+  (require 'bookmark)
+  (setq bookmark-default-file
+        (gascity-shots-getenv "GASCITY_SHOT_BOOKMARKS"
+                              (expand-file-name "gascity-shots-bookmarks.el"
+                                                temporary-file-directory))
+        bookmark-alist nil)
+  (with-current-buffer (gascity-shots--await (gascity-shots--cockpit-buffer))
+    (bookmark-set "gascity: cockpit (fixture)"))
+  (with-current-buffer
+      (gascity-shots--await
+       (funcall (lambda () (gascity-rig-dashboard gascity-shots-rig)
+                  (gascity-shots--selected-buffer))))
+    (bookmark-set (format "gascity-rig: %s (fixture)" gascity-shots-rig)))
+  (bookmark-bmenu-list)
+  (or (get-buffer "*Bookmark List*") (gascity-shots--selected-buffer)))
+
+(defun gascity-shots--remote-cities-buffer ()
+  "Open the Cities list, which includes the remote hosts (`j c').
+The fixture city plus one fixture remote context is what the manual's
+Remote Cities chapter shows; the command is the same list as `cities'."
+  (gascity-cities)
+  (gascity-shots--selected-buffer))
+
+(defun gascity-shots--terminal-attach-buffer ()
+  "Open a terminal attached to the fixture's fixed tmux session.
+The session name comes from GASCITY_SHOT_TERMINAL_SESSION (default
+`demo-agent'); when tmux is present and the session is absent it is created
+first, so the attach has something to render.  The attach runs a pre-step
+asynchronously (D9), so this waits for the live terminal buffer and
+returns it, rather than the buffer that happened to be selected before.
+Environment-dependent (a host without tmux logs the shot as skipped rather
+than failing the run)."
+  (let* ((session (gascity-shots-getenv "GASCITY_SHOT_TERMINAL_SESSION" "demo-agent"))
+         (tmux (executable-find "tmux")))
+    (when tmux
+      (unless (eq 0 (call-process tmux nil nil nil "has-session" "-t" session))
+        (ignore-errors
+          (call-process tmux nil nil nil "new-session" "-d" "-s" session))))
+    (gascity-terminal-attach-tmux session)
+    (let ((deadline (+ (float-time) 20)) found)
+      (while (and (not found) (< (float-time) deadline))
+        (accept-process-output nil 0.2)
+        (setq found (cl-find-if
+                     (lambda (b)
+                       (string-match-p (format "\\*gc-agent-.*%s\\*"
+                                               (regexp-quote session))
+                                       (buffer-name b)))
+                     (buffer-list))))
+      (if found
+          (progn (switch-to-buffer found) found)
+        (gascity-shots--selected-buffer)))))
+
+(defun gascity-shots--sling-frame (&optional scope)
+  "Show the sling dispatch transient over the fixture cockpit.
+SCOPE is a plist merged over the base scope (`:city' plus nils); nil is
+the cold menu.  Returns nil so the whole frame is captured
+\(:whole-frame)."
+  (switch-to-buffer (gascity-shots--await (gascity-shots--cockpit-buffer)))
+  (delete-other-windows)
+  (set-frame-size (selected-frame) 150 46)
+  (redisplay t)
+  (transient-setup 'gascity-sling-dispatch nil nil
+                   :scope (append scope
+                                  (list :city default-directory
+                                        :formula nil :target nil :work nil
+                                        :work-title nil))
+                   :value nil)
+  (redisplay t)
+  nil)
+
+(defun gascity-shots--sling-plain-frame ()
+  "The sling menu pre-seeded with fixture work: the plain shape."
+  (gascity-shots--sling-frame
+   (list :work "demo-task-manual"
+         :work-title "Write the task-organized manual")))
+
+(defun gascity-shots--sling-cold-frame ()
+  "The sling menu with nothing pre-seeded."
+  (gascity-shots--sling-frame))
+
+(defun gascity-shots--sling-formula-frame ()
+  "The formula shape: a formula picked with no work attached."
+  (gascity-shots--sling-frame (list :formula "mol-do-work")))
+
+(defun gascity-shots--sling-on-frame ()
+  "The targeted shape: a formula picked with fixture work in scope."
+  (gascity-shots--sling-frame
+   (list :work "demo-task-manual"
+         :work-title "Write the task-organized manual"
+         :formula "mol-do-work")))
+
+(defun gascity-shots--sling-preview-buffer ()
+  "The full preview buffer (`P') for a fixture dispatch."
+  (switch-to-buffer (gascity-shots--await (gascity-shots--cockpit-buffer)))
+  (gascity-sling--full-preview
+   (list :city default-directory
+         :work "demo-task-manual"
+         :work-title "Write the task-organized manual"
+         :formula "mol-do-work"
+         :target "demo-rig/gc.implementation-worker")
+   nil)
+  (gascity-shots--await (gascity-shots--selected-buffer)))
+
 (defun gascity-shots-all ()
   "Return the full alist of shots: (NAME THUNK . PROPS)."
   (list
    ;; vui views — auto-fit height.
    (list "cockpit" #'gascity-shots--cockpit-buffer :settle 15)
    (list "agents-tree" #'gascity-shots--agents-tree-buffer :settle 12)
-   (list "agent-detail" #'gascity-shots--agent-detail-buffer :settle 15)
    (list "runs" (gascity-shots--view #'gascity-runs) :settle 15)
-   (list "run-detail" #'gascity-shots--run-detail-buffer :settle 15)
    (list "health" (gascity-shots--view #'gascity-health) :settle 15)
+   (list "costs" (gascity-shots--view #'gascity-costs) :settle 12)
    (list "rig-dashboard"
          (lambda () (gascity-rig-dashboard gascity-shots-rig)
            (gascity-shots--selected-buffer))
          :settle 15)
-   (list "mail-thread" #'gascity-shots--mail-thread-buffer :settle 6)
    ;; tabulated lists — extra row pad so short lists stay on one page.
    (list "agents" (gascity-shots--view #'gascity-agents) :settle 12 :row-pad 2)
    (list "events" (gascity-shots--view #'gascity-events) :settle 12 :fixed-rows 30)
    (list "mail-inbox" (gascity-shots--view #'gascity-mail) :settle 8 :fixed-rows 14)
+   (list "bookmarks" #'gascity-shots--bookmarks-buffer :settle 6 :fixed-rows 20)
    (list "cities" (gascity-shots--view #'gascity-cities) :settle 15 :row-pad 2
          :col-pad 6)
+   (list "remote-cities" #'gascity-shots--remote-cities-buffer :settle 15
+         :row-pad 2 :col-pad 6)
    (list "rig-list" (gascity-shots--view #'gascity-rig-list) :settle 8 :row-pad 4)
    (list "session-list" (gascity-shots--view #'gascity-session-list)
          :settle 8 :row-pad 4)
@@ -238,6 +450,12 @@ Then clear the echo area, so the export shows no stray message."
    (list "dolt-list" (gascity-shots--view #'gascity-dolt-list) :settle 8 :row-pad 4)
    ;; overlay / frame UI — capture the whole frame.
    (list "dispatch" #'gascity-shots--dispatch-frame :whole-frame t)
+   (list "sling-plain" #'gascity-shots--sling-plain-frame :whole-frame t)
+   (list "sling-cold" #'gascity-shots--sling-cold-frame :whole-frame t)
+   (list "sling-formula" #'gascity-shots--sling-formula-frame :whole-frame t)
+   (list "sling-on" #'gascity-shots--sling-on-frame :whole-frame t)
+   (list "sling-preview" #'gascity-shots--sling-preview-buffer :settle 15)
+   (list "terminal-attach" #'gascity-shots--terminal-attach-buffer :settle 12)
    (list "lighter" #'gascity-shots--lighter-frame :whole-frame t)))
 
 (defun gascity-shots--wrapped ()

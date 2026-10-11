@@ -58,6 +58,36 @@ verb under test; `gascity-test-with-store-stubs` records both async ones);
 the store is cleared before every test. The few tests that need a live
 `gc` and city guard themselves with `skip-unless`.
 
+## User manual and screenshots
+
+The user manual is `doc/gascity.texi` (built by `make -C doc`), with the
+committed images it embeds in `doc/images/`.  The screenshots are captured
+from a throwaway deterministic fixture city, never a live store, by
+`doc/screenshots/` and the repo-local formula
+`.beads/formulas/user-manual-screenshots.formula.toml`.  The shared contract
+(formula, scope, fixture, naming) is `doc/screenshots/README.md`
+§Cross-repo contract; keep `AGENTS.md` and that section in step.
+
+The formula's one variable is `scope`: `all` (default), `changed` (the views
+whose owning source changed), or a comma-separated view list.  Committed
+images are `<view>-<theme>.png` plus a `<view>-<theme>-thumb.png` preview
+under `doc/images/`.
+
+Regenerate and verify from the repo root:
+
+```bash
+make -C doc screenshots                       # scope all (fixture city)
+doc/screenshots/capture.sh --scope changed    # only the changed views
+doc/screenshots/capture.sh --verify all       # two runs, byte-identical
+doc/screenshots/capture.sh --check-isolation cockpit
+eldev test gascity-test-manual               # offline fixture/scope/shot checks
+```
+
+There are no permitted pixel differences: fixture ids are `demo-<role>` and
+timestamps are pinned, so `--verify` asserts byte-identical output; a view
+that cannot be made deterministic is excluded with a recorded reason rather
+than faked.
+
 ## Architecture
 
 Load order in `lisp/gascity.el` is the dependency order:
