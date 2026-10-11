@@ -81,10 +81,10 @@ Never seeded, never touched: the repository `.beads/`, `~/emacs-city`,
 | `events` | 6 events, seq 1-6, pinned epochs | `.gc/events.jsonl` |
 | `costs` | 2 pinned compute facts (`demo-run-build`, `demo-run-review`) | `.gc/usage.jsonl` |
 | `cities`, `remote-cities` | the fixture city only, under a fixture `GC_HOME` | `gc-home/cities.toml` |
-| `mail-inbox`, `mail-thread` | a `demo-mail-thread` message bead | `bd import` |
+| `mail-inbox` | a `demo-mail-thread` message bead | `bd import` |
 | `convoy-list`, `dolt-list` | one bounded page from the seeded store | `bd import` |
 | `bookmarks` | two gascity bookmarks set in-session | the shot list, not the fixture |
-| `session-list`, `agents`, `agent-detail`, `runs`, `run-detail` | *excluded* — see below | — |
+| `session-list`, `agents`, `runs` | *excluded* — see below | — |
 
 Beads are role-addressed: every id is `demo-<role>` (`demo-epic-manual`,
 `demo-task-fixture`, `demo-bug-render`, `demo-mail-thread`, ...), with labels,
@@ -98,15 +98,23 @@ offline `gc`/`bd` commands is excluded with a reason rather than synthesized.
 
 - **Sessions, agents, runs** need a running controller (`gc session list`,
   `gc runs`). The fixture deliberately runs `gc init --no-start` with no live
-  provider, so these stores are empty. Excluded; if a future view needs them,
-  seed them from a deterministic `gc agent-script` run (see
-  `examples/lifecycle`) and record the added controller cost here. The
-  cockpit, by contrast, still renders its config-derived sections and shows
-  its degraded (`controller down`) state — a real state, not a fake.
+  provider, so these stores are empty. The `session-list`, `agents` and `runs`
+  views still render their honest empty/degraded states; `agent-detail` and
+  `run-detail` error with nothing to act on, so they are **not in the capture
+  manifest** (see below). If a future view needs real data, seed sessions from
+  a deterministic `gc agent-script` run (see `examples/lifecycle`) and record
+  the added controller cost here. The cockpit, by contrast, still renders its
+  config-derived sections and shows its degraded (`controller down`) state —
+  a real state, not a fake.
 - **Mail** is seeded as a message bead, but `gc mail inbox` resolves the
   *current agent's* session, which does not exist without a controller, so the
-  live mail view is excluded too. The bead stays as fixture data for a future
-  session-backed capture.
+  live `mail-thread` view is not in the capture manifest. The bead stays as
+  fixture data for a future session-backed capture.
+- **Dropped views (`agent-detail`, `run-detail`, `mail-thread`).** These three
+  cannot be produced from the offline fixture (above), so they were removed
+  from the capture manifest and the manual rather than shipping their
+  pre-workflow live-store captures. Regenerate and re-add them here once a
+  deterministic controller seed exists.
 - **Bookmarks** are Emacs-side (`gascity-bookmark.el`), not a `gc` store, so
   the fixture cannot write them; the shot list sets two real gascity
   bookmarks in-session (`bookmark-default-file` pointed at a throwaway path)

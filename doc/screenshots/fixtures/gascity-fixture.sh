@@ -21,8 +21,11 @@
 # here because a POSIX shell cannot read beads.el's Lisp constant
 # `beads-test-isolation-env-vars' (lisp/test/beads-integration-test.el).  Keep
 # the two lists in sync; the WI-6 `:unit' test asserts the equality by reading
-# `fixture.sh print-isolation-vars'.  `gc' is always invoked with an explicit
-# `--city' as well, so a leaked `GC_CITY' cannot redirect it either.
+# both `fixture.sh print-isolation-vars' and
+# `gascity-fixture.sh print-isolation-vars', so the process that actually runs
+# `gc bd import' (this one) cannot drift from the tested list.  `gc' is always
+# invoked with an explicit `--city' as well, so a leaked `GC_CITY' cannot
+# redirect it either.
 
 set -euo pipefail
 
@@ -67,6 +70,8 @@ role-addressed fixture: beads, a mail thread, orders, and pinned events.
 
   --city <dir>   Gas City workspace to seed (required).
   --rig <dir>    Rig source repository (default: <city>/rig).
+  print-isolation-vars
+                 Print the hardcoded isolation variable names and exit.
   --help, -h     Show this help.
 
 Environment: the four isolation variables (BEADS_DIR, BEADS_DOLT_PORT,
@@ -87,6 +92,13 @@ unset_gc_location_vars() {
   unset GC_CITY GC_CITY_PATH GC_CITY_RUNTIME_DIR GC_CITY_NAME \
     GC_DIR GC_RIG GC_RIG_ROOT GC_BEADS_SCOPE_ROOT \
     GC_SESSION_ID GC_SESSION_NAME GC_AGENT GC_ALIAS
+}
+
+# The drift-test seam: print the hardcoded list so the WI-6 `:unit' test can
+# compare it to beads.el's `beads-test-isolation-env-vars' (see the comment at
+# the top of this file).
+print_isolation_vars() {
+  printf '%s\n' "${ISOLATION_ENV_VARS[@]}"
 }
 
 # Run `gc' against the fixture city, never a leaked GC_CITY.
@@ -195,6 +207,7 @@ main() {
       --city=*) CITY="${1#--city=}"; shift ;;
       --rig) RIG="${2:-}"; shift 2 ;;
       --rig=*) RIG="${1#--rig=}"; shift ;;
+      print-isolation-vars) print_isolation_vars; exit 0 ;;
       help | --help | -h) usage; exit 0 ;;
       *) die "unknown argument: $1 (see --help)" ;;
     esac

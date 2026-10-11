@@ -15,12 +15,16 @@ outside the scope kept their exact bytes. No live store (`~/emacs-city`,
 `~/bright-lights`, the repo `.beads`) was read or written; all three mtimes
 are unchanged.
 
-Three manifest views are **excluded** from the fixture capture because the
-offline fixture cannot seed sessions/agents/runs/mail; their committed
-images are legacy live captures and are not regenerated. The exclusion is
-recorded in `doc/screenshots/fixtures/README.md` ("Exclusions and risks"),
-and is enumerated below. There are no *permitted* pixel differences
-(plan D4): the raw captures of every producible view are byte-identical.
+Three manifest views (`run-detail-dark`, `agent-detail-light`,
+`mail-thread-light`) could not be produced by the offline fixture — it
+cannot seed sessions/agents/runs/mail. Rather than ship their legacy
+live-store images, the fix lane (bead ga-8nm5q) **removed those three views
+from the capture manifest and the manual** and deleted their committed
+`7c23f47` captures, so every committed image is now fixture-produced. The
+pipeline also gained a coverage gate that fails `--verify` when a selected
+view produces no image. See "Fix-lane update" below for the fix-lane proof.
+There are no *permitted* pixel differences (plan D4): the raw captures of
+every view are byte-identical.
 
 ## Environment
 
@@ -93,9 +97,11 @@ doc/screenshots/capture.sh --self-test
 [capture] isolation: OK (no non-selected committed image to check; scope all)
 ```
 
-The scope produces 29 outputs (20 `-dark`, 9 `-light`); 26 are
-fixture-producible. The 3 excluded outputs fail their thunks against the
-offline fixture and are recorded below, not silently faked.
+The WI-5 scope produced 29 outputs (20 `-dark`, 9 `-light`); 26 were
+fixture-producible. The 3 outputs the fixture could not render were recorded
+below, not silently faked. After the fix lane dropped those three views, the
+manifest has 26 outputs and `--verify`'s coverage gate confirms all 26 are
+produced.
 
 ## Second-run digest manifest
 
@@ -157,9 +163,6 @@ and a queued pgtk surface resize by `gascity-shots--await-frame-resize`.
 
 | ID | Status |
 | --- | --- |
-| run-detail-dark | excluded |
-| agent-detail-light | excluded |
-| mail-thread-light | excluded |
 | cockpit-dark | covered |
 | cockpit-light | covered |
 | agents-dark | covered |
@@ -187,24 +190,45 @@ and a queued pgtk surface resize by `gascity-shots--await-frame-resize`.
 | sling-preview-dark | covered |
 | terminal-attach-dark | covered |
 
-### Excluded views (recorded reason)
+### Fix-lane update (bead ga-8nm5q, 2026-10-11)
 
-The offline fixture runs `gc init --no-start` with no controller, so it
-cannot produce sessions, agents, runs, or a live mail session. The three
-views below therefore error their thunks against the fixture
-(`run-detail`: `Nothing to act on here`; `agent-detail`: `No session/agent
-at point`; `mail-thread`: `gascity-mail-thread-id nil`). Their committed
-`doc/images/*.png` are legacy captures from commit `7c23f47` and are
-**not** regenerated from the fixture; the manual still embeds them. This
-mirrors the plan's "no silent fake / exclude with a recorded reason" rule
-and the exclusion table in `doc/screenshots/fixtures/README.md`. The
-remaining 26 outputs — including the empty/degraded states the fixture can
-honestly render (e.g. `agents-dark`, `session-list-dark`, the cockpit's
-`controller down`) — are byte-reproducible.
+**Dropped views, not excluded views.** The offline fixture runs
+`gc init --no-start` with no controller, so it cannot produce sessions,
+agents, runs, or a live mail session; `run-detail` (`Nothing to act on
+here`), `agent-detail` (`No session/agent at point`) and `mail-thread`
+(`gascity-mail-thread-id nil`) errored their thunks. Instead of continuing to
+ship the three legacy `7c23f47` live-store captures while the docs claimed
+every image was fixture-produced, the fix lane removed the three views from
+the capture manifest (`doc/screenshots/capture.sh`), their thunks
+(`doc/screenshots/gascity-shots.el`), their `@shot` and Area-to-Screenshot
+Map entries (`doc/gascity.texi`), and their six committed PNGs. Their areas
+remain covered by fixture-produced proxies (`agents-dark`/`agents-tree-light`,
+`runs-dark`, `mail-inbox-light`).
 
-`--verify` covers every image a scope actually produces; a view whose thunk
-fails produces no image, so the exclusion is explicit here rather than a
-faked frame.
+**Coverage gate.** `capture.sh --verify` now calls `coverage_check`, which
+fails the scope if any selected manifest view produced no image, so a thunk
+that errors can no longer pass verify silently. Verified both ways with a
+stub engine: a producing engine passes (`coverage: every selected view
+produced an image`), and an engine that skips one view fails with
+`coverage: MISSING image for selected view: health-dark` and exit 1.
+
+**Exec-check run (ME1).** The formula's `[steps.check]`
+(`doc/screenshots/formula-verify.sh`, mode `exec`) was run end to end without
+a GUI, driving the check with the stub engine:
+
+```sh
+GASCITY_SHOT_ENGINE=<stub> GASCITY_SHOT_DIR=<tmp city> \
+  doc/screenshots/formula-verify.sh cockpit
+# -> coverage: every selected view produced an image (scope cockpit)
+#    verify: byte-identical for 2 image(s) (scope cockpit)
+#    isolation: OK; 48 non-selected image(s) byte-identical (scope cockpit)
+#    rc=0
+```
+
+This exercises `prepare -> seed -> capture -> verify -> teardown` wiring and
+the exec check itself; the graphical pixel proof remains the WI-5 run above.
+The remaining manifest views (including the empty/degraded states the fixture
+can honestly render) stay byte-reproducible.
 
 ## Protected paths untouched (AC-6)
 
@@ -225,13 +249,14 @@ mtime is unchanged across its own run.
 
 ## Remaining risks
 
-- **Three views are not fixture-reproducible** (above). Regenerating them
-  requires seeding sessions/agents/runs from a deterministic controller
-  run; until then their images are stale relative to the current UI. This
-  is the largest gap to AC-5 and is called out rather than papered over.
-- **`--verify` tolerates a thunk that produces no image.** Coverage is
-  every file a scope actually writes, so an excluded/broken view can pass
-  verify silently unless, as here, the exclusion is enumerated.
+- **Three views are not fixture-reproducible** (above). They were dropped
+  rather than left stale; re-adding them requires seeding
+  sessions/agents/runs/mail from a deterministic controller run. That
+  remains the largest gap to a fully complete manual gallery.
+- **~~`--verify` tolerates a thunk that produces no image.~~** Fixed by the
+  fix lane (ga-8nm5q): `capture.sh --verify` now calls `coverage_check` and
+  fails when any selected manifest view produced no image, so a broken view
+  cannot pass silently.
 - **The fixed fixture path is not concurrency-safe.** This pass avoided it
   with a private `TMPDIR`; two default-path runs at once still collide
   (recorded in `fixtures/README.md`).
@@ -244,5 +269,6 @@ mtime is unchanged across its own run.
 
 The fixture pipeline reproduces every producible committed image byte for
 byte across two runs, the subset-isolation guarantee holds, the fixture is
-throwaway and role-addressed, and no live store was touched. Three views
-are excluded with recorded reasons.
+throwaway and role-addressed, and no live store was touched. The three views
+the fixture cannot render were removed from the manifest and manual (fix lane
+ga-8nm5q) so no committed image has a live-store provenance.

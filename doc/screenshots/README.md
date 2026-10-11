@@ -159,8 +159,8 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-ef-elea-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus     -light  cockpit agents-tree agent-detail mail-inbox mail-thread cities rig-list order-list remote-cities
+ef-elea-dark  -dark   cockpit dispatch agents runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+ef-cyprus     -light  cockpit agents-tree mail-inbox cities rig-list order-list remote-cities
 ```
 
 Each line is `THEME  SUFFIX  view view …`. A view named under two themes
