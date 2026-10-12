@@ -687,12 +687,38 @@ the `*gascity-detail*' side window, or closes it."
     (gascity-tabulated-detail-toggle)
     t))
 
+(defconst gascity-tabulated-header-hint "   ? all verbs · j jump"
+  "The at-a-glance discoverability hint on a list's header line.
+F7 (plans/ux/magit-parity-plan.md): the lists show their sort/filter
+state in the mode line, but the header line is the always-visible place
+to point at `?' (the verb dispatch) and `j' (jump).")
+
+(defvar-local gascity-tabulated--header-hint nil
+  "The tabulated header line before the §F7 hint was appended.
+Non-nil once `gascity-tabulated--install-header-hint' has run, so a
+refresh never stacks a second copy.")
+
+(defun gascity-tabulated--install-header-hint ()
+  "Append the §F7 discoverability hint to the list's header line, once.
+Run after `tabulated-list-init-header', which sets the column header as
+`header-line-format'; idempotent.  A list with its own evaluated header
+adds the hint there instead — the mail inbox does."
+  (when (and (stringp header-line-format)
+             (not gascity-tabulated--header-hint))
+    (setq gascity-tabulated--header-hint header-line-format)
+    (setq-local header-line-format
+                (concat header-line-format
+                        (propertize gascity-tabulated-header-hint
+                                    'face 'gascity-dim)))))
+
 (defun gascity-tabulated--setup-things ()
   "Route SPC on this list's rows to the detail window (§5.4).
 Installs `gascity-tabulated--toggle-row' on the buffer-local
 `beads-thing-toggle-functions', the shared primitive's one dispatch
-path.  Run from every list mode's body."
-  (add-hook 'beads-thing-toggle-functions #'gascity-tabulated--toggle-row nil t))
+path, and adds the §F7 discoverability hint to the header line.  Run
+from every list mode's body."
+  (add-hook 'beads-thing-toggle-functions #'gascity-tabulated--toggle-row nil t)
+  (gascity-tabulated--install-header-hint))
 
 ;;; Detail side window (§5.4)
 

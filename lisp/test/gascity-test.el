@@ -633,9 +633,9 @@ tmux attach, with the detail/info view on `i' — gce-4hk."
          (gascity-rig-dashboard-activate)
          (should tmux)
          (should-not info)))))
-  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "i")
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "a i")
               #'gascity-polecat-detail-at-point))
-  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "t")
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "a t")
               #'gascity-tmux-at-point))
   (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "RET")
               #'gascity-rig-dashboard-activate)))
@@ -4772,8 +4772,15 @@ so it only relocates nudge to `M' (it does not inherit the shared map)."
                      gascity-rig-dashboard-mode-map
                      gascity-session-detail-mode-map))
     (should (eq (keymap-lookup map "N") #'gascity-section-next))
-    (should (eq (keymap-lookup map "P") #'gascity-section-previous))
-    (should (eq (keymap-lookup map "M") #'gascity-session-nudge-at-point)))
+    (should (eq (keymap-lookup map "P") #'gascity-section-previous)))
+  ;; F1: the cockpit keeps the single-letter nudge (`M'); the mixed views
+  ;; carry it under the `a' prefix.
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "M")
+              #'gascity-session-nudge-at-point))
+  (dolist (map (list gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map))
+    (should (eq (keymap-lookup map "a n")
+                #'gascity-session-nudge-at-point)))
   ;; The session list keeps nudge reachable (on M) but binds no section nav.
   (should (eq (keymap-lookup gascity-session-list-mode-map "M")
               #'gascity-session-nudge-at-point))
@@ -4808,10 +4815,14 @@ The rig dashboard, session-detail, and session-list maps bound
 `gascity-session-peek-at-point' on `p'; that conflicted with the
 `p' = previous-line convention, so peek relocates to `v' (gce-3n8).
 `p' in those maps no longer peeks."
+  (should (eq (keymap-lookup gascity-session-list-mode-map "v")
+              #'gascity-session-peek-at-point))
+  (dolist (map (list gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map))
+    (should (eq (keymap-lookup map "a v") #'gascity-session-peek-at-point)))
   (dolist (map (list gascity-rig-dashboard-mode-map
                      gascity-session-detail-mode-map
                      gascity-session-list-mode-map))
-    (should (eq (keymap-lookup map "v") #'gascity-session-peek-at-point))
     (should-not (eq (keymap-lookup map "p")
                     #'gascity-session-peek-at-point))))
 
@@ -4980,13 +4991,22 @@ bead-bearing vui views opens `gascity-bead-dispatch' (note moved to its
 and `c' mail-dispatch."
   ;; The cockpit's and rig dashboard's `R' resets an agent or restarts a
   ;; rig (the row decides).
-  (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map))
-    (should (eq (keymap-lookup map "R") #'gascity-dashboard-reset)))
-  (dolist (map (list gascity-session-detail-mode-map gascity-session-list-mode-map))
-    (should (eq (keymap-lookup map "R") #'gascity-session-reset-at-point)))
-  (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
-                     gascity-session-detail-mode-map gascity-session-list-mode-map))
-    (should (eq (keymap-lookup map "U") #'gascity-session-undrain-at-point)))
+  ;; F1: the cockpit keeps the single-letter reset/undrain; the mixed views
+  ;; (rig dashboard, session detail) carry them under the `a' prefix.
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "R")
+              #'gascity-dashboard-reset))
+  (should (eq (keymap-lookup gascity-session-list-mode-map "R")
+              #'gascity-session-reset-at-point))
+  (dolist (map (list gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map))
+    (should (eq (keymap-lookup map "a r") #'gascity-dashboard-reset)))
+  (should (eq (keymap-lookup gascity-dashboard-mode-map "U")
+              #'gascity-session-undrain-at-point))
+  (should (eq (keymap-lookup gascity-session-list-mode-map "U")
+              #'gascity-session-undrain-at-point))
+  (dolist (map (list gascity-rig-dashboard-mode-map
+                     gascity-session-detail-mode-map))
+    (should (eq (keymap-lookup map "a u") #'gascity-session-undrain-at-point)))
   ;; `c' is the bead-dispatch menu and `S' the sling transient on the three
   ;; views that carry bead references (not the flat session list).
   (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
@@ -8539,20 +8559,22 @@ buffer."
 
 (ert-deftest gascity-test-dashboard-wiring ()
   "The dashboard is wired as an entry point: the command is interactive
-and the `gascity' dispatch transient lists it (Overview column, key `h';
-`D' is the Dolt list alone, dashboard-v3 P0).
+and the one `gascity-dispatch' menu (`?' and `M-x gascity') lists it
+under `j j' (cockpit); `j d' reaches the Dolt list alone (F4,
+dashboard-v3 P0).
 The suffix is located by its KEY string: transient >= 0.12 dropped the
 numeric-coordinate LOC form (a list's second element is now a child
 key/command, not an index), while a bare key string works across the
 transient versions this package builds against."
   (should (commandp 'gascity-dashboard))
   (should (commandp 'gascity-dashboard-refresh))
-  (let ((suffix (transient-get-suffix 'gascity "h")))
+  (let ((suffix (transient-get-suffix 'gascity-dispatch "j j")))
     (should suffix)
     (should (eq (plist-get (cdr suffix) :command)
-                'gascity-dashboard)))
-  (should (eq (plist-get (cdr (transient-get-suffix 'gascity "D")) :command)
-              'gascity-dolt-list)))
+                'gascity-jump-cockpit)))
+  (should (eq (plist-get (cdr (transient-get-suffix 'gascity-dispatch "j d"))
+                         :command)
+              'gascity-jump-dolt)))
 
 ;;; City dashboard — Runs rig fan-out (S5 live-check fix)
 
@@ -8648,8 +8670,9 @@ the directory it was opened for."
   (require 'gascity-action)
   (require 'gascity-tabulated)
   (require 'gascity-dashboard)
-  (dolist (prefix '(gascity
-                    gascity-sling-dispatch gascity-rig-dispatch
+  ;; `gascity' is no longer a transient prefix: it is a thin front door
+  ;; to `gascity-dispatch' (F4), which stays in the list below.
+  (dolist (prefix '(gascity-sling-dispatch gascity-rig-dispatch
                     gascity-session-dispatch gascity-lifecycle-dispatch
                     gascity-bead-dispatch gascity-mail-dispatch
                     gascity-rig-list-filter gascity-session-list-filter
@@ -8683,9 +8706,10 @@ the chosen project's city, not the current buffer's."
                    "/tmp/home/"))))
 
 (ert-deftest gascity-test-menu-suffix-runs-in-switched-project ()
-  "A suffix of the `gascity' menu opened from `project-switch-project'
+  "A suffix of the `gascity' front door opened from `project-switch-project'
 runs in the chosen project, although the menu returns before the
-suffix is picked."
+suffix is picked.  `M-x gascity' delegates to `gascity-dispatch' (F4),
+so the cockpit is reached through its jump group (`j j')."
   (let ((home (file-name-as-directory (make-temp-file "gascity-home" t)))
         (city (file-name-as-directory (make-temp-file "gascity-city" t)))
         (map (make-sparse-keymap))
@@ -8700,7 +8724,7 @@ suffix is picked."
               (setq-local default-directory home)
               (let ((project-current-directory-override city))
                 (execute-kbd-macro (kbd "<f12>")))
-              (execute-kbd-macro (kbd "h"))))
+              (execute-kbd-macro (kbd "j j"))))
           (should (equal seen (list city))))
       (delete-directory home t)
       (delete-directory city t))))

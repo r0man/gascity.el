@@ -37,7 +37,7 @@
 (require 'cl-lib)
 (require 'files-x)       ; with-connection-local-variables
 (require 'beads-meta)    ; slot-metadata engine + command-line builder
-(require 'beads-command) ; bridge generics (beads-command-validate / -execute-interactive / -preview)
+(require 'beads-command) ; bridge generics (beads-command-validate / -execute-interactive)
 (require 'gascity-custom)
 (require 'gascity-error)
 (require 'gascity-reader)
@@ -228,9 +228,6 @@ remote city) would be wasted.")
 (cl-defgeneric gascity-command-execute-interactive (command)
   "Execute COMMAND interactively, streaming its output to the user.")
 
-(cl-defgeneric gascity-command-preview (command)
-  "Show, without running, the command line COMMAND would execute.")
-
 ;;; ============================================================
 ;;; Bridge methods for beads-meta-generated transients
 ;;; ============================================================
@@ -239,10 +236,17 @@ remote city) would be wasted.")
 ;; gascity-defcommand forwards a :global-section) generates suffixes that
 ;; call the beads-command-* generics.  Delegate those to the
 ;; gascity-command-* methods so generated menus drive gascity commands.
+;;
+;; There is deliberately no `beads-command-preview' bridge: gascity has
+;; no static command-line preview.  The raw `gc' command line is not a
+;; user-facing preview, so the generated-transient "Preview command"
+;; suffix was removed (the interactive sling `P' preview, a `--dry-run'
+;; routing plan, is a separate, view-owned affordance).  A generated
+;; transient that still offered a static preview would have no method to
+;; call — the right failure, since no gascity command defines one today.
 
 (declare-function beads-command-validate "beads-command")
 (declare-function beads-command-execute-interactive "beads-command")
-(declare-function beads-command-preview "beads-command")
 
 (cl-defmethod beads-command-validate ((command gascity-command))
   "Delegate validation of COMMAND to `gascity-command-validate'."
@@ -251,10 +255,6 @@ remote city) would be wasted.")
 (cl-defmethod beads-command-execute-interactive ((command gascity-command))
   "Delegate interactive execution of COMMAND to gascity."
   (gascity-command-execute-interactive command))
-
-(cl-defmethod beads-command-preview ((command gascity-command))
-  "Delegate preview of COMMAND to `gascity-command-preview'."
-  (gascity-command-preview command))
 
 ;;; ============================================================
 ;;; Command-line construction
@@ -336,13 +336,6 @@ specializer this method dispatches on."
     (if (not (slot-value command 'json))
         stdout
       (gascity-reader-parse-json stdout))))
-
-(cl-defmethod gascity-command-preview ((command gascity-command))
-  "Echo and return the shell-quoted command line for COMMAND."
-  (let ((cmd-string (mapconcat #'shell-quote-argument
-                               (gascity-command-line command) " ")))
-    (message "Command: %s" cmd-string)
-    cmd-string))
 
 (cl-defmethod gascity-command-execute-interactive ((command gascity-command))
   "Run COMMAND asynchronously, streaming output to a buffer.

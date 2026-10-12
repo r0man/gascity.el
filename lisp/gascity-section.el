@@ -277,6 +277,39 @@ commands (see `beads-thing-define-keys'), `?' opens the dispatch and
 ;; gascity-action, resolved at key time.
 (keymap-set gascity-section-mode-map "S" 'gascity-sling-dispatch)
 
+;;; The `a' agent/rig verb prefix (F1)
+;;
+;; A view that can also show beads must not give `d'/`s'/`w'/`i'/`t'/
+;; `D'/`K'/`M' a non-bead meaning on a bead row: beads.el already uses
+;; those letters for bead verbs, and the same physical key would then
+;; switch meaning as you cross from a beads buffer into a gascity one.
+;; The mixed vui views (the rig dashboard, the session detail) therefore
+;; move their agent verbs under this prefix; agent-only views (the
+;; cockpit and the Agents views) additionally keep the fast single-letter
+;; aliases, the plan's sanctioned exception
+;; (plans/ux/magit-parity-plan.md §4.1).
+(defvar-keymap gascity-agent-map
+  :doc "The `a' agent/rig verb prefix of gascity views (F1).
+`a n' nudges, `a s' suspends, `a w' wakes, `a k' kills, `a D'
+drains, `a r' resets, `a u' undrains, `a t' attaches, `a d' direds,
+`a i' opens the detail and `a v' peeks — the agent verbs, namespaced
+so they never collide with beads.el's bead keys on a bead row."
+  "n" 'gascity-session-nudge-at-point
+  "s" 'gascity-dashboard-suspend
+  "w" 'gascity-session-wake-at-point
+  "k" 'gascity-session-kill-at-point
+  "D" 'gascity-session-drain-at-point
+  "r" 'gascity-dashboard-reset
+  "u" 'gascity-session-undrain-at-point
+  "t" #'gascity-tmux-at-point
+  "d" #'gascity-dired-at-point
+  "i" 'gascity-polecat-detail-at-point
+  "v" 'gascity-session-peek-at-point)
+
+(defalias 'gascity-agent-prefix gascity-agent-map
+  "The `a' agent/rig verb prefix bound in every gascity vui view (F1).")
+(keymap-set gascity-section-mode-map "a" 'gascity-agent-prefix)
+
 ;;; `+' / `-': more or fewer rows in a capped section
 
 (defcustom gascity-dashboard-section-batch 10

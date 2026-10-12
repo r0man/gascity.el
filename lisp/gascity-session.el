@@ -725,21 +725,14 @@ TRAMP as a local ssh pipe.  `q' in the log buffer stops it."
 ;;; Mode
 
 (defvar-keymap gascity-session-detail-mode-map
-  :doc "Keymap for `gascity-session-detail-mode'."
+  :doc "Keymap for `gascity-session-detail-mode'.
+
+The detail also shows bead references, so its agent verbs live under
+the inherited `a' prefix (F1), never on the bare beads.el keys."
   :parent gascity-section-mode-map
   "g"   #'gascity-polecat-detail-refresh
   "RET" #'gascity-session-detail-activate
   "f"   #'gascity-session-follow-log
-  "v"   #'gascity-session-peek-at-point
-  "M"   #'gascity-session-nudge-at-point
-  "s"   #'gascity-session-suspend-at-point
-  "K"   #'gascity-session-kill-at-point
-  "w"   #'gascity-session-wake-at-point
-  "D"   #'gascity-session-drain-at-point
-  "d"   #'gascity-dired-at-point
-  "t"   #'gascity-tmux-at-point
-  "R"   #'gascity-session-reset-at-point
-  "U"   #'gascity-session-undrain-at-point
   "c"   #'gascity-bead-dispatch
   "S"   #'gascity-sling-dispatch)
 
