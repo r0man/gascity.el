@@ -31,8 +31,8 @@
   '((cockpit        gascity-dashboard-mode-map      vui  t)
     (agents         gascity-agents-mode-map         list t)
     (agents-tree    gascity-agents-tree-mode-map    vui  t)
-    (agent-detail   gascity-session-detail-mode-map vui  t :skip ("i"))
-    (rig-dashboard  gascity-rig-dashboard-mode-map  vui  t)
+    (agent-detail   gascity-session-detail-mode-map vui  t :namespaced t)
+    (rig-dashboard  gascity-rig-dashboard-mode-map  vui  t :namespaced t)
     (runs           gascity-runs-mode-map           vui  nil)
     (run-detail     gascity-run-mode-map            vui  nil)
     (health         gascity-health-mode-map         vui  nil)
@@ -100,6 +100,12 @@ Emacs's inherited negative argument — never another verb.")
   "§5.3 agent keys and the commands they may mean in a view with agents.
 The cockpit's `s'/`R' decide by row (agent or rig).")
 
+(defconst gascity-consistency--agent-namespace
+  '(("t" . "a t") ("i" . "a i") ("v" . "a v") ("d" . "a d")
+    ("M" . "a n") ("s" . "a s") ("K" . "a k") ("w" . "a w")
+    ("D" . "a D") ("R" . "a r") ("U" . "a u"))
+  "F1: each agent key's `a'-prefixed spelling in a view that can hold beads.")
+
 (defconst gascity-consistency--verb-families
   '(("s" gascity-rig-suspend-at-point)
     ("R" gascity-rig-restart-at-point gascity-mail-reply-at-point)
@@ -139,15 +145,21 @@ confirmed reset/restart; the run views reach a step's live worker).")
               (should (or (null cmd) (memq cmd allowed))))))))))
 
 (ert-deftest gascity-test-consistency-agent-keys ()
-  "§5.3: the agent keys mean the same command in every view with agents."
+  "§5.3/F1: the agent keys mean the same command in every view with agents.
+In a view that can also hold beads they live under the `a' prefix."
   (dolist (view gascity-consistency--views)
     (when (nth 3 view)
       (let ((map (gascity-consistency--map view))
-            (skip (plist-get (nthcdr 4 view) :skip)))
+            (skip (plist-get (nthcdr 4 view) :skip))
+            (namespaced (plist-get (nthcdr 4 view) :namespaced)))
         (pcase-dolist (`(,key . ,allowed) gascity-consistency--agent-keys)
           (unless (member key skip)
-            (let ((cmd (gascity-consistency--lookup map key)))
-              (ert-info ((format "%s: %s → %S" (car view) key cmd))
+            (let* ((lookup (if namespaced
+                               (cdr (assoc key gascity-consistency--agent-namespace))
+                             key))
+                   (cmd (and lookup (gascity-consistency--lookup map lookup))))
+              (ert-info ((format "%s: %s → %S" (car view) lookup cmd))
+                (should cmd)
                 (should (memq cmd allowed))))))))))
 
 (ert-deftest gascity-test-consistency-no-collisions ()

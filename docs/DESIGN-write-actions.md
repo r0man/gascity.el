@@ -428,9 +428,44 @@ don’t collide with view keys):
 `gascity-bead-dispatch` inner keys: `s` sling · `c` close · `o` note · `p`
 priority · `u` status · `a` assign · `r` reopen · `n` create · `v` visit
 (beads.el). `gascity-mail-dispatch` inner keys: `r` read · `R` reply · `s`
-send · `a` archive · `u` unread. Main `gascity` transient gains a
-**“Bead/Mail”** group entry for each dispatcher. (Exact letters are the
-proposal; final assignment is fixed in each phase’s review.)
+send · `a` archive · `u` unread. `M-x gascity` no longer has its own verb
+groups: it is a thin front door to `gascity-dispatch` (`?`), the one
+hand-written verb menu (F4, plans/ux/magit-parity-plan.md §4.3).
+
+### Cross-package key registry (F1)
+
+gascity.el layers on beads.el, so the same physical key used to mean one
+thing in a beads buffer and another in a gascity buffer. The destructive
+ones are the hazards: `D` (beads delete / gascity drain), `K` (kill),
+`s` (beads set-status / gascity suspend). The table below is the
+cross-package contract; `lisp/test/gascity-key-registry-test.el` asserts
+it against each view’s *effective* keymap (a local binding wins over the
+inherited `beads-section-mode`/`vui` chain), and `docs/key-registry.md` is
+the prose companion, cross-referenced with the beads.el half of the same
+table.
+
+| Key | bead row | agent/session row | rig row | list/tabulated |
+|---|---|---|---|---|
+| `RET` | visit bead | open detail | rig dashboard | drill in |
+| `SPC` | fold/toggle | toggle drawer | fold | row detail |
+| `d` | close bead | — | — | close bead |
+| `D` | delete… | drain (`a D`) | — | — |
+| `s` | set status | suspend (`a s`) | suspend | — |
+| `S` | sling… | sling… | sling… | sling… |
+| `w` | copy id | wake (`a w`) | resume | copy |
+| `K` | — | kill (`a k`) | — | — |
+| `M` | — | nudge (`a n`) | — | — |
+| `C` | claim | — | — | claim |
+| `#` | priority | — | — | priority |
+| `x` | — | — | — | clear filter |
+| `?` | beads-dispatch | gascity-dispatch | gascity-dispatch | per package |
+
+The namespaced `a …` spelling is required in any view that can also hold
+a bead (the rig dashboard, the session detail): it keeps `d`/`s`/`w`/
+`i`/`t`/`D`/`K`/`M` meaning the beads.el bead verb on a bead row. The
+cockpit and the other agent-only views keep the fast single-letter
+aliases; the registry test carries that sanctioned exception explicitly
+(plans/ux/magit-parity-plan.md §4.1).
 
 ### Unified sling transient (the staged adaptive menu — sling redesign)
 

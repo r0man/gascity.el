@@ -579,13 +579,21 @@ its last line lands in the end note (QA #11)."
       (kill-buffer (gascity-session-peek--buffer-name "mayor")))))
 
 (ert-deftest gascity-test-agent-detail-keys ()
-  "The detail binds `f' follow, `v' peek and the §5.3 agent keys."
+  "The detail binds `f' follow, `a v' peek and the namespaced agent keys.
+The detail also shows bead references, so its agent verbs live under `a'
+(F1), never on the bare beads.el keys."
   (let ((map gascity-session-detail-mode-map))
     (should (eq (keymap-lookup map "f") #'gascity-session-follow-log))
-    (should (eq (keymap-lookup map "v") #'gascity-session-peek-at-point))
-    (dolist (key '("M" "s" "K" "w" "D" "R" "U" "t" "d"))
+    (should (eq (keymap-lookup map "a v") #'gascity-session-peek-at-point))
+    (should (eq (keymap-lookup map "a n") #'gascity-session-nudge-at-point))
+    (should (eq (keymap-lookup map "a s") #'gascity-dashboard-suspend))
+    (should (eq (keymap-lookup map "a r") #'gascity-dashboard-reset))
+    (dolist (key '("a k" "a w" "a D" "a u" "a t" "a d"))
       (should (keymap-lookup map key)))
-    (should (eq (keymap-lookup map "S") #'gascity-sling-dispatch))))
+    (should (eq (keymap-lookup map "S") #'gascity-sling-dispatch))
+    ;; The bare beads keys stay free on the detail's bead references.
+    (dolist (key '("d" "s" "w" "i" "t" "D"))
+      (should-not (keymap-lookup map key)))))
 
 (ert-deftest gascity-test-agents-sort-keeps-stalled-pinned ()
   "A header-click sort, either direction, keeps stalled rows first."

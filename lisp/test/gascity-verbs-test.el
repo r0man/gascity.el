@@ -133,9 +133,11 @@ RAN collects what reached gc (commands, attaches, peeks)."
     (should-error (gascity-rig-resume-at-point) :type 'user-error)))
 
 (ert-deftest gascity-test-verbs-rig-dashboard-keys ()
-  "The rig dashboard's `s'/`R' decide by row, `r' resumes its rig."
-  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "s") #'gascity-dashboard-suspend))
-  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "R") #'gascity-dashboard-reset))
+  "The rig dashboard's `a s'/`a r' decide by row, `r' resumes its rig.
+The agent verbs are namespaced under `a' (F1) because the dashboard also
+shows bead sections; `r' (a rig verb, not a bead key) stays bare."
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "a s") #'gascity-dashboard-suspend))
+  (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "a r") #'gascity-dashboard-reset))
   (should (eq (keymap-lookup gascity-rig-dashboard-mode-map "r") #'gascity-rig-resume-at-point))
   ;; Its title line is a rig row.
   (let ((props (vui-vnode-text-properties

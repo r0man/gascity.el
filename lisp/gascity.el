@@ -115,35 +115,16 @@ passed to `format'.  Honours `gascity-enable-debug' and
 ;;; Dispatcher
 
 ;;;###autoload (autoload 'gascity "gascity" nil t)
-(beads-define-prefix gascity ()
-  "Dispatch the Gas City porcelain.
-A hand-written command-dispatch menu — the views in the left columns are
-the deliberately-designed porcelain (not auto-generated from this
-prefix), and the Dispatch column routes the mutating actions, prompting
-for their arguments.  The same actions are also available at point in
-the lists and the status dashboard."
-  ["Gas City"
-   ["Overview"
-    ("h" "City cockpit" gascity-dashboard)
-    ("d" "Rig dashboard…" gascity-rig-dashboard)
-    ("b" "Beads (rig)…" gascity-rig-beads)]
-   ["Lists"
-    ("r" "Rigs" gascity-rig-list)
-    ("a" "Sessions" gascity-session-list)
-    ("c" "Convoys" gascity-convoy-list)
-    ("m" "Mail inbox" gascity-mail)
-    ("e" "Events" gascity-events)
-    ("o" "Orders" gascity-order-list)
-    ("D" "Dolt databases" gascity-dolt-list)]
-   ["Dispatch"
-    ("R" "Rig control…" gascity-rig-dispatch)
-    ("A" "Session control…" gascity-session-dispatch)
-    ("S" "Sling…" gascity-sling-dispatch)
-    ("O" "Run order…" gascity-order-run)
-    ("L" "City lifecycle…" gascity-lifecycle-dispatch)]
-   ["Bead / Mail"
-    ("B" "Bead actions…" gascity-bead-dispatch)
-    ("M" "Mail actions…" gascity-mail-dispatch)]])
+(defun gascity ()
+  "Open the Gas City dispatch menu (`gascity-dispatch', also `?').
+A thin front door to the one hand-written verb menu: `?' in every
+gascity view and `M-x gascity' open the same `gascity-dispatch', whose
+Jump group reaches every porcelain view and whose Agent/Work/City
+groups route the mutating actions.  The duplicated verb keys of the
+old standalone `gascity' transient are gone (F4,
+plans/ux/magit-parity-plan.md §4.3)."
+  (interactive)
+  (call-interactively #'gascity-dispatch))
 
 (provide 'gascity)
 ;;; gascity.el ends here

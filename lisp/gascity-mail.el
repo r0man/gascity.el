@@ -296,7 +296,8 @@ Pure over buffer-local state (§8.3 R2)."
                              (length visible)))))
          (filters (gascity-mail--filter-text))
          (live (gascity-live-header-string))
-         (right (concat (propertize "/ filter  c compose" 'face 'gascity-dim)
+         (right (concat (propertize "? all verbs · j jump  / filter  c compose"
+                                    'face 'gascity-dim)
                         (if live (concat "  " live) ""))))
     (concat " " (propertize (or gascity-mail--city "?") 'face 'gascity-city)
             (if host (propertize (concat " @" host) 'face 'gascity-dim) "")

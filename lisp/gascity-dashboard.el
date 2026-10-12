@@ -2212,6 +2212,11 @@ The Cities list is every city, not one: this jump is never scoped to
   (interactive)
   (gascity-jump--scoped #'gascity-dolt-list))
 
+(defun gascity-jump-rigs ()
+  "Jump to this city's Rigs list (`j l')."
+  (interactive)
+  (gascity-jump--scoped #'gascity-rig-list))
+
 (defun gascity-jump-rig ()
   "Open the rig dashboard of the rig at point, else prompt (`j g').
 The prompt reads the rig memo only — never a synchronous `gc' — and
@@ -2265,6 +2270,7 @@ background for the next prompt."
   "v" #'gascity-jump-convoys
   "d" #'gascity-jump-dolt
   "g" #'gascity-jump-rig
+  "l" #'gascity-jump-rigs
   "$" #'gascity-jump-costs)
 
 (defalias 'gascity-jump-prefix gascity-jump-map
@@ -2288,6 +2294,7 @@ teaches the view keys."
     ("j v" "convoys" gascity-jump-convoys)
     ("j d" "dolt" gascity-jump-dolt)
     ("j g" "rig dashboard" gascity-jump-rig)
+    ("j l" "rigs" gascity-jump-rigs)
     ("j $" "costs" gascity-jump-costs)]
    ["Agent at point"
     ("M" "nudge…" gascity-session-nudge-at-point)

@@ -407,31 +407,22 @@ rig path is host-qualified first, so a remote rig logs on its host."
 ;;; Mode
 
 (defvar-keymap gascity-rig-dashboard-mode-map
-  :doc "Keymap for `gascity-rig-dashboard-mode'."
+  :doc "Keymap for `gascity-rig-dashboard-mode'.
+
+The rig dashboard also shows bead sections, so its agent verbs live
+under the inherited `a' prefix (F1): the bare `i'/`d'/`t'/`s'/`w'/`D'/
+`K'/`M'/`R'/`U'/`v' would otherwise collide with beads.el's bead keys
+on a bead row."
   :parent gascity-section-mode-map
   "g"   #'gascity-rig-dashboard-refresh
   "RET" #'gascity-rig-dashboard-activate
-  "i"   #'gascity-polecat-detail-at-point
   "b"   #'gascity-rig-dashboard-beads
-  "d"   #'gascity-dired-at-point
-  "t"   #'gascity-tmux-at-point
-  ;; Nudge moves off `N' (now next-section, inherited from
-  ;; `gascity-section-mode-map') to `M' (Message); `N'/`P' jump sections
-  ;; and `n'/`p' move by line (all inherited).  Peek moves off `p' to `v'.
-  "M"   #'gascity-session-nudge-at-point
-  ;; The title line is the rig's row (§5.3): `s'/`R' act on the agent
-  ;; at point, else on the rig; `r' resumes the rig.
-  "s"   #'gascity-dashboard-suspend
+  ;; `r' resumes the rig — a rig verb, not a beads.el bead key; the agent
+  ;; verbs live under the inherited `a' prefix (`a s' acts on the agent at
+  ;; point, else on the rig).
   "r"   #'gascity-rig-resume-at-point
-  "K"   #'gascity-session-kill-at-point
-  "w"   #'gascity-session-wake-at-point
-  "D"   #'gascity-session-drain-at-point
-  "v"   #'gascity-session-peek-at-point
-  ;; Write verbs: reset/undrain the agent at point.  Phase 2 promotes `c'
-  ;; to the bead-dispatch menu (note moved to its `o') and adds `S' for the
-  ;; sling/route flag transient on a ready/in-progress bead reference.
-  "R"   #'gascity-dashboard-reset
-  "U"   #'gascity-session-undrain-at-point
+  ;; Write verbs: `c' the bead-dispatch menu (note moved to its `o'), `S'
+  ;; the sling/route flag transient on a ready/in-progress bead reference.
   "c"   #'gascity-bead-dispatch
   "S"   #'gascity-sling-dispatch
   "l"   #'gascity-rig-dashboard-log)
