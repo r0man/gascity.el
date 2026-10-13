@@ -6,13 +6,14 @@
 ## and generated Texinfo includes are part of the distribution so a
 ## tarball builds the manual as shipped.
 ##
-## HTML and PDF are explicit rules that replace automake's plain
-## `.texi.html'/`.texi.pdf' suffix rules: the shipped manual must be a
-## self-contained, split multi-page tree (the stylesheet inlined by
-## `--css-include', the lightbox inlined through the PRE_BODY_CLOSE
-## customization variable, and the screenshots --- emitted as raw <img>,
-## which makeinfo does not copy --- mirrored into the output directory),
-## and the PDF keeps the standalone Makefile's `texi2pdf' invocation.
+## The HTML recipe stays automake's built-in `.texi.html' rule, extended
+## through AM_MAKEINFOHTMLFLAGS so the shipped manual is a self-contained,
+## split multi-page tree: the stylesheet is inlined by `--css-include' and
+## the lightbox script through the PRE_BODY_CLOSE customization variable.
+## The `html-local' hook then mirrors the raw screenshot images into the
+## output directory, because makeinfo emits them as <img> without copying
+## them.  The PDF keeps automake's built-in `.texi.pdf' rule, the same
+## `texi2pdf' invocation the standalone Makefile used.
 ##
 ## `make html' and `make pdf' at the top level recurse here through
 ## `SUBDIRS = doc' in the top-level Makefile.am.
@@ -27,13 +28,13 @@ info_TEXINFOS = gascity.texi
 
 ## The generated tables (REQ-014, D4) are committed includes emitted by
 ## doc/generate-tables.el; a clean checkout builds the manual from them.
-## The wildcard keeps this file valid before the generator first runs.
-gascity_generated_TEXINFOS = $(wildcard $(srcdir)/generated/*.texi)
-
+## They are tracked placeholders until W4 fills them in and `@include`s
+## them from gascity.texi.
 gascity_TEXINFOS = \
   manual.css \
   lightbox.js \
-  $(gascity_generated_TEXINFOS) \
+  generated/keys.texi \
+  generated/commands.texi \
   images/agents-dark-thumb.png \
   images/agents-dark.png \
   images/agents-tree-light-thumb.png \
@@ -89,21 +90,19 @@ gascity_TEXINFOS = \
 
 EXTRA_DIST = $(gascity_TEXINFOS) screenshots
 
-## Split, multi-page HTML with the stylesheet and lightbox inlined into
-## every page.  Passing `-o NAME' with no `.html' suffix makes makeinfo
-## emit a directory of per-node pages (index.html plus one file per
-## node), so `rm -rf' first and mirror the raw screenshot images in
-## afterwards.  The shell command substitution lands the lightbox as a
-## single argument, so its quotes and `$' characters need no escaping.
-gascity.html: gascity.texi $(gascity_TEXINFOS)
-	rm -rf $@
-	$(MAKEINFO) --html --css-include=$(srcdir)/manual.css \
-	  --set-customization-variable "PRE_BODY_CLOSE=<script>$$(cat $(srcdir)/lightbox.js)</script>" \
-	  -I $(srcdir) -o $@ $<
-	cp -R $(srcdir)/images $@/images
+## Inline the stylesheet and the lightbox into every HTML page.  Automake
+## passes these flags to `$(MAKEINFO) --html' for its built-in
+## `.texi.html' rule; the shell command substitution lands the lightbox
+## as a single `--set-customization-variable' argument, so its quotes and
+## `$' characters need no escaping.
+AM_MAKEINFOHTMLFLAGS = \
+  --css-include=$(srcdir)/manual.css \
+  --set-customization-variable "PRE_BODY_CLOSE=<script>$$(cat $(srcdir)/lightbox.js)</script>"
 
-## `texi2pdf' (a thin wrapper over `texi2dvi --pdf') keeps the standalone
-## Makefile's invocation; it needs a TeX installation and is therefore
-## not part of the default build.
-gascity.pdf: gascity.texi $(gascity_TEXINFOS)
-	$(TEXI2PDF) -I $(srcdir) $(srcdir)/gascity.texi
+## `makeinfo' does not copy the screenshot images the manual references as
+## raw <img>, so mirror doc/images/ into the built HTML tree once it
+## exists.  Automake wires this hook into the `html' target through
+## `html-am'.
+html-local: gascity.html
+	rm -rf gascity.html/images
+	cp -R $(srcdir)/images gascity.html/images

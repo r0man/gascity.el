@@ -33,7 +33,7 @@ trace:
       hash: git:47dc0c572689a04d3b93c1ba523ffc6f5be2ba78
       title: "Standalone manual build removed; folded into info_TEXINFOS"
     - path: doc/Makefile.am
-      hash: sha256:44cffb7b838c83bba5d9a67dd7727a6f818b83903024192dd0f0b4269605955f
+      hash: sha256:8c50f7f2a06e341c15ad633265bcb53c962f1a1a8eb6f6c04234c8ef2676d179
       title: "info_TEXINFOS integration, inlined-CSS/lightbox HTML, pdf"
     - path: doc/generated/keys.texi
       hash: sha256:64f810043ca75d1cd3ecbe184ca1e5b3f3a8567ce58f0d73a537a86e1c7a4d58
