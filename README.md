@@ -26,14 +26,18 @@ the [manual](https://r0man.github.io/gascity.el/).
 ### Guix
 
 ```sh
-guix shell -D -f guix.scm -- ./configure --with-beads-dir="$HOME/workspace/beads.el" && make && make check
-guix build -f guix.scm
+guix shell -D -f guix.scm
+./autogen.sh
+./configure --with-beads-dir="$HOME/workspace/beads.el"
+make && make check
 ```
 
-`guix.scm` packages the autotools build. `beads.el`/`vui` stay outside
-Guix: the sibling `../beads.el` checkout is read at **evaluation time**
-(`GASCITY_BEADS_DIR` overrides it), so it must exist before `guix build`
-or `guix shell`. Pin it with `git-fetch` for a checkout-free build.
+`guix build -f guix.scm` builds and installs the package the same way.
+`guix.scm` packages the autotools build through `gnu-build-system`.
+`beads.el`/`vui` stay outside Guix: the sibling `../beads.el` checkout is
+read at **evaluation time** (`GASCITY_BEADS_DIR` overrides it), so it must
+exist before `guix build` or `guix shell`. Pin it with `git-fetch` for a
+checkout-free build.
 
 ### Building from source
 
