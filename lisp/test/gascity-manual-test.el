@@ -337,5 +337,37 @@ never reach the built manual."
         (should (string-match-p (regexp-quote (concat "@include " include))
                                 texi))))))
 
+(ert-deftest gascity-test-manual-quality-sections ()
+  "The manual carries the Guix/PostgreSQL quality elements (REQ-013).
+A review checklist in test form: a concept section, a task-organized
+reference, worked examples, complete indexes, correct cross-references,
+a contributing chapter and a troubleshooting chapter, plus the two
+required autotools/lint nodes."
+  (let ((texi (gascity-manual-test--read "doc/gascity.texi")))
+    ;; Concept, terminology, examples, reference, troubleshooting, contributing.
+    (dolist (node '("@node Introduction"
+                    "@node Terminology"
+                    "@node Worked Examples"
+                    "@node View and Key Reference"
+                    "@node Troubleshooting"
+                    "@node Contributing"))
+      (ert-info ((format "node %s" node))
+        (should (string-match-p (regexp-quote node) texi))))
+    ;; The two nodes W6 is required to add.
+    (dolist (node '("@node Building and installing with autotools"
+                    "@node Linting and documentation drift"))
+      (ert-info ((format "new node %s" node))
+        (should (string-match-p (regexp-quote node) texi))))
+    ;; Concept, function and variable index entries all appear.
+    (dolist (index '("@cindex " "@findex " "@vindex "))
+      (should (string-match-p (regexp-quote index) texi)))
+    ;; Both printed indexes are wired: the variable index is folded into
+    ;; the function index (`@syncodeindex vr fn'), and the key index prints.
+    (should (string-match-p "@syncodeindex vr fn" texi))
+    (should (string-match-p "@printindex fn" texi))
+    ;; Cross-references are present.
+    (should (string-match-p "@xref{" texi))
+    (should (string-match-p "@pxref{" texi))))
+
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here
