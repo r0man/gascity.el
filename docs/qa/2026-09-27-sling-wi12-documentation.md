@@ -26,9 +26,26 @@
 3. **`doc/images/sling-*.png`** (7 states + thumbnails) — the sling
    menu's states, wired with the existing `@shot` macro.
 
-## Screenshots are mockup renderings (the documented fallback)
+## Screenshots were mockup renderings (superseded)
 
-All seven sling images (`sling-plain`, `sling-cold`, `sling-formula`,
+> **Replaced 2026-10-10 — this note no longer applies.** Commit
+> `1a29740` ("docs(manual): fixture-scoped captures for the missing views
+> and sling", ga-zu877) replaced the seven hand-drawn mockups with five
+> real whole-frame/preview captures (`sling-plain`, `sling-cold`,
+> `sling-formula`, `sling-on`, `sling-preview`, each with a `-thumb`)
+> produced by the `doc/screenshots/` fixture pipeline under the same
+> `@shot` names; `sling-trap` and `sling-follow` were dropped because the
+> offline fixture cannot render those states. Commits `613aea2` and
+> `ed93297` (ga-1s3jv / ga-8nm5q) then regenerated the committed images
+> from the throwaway fixture and proved them byte-reproducible —
+> `capture.sh --verify all` reports "byte-identical for 26 image(s)",
+> including all five sling shots. See
+> `docs/qa/2026-10-11-user-manual-screenshots.md` for the capture,
+> normalization and reproducibility evidence, and `doc/images/sling-\*`
+> for the real themed captures. The paragraph below is kept only as the
+> historical record of this item's original state.
+
+At the time of this item's separate-context drain, all seven sling images (`sling-plain`, `sling-cold`, `sling-formula`,
 `sling-on`, `sling-trap`, `sling-preview`, `sling-follow`) are
 **mockup renderings** of the signed-off menu mockups
 (`plans/sling-command/menu-mockups.md`), not live captures. Under the
@@ -53,6 +70,9 @@ wiring needs no change.
 
 ## Remaining work
 
-- Replace the mockup renderings with real captures from the live
+- ~~Replace the mockup renderings with real captures from the live
   verification session (same file names, same wiring) when that pass
-  runs against the merged redesign.
+  runs against the merged redesign.~~ **Done** — see the superseded note
+  above: commit `1a29740` replaced them with fixture captures under the
+  same names, and `docs/qa/2026-10-11-user-manual-screenshots.md`
+  records the regeneration and byte-reproducibility proof.
