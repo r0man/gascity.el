@@ -21,9 +21,21 @@ omitted.  The semantic contract behind these tables is
 @multitable @columnfractions .15 .12 .33 .40
 @headitem View @tab Key @tab Command @tab Meaning
 @item @code{cockpit}
-@tab @kbd{RET}
-@tab @code{gascity-dashboard-activate}
-@tab Act on the thing at point (RET never folds, §5.4).
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{cockpit}
+@tab @kbd{g}
+@tab @code{gascity-dashboard-refresh}
+@tab Re-read every cockpit section, keeping point, folds and drawers.
+@item @code{cockpit}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{cockpit}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{cockpit}
 @tab @kbd{TAB}
 @tab @code{gascity-thing-forward}
@@ -36,6 +48,10 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{SPC}
 @tab @code{gascity-thing-toggle}
 @tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{cockpit}
+@tab @kbd{RET}
+@tab @code{gascity-dashboard-activate}
+@tab Act on the thing at point (RET never folds, §5.4).
 @item @code{cockpit}
 @tab @kbd{n}
 @tab @code{next-line}
@@ -52,22 +68,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{P}
 @tab @code{gascity-section-previous}
 @tab Move point to the previous top-level section header.
-@item @code{cockpit}
-@tab @kbd{q}
-@tab @code{quit-window}
-@tab Quit WINDOW and bury its buffer.
-@item @code{cockpit}
-@tab @kbd{g}
-@tab @code{gascity-dashboard-refresh}
-@tab Re-read every cockpit section, keeping point, folds and drawers.
-@item @code{cockpit}
-@tab @kbd{?}
-@tab @code{gascity-dispatch}
-@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
-@item @code{cockpit}
-@tab @kbd{j}
-@tab @code{gascity-jump-prefix}
-@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{cockpit}
 @tab @kbd{a n}
 @tab @code{gascity-session-nudge-at-point}
@@ -141,13 +141,17 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-lifecycle-dispatch}
 @tab Dispatch city-lifecycle actions (a hand-built command backend).
 @item @code{cockpit}
-@tab @kbd{K}
-@tab @code{gascity-session-kill-at-point}
-@tab Force-kill the runtime of the session/agent at point and refresh.
+@tab @kbd{v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
 @item @code{cockpit}
 @tab @kbd{M}
 @tab @code{gascity-session-nudge-at-point}
 @tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{cockpit}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
 @item @code{cockpit}
 @tab @kbd{R}
 @tab @code{gascity-dashboard-reset}
@@ -160,38 +164,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{rig-dashboard}
-@tab @kbd{RET}
-@tab @code{gascity-rig-dashboard-activate}
-@tab Drill into the thing at point: a bead opens in beads.el, an agent attaches.
-@item @code{rig-dashboard}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{rig-dashboard}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{rig-dashboard}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{rig-dashboard}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{rig-dashboard}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{rig-dashboard}
-@tab @kbd{N}
-@tab @code{gascity-section-next}
-@tab Move point to the next top-level section header.
-@item @code{rig-dashboard}
-@tab @kbd{P}
-@tab @code{gascity-section-previous}
-@tab Move point to the previous top-level section header.
 @item @code{rig-dashboard}
 @tab @kbd{q}
 @tab @code{quit-window}
@@ -209,6 +181,38 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{rig-dashboard}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{rig-dashboard}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{rig-dashboard}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{rig-dashboard}
+@tab @kbd{RET}
+@tab @code{gascity-rig-dashboard-activate}
+@tab Drill into the thing at point: a bead opens in beads.el, an agent attaches.
+@item @code{rig-dashboard}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{rig-dashboard}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{rig-dashboard}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{rig-dashboard}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{rig-dashboard}
 @tab @kbd{a n}
 @tab @code{gascity-session-nudge-at-point}
 @tab Nudge the session/agent at point with a prompted message, then refresh.
@@ -256,38 +260,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{agent-detail}
-@tab @kbd{RET}
-@tab @code{gascity-session-detail-activate}
-@tab Act on the thing at point: a run opens run detail, a bead beads.el.
-@item @code{agent-detail}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{agent-detail}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{agent-detail}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{agent-detail}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{agent-detail}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{agent-detail}
-@tab @kbd{N}
-@tab @code{gascity-section-next}
-@tab Move point to the next top-level section header.
-@item @code{agent-detail}
-@tab @kbd{P}
-@tab @code{gascity-section-previous}
-@tab Move point to the previous top-level section header.
 @item @code{agent-detail}
 @tab @kbd{q}
 @tab @code{quit-window}
@@ -305,6 +277,38 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{agent-detail}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{agent-detail}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{agent-detail}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{agent-detail}
+@tab @kbd{RET}
+@tab @code{gascity-session-detail-activate}
+@tab Act on the thing at point: a run opens run detail, a bead beads.el.
+@item @code{agent-detail}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{agent-detail}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{agent-detail}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{agent-detail}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{agent-detail}
 @tab @kbd{a n}
 @tab @code{gascity-session-nudge-at-point}
 @tab Nudge the session/agent at point with a prompted message, then refresh.
@@ -352,38 +356,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{agents-tree}
-@tab @kbd{RET}
-@tab @code{gascity-tmux-at-point}
-@tab Attach to the tmux session of the agent at point.
-@item @code{agents-tree}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{agents-tree}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{agents-tree}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{agents-tree}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{agents-tree}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{agents-tree}
-@tab @kbd{N}
-@tab @code{gascity-section-next}
-@tab Move point to the next top-level section header.
-@item @code{agents-tree}
-@tab @kbd{P}
-@tab @code{gascity-section-previous}
-@tab Move point to the previous top-level section header.
 @item @code{agents-tree}
 @tab @kbd{q}
 @tab @code{quit-window}
@@ -401,6 +373,38 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{agents-tree}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{agents-tree}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{agents-tree}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{agents-tree}
+@tab @kbd{RET}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agents-tree}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{agents-tree}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{agents-tree}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{agents-tree}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{agents-tree}
 @tab @kbd{a n}
 @tab @code{gascity-session-nudge-at-point}
 @tab Nudge the session/agent at point with a prompted message, then refresh.
@@ -469,13 +473,17 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-session-drain-at-point}
 @tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
 @item @code{agents-tree}
-@tab @kbd{K}
-@tab @code{gascity-session-kill-at-point}
-@tab Force-kill the runtime of the session/agent at point and refresh.
+@tab @kbd{v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
 @item @code{agents-tree}
 @tab @kbd{M}
 @tab @code{gascity-session-nudge-at-point}
 @tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{agents-tree}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
 @item @code{agents-tree}
 @tab @kbd{R}
 @tab @code{gascity-session-reset-at-point}
@@ -488,30 +496,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{agents}
-@tab @kbd{RET}
-@tab @code{gascity-tmux-at-point}
-@tab Attach to the tmux session of the agent at point.
-@item @code{agents}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{agents}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{agents}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{agents}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{agents}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
 @item @code{agents}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
@@ -529,6 +513,30 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{agents}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{agents}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{agents}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{agents}
+@tab @kbd{RET}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agents}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{agents}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{agents}
 @tab @kbd{a n}
 @tab @code{nil}
 @tab nil
@@ -597,13 +605,17 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-session-drain-at-point}
 @tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
 @item @code{agents}
-@tab @kbd{K}
-@tab @code{gascity-session-kill-at-point}
-@tab Force-kill the runtime of the session/agent at point and refresh.
+@tab @kbd{v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
 @item @code{agents}
 @tab @kbd{M}
 @tab @code{gascity-session-nudge-at-point}
 @tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{agents}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
 @item @code{agents}
 @tab @kbd{R}
 @tab @code{gascity-session-reset-at-point}
@@ -616,30 +628,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{session-list}
-@tab @kbd{RET}
-@tab @code{gascity-tmux-at-point}
-@tab Attach to the tmux session of the agent at point.
-@item @code{session-list}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{session-list}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{session-list}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{session-list}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{session-list}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
 @item @code{session-list}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
@@ -657,6 +645,30 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{session-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{session-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{session-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{session-list}
+@tab @kbd{RET}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{session-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{session-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{session-list}
 @tab @kbd{a n}
 @tab @code{nil}
 @tab nil
@@ -725,13 +737,17 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-session-drain-at-point}
 @tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
 @item @code{session-list}
-@tab @kbd{K}
-@tab @code{gascity-session-kill-at-point}
-@tab Force-kill the runtime of the session/agent at point and refresh.
+@tab @kbd{v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
 @item @code{session-list}
 @tab @kbd{M}
 @tab @code{gascity-session-nudge-at-point}
 @tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{session-list}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
 @item @code{session-list}
 @tab @kbd{R}
 @tab @code{gascity-session-reset-at-point}
@@ -744,38 +760,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{runs}
-@tab @kbd{RET}
-@tab @code{gascity-runs-activate}
-@tab Open the run at point in the run detail (RET never folds, §5.4).
-@item @code{runs}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{runs}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{runs}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{runs}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{runs}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{runs}
-@tab @kbd{N}
-@tab @code{gascity-section-next}
-@tab Move point to the next top-level section header.
-@item @code{runs}
-@tab @kbd{P}
-@tab @code{gascity-section-previous}
-@tab Move point to the previous top-level section header.
 @item @code{runs}
 @tab @kbd{q}
 @tab @code{quit-window}
@@ -792,6 +776,38 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{runs}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{runs}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{runs}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{runs}
+@tab @kbd{RET}
+@tab @code{gascity-runs-activate}
+@tab Open the run at point in the run detail (RET never folds, §5.4).
+@item @code{runs}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{runs}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{runs}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{runs}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
 @item @code{runs}
 @tab @kbd{a n}
 @tab @code{gascity-session-nudge-at-point}
@@ -845,41 +861,13 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-runs-agent-tmux}
 @tab Attach the live worker at point (the t key).
 @item @code{runs}
+@tab @kbd{v}
+@tab @code{gascity-runs-agent-peek}
+@tab Peek at the live worker at point (‘v’).
+@item @code{runs}
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{run-detail}
-@tab @kbd{RET}
-@tab @code{gascity-run-activate}
-@tab Act on the thing at point: open a step’s bead, visit a plan file.
-@item @code{run-detail}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{run-detail}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{run-detail}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{run-detail}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{run-detail}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{run-detail}
-@tab @kbd{N}
-@tab @code{gascity-section-next}
-@tab Move point to the next top-level section header.
-@item @code{run-detail}
-@tab @kbd{P}
-@tab @code{gascity-section-previous}
-@tab Move point to the previous top-level section header.
 @item @code{run-detail}
 @tab @kbd{q}
 @tab @code{quit-window}
@@ -896,6 +884,38 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{run-detail}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{run-detail}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{run-detail}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{run-detail}
+@tab @kbd{RET}
+@tab @code{gascity-run-activate}
+@tab Act on the thing at point: open a step’s bead, visit a plan file.
+@item @code{run-detail}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{run-detail}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{run-detail}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{run-detail}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
 @item @code{run-detail}
 @tab @kbd{a n}
 @tab @code{gascity-session-nudge-at-point}
@@ -953,41 +973,13 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-run-toggle-control}
 @tab Show or hide the control nodes (spec, scope check, finalize) (‘C’).
 @item @code{run-detail}
+@tab @kbd{v}
+@tab @code{gascity-runs-agent-peek}
+@tab Peek at the live worker at point (‘v’).
+@item @code{run-detail}
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{health}
-@tab @kbd{RET}
-@tab @code{gascity-health-activate}
-@tab Act on the thing at point: a rig opens its dashboard (RET).
-@item @code{health}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{health}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{health}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{health}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{health}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{health}
-@tab @kbd{N}
-@tab @code{gascity-section-next}
-@tab Move point to the next top-level section header.
-@item @code{health}
-@tab @kbd{P}
-@tab @code{gascity-section-previous}
-@tab Move point to the previous top-level section header.
 @item @code{health}
 @tab @kbd{q}
 @tab @code{quit-window}
@@ -1004,6 +996,38 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{health}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{health}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{health}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{health}
+@tab @kbd{RET}
+@tab @code{gascity-health-activate}
+@tab Act on the thing at point: a rig opens its dashboard (RET).
+@item @code{health}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{health}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{health}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{health}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
 @item @code{health}
 @tab @kbd{a n}
 @tab @code{gascity-session-nudge-at-point}
@@ -1053,30 +1077,6 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 @item @code{cities}
-@tab @kbd{RET}
-@tab @code{gascity-cities-visit}
-@tab Open the cockpit of the city at point (RET).
-@item @code{cities}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{cities}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{cities}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{cities}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{cities}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{cities}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
 @tab Close the detail window when one is open, else bury the list (‘q’).
@@ -1092,6 +1092,30 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{cities}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{cities}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{cities}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{cities}
+@tab @kbd{RET}
+@tab @code{gascity-cities-visit}
+@tab Open the cockpit of the city at point (RET).
+@item @code{cities}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{cities}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
 @item @code{cities}
 @tab @kbd{a n}
 @tab @code{nil}
@@ -1141,30 +1165,6 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 @item @code{rig-list}
-@tab @kbd{RET}
-@tab @code{gascity-rig-dashboard-at-point}
-@tab Open the rig dashboard for the rig at point.
-@item @code{rig-list}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{rig-list}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{rig-list}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{rig-list}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{rig-list}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{rig-list}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
 @tab Close the detail window when one is open, else bury the list (‘q’).
@@ -1180,6 +1180,30 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{rig-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{rig-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{rig-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{rig-list}
+@tab @kbd{RET}
+@tab @code{gascity-rig-dashboard-at-point}
+@tab Open the rig dashboard for the rig at point.
+@item @code{rig-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{rig-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
 @item @code{rig-list}
 @tab @kbd{a n}
 @tab @code{nil}
@@ -1241,30 +1265,6 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 @item @code{convoy-list}
-@tab @kbd{RET}
-@tab @code{gascity-convoy-list-visit}
-@tab Open the convoy bead at point in beads.el, scoped to its store.
-@item @code{convoy-list}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{convoy-list}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{convoy-list}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{convoy-list}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{convoy-list}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{convoy-list}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
 @tab Close the detail window when one is open, else bury the list (‘q’).
@@ -1280,6 +1280,30 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{convoy-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{convoy-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{convoy-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{convoy-list}
+@tab @kbd{RET}
+@tab @code{gascity-convoy-list-visit}
+@tab Open the convoy bead at point in beads.el, scoped to its store.
+@item @code{convoy-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{convoy-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
 @item @code{convoy-list}
 @tab @kbd{a n}
 @tab @code{nil}
@@ -1328,30 +1352,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{order-list}
-@tab @kbd{RET}
-@tab @code{gascity-order-list-visit}
-@tab Open the source file of the order at point.
-@item @code{order-list}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{order-list}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{order-list}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{order-list}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{order-list}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
 @item @code{order-list}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
@@ -1369,6 +1369,30 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{order-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{order-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{order-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{order-list}
+@tab @kbd{RET}
+@tab @code{gascity-order-list-visit}
+@tab Open the source file of the order at point.
+@item @code{order-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{order-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{order-list}
 @tab @kbd{a n}
 @tab @code{nil}
 @tab nil
@@ -1416,30 +1440,6 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
-@item @code{dolt-list}
-@tab @kbd{RET}
-@tab @code{gascity-dolt-list-show}
-@tab Echo the details of the Dolt database at point.
-@item @code{dolt-list}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{dolt-list}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{dolt-list}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{dolt-list}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{dolt-list}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
 @item @code{dolt-list}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
@@ -1457,6 +1457,30 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
 @item @code{dolt-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{dolt-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{dolt-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{dolt-list}
+@tab @kbd{RET}
+@tab @code{gascity-dolt-list-show}
+@tab Echo the details of the Dolt database at point.
+@item @code{dolt-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{dolt-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{dolt-list}
 @tab @kbd{a n}
 @tab @code{nil}
 @tab nil
@@ -1505,30 +1529,6 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 @item @code{events}
-@tab @kbd{RET}
-@tab @code{gascity-events-visit}
-@tab Drill into the row at point (RET).
-@item @code{events}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{events}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{events}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{events}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{events}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{events}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
 @tab Close the detail window when one is open, else bury the list (‘q’).
@@ -1544,6 +1544,30 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{events}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{events}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{events}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{events}
+@tab @kbd{RET}
+@tab @code{gascity-events-visit}
+@tab Drill into the row at point (RET).
+@item @code{events}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{events}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
 @item @code{events}
 @tab @kbd{a n}
 @tab @code{nil}
@@ -1597,30 +1621,6 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 @item @code{mail-inbox}
-@tab @kbd{RET}
-@tab @code{gascity-mail-inbox-show}
-@tab Show the message at point without marking it read (RET).
-@item @code{mail-inbox}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{mail-inbox}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{mail-inbox}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{mail-inbox}
-@tab @kbd{n}
-@tab @code{next-line}
-@tab Move cursor vertically down ARG lines.
-@item @code{mail-inbox}
-@tab @kbd{p}
-@tab @code{previous-line}
-@tab Move cursor vertically up ARG lines.
-@item @code{mail-inbox}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}
 @tab Close the detail window when one is open, else bury the list (‘q’).
@@ -1636,6 +1636,30 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{mail-inbox}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{mail-inbox}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{mail-inbox}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{mail-inbox}
+@tab @kbd{RET}
+@tab @code{gascity-mail-inbox-show}
+@tab Show the message at point without marking it read (RET).
+@item @code{mail-inbox}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{mail-inbox}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
 @item @code{mail-inbox}
 @tab @kbd{a n}
 @tab @code{nil}
@@ -1689,22 +1713,6 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
 @item @code{mail-thread}
-@tab @kbd{RET}
-@tab @code{gascity-mail-thread-visit}
-@tab Open the message at point in beads.el (RET): a message is a bead.
-@item @code{mail-thread}
-@tab @kbd{TAB}
-@tab @code{gascity-thing-forward}
-@tab Move to the Nth next thing (TAB), marking this view’s things first.
-@item @code{mail-thread}
-@tab @kbd{S-TAB}
-@tab @code{gascity-thing-backward}
-@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
-@item @code{mail-thread}
-@tab @kbd{SPC}
-@tab @code{gascity-thing-toggle}
-@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
-@item @code{mail-thread}
 @tab @kbd{q}
 @tab @code{quit-window}
 @tab Quit WINDOW and bury its buffer.
@@ -1720,6 +1728,22 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{j}
 @tab @code{gascity-jump-prefix}
 @tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{mail-thread}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{mail-thread}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{mail-thread}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{mail-thread}
+@tab @kbd{RET}
+@tab @code{gascity-mail-thread-visit}
+@tab Open the message at point in beads.el (RET): a message is a bead.
 @item @code{mail-thread}
 @tab @kbd{a n}
 @tab @code{nil}

@@ -22,7 +22,8 @@
 ;; every view: `keymap-lookup' returns the local-over-inherited command,
 ;; so a parent-map redefinition changes the generated output.  Its
 ;; semantic guard is `lisp/test/gascity-key-registry-test.el' (F1/F4);
-;; the view list below mirrors that test's registry.
+;; the view and key lists below are derived from that test's registry,
+;; so a new view or contract key is picked up automatically.
 ;;
 ;; The command table enumerates every concrete `gascity-command' class
 ;; (via `gascity-defcommand') and reads the live `gascity-dispatch'
@@ -39,37 +40,33 @@
 
 (require 'cl-lib)
 (require 'gascity)
+;; The effective-key registry (F1/F4/F11) is the single source of truth
+;; for which views exist and which keys are rendered.  It is a pure
+;; `defconst' file: loading it registers its ERT tests but runs none, so
+;; the generator stays a deterministic batch script.
+(require 'gascity-key-registry-test)
 
 (defconst gascity-generate-tables--views
-  '((cockpit        gascity-dashboard-mode-map)
-    (rig-dashboard  gascity-rig-dashboard-mode-map)
-    (agent-detail   gascity-session-detail-mode-map)
-    (agents-tree    gascity-agents-tree-mode-map)
-    (agents         gascity-agents-mode-map)
-    (session-list   gascity-session-list-mode-map)
-    (runs           gascity-runs-mode-map)
-    (run-detail     gascity-run-mode-map)
-    (health         gascity-health-mode-map)
-    (cities         gascity-cities-mode-map)
-    (rig-list       gascity-rig-list-mode-map)
-    (convoy-list    gascity-convoy-list-mode-map)
-    (order-list     gascity-order-list-mode-map)
-    (dolt-list      gascity-dolt-list-mode-map)
-    (events         gascity-events-mode-map)
-    (mail-inbox     gascity-mail-inbox-mode-map)
-    (mail-thread    gascity-mail-thread-mode-map))
-  "Every view: (NAME MAP).  MAP is resolved at generation time.
-Mirrors `gascity-key-registry--views' in
-lisp/test/gascity-key-registry-test.el, which asserts the semantics.")
+  (mapcar (lambda (view) (list (nth 0 view) (nth 1 view)))
+          gascity-key-registry--views)
+  "Every view as (NAME MAP), derived from `gascity-key-registry--views'.")
+
+(defconst gascity-generate-tables--extra-keys
+  '("S")
+  "Rendered keys the navigation registry does not model (the sling key).")
 
 (defconst gascity-generate-tables--keys
-  '("RET" "TAB" "S-TAB" "SPC"
-    "n" "p" "N" "P"
-    "q" "g" "?" "j"
-    "a n" "a s" "a w" "a k" "a D" "a r" "a u" "a t" "a d" "a i" "a v"
-    "d" "s" "w" "i" "t" "D" "C" "#" "K" "M" "R" "U" "S")
-  "The keys rendered per view: the navigation contract, the `a'
-namespacing (F1), the agent-only aliases and the reserved keys.")
+  (delete-dups
+   (append gascity-key-registry--contract
+           gascity-key-registry--vui-contract
+           (mapcar (lambda (row) (concat "a " (car row)))
+                   gascity-key-registry--namespaced-verbs)
+           gascity-key-registry--forbidden
+           (mapcar #'car gascity-key-registry--agent-only-verbs)
+           gascity-generate-tables--extra-keys))
+  "The keys rendered per view, derived from the key registry:
+`--contract', `--vui-contract', the `a' namespacing (F1), the reserved
+keys, the agent-only aliases and the extra rendered keys.")
 
 (defconst gascity-generate-tables--header
   ;; The comment header every generated file starts with.  Kept here so

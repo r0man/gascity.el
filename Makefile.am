@@ -62,14 +62,14 @@ check-local: all-local check-doc-drift
 ## so it also works inside `make distcheck' (no `git diff' as the gate).
 regen-doc-tables:
 	EMACSLOADPATH="$(AM_EMACSLOADPATH)" \
-	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' \
+	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' -L '$(top_srcdir)/lisp/test' \
 	    -l '$(top_srcdir)/doc/generate-tables.el' '$(top_srcdir)/doc/generated'
 
 check-doc-drift:
 	@directory="$$(mktemp -d)"; \
 	trap 'rm -rf "$$directory"' EXIT; \
 	EMACSLOADPATH="$(AM_EMACSLOADPATH)" \
-	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' \
+	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' -L '$(top_srcdir)/lisp/test' \
 	    -l '$(top_srcdir)/doc/generate-tables.el' "$$directory" >/dev/null; \
 	status=0; \
 	for file in keys.texi commands.texi; do \
