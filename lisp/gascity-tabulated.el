@@ -108,9 +108,13 @@ does not recognize."
   "Return PATH with the home-directory prefix abbreviated to \"~\"."
   (if (and path (stringp path)) (abbreviate-file-name path) (or path "")))
 
-(defun gascity-tabulated--str (value)
-  "Coerce VALUE to a display string."
-  (cond ((null value) "")
+(defun gascity-tabulated--str (value &optional blank)
+  "Coerce VALUE to a display string.
+A nil VALUE renders as an em-dash (\"—\"): an absent value should look
+absent, not like a broken empty cell.  Pass non-nil BLANK for a cell
+that is genuinely empty by design (a trailing free-text column, a filter
+sentinel) to keep nil as the empty string."
+  (cond ((null value) (if blank "" "—"))
         ((stringp value) value)
         ((numberp value) (number-to-string value))
         ((eq value t) "yes")

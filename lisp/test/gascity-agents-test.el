@@ -263,6 +263,54 @@ free entry, the accessor never errors."
               (should (string-match-p "▸ beads.el" (buffer-string)))))
         (kill-buffer buf)))))
 
+(ert-deftest gascity-test-agents-tree-city-folds ()
+  "SPC on the City header folds the whole city block; it survives `g'."
+  (let ((vui-render-delay nil)
+        (buf (get-buffer-create "*gascity-agents-tree-city-test*")))
+    (cl-letf (((symbol-function 'gascity-reader-read-async) #'gascity-agents-test--read))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer buf (gascity-agents-tree-mode))
+            (vui-mount (vui-component 'gascity-agents-tree-app) (buffer-name buf))
+            (with-current-buffer buf
+              (should (string-match-p "▾ City" (buffer-string)))
+              ;; The city block renders its pooled workers.
+              (should (string-match-p "bd.dog" (buffer-string)))
+              (goto-char (point-min))
+              (re-search-forward "▾ City")
+              (beginning-of-line)
+              (gascity-thing-toggle)
+              (should (string-match-p "▸ City" (buffer-string)))
+              (should-not (string-match-p "bd.dog" (buffer-string)))
+              (gascity-agents-tree-refresh)
+              ;; The fold survives `g', like a rig or pool fold.
+              (should (string-match-p "▸ City" (buffer-string)))
+              (should-not (string-match-p "bd.dog" (buffer-string)))))
+        (kill-buffer buf)))))
+
+(ert-deftest gascity-test-agents-tree-named-folds ()
+  "SPC on the Named sessions header folds the mayor away; it survives `g'."
+  (let ((vui-render-delay nil)
+        (buf (get-buffer-create "*gascity-agents-tree-named-test*")))
+    (cl-letf (((symbol-function 'gascity-reader-read-async) #'gascity-agents-test--read))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer buf (gascity-agents-tree-mode))
+            (vui-mount (vui-component 'gascity-agents-tree-app) (buffer-name buf))
+            (with-current-buffer buf
+              (should (string-match-p "▾ Named sessions" (buffer-string)))
+              (should (string-match-p "○ mayor" (buffer-string)))
+              (goto-char (point-min))
+              (re-search-forward "▾ Named sessions")
+              (beginning-of-line)
+              (gascity-thing-toggle)
+              (should (string-match-p "▸ Named sessions" (buffer-string)))
+              (should-not (string-match-p "○ mayor" (buffer-string)))
+              (gascity-agents-tree-refresh)
+              (should (string-match-p "▸ Named sessions" (buffer-string)))
+              (should-not (string-match-p "○ mayor" (buffer-string)))))
+        (kill-buffer buf)))))
+
 ;;; Agent detail (§7.4)
 
 (ert-deftest gascity-test-agent-detail-transcript-summary ()
