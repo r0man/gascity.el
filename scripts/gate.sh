@@ -4,14 +4,14 @@
 # Runs the two halves of the offline gate that, together, catch the
 # regression classes the test suite alone cannot:
 #
-#   1. eldev compile --warnings-as-errors
-#        Byte-compiles every file with warnings promoted to errors.  This
-#        is the ONLY half that catches undefined-function references - a
-#        keymap or menu that names an action verb whose forward
-#        `declare-function' is missing (see gce-ege, gce-9f6).  Plain
-#        `eldev compile' reports these merely as warnings (exit 0), and
-#        `eldev test' never sees them at all.
-#   2. eldev test
+#   1. make
+#        Byte-compiles every lisp/*.el with warnings promoted to errors
+#        (byte-compile-error-on-warn t).  This is the ONLY half that catches
+#        undefined-function references - a keymap or menu that names an
+#        action verb whose forward `declare-function' is missing (see
+#        gce-ege, gce-9f6).  A plain byte-compile reports these merely as
+#        warnings, and `make check' never sees them at all.
+#   2. make check
 #        Runs the ERT suite.
 #
 # Lint is NOT part of this gate: the doc linter's checkdoc rules differ
@@ -33,14 +33,21 @@
 #   formula_vars.test_command = "scripts/gate.sh"
 set -eu
 
-# Run from the repository root regardless of the caller's cwd, so Eldev
-# discovers the project correctly.
+# Run from the repository root regardless of the caller's cwd.
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
-echo ">>> gate: eldev compile --warnings-as-errors"
-eldev compile --warnings-as-errors
+# Bootstrap the autotools build on a fresh checkout (the generated files are
+# never committed).  BEADS_DIR overrides the default sibling checkout.
+if [ ! -f Makefile ]; then
+  echo ">>> gate: bootstrapping autotools (./autogen.sh && ./configure)"
+  ./autogen.sh
+  ./configure --with-beads-dir="${BEADS_DIR:-$HOME/workspace/beads.el}"
+fi
 
-echo ">>> gate: eldev test"
-eldev test
+echo ">>> gate: make (byte-compile, warnings as errors)"
+make
+
+echo ">>> gate: make check (ERT)"
+make check
 
 echo ">>> gate: PASS (compile clean + tests green)"
