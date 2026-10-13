@@ -20,6 +20,19 @@
 (defvar gascity-lint--files command-line-args-left
   "The Lisp files to lint, from the command line.")
 
+(defvar gascity-lint--main-file
+  (let ((dir (locate-dominating-file (or (car gascity-lint--files) ".")
+                                     "gascity.el")))
+    (when dir (expand-file-name "gascity.el" dir)))
+  "The package's main file, `gascity.el', or nil when it cannot be found.
+
+package-lint checks every linted file against the package headers of
+`package-lint-main-file' (name prefix, `Package-Requires', ...).  Without
+it each file is treated as its own package -- every `gascity-*' definition
+would be reported as wrong-prefixed and every runtime dependency as
+uninstallable -- so it must name `gascity.el', exactly as Eldev's
+`eldev-project-main-file' did.")
+
 (when (null gascity-lint--files)
   (error "lint.el: no files given"))
 
@@ -29,8 +42,16 @@
   (with-current-buffer (find-file-noselect file)
     (checkdoc-batch)))
 
+;; package-lint's batch entry point takes NO arguments: it reads the files
+;; still on `command-line-args-left' (which are exactly the files passed
+;; after `-l scripts/lint.el'), so it lints the same set checkdoc just
+;; walked.  Passing the file list as arguments raises
+;; `wrong-number-of-arguments' and aborts the lint run the moment
+;; package-lint is installed (i.e. in CI), so keep the call argument-free.
 (if (require 'package-lint nil t)
-    (apply #'package-lint-batch-and-exit gascity-lint--files)
+    (progn
+      (setq package-lint-main-file gascity-lint--main-file)
+      (package-lint-batch-and-exit))
   (message "lint: package-lint is not installed; skipping package metadata checks (CI installs it)"))
 
 ;;; lint.el ends here
