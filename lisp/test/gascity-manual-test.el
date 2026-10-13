@@ -210,6 +210,27 @@ package just to learn the registered surface."
     (should-not (equal 0 (plist-get res :status)))
     (should (string-match-p "nope" (plist-get res :stderr)))))
 
+(ert-deftest gascity-test-manual-capture-root-resolution ()
+  "capture.sh finds the repo root from any working directory (REQ-015).
+It resolves the root with `git rev-parse --show-toplevel' (or its own
+parent-parent), so `make screenshots' can run it by absolute path."
+  (let ((text (gascity-manual-test--read "doc/screenshots/capture.sh")))
+    (should (string-match-p "rev-parse --show-toplevel" text)))
+  (let* ((script (expand-file-name "doc/screenshots/capture.sh"
+                                   gascity-manual-test--root))
+         (tmp (make-temp-file "gascity-capture-cwd" t))
+         (errfile (make-temp-file "gascity-manual-err"))
+         (views (gascity-manual-test--views)))
+    (unwind-protect
+        (with-temp-buffer
+          (let ((default-directory (file-name-as-directory tmp)))
+            (should (equal 0 (call-process
+                              "bash" nil (list t errfile) nil script
+                              "--list-scope" "--scope" "all")))
+            (should (equal views (split-string (buffer-string) "\n" t)))))
+      (delete-file errfile)
+      (delete-directory tmp t))))
+
 (ert-deftest gascity-test-manual-manifest-views-have-shots ()
   "Every manifest view has a shot thunk, and vice versa (REQ-001, REQ-006)."
   (let ((views (gascity-manual-test--views))

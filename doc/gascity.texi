@@ -3683,10 +3683,16 @@ make screenshots     # or: doc/screenshots/capture.sh
 @end example
 
 @noindent
-Requirements: a graphical Emacs, @command{sway} (a wlroots headless
-compositor), ImageMagick @command{convert}, a running city, and the
-@code{ef-themes} package.  @file{doc/screenshots/README.md} documents the
-configuration variables and how to reuse the engine.
+@code{capture.sh} resolves the repository root with @command{git rev-parse
+--show-toplevel} (falling back to the script's parent-parent), so the target
+works from the build tree as well as from a checkout.  This is a
+@emph{local/graphical} target: it starts a private headless compositor and
+needs a graphical Emacs, @command{sway} (a wlroots headless compositor),
+ImageMagick @command{convert}, a running city, and the @code{ef-themes}
+package, so continuous integration never runs it --- the committed images
+under @file{doc/images} are the shipped artifact.
+@file{doc/screenshots/README.md} documents the configuration variables and how
+to reuse the engine.
 
 
 @c ====================================================================

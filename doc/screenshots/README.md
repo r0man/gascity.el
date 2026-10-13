@@ -61,8 +61,14 @@ never `--batch`.
 ./capture.sh --list-scope --scope all # print the selected view names
 ./capture.sh --self-test              # unit-check scope + isolation (no GUI)
 ./capture.sh --compress               # recompress existing raws only
-make -C .. screenshots                # same as the default, via the doc Makefile
+make screenshots                      # top-level target (delegates here)
 ```
+
+`capture.sh` resolves the repository root with `git rev-parse --show-toplevel`
+(falling back to its own parent-parent when git is unavailable), so it works
+when invoked by absolute path from anywhere, including from a VPATH build
+tree. This is a **local/graphical** target; CI never runs it (the committed
+`doc/images/` are the shipped artifact).
 
 The committed image footprint is small (≈0.8 MiB for 20 views, full +
 thumbnail). The capture is read-only with respect to the fixture city — it
@@ -209,7 +215,7 @@ this section) whenever it changes:
 Regenerate and verify (from the repo root):
 
 ```sh
-make -C doc screenshots                     # scope all
+make screenshots                            # scope all
 ./doc/screenshots/capture.sh --scope changed  # only the changed views
 ./doc/screenshots/capture.sh --scope cockpit,health
 ./doc/screenshots/capture.sh --verify all     # two runs, byte-identical

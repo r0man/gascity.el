@@ -26,7 +26,10 @@ make -C doc html     # styled multi-page HTML only
 ```
 
 Screenshots are produced by a reusable, documented pipeline under
-[doc/screenshots/](doc/screenshots/README.md) (`make -C doc screenshots`).
+[doc/screenshots/](doc/screenshots/README.md) (`make screenshots`). It is a
+local/graphical target --- it needs a private headless compositor and a running
+city --- so continuous integration never runs it; the committed images under
+`doc/images/` are the shipped artifact.
 
 ## Status
 
