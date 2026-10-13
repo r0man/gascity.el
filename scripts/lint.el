@@ -42,16 +42,49 @@ uninstallable -- so it must name `gascity.el', exactly as Eldev's
   (with-current-buffer (find-file-noselect file)
     (checkdoc-batch)))
 
-;; package-lint's batch entry point takes NO arguments: it reads the files
-;; still on `command-line-args-left' (which are exactly the files passed
-;; after `-l scripts/lint.el'), so it lints the same set checkdoc just
-;; walked.  Passing the file list as arguments raises
-;; `wrong-number-of-arguments' and aborts the lint run the moment
-;; package-lint is installed (i.e. in CI), so keep the call argument-free.
+(defun gascity-lint--register-local-package (name)
+  "Register the local source checkout of package NAME with package.el.
+
+NAME is a runtime dependency this project resolves from a source checkout
+rather than a package archive: `beads' and the `vui' that checkout bundles.
+package-lint decides installability from `package-alist', so without a
+descriptor it would report the dependency as \"not installable\" even though
+the build finds it on `EMACSLOADPATH'.  The descriptor is parsed from the
+package's own main file, so its version tracks the checkout.
+
+This mirrors Eldev's internal-pseudoarchive handling
+\(`eldev--linter-package-present-archives') for `eldev -p -dtT lint'."
+  (when-let* ((file (locate-library (symbol-name name)))
+              (desc (with-current-buffer (find-file-noselect file)
+                      (ignore-errors (package-buffer-info)))))
+    (push desc (alist-get name package-alist nil nil #'eq))))
+
+(defun gascity-lint--package-lint ()
+  "Run package-lint over every file in `gascity-lint--files'.
+
+This reproduces `package-lint-batch-and-exit' but controls the order around
+`package-initialize': that function resets `package-alist', so the local
+source-checkout dependencies must be registered *after* it, which is not
+possible through the batch entry point.  Errors and warnings are fatal,
+matching `package-lint-batch-fail-on-warnings'."
+  (package-initialize)
+  (setq package-lint-main-file gascity-lint--main-file)
+  (dolist (name '(beads vui))
+    (gascity-lint--register-local-package name))
+  (let ((failed nil))
+    (dolist (file gascity-lint--files)
+      (with-temp-buffer
+        (insert-file-contents file t)
+        (emacs-lisp-mode)
+        (pcase-dolist (`(,line ,col ,type ,message) (package-lint-buffer))
+          (when (memq type '(error warning))
+            (setq failed t))
+          (message "%s:%d:%d: %s: %s" file line col type message))))
+    (when failed
+      (kill-emacs 1))))
+
 (if (require 'package-lint nil t)
-    (progn
-      (setq package-lint-main-file gascity-lint--main-file)
-      (package-lint-batch-and-exit))
+    (gascity-lint--package-lint)
   (message "lint: package-lint is not installed; skipping package metadata checks (CI installs it)"))
 
 ;;; lint.el ends here
