@@ -7,17 +7,25 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# Autotools conversion (plans/gnu-toolchain, W8): the workflow bootstraps the
+# GNU build system (`./autogen.sh`, `./configure`, `make`, `make check`) instead
+# of installing and running Eldev.  The byte-compile is the warnings-as-errors
+# gate (REQ-002) and `make check` runs the whole ERT suite (REQ-003), so a
+# missing forward `declare-function` still fails CI before it reaches review.
+
 # Dependency resolution decision (OQ-1): the suite's Package-Requires pins
-# `beads 0.1.0`, but beads.el is not published on ELPA/MELPA, so the
-# workflow clones the sibling github:r0man/beads.el repo as a pre-step for
-# Eldev's local dependency (see the "Clone beads.el" step below; see also
-# plans/ci-cd/implementation-plan.md, W4).
+# `beads 0.1.0`, but beads.el is not published on ELPA/MELPA, so the workflow
+# clones the sibling github:r0man/beads.el repo and points configure at it with
+# `--with-beads-dir`.  A fresh beads.el checkout does not carry the `vui` it
+# declares, so the pinned vui release is cloned beside it: configure's sibling
+# default (`$beads_dir/../vui`) then finds it with no extra flag (see
+# configure.ac, plan D2).
 
 # Gc-gated tests decision (OQ-2): a bare `gc` on PATH is sufficient.  The
 # integration tests `skip-unless (executable-find "gc")` and fake the city
 # environment (GC_CITY etc.) in-process, so no initialized city is required
 # and no `gc init` pre-step is added.  If a future test needs a real city,
-# add `gc init` into a temp dir before `scripts/gate.sh`.
+# add `gc init` into a temp dir before `make check`.
 
 jobs:
   test:
@@ -45,27 +53,28 @@ jobs:
         with:
           version: ${{ matrix.emacs_version }}
 
-      - name: Cache Eldev dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.emacs.d/eldev
-          key: ${{ runner.os }}-eldev-test-v1-${{ matrix.emacs_version }}-${{ hashFiles('Eldev') }}
-          restore-keys: |
-            ${{ runner.os }}-eldev-test-v1-${{ matrix.emacs_version }}-
+      # `configure` hard-requires GNU Texinfo: the manual is a first-class
+      # build product and `make` builds it through automake's info machinery.
+      - name: Install Texinfo
+        run: sudo apt-get update && sudo apt-get install -y texinfo
 
-      - name: Install Eldev
-        run: curl --fail --silent --show-error --location https://raw.github.com/doublep/eldev/master/webinstall/github-eldev | sh
-
-      # beads.el is not published on ELPA/MELPA (see Eldev), so Eldev cannot
-      # resolve the `beads' dependency from archives: the first CI iteration
-      # failed on every matrix leg with "Dependency 'beads' is not available"
-      # (OQ-1 escalation documented in plans/ci-cd).  Clone the canonical
-      # beads.el into the sibling path the Eldev file hardcodes so its
-      # local-dependency hook fires.  Pin a ref there if the API ever drifts.
-      - name: Clone beads.el (Eldev local dependency)
+      # beads.el is not published on ELPA/MELPA.  Clone the canonical
+      # checkout and configure `--with-beads-dir` at it so the build resolves
+      # the non-ELPA dependency from source (REQ-009).  Pin a ref here if the
+      # API ever drifts.
+      - name: Clone beads.el (sibling dependency)
         run: |
           git clone --depth 1 https://github.com/r0man/beads.el.git "$HOME/workspace/beads.el"
           git -C "$HOME/workspace/beads.el" rev-parse --short HEAD
+
+      # vui.el is the UI layer beads.el depends on and is not vendored in its
+      # checkout.  Clone the release beads.el pins and land it at the sibling
+      # path `configure` searches, so the build loads the exact vui the
+      # package was byte-compiled against.
+      - name: Clone vui.el (beads.el dependency)
+        run: |
+          git clone --depth 1 --branch v1.4.0 https://github.com/d12frosted/vui.el.git "$HOME/workspace/vui"
+          git -C "$HOME/workspace/vui" rev-parse --short HEAD
 
       # gc v1.4.2 from gastownhall/gascity. Bump by changing the version in
       # the URL.
@@ -75,8 +84,14 @@ jobs:
             | tar -xz -C /usr/local/bin gc
           gc version
 
-      - name: Run gate
-        # scripts/gate.sh runs `eldev compile --warnings-as-errors` and
-        # `eldev test` on the same Emacs, so undefined cross-file references
-        # fail CI before they reach the refinery.
-        run: scripts/gate.sh
+      # Bootstrap the GNU build system, configure the source-checkout
+      # dependencies, byte-compile with warnings as errors, and run the whole
+      # ERT suite.  `scripts/gate.sh` is not used here: it is the local
+      # two-half convenience wrapper, while CI runs the two halves as the
+      # explicit autotools steps the plan specifies.
+      - name: Bootstrap, build and test
+        run: |
+          ./autogen.sh
+          ./configure --with-beads-dir="$HOME/workspace/beads.el"
+          make
+          make check

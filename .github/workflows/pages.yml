@@ -1,0 +1,90 @@
+name: Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# GitHub Pages publish of the built HTML manual (REQ-016, REQ-017, REQ-023,
+# plan D6).  Publishing happens only on a push to `main`; pull requests run
+# only the build job (via `workflow_dispatch`/branch protection) and never
+# deploy.  The build job fails on a broken `make html` instead of uploading
+# stale output.
+#
+# This is the shared cross-repo shape beads.el mirrors (REQ-022): the triggers,
+# permissions, concurrency, action versions and the build-then-deploy split are
+# the contract.  The project-specific steps resolve gascity.el's non-ELPA
+# dependencies the same way the test workflow does.
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Emacs 31.1
+        uses: purcell/setup-emacs@master
+        with:
+          version: '31.1'
+
+      # `configure` hard-requires GNU Texinfo and `make html` drives makeinfo.
+      - name: Install Texinfo
+        run: sudo apt-get update && sudo apt-get install -y texinfo
+
+      # `configure` requires the non-ELPA beads.el/vui checkouts (plan D2, R4)
+      # even though `make html` only runs makeinfo; resolve them exactly as
+      # the test workflow does so the published manual is reproducible.
+      - name: Clone beads.el (sibling dependency)
+        run: |
+          git clone --depth 1 https://github.com/r0man/beads.el.git "$HOME/workspace/beads.el"
+          git -C "$HOME/workspace/beads.el" rev-parse --short HEAD
+
+      - name: Clone vui.el (beads.el dependency)
+        run: |
+          git clone --depth 1 --branch v1.4.0 https://github.com/d12frosted/vui.el.git "$HOME/workspace/vui"
+          git -C "$HOME/workspace/vui" rev-parse --short HEAD
+
+      # gc v1.4.2 from gastownhall/gascity, pinned as in the other workflows so
+      # the doc pipeline's environment is explicit and reproducible.  Bump by
+      # changing the version in the URL.
+      - name: Install Gascity v1.4.2
+        run: |
+          curl -fsSL https://github.com/gastownhall/gascity/releases/download/v1.4.2/gascity_1.4.2_linux_amd64.tar.gz \
+            | tar -xz -C /usr/local/bin gc
+          gc version
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build HTML manual
+        run: |
+          ./autogen.sh
+          ./configure --with-beads-dir="$HOME/workspace/beads.el"
+          make html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: doc/gascity.html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
