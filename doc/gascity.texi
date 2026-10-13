@@ -702,13 +702,25 @@ a city, so a checkout without one skips the few tests that require them.
 
 @cindex guix shell
 @cindex guix build
-On Guix, @file{guix.scm} packages the same tree and provides the
-development environment:
+On Guix, @file{guix.scm} packages the same tree through
+@code{gnu-build-system} and provides the development environment:
 
 @example
-guix shell -D -f guix.scm -- ./configure --with-beads-dir="$HOME/workspace/beads.el" && make && make check
-guix build -f guix.scm
+guix shell -D -f guix.scm
+./autogen.sh
+./configure --with-beads-dir="$HOME/workspace/beads.el"
+make && make check
 @end example
+
+@noindent
+@command{guix build -f guix.scm} builds and installs the package the same
+way.  Because @code{beads.el} and @code{vui} are not packaged for Guix,
+@file{guix.scm} copies the sibling @file{beads.el} checkout into the store
+when it is evaluated and passes its path as @code{--with-beads-dir} (the
+@code{vui} it bundles becomes @code{--with-vui-dir}).  The checkout must
+therefore exist before @command{guix build} or @command{guix shell} runs;
+set @env{GASCITY_BEADS_DIR} to point elsewhere, or pin the dependency with
+@code{git-fetch} for a build that does not rely on a sibling directory.
 
 @noindent
 @file{README.md} keeps a short install section; this manual is the full
