@@ -99,6 +99,7 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 * Remote Cities::           Cities on other hosts, over TRAMP and ssh.
 * Customization::           Variables and faces.
 * Contributing::            Hacking on gascity.el and this manual.
+* View and Key Reference::  Every registered view, key and action verb.
 * Capability Gaps::         What gc does not expose, so gascity cannot show.
 * Key Index::               Keystrokes.
 * Command and Variable Index:: Commands, functions and user options.
@@ -3245,6 +3246,138 @@ Requirements: a graphical Emacs, @command{sway} (a wlroots headless
 compositor), ImageMagick @command{convert}, a running city, and the
 @code{ef-themes} package.  @file{doc/screenshots/README.md} documents the
 configuration variables and how to reuse the engine.
+
+
+@c ====================================================================
+@node View and Key Reference
+@chapter View and Key Reference
+@cindex view reference
+@cindex key reference
+@cindex verb reference
+
+This chapter is the exhaustive reference for the surface the manual is
+required to cover (REQ-012).  It names every registered view, its mode
+map, and every agent action verb with the Emacs command it runs; the
+universal keys themselves are described once in @ref{Buffers and
+Navigation}.  @code{lisp/test/gascity-manual-test.el} checks that every
+name below still appears here, so a new view or verb cannot ship
+undocumented.
+
+@section Registered views
+
+@cindex views, registered
+Every gascity view is read-only and keyboard-driven.  A @dfn{namespaced}
+view may also hold a bead, so its agent verbs live under the @kbd{a}
+prefix; an @dfn{agent-only} view keeps the bare single-letter aliases,
+and a @dfn{mixed} view shows agents but no beads, so it keeps the bare
+aliases too.
+
+@table @asis
+@item @code{cockpit} --- @code{gascity-dashboard-mode-map}
+@cindex cockpit view
+The city triage buffer: vui sections over one city's state
+(@pxref{The Cockpit}).  Mixed; agent verbs keep their bare keys.
+@item @code{rig-dashboard} --- @code{gascity-rig-dashboard-mode-map}
+@cindex rig dashboard view
+One rig's beads, agents and convoys (@pxref{The Rig Dashboard}).
+Namespaced: agent verbs are under @kbd{a}.
+@item @code{agent-detail} --- @code{gascity-session-detail-mode-map}
+@cindex agent detail view
+One agent's detail (@pxref{Agents}).  Namespaced.
+@item @code{agents-tree} --- @code{gascity-agents-tree-mode-map}
+@cindex agents tree view
+The hierarchical agent tree (@pxref{Agents}).  Mixed.
+@item @code{agents} --- @code{gascity-agents-mode-map}
+@cindex agents view
+The flat agent table (@pxref{Agents}).  Mixed.
+@item @code{session-list} --- @code{gascity-session-list-mode-map}
+@cindex session list view
+The session list (@pxref{Sessions}).  Mixed.
+@item @code{runs} --- @code{gascity-runs-mode-map}
+@cindex runs view
+Workflow runs (@pxref{Runs}).
+@item @code{run-detail} --- @code{gascity-run-mode-map}
+@cindex run detail view
+One run's step ladder (@pxref{Runs}).
+@item @code{health} --- @code{gascity-health-mode-map}
+@cindex health view
+Supervisor, versions, stores and doctor (@pxref{Health}).
+@item @code{cities} --- @code{gascity-cities-mode-map}
+@cindex cities view
+Every city on every host (@pxref{Cities}).
+@item @code{rig-list} --- @code{gascity-rig-list-mode-map}
+@cindex rig list view
+The tabulated rig list (@pxref{Rigs}).
+@item @code{convoy-list} --- @code{gascity-convoy-list-mode-map}
+@cindex convoy list view
+Convoys (@pxref{Convoys}).
+@item @code{order-list} --- @code{gascity-order-list-mode-map}
+@cindex order list view
+Orders (@pxref{Orders}).
+@item @code{dolt-list} --- @code{gascity-dolt-list-mode-map}
+@cindex dolt list view
+The Dolt stores (@pxref{Dolt}).
+@item @code{events} --- @code{gascity-events-mode-map}
+@cindex events view
+The event log (@pxref{Events}).
+@item @code{mail-inbox} --- @code{gascity-mail-inbox-mode-map}
+@cindex mail inbox view
+The mail inbox (@pxref{Mail View}).
+@item @code{mail-thread} --- @code{gascity-mail-thread-mode-map}
+@cindex mail thread view
+One mail thread; a text view, not tabulated or vui
+(@pxref{Mail View}).
+@end table
+
+@section Agent action verbs
+
+@cindex agent verbs
+Each verb below acts on the agent or session at point.  It is reachable
+under @kbd{a} in the namespaced views and on the bare key shown in the
+agent-only views (@pxref{Actions}); the dispatcher also exposes it by
+prompt (@pxref{The ? dispatch}).
+
+@table @asis
+@item Nudge --- @code{gascity-session-nudge-at-point}
+@findex gascity-session-nudge-at-point
+Prompt for a message and send it to the agent: @kbd{a n}, or @kbd{M}
+in the agent-only views.
+@item Suspend --- @code{gascity-dashboard-suspend}
+@findex gascity-dashboard-suspend
+Suspend the session (the namespaced @kbd{a s}), or the equivalent
+@code{gascity-session-suspend-at-point} on the bare @kbd{s} of an
+agent-only view.
+@item Wake --- @code{gascity-session-wake-at-point}
+@findex gascity-session-wake-at-point
+Wake a suspended agent: @kbd{a w} or @kbd{w}.
+@item Kill --- @code{gascity-session-kill-at-point}
+@findex gascity-session-kill-at-point
+Force-kill the agent's runtime: @kbd{a k} or @kbd{K}.  Confirms first.
+@item Drain --- @code{gascity-session-drain-at-point}
+@findex gascity-session-drain-at-point
+Wind the agent down gracefully: @kbd{a D} or @kbd{D}.
+@item Reset --- @code{gascity-dashboard-reset}
+@findex gascity-dashboard-reset
+Restart the agent's session fresh: @kbd{a r}, or @kbd{R} on an
+agent-only view through @code{gascity-session-reset-at-point}.  Confirms
+first.
+@item Undrain --- @code{gascity-session-undrain-at-point}
+@findex gascity-session-undrain-at-point
+Cancel a drain: @kbd{a u} or @kbd{U}.
+@item Attach --- @code{gascity-tmux-at-point}
+@findex gascity-tmux-at-point
+Attach a terminal to the agent's tmux session: @kbd{a t} or @kbd{t}
+(@pxref{Attach to a Terminal}).
+@item Dired --- @code{gascity-dired-at-point}
+@findex gascity-dired-at-point
+Open the agent's working directory in Dired: @kbd{a d} or @kbd{d}.
+@item Detail --- @code{gascity-polecat-detail-at-point}
+@findex gascity-polecat-detail-at-point
+Open the polecat detail view: @kbd{a i} or @kbd{i}.
+@item Peek --- @code{gascity-session-peek-at-point}
+@findex gascity-session-peek-at-point
+Show recent terminal output read-only: @kbd{a v} or @kbd{v}.
+@end table
 
 
 @c ====================================================================

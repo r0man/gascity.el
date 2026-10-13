@@ -155,6 +155,22 @@ Return a plist with :status, the captured :stdout and the captured
       (and (boundp 'beads-test-isolation-env-vars)
            (symbol-value 'beads-test-isolation-env-vars)))))
 
+(defun gascity-manual-test--key-registry-const (name)
+  "Return the value of the key-registry test's NAME `defconst'.
+NAME is a symbol; its literal `(defconst NAME VALUE ...)' form is read
+from `gascity-key-registry-test.el' so this file need not load the
+package just to learn the registered surface."
+  (let* ((text (gascity-manual-test--read
+                "lisp/test/gascity-key-registry-test.el"))
+         (start (string-match (concat "(defconst "
+                                      (regexp-quote (symbol-name name))
+                                      "\\b")
+                              text)))
+    (should start)
+    (let ((form (read (substring text start))))
+      (should (eq (car form) 'defconst))
+      (eval (nth 2 form) t))))
+
 ;;; Tests
 
 (ert-deftest gascity-test-manual-fixture-parses ()
@@ -269,6 +285,42 @@ resolve a sibling repository's formula."
                   ".beads/formulas/user-manual-screenshots.formula.toml")
                  (gascity-manual-test--read
                   ".beads/formulas/user-manual-screenshots.toml"))))
+
+(ert-deftest gascity-test-manual-key-registry-coverage ()
+  "Every registered view, key and verb appears in the manual (REQ-012, AC-6).
+The key registry is the coverage checklist: a new view, keymap or agent
+command fails this test until it is documented in `doc/gascity.texi'."
+  (let* ((texi (gascity-manual-test--read "doc/gascity.texi"))
+         (views (gascity-manual-test--key-registry-const
+                 'gascity-key-registry--views))
+         (contract (gascity-manual-test--key-registry-const
+                    'gascity-key-registry--contract))
+         (vui-contract (gascity-manual-test--key-registry-const
+                        'gascity-key-registry--vui-contract))
+         (namespaced (gascity-manual-test--key-registry-const
+                      'gascity-key-registry--namespaced-verbs))
+         (agent-only (gascity-manual-test--key-registry-const
+                      'gascity-key-registry--agent-only-verbs)))
+    ;; Every view name and its mode map are documented.
+    (dolist (view views)
+      (ert-info ((format "view %s" (car view)))
+        (should (string-match-p (regexp-quote (symbol-name (car view))) texi))
+        (should (string-match-p (regexp-quote (symbol-name (nth 1 view)))
+                                texi))))
+    ;; Every universal and vui contract key is in the key index.
+    (dolist (key (append contract vui-contract))
+      (ert-info ((format "key %s" key))
+        (should (string-match-p (regexp-quote (concat "@kindex " key)) texi))))
+    ;; Every namespaced (`a' prefix) verb names its command.
+    (dolist (entry namespaced)
+      (ert-info ((format "a %s" (car entry)))
+        (should (string-match-p
+                 (regexp-quote (symbol-name (cdr entry))) texi))))
+    ;; Every agent-only bare alias names each command it may mean.
+    (dolist (entry agent-only)
+      (dolist (cmd (cdr entry))
+        (ert-info ((format "bare %s" (car entry)))
+          (should (string-match-p (regexp-quote (symbol-name cmd)) texi)))))))
 
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here
