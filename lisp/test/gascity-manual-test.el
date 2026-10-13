@@ -12,7 +12,7 @@
 ;; manifest and scope resolver, gascity-shots.el's shot list,
 ;; doc/gascity.texi's `@shot' macro and area map, and fixture.sh's
 ;; isolation variables --- instead of a live city, so they run under
-;; `eldev test' without the graphical capture stack.  Only bash is
+;; `make check' without the graphical capture stack.  Only bash is
 ;; spawned; the parts that need sway, a GUI Emacs or ImageMagick stay in
 ;; `capture.sh --self-test' and are skipped there without those tools.
 

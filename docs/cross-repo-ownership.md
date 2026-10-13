@@ -52,8 +52,8 @@ the beads.el sling stage.
 
 | Gate | Command |
 |---|---|
-| Byte-compile (warnings as errors) | `scripts/gate.sh` (`eldev compile --warnings-as-errors`) |
-| Unit suite (incl. `gascity-test-formula-beads-seams`) | `eldev test` |
+| Byte-compile (warnings as errors) | `make` (via `scripts/gate.sh`) |
+| Unit suite (incl. `gascity-test-formula-beads-seams`) | `make check` (via `scripts/gate.sh`) |
 | CI lint | `scripts/lint.sh` |
 
 `gascity-test-formula-beads-seams` asserts the seam consumption directly: the

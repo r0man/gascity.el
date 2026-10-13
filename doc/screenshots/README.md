@@ -220,7 +220,7 @@ make screenshots                            # scope all
 ./doc/screenshots/capture.sh --scope cockpit,health
 ./doc/screenshots/capture.sh --verify all     # two runs, byte-identical
 ./doc/screenshots/capture.sh --check-isolation cockpit
-eldev test gascity-test-manual             # offline unit checks
+make check                                  # offline unit checks
 ```
 
 **Allowed differences:** none. The fixture pins role ids and timestamps,
