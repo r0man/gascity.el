@@ -1,8 +1,256 @@
-@c commands.texi --- generated command/dispatch tables for gascity.el
+@c commands.texi --- generated commands tables for gascity.el
 @c
 @c This tracked include is the committed artifact the manual builds
 @c from.  It is produced by doc/generate-tables.el and refreshed with
 @c `make regen-doc-tables'; `make check-doc-drift' fails when it no
-@c longer matches the command registry.  Do not edit by hand.
+@c longer matches the live commands.  Do not edit by hand.
 @c
 @c SPDX-License-Identifier: GPL-3.0-or-later
+
+@node Generated Command Reference
+@section Generated Command Reference
+@cindex command reference, generated
+@cindex dispatch, generated
+
+Every concrete @code{gascity-command} class, its @command{gc}
+subcommand and its summary.  The table is generated from the
+classes' `:documentation' option, so a renamed subcommand or a
+changed docstring is drift.
+
+@multitable @columnfractions .36 .64
+@headitem Command class @tab @command{gc} subcommand and summary
+@item @code{gascity-command-bd-assign}
+@tab @code{gc bd assign} --- Assign a bead to an agent or human (`gc bd assign <id> <name>').
+@item @code{gascity-command-bd-close}
+@tab @code{gc bd close} --- Close a bead (`gc bd close <id> -r <reason>').
+@item @code{gascity-command-bd-create}
+@tab @code{gc bd create} --- Quick-capture a bead (`gc bd create <title> --type … --json').
+@item @code{gascity-command-bd-dep-add}
+@tab @code{gc bd dep add} --- Add a dependency — ID depends on DEPENDENCY
+@item @code{gascity-command-bd-dep-remove}
+@tab @code{gc bd dep remove} --- Remove a dependency — ID no longer depends on DEPENDENCY
+@item @code{gascity-command-bd-note}
+@tab @code{gc bd note} --- Append a note to a bead (`gc bd note <id> <text>').
+@item @code{gascity-command-bd-reopen}
+@tab @code{gc bd reopen} --- Reopen a closed bead (`gc bd reopen <id>') — clears
+@item @code{gascity-command-bd-update}
+@tab @code{gc bd update} --- Update a bead's fields (`gc bd update <id> --status/--priority/…').
+@item @code{gascity-command-convoy-list}
+@tab @code{gc convoy list} --- List the city's convoys.
+@item @code{gascity-command-dolt-health}
+@tab @code{gc dolt health} --- Report Dolt server health and per-database stats.
+@item @code{gascity-command-formula-catalog}
+@tab @code{gc formula catalog} --- List the formulas available in the city.
+@item @code{gascity-command-formula-show}
+@tab @code{gc formula show} --- Show a formula's compiled recipe.
+@item @code{gascity-command-mail-archive}
+@tab @code{gc mail archive} --- Archive a message without reading it (`gc mail archive <id>').
+@item @code{gascity-command-mail-inbox}
+@tab @code{gc mail inbox} --- Show the current agent's mail inbox.
+@item @code{gascity-command-mail-mark-read}
+@tab @code{gc mail mark-read} --- Mark a message read without opening it (`gc mail mark-read <id>').
+@item @code{gascity-command-mail-mark-unread}
+@tab @code{gc mail mark-unread} --- Mark a message unread (`gc mail mark-unread <id>').
+@item @code{gascity-command-mail-read}
+@tab @code{gc mail read} --- Read a message and mark it read (`gc mail read <id>').
+@item @code{gascity-command-mail-reply}
+@tab @code{gc mail reply} --- Reply to a message, addressed to its original sender
+@item @code{gascity-command-mail-send}
+@tab @code{gc mail send} --- Send a message to a session alias or human
+@item @code{gascity-command-order-list}
+@tab @code{gc order list} --- List the city's orders (scheduled/cooldown jobs).
+@item @code{gascity-command-order-run}
+@tab @code{gc order run} --- Execute an order manually, bypassing its trigger conditions.
+@item @code{gascity-command-reload}
+@tab @code{gc reload} --- Re-read effective config and process one reload tick
+@item @code{gascity-command-rig-add}
+@tab @code{gc rig add} --- Register a project directory as a rig (`gc rig add <path>').
+@item @code{gascity-command-rig-list}
+@tab @code{gc rig list} --- List the rigs registered in the city.
+@item @code{gascity-command-rig-remove}
+@tab @code{gc rig remove} --- Remove a rig from the city config (`gc rig remove <name>').
+@item @code{gascity-command-rig-restart}
+@tab @code{gc rig restart} --- Restart a rig by killing its agent sessions.
+@item @code{gascity-command-rig-resume}
+@tab @code{gc rig resume} --- Resume a suspended rig.
+@item @code{gascity-command-rig-suspend}
+@tab @code{gc rig suspend} --- Suspend a rig (the reconciler then skips its agents).
+@item @code{gascity-command-runtime-drain}
+@tab @code{gc runtime drain} --- Signal a session to drain — wind down its work gracefully.
+@item @code{gascity-command-runtime-undrain}
+@tab @code{gc runtime undrain} --- Clear a session's drain flag — the inverse of `runtime drain'.
+@item @code{gascity-command-session-close}
+@tab @code{gc session close} --- Close a session permanently (`gc session close <target>') —
+@item @code{gascity-command-session-kill}
+@tab @code{gc session kill} --- Force-kill a session's runtime (the reconciler restarts it).
+@item @code{gascity-command-session-list}
+@tab @code{gc session list} --- List the city's agent sessions.
+@item @code{gascity-command-session-nudge}
+@tab @code{gc session nudge} --- Send a text message to a running session.
+@item @code{gascity-command-session-peek}
+@tab @code{gc session peek} --- View a session's recent output without attaching.
+@item @code{gascity-command-session-pin}
+@tab @code{gc session pin} --- Pin a session awake (`gc session pin <target>') — sets a
+@item @code{gascity-command-session-prune}
+@tab @code{gc session prune} --- Close dormant sessions older than an age
+@item @code{gascity-command-session-rename}
+@tab @code{gc session rename} --- Rename a session (`gc session rename <target> <title>').
+@item @code{gascity-command-session-reset}
+@tab @code{gc session reset} --- Restart a session fresh while preserving its bead.
+@item @code{gascity-command-session-suspend}
+@tab @code{gc session suspend} --- Suspend a session (stop its runtime; the bead persists).
+@item @code{gascity-command-session-unpin}
+@tab @code{gc session unpin} --- Remove a session's durable awake pin (`gc session unpin <target>').
+@item @code{gascity-command-session-wake}
+@tab @code{gc session wake} --- Wake a session and clear holds.
+@item @code{gascity-command-sling}
+@tab @code{gc sling} --- Route a bead (or task text/formula) to a session or agent.
+@item @code{gascity-command-start}
+@tab @code{gc start} --- Start the city under the machine-wide supervisor.
+@item @code{gascity-command-status}
+@tab @code{gc status} --- Show the Gas City town status.
+@item @code{gascity-command-stop}
+@tab @code{gc stop} --- Stop all agent sessions in the city (graceful shutdown).
+@end multitable
+
+@subsection The dispatch menu
+
+The one dispatch, @code{gascity-dispatch} (bound to @kbd{?} everywhere),
+generated from its transient layout.  Its suffixes sit under the keys they
+have in the views, so the menu teaches the view keys.
+
+@multitable @columnfractions .16 .10 .32 .42
+@headitem Group @tab Key @tab Command @tab Meaning
+@item Jump
+@tab @kbd{j j}
+@tab @code{gascity-jump-cockpit}
+@tab cockpit
+@item Jump
+@tab @kbd{j a}
+@tab @code{gascity-jump-agents}
+@tab agents
+@item Jump
+@tab @kbd{j r}
+@tab @code{gascity-jump-runs}
+@tab runs
+@item Jump
+@tab @kbd{j b}
+@tab @code{gascity-jump-beads}
+@tab beads
+@item Jump
+@tab @kbd{j m}
+@tab @code{gascity-jump-mail}
+@tab mail
+@item Jump
+@tab @kbd{j e}
+@tab @code{gascity-jump-events}
+@tab events
+@item Jump
+@tab @kbd{j h}
+@tab @code{gascity-jump-health}
+@tab health
+@item Jump
+@tab @kbd{j c}
+@tab @code{gascity-jump-cities}
+@tab cities
+@item Jump
+@tab @kbd{j o}
+@tab @code{gascity-jump-orders}
+@tab orders
+@item Jump
+@tab @kbd{j v}
+@tab @code{gascity-jump-convoys}
+@tab convoys
+@item Jump
+@tab @kbd{j d}
+@tab @code{gascity-jump-dolt}
+@tab dolt
+@item Jump
+@tab @kbd{j g}
+@tab @code{gascity-jump-rig}
+@tab rig dashboard
+@item Jump
+@tab @kbd{j l}
+@tab @code{gascity-jump-rigs}
+@tab rigs
+@item Jump
+@tab @kbd{j $}
+@tab @code{gascity-jump-costs}
+@tab costs
+@item Agent at point
+@tab @kbd{M}
+@tab @code{gascity-session-nudge-at-point}
+@tab nudge…
+@item Agent at point
+@tab @kbd{s}
+@tab @code{gascity-dashboard-suspend}
+@tab suspend
+@item Agent at point
+@tab @kbd{w}
+@tab @code{gascity-session-wake-at-point}
+@tab wake
+@item Agent at point
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab kill
+@item Agent at point
+@tab @kbd{D}
+@tab @code{gascity-session-drain-at-point}
+@tab drain
+@item Agent at point
+@tab @kbd{R}
+@tab @code{gascity-dashboard-reset}
+@tab reset
+@item Agent at point
+@tab @kbd{U}
+@tab @code{gascity-session-undrain-at-point}
+@tab undrain
+@item Agent at point
+@tab @kbd{t}
+@tab @code{gascity-tmux-at-point}
+@tab attach
+@item Work
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab sling…
+@item Work
+@tab @kbd{c}
+@tab @code{gascity-bead-dispatch}
+@tab bead actions…
+@item Work
+@tab @kbd{m}
+@tab @code{gascity-mail-dispatch}
+@tab mail actions…
+@item City
+@tab @kbd{L}
+@tab @code{gascity-reload}
+@tab reload
+@item City
+@tab @kbd{C}
+@tab @code{gascity-lifecycle-dispatch}
+@tab lifecycle…
+@item City
+@tab @kbd{O}
+@tab @code{gascity-order-run}
+@tab run order…
+@item City
+@tab @kbd{W}
+@tab @code{gascity-live-toggle}
+@tab toggle live
+@item City
+@tab @kbd{+}
+@tab @code{gascity-section-more}
+@tab more rows
+@item City
+@tab @kbd{-}
+@tab @code{gascity-section-less}
+@tab fewer rows
+@item City
+@tab @kbd{g}
+@tab @code{gascity-dispatch-refresh}
+@tab refresh
+@item City
+@tab @kbd{/}
+@tab @code{gascity-dispatch-filter}
+@tab filter…
+@end multitable

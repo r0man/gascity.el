@@ -270,5 +270,20 @@ resolve a sibling repository's formula."
                  (gascity-manual-test--read
                   ".beads/formulas/user-manual-screenshots.toml"))))
 
+(ert-deftest gascity-test-manual-generated-tables-tracked ()
+  "The generated reference tables are shipped and included (REQ-014).
+A normal `make' builds the manual from the tracked `doc/generated/*.texi';
+if either file drops out of `gascity_TEXINFOS' it stops shipping, and
+`make check-doc-drift' would have nothing to compare against.  Each file
+must also be `@include'd by `doc/gascity.texi' or the generated tables
+never reach the built manual."
+  (let ((makefile (gascity-manual-test--read "doc/Makefile.am"))
+        (texi (gascity-manual-test--read "doc/gascity.texi")))
+    (dolist (include '("generated/keys.texi" "generated/commands.texi"))
+      (ert-info ((format "%s" include))
+        (should (string-match-p (regexp-quote include) makefile))
+        (should (string-match-p (regexp-quote (concat "@include " include))
+                                texi))))))
+
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here

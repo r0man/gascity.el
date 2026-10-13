@@ -52,6 +52,9 @@
 !/build-aux/.gitkeep
 /m4/*.m4
 
+# `make dist' tarball
+/gascity-*.tar.gz
+
 # Coverage
 /coverage-final.json
 /.undercover-report.json

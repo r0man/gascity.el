@@ -27,9 +27,10 @@
 info_TEXINFOS = gascity.texi
 
 ## The generated tables (REQ-014, D4) are committed includes emitted by
-## doc/generate-tables.el; a clean checkout builds the manual from them.
-## They are tracked placeholders until W4 fills them in and `@include`s
-## them from gascity.texi.
+## doc/generate-tables.el; a clean checkout builds the manual from them
+## and a normal `make' never rewrites them.  `make check-doc-drift'
+## (wired into `make check') diffs a fresh generation against these
+## tracked copies; `make regen-doc-tables' rewrites them.
 gascity_TEXINFOS = \
   manual.css \
   lightbox.js \
@@ -88,7 +89,7 @@ gascity_TEXINFOS = \
   images/terminal-attach-dark-thumb.png \
   images/terminal-attach-dark.png
 
-EXTRA_DIST = $(gascity_TEXINFOS) screenshots
+EXTRA_DIST = $(gascity_TEXINFOS) generate-tables.el screenshots
 
 ## Inline the stylesheet and the lightbox into every HTML page.  Automake
 ## passes these flags to `$(MAKEINFO) --html' for its built-in
