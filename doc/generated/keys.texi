@@ -1,0 +1,8 @@
+@c keys.texi --- generated key-registry tables for gascity.el
+@c
+@c This tracked include is the committed artifact the manual builds
+@c from.  It is produced by doc/generate-tables.el and refreshed with
+@c `make regen-doc-tables'; `make check-doc-drift' fails when it no
+@c longer matches the effective keymaps.  Do not edit by hand.
+@c
+@c SPDX-License-Identifier: GPL-3.0-or-later
