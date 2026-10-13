@@ -1,8 +1,1775 @@
-@c keys.texi --- generated key-registry tables for gascity.el
+@c keys.texi --- generated keys tables for gascity.el
 @c
 @c This tracked include is the committed artifact the manual builds
 @c from.  It is produced by doc/generate-tables.el and refreshed with
 @c `make regen-doc-tables'; `make check-doc-drift' fails when it no
-@c longer matches the effective keymaps.  Do not edit by hand.
+@c longer matches the live keys.  Do not edit by hand.
 @c
 @c SPDX-License-Identifier: GPL-3.0-or-later
+
+@node Effective Key Bindings
+@section Effective Key Bindings
+@cindex key bindings, generated
+@cindex effective keymap
+
+These tables are generated from each view's @emph{effective} keymap
+(`keymap-lookup' over the mode's map, local bindings over inherited ones).
+A key a view binds is listed with the command it runs; an unbound key is
+omitted.  The semantic contract behind these tables is
+@code{gascity-key-registry-test}; @xref{Key Index}, for the alphabetical index.
+
+@multitable @columnfractions .15 .12 .33 .40
+@headitem View @tab Key @tab Command @tab Meaning
+@item @code{cockpit}
+@tab @kbd{RET}
+@tab @code{gascity-dashboard-activate}
+@tab Act on the thing at point (RET never folds, §5.4).
+@item @code{cockpit}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{cockpit}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{cockpit}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{cockpit}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{cockpit}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{cockpit}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{cockpit}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{cockpit}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{cockpit}
+@tab @kbd{g}
+@tab @code{gascity-dashboard-refresh}
+@tab Re-read every cockpit section, keeping point, folds and drawers.
+@item @code{cockpit}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{cockpit}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{cockpit}
+@tab @kbd{a n}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{cockpit}
+@tab @kbd{a s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{cockpit}
+@tab @kbd{a w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{cockpit}
+@tab @kbd{a k}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{cockpit}
+@tab @kbd{a D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{cockpit}
+@tab @kbd{a r}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{cockpit}
+@tab @kbd{a u}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{cockpit}
+@tab @kbd{a t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{cockpit}
+@tab @kbd{a d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{cockpit}
+@tab @kbd{a i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{cockpit}
+@tab @kbd{a v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
+@item @code{cockpit}
+@tab @kbd{d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{cockpit}
+@tab @kbd{s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{cockpit}
+@tab @kbd{w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{cockpit}
+@tab @kbd{i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{cockpit}
+@tab @kbd{t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{cockpit}
+@tab @kbd{D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{cockpit}
+@tab @kbd{C}
+@tab @code{gascity-lifecycle-dispatch}
+@tab Dispatch city-lifecycle actions (a hand-built command backend).
+@item @code{cockpit}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{cockpit}
+@tab @kbd{M}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{cockpit}
+@tab @kbd{R}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{cockpit}
+@tab @kbd{U}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{cockpit}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{rig-dashboard}
+@tab @kbd{RET}
+@tab @code{gascity-rig-dashboard-activate}
+@tab Drill into the thing at point: a bead opens in beads.el, an agent attaches.
+@item @code{rig-dashboard}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{rig-dashboard}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{rig-dashboard}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{rig-dashboard}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{rig-dashboard}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{rig-dashboard}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{rig-dashboard}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{rig-dashboard}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{rig-dashboard}
+@tab @kbd{g}
+@tab @code{gascity-rig-dashboard-refresh}
+@tab Reload the rig dashboard’s data, preserving point.
+@item @code{rig-dashboard}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{rig-dashboard}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{rig-dashboard}
+@tab @kbd{a n}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{rig-dashboard}
+@tab @kbd{a s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{rig-dashboard}
+@tab @kbd{a w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{rig-dashboard}
+@tab @kbd{a k}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{rig-dashboard}
+@tab @kbd{a D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{rig-dashboard}
+@tab @kbd{a r}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{rig-dashboard}
+@tab @kbd{a u}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{rig-dashboard}
+@tab @kbd{a t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{rig-dashboard}
+@tab @kbd{a d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{rig-dashboard}
+@tab @kbd{a i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{rig-dashboard}
+@tab @kbd{a v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
+@item @code{rig-dashboard}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{agent-detail}
+@tab @kbd{RET}
+@tab @code{gascity-session-detail-activate}
+@tab Act on the thing at point: a run opens run detail, a bead beads.el.
+@item @code{agent-detail}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{agent-detail}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{agent-detail}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{agent-detail}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{agent-detail}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{agent-detail}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{agent-detail}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{agent-detail}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{agent-detail}
+@tab @kbd{g}
+@tab @code{gascity-polecat-detail-refresh}
+@tab Reload the agent detail, preserving point.
+@item @code{agent-detail}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{agent-detail}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{agent-detail}
+@tab @kbd{a n}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{agent-detail}
+@tab @kbd{a s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{agent-detail}
+@tab @kbd{a w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{agent-detail}
+@tab @kbd{a k}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{agent-detail}
+@tab @kbd{a D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{agent-detail}
+@tab @kbd{a r}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{agent-detail}
+@tab @kbd{a u}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{agent-detail}
+@tab @kbd{a t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agent-detail}
+@tab @kbd{a d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{agent-detail}
+@tab @kbd{a i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{agent-detail}
+@tab @kbd{a v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
+@item @code{agent-detail}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{agents-tree}
+@tab @kbd{RET}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agents-tree}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{agents-tree}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{agents-tree}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{agents-tree}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{agents-tree}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{agents-tree}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{agents-tree}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{agents-tree}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{agents-tree}
+@tab @kbd{g}
+@tab @code{gascity-agents-tree-refresh}
+@tab Re-read the Agents tree, keeping folds and point.
+@item @code{agents-tree}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{agents-tree}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{agents-tree}
+@tab @kbd{a n}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{agents-tree}
+@tab @kbd{a s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{agents-tree}
+@tab @kbd{a w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{agents-tree}
+@tab @kbd{a k}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{agents-tree}
+@tab @kbd{a D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{agents-tree}
+@tab @kbd{a r}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{agents-tree}
+@tab @kbd{a u}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{agents-tree}
+@tab @kbd{a t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agents-tree}
+@tab @kbd{a d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{agents-tree}
+@tab @kbd{a i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{agents-tree}
+@tab @kbd{a v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
+@item @code{agents-tree}
+@tab @kbd{d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{agents-tree}
+@tab @kbd{s}
+@tab @code{gascity-session-suspend-at-point}
+@tab Suspend the session/agent at point and refresh.
+@item @code{agents-tree}
+@tab @kbd{w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{agents-tree}
+@tab @kbd{i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{agents-tree}
+@tab @kbd{t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agents-tree}
+@tab @kbd{D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{agents-tree}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{agents-tree}
+@tab @kbd{M}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{agents-tree}
+@tab @kbd{R}
+@tab @code{gascity-session-reset-at-point}
+@tab Restart the session/agent at point fresh (confirmed) and refresh.
+@item @code{agents-tree}
+@tab @kbd{U}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{agents-tree}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{agents}
+@tab @kbd{RET}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agents}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{agents}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{agents}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{agents}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{agents}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{agents}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{agents}
+@tab @kbd{g}
+@tab @code{gascity-agents-refresh}
+@tab Re-read the Agents table’s payloads; the old rows stay until they land.
+@item @code{agents}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{agents}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{agents}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{agents}
+@tab @kbd{d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{agents}
+@tab @kbd{s}
+@tab @code{gascity-session-suspend-at-point}
+@tab Suspend the session/agent at point and refresh.
+@item @code{agents}
+@tab @kbd{w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{agents}
+@tab @kbd{i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{agents}
+@tab @kbd{t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{agents}
+@tab @kbd{D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{agents}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{agents}
+@tab @kbd{M}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{agents}
+@tab @kbd{R}
+@tab @code{gascity-session-reset-at-point}
+@tab Restart the session/agent at point fresh (confirmed) and refresh.
+@item @code{agents}
+@tab @kbd{U}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{agents}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{session-list}
+@tab @kbd{RET}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{session-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{session-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{session-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{session-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{session-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{session-list}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{session-list}
+@tab @kbd{g}
+@tab @code{gascity-session-list-refresh}
+@tab Refresh the session list, applying the current filter.
+@item @code{session-list}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{session-list}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{session-list}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{session-list}
+@tab @kbd{d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{session-list}
+@tab @kbd{s}
+@tab @code{gascity-session-suspend-at-point}
+@tab Suspend the session/agent at point and refresh.
+@item @code{session-list}
+@tab @kbd{w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{session-list}
+@tab @kbd{i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{session-list}
+@tab @kbd{t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{session-list}
+@tab @kbd{D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{session-list}
+@tab @kbd{K}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{session-list}
+@tab @kbd{M}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{session-list}
+@tab @kbd{R}
+@tab @code{gascity-session-reset-at-point}
+@tab Restart the session/agent at point fresh (confirmed) and refresh.
+@item @code{session-list}
+@tab @kbd{U}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{session-list}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{runs}
+@tab @kbd{RET}
+@tab @code{gascity-runs-activate}
+@tab Open the run at point in the run detail (RET never folds, §5.4).
+@item @code{runs}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{runs}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{runs}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{runs}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{runs}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{runs}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{runs}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{runs}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{runs}
+@tab @kbd{g}
+@tab @code{gascity-runs-refresh}
+@tab Re-read the runs, keeping point, folds and drawers.
+@item @code{runs}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{runs}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{runs}
+@tab @kbd{a n}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{runs}
+@tab @kbd{a s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{runs}
+@tab @kbd{a w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{runs}
+@tab @kbd{a k}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{runs}
+@tab @kbd{a D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{runs}
+@tab @kbd{a r}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{runs}
+@tab @kbd{a u}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{runs}
+@tab @kbd{a t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{runs}
+@tab @kbd{a d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{runs}
+@tab @kbd{a i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{runs}
+@tab @kbd{a v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
+@item @code{runs}
+@tab @kbd{i}
+@tab @code{gascity-runs-agent-detail}
+@tab Open the detail of the live worker at point (‘i’).
+@item @code{runs}
+@tab @kbd{t}
+@tab @code{gascity-runs-agent-tmux}
+@tab Attach the live worker at point (the t key).
+@item @code{runs}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{run-detail}
+@tab @kbd{RET}
+@tab @code{gascity-run-activate}
+@tab Act on the thing at point: open a step’s bead, visit a plan file.
+@item @code{run-detail}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{run-detail}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{run-detail}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{run-detail}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{run-detail}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{run-detail}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{run-detail}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{run-detail}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{run-detail}
+@tab @kbd{g}
+@tab @code{gascity-run-refresh}
+@tab Re-read the run, keeping point, folds and drawers.
+@item @code{run-detail}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{run-detail}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{run-detail}
+@tab @kbd{a n}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{run-detail}
+@tab @kbd{a s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{run-detail}
+@tab @kbd{a w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{run-detail}
+@tab @kbd{a k}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{run-detail}
+@tab @kbd{a D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{run-detail}
+@tab @kbd{a r}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{run-detail}
+@tab @kbd{a u}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{run-detail}
+@tab @kbd{a t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{run-detail}
+@tab @kbd{a d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{run-detail}
+@tab @kbd{a i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{run-detail}
+@tab @kbd{a v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
+@item @code{run-detail}
+@tab @kbd{i}
+@tab @code{gascity-runs-agent-detail}
+@tab Open the detail of the live worker at point (‘i’).
+@item @code{run-detail}
+@tab @kbd{t}
+@tab @code{gascity-runs-agent-tmux}
+@tab Attach the live worker at point (the t key).
+@item @code{run-detail}
+@tab @kbd{C}
+@tab @code{gascity-run-toggle-control}
+@tab Show or hide the control nodes (spec, scope check, finalize) (‘C’).
+@item @code{run-detail}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{health}
+@tab @kbd{RET}
+@tab @code{gascity-health-activate}
+@tab Act on the thing at point: a rig opens its dashboard (RET).
+@item @code{health}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{health}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{health}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{health}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{health}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{health}
+@tab @kbd{N}
+@tab @code{gascity-section-next}
+@tab Move point to the next top-level section header.
+@item @code{health}
+@tab @kbd{P}
+@tab @code{gascity-section-previous}
+@tab Move point to the previous top-level section header.
+@item @code{health}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{health}
+@tab @kbd{g}
+@tab @code{gascity-health-refresh}
+@tab Re-read every health section (doctor excepted: ‘!’ runs it).
+@item @code{health}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{health}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{health}
+@tab @kbd{a n}
+@tab @code{gascity-session-nudge-at-point}
+@tab Nudge the session/agent at point with a prompted message, then refresh.
+@item @code{health}
+@tab @kbd{a s}
+@tab @code{gascity-dashboard-suspend}
+@tab Suspend the agent or rig at point (‘s’, §5.3).
+@item @code{health}
+@tab @kbd{a w}
+@tab @code{gascity-session-wake-at-point}
+@tab Wake the session/agent at point and refresh.
+@item @code{health}
+@tab @kbd{a k}
+@tab @code{gascity-session-kill-at-point}
+@tab Force-kill the runtime of the session/agent at point and refresh.
+@item @code{health}
+@tab @kbd{a D}
+@tab @code{gascity-session-drain-at-point}
+@tab Signal the session/agent at point to drain (wind down gracefully), then refresh.
+@item @code{health}
+@tab @kbd{a r}
+@tab @code{gascity-dashboard-reset}
+@tab Reset the agent, or restart the rig, at point (‘R’, confirmed).
+@item @code{health}
+@tab @kbd{a u}
+@tab @code{gascity-session-undrain-at-point}
+@tab Clear the drain flag on the session/agent at point and refresh.
+@item @code{health}
+@tab @kbd{a t}
+@tab @code{gascity-tmux-at-point}
+@tab Attach to the tmux session of the agent at point.
+@item @code{health}
+@tab @kbd{a d}
+@tab @code{gascity-dired-at-point}
+@tab Open Dired on the agent worktree or rig directory at point.
+@item @code{health}
+@tab @kbd{a i}
+@tab @code{gascity-polecat-detail-at-point}
+@tab Open the detail view for the session/agent at point.
+@item @code{health}
+@tab @kbd{a v}
+@tab @code{gascity-session-peek-at-point}
+@tab Show recent output of the session/agent at point without attaching.
+@item @code{health}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{cities}
+@tab @kbd{RET}
+@tab @code{gascity-cities-visit}
+@tab Open the cockpit of the city at point (RET).
+@item @code{cities}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{cities}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{cities}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{cities}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{cities}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{cities}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{cities}
+@tab @kbd{g}
+@tab @code{gascity-cities-refresh}
+@tab Re-read every host’s cities and every city’s status (‘g’).
+@item @code{cities}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{cities}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{cities}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{cities}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{rig-list}
+@tab @kbd{RET}
+@tab @code{gascity-rig-dashboard-at-point}
+@tab Open the rig dashboard for the rig at point.
+@item @code{rig-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{rig-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{rig-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{rig-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{rig-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{rig-list}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{rig-list}
+@tab @kbd{g}
+@tab @code{gascity-rig-list-refresh}
+@tab Refresh the rig list, applying the current filter.
+@item @code{rig-list}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{rig-list}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{rig-list}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{rig-list}
+@tab @kbd{d}
+@tab @code{gascity-rig-list-dired}
+@tab Open Dired on the path of the rig at point.
+@item @code{rig-list}
+@tab @kbd{s}
+@tab @code{gascity-rig-suspend-at-point}
+@tab Suspend the rig at point and refresh the list.
+@item @code{rig-list}
+@tab @kbd{R}
+@tab @code{gascity-rig-restart-at-point}
+@tab Restart the rig at point (kill its agent sessions) and refresh the list.
+@item @code{rig-list}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{convoy-list}
+@tab @kbd{RET}
+@tab @code{gascity-convoy-list-visit}
+@tab Open the convoy bead at point in beads.el, scoped to its store.
+@item @code{convoy-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{convoy-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{convoy-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{convoy-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{convoy-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{convoy-list}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{convoy-list}
+@tab @kbd{g}
+@tab @code{gascity-convoy-list-refresh}
+@tab Refresh the convoy list, applying the current filter.
+@item @code{convoy-list}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{convoy-list}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{convoy-list}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{convoy-list}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{order-list}
+@tab @kbd{RET}
+@tab @code{gascity-order-list-visit}
+@tab Open the source file of the order at point.
+@item @code{order-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{order-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{order-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{order-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{order-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{order-list}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{order-list}
+@tab @kbd{g}
+@tab @code{gascity-order-list-refresh}
+@tab Refresh the order list, applying the current filter.
+@item @code{order-list}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{order-list}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{order-list}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{order-list}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{dolt-list}
+@tab @kbd{RET}
+@tab @code{gascity-dolt-list-show}
+@tab Echo the details of the Dolt database at point.
+@item @code{dolt-list}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{dolt-list}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{dolt-list}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{dolt-list}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{dolt-list}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{dolt-list}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{dolt-list}
+@tab @kbd{g}
+@tab @code{gascity-dolt-list-refresh}
+@tab Refresh the Dolt database list (from ‘gc dolt health’).
+@item @code{dolt-list}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{dolt-list}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{dolt-list}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{dolt-list}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{events}
+@tab @kbd{RET}
+@tab @code{gascity-events-visit}
+@tab Drill into the row at point (RET).
+@item @code{events}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{events}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{events}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{events}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{events}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{events}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{events}
+@tab @kbd{g}
+@tab @code{gascity-events-refresh}
+@tab Re-read the events of this view’s window (and type), then render.
+@item @code{events}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{events}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{events}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{events}
+@tab @kbd{i}
+@tab @code{gascity-events-agent}
+@tab Open the agent detail of the session event at point (‘i’).
+@item @code{events}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{mail-inbox}
+@tab @kbd{RET}
+@tab @code{gascity-mail-inbox-show}
+@tab Show the message at point without marking it read (RET).
+@item @code{mail-inbox}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{mail-inbox}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{mail-inbox}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{mail-inbox}
+@tab @kbd{n}
+@tab @code{next-line}
+@tab Move cursor vertically down ARG lines.
+@item @code{mail-inbox}
+@tab @kbd{p}
+@tab @code{previous-line}
+@tab Move cursor vertically up ARG lines.
+@item @code{mail-inbox}
+@tab @kbd{q}
+@tab @code{gascity-tabulated-quit}
+@tab Close the detail window when one is open, else bury the list (‘q’).
+@item @code{mail-inbox}
+@tab @kbd{g}
+@tab @code{gascity-mail-inbox-refresh}
+@tab Re-read the inbox through the store and render it (‘g’).
+@item @code{mail-inbox}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{mail-inbox}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{mail-inbox}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{mail-inbox}
+@tab @kbd{R}
+@tab @code{gascity-mail-reply-at-point}
+@tab Reply to the message at point — compose the body, then send to its sender.
+@item @code{mail-inbox}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{mail-thread}
+@tab @kbd{RET}
+@tab @code{gascity-mail-thread-visit}
+@tab Open the message at point in beads.el (RET): a message is a bead.
+@item @code{mail-thread}
+@tab @kbd{TAB}
+@tab @code{gascity-thing-forward}
+@tab Move to the Nth next thing (TAB), marking this view’s things first.
+@item @code{mail-thread}
+@tab @kbd{S-TAB}
+@tab @code{gascity-thing-backward}
+@tab Move to the Nth previous thing (S-TAB), marking this view’s things first.
+@item @code{mail-thread}
+@tab @kbd{SPC}
+@tab @code{gascity-thing-toggle}
+@tab Toggle the thing at point (SPC): fold, expand, or open its detail.
+@item @code{mail-thread}
+@tab @kbd{q}
+@tab @code{quit-window}
+@tab Quit WINDOW and bury its buffer.
+@item @code{mail-thread}
+@tab @kbd{g}
+@tab @code{gascity-mail-thread-refresh}
+@tab Re-read this thread with ‘gc mail thread --json’ (‘g’).
+@item @code{mail-thread}
+@tab @kbd{?}
+@tab @code{gascity-dispatch}
+@tab Dispatch every gascity verb and view (dashboard-v3 §6.2).
+@item @code{mail-thread}
+@tab @kbd{j}
+@tab @code{gascity-jump-prefix}
+@tab The ‘j’ jump prefix bound in every gascity view (§5.2).
+@item @code{mail-thread}
+@tab @kbd{a n}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a s}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a w}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a k}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a D}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a r}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a u}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a t}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a d}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a i}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{a v}
+@tab @code{nil}
+@tab nil
+@item @code{mail-thread}
+@tab @kbd{R}
+@tab @code{gascity-mail-reply-at-point}
+@tab Reply to the message at point — compose the body, then send to its sender.
+@item @code{mail-thread}
+@tab @kbd{S}
+@tab @code{gascity-sling-dispatch}
+@tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@end multitable

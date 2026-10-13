@@ -23,7 +23,7 @@ GASCITY_LISP_FILES = $(filter-out %/gascity-autoloads.el, \
 ELCFILES = $(GASCITY_LISP_FILES:.el=.elc)
 AUTOLOADS = $(top_srcdir)/lisp/gascity-autoloads.el
 
-.PHONY: byte-compile lint screenshots
+.PHONY: byte-compile lint screenshots check-doc-drift regen-doc-tables
 
 ## Byte-compile the whole package in a single Emacs invocation, with
 ## warnings promoted to errors (REQ-002).  The single invocation over
@@ -48,11 +48,37 @@ all-local: byte-compile $(AUTOLOADS)
 ## `make check' runs the whole ERT suite exactly once (REQ-003, REQ-021).
 ## scripts/run-tests.el loads each test file unless its feature is already
 ## present, so a file pulled in through `require' is not evaluated twice.
-check-local: all-local
+check-local: all-local check-doc-drift
 	GASCITY_TEST_DIR='$(top_srcdir)/lisp/test' \
 	  EMACSLOADPATH="$(AM_EMACSLOADPATH)" \
 	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' -L '$(top_srcdir)/lisp/test' \
 	    -l '$(top_srcdir)/scripts/run-tests.el'
+
+## Generated manual tables (REQ-014, plan decision D4).  The tracked
+## includes under doc/generated/ are the committed artifact a clean
+## checkout builds the manual from.  A normal `make' never rewrites them.
+## `regen-doc-tables' is the maintainer target that does; `check-doc-drift'
+## regenerates into a fresh temporary directory and compares byte for byte,
+## so it also works inside `make distcheck' (no `git diff' as the gate).
+regen-doc-tables:
+	EMACSLOADPATH="$(AM_EMACSLOADPATH)" \
+	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' \
+	    -l '$(top_srcdir)/doc/generate-tables.el' '$(top_srcdir)/doc/generated'
+
+check-doc-drift:
+	@directory="$$(mktemp -d)"; \
+	trap 'rm -rf "$$directory"' EXIT; \
+	EMACSLOADPATH="$(AM_EMACSLOADPATH)" \
+	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' \
+	    -l '$(top_srcdir)/doc/generate-tables.el' "$$directory" >/dev/null; \
+	status=0; \
+	for file in keys.texi commands.texi; do \
+	  if ! diff -u "$(top_srcdir)/doc/generated/$$file" "$$directory/$$file"; then \
+	    echo "check-doc-drift: doc/generated/$$file is stale; run 'make regen-doc-tables'" >&2; \
+	    status=1; \
+	  fi; \
+	done; \
+	exit $$status
 
 ## `make lint' is the `eldev -p -dtT lint' bar preserved without Eldev
 ## (REQ-008, REQ-021): scripts/lint.el checkdocs every source and runs
@@ -101,4 +127,7 @@ EXTRA_DIST = \
   m4 \
   scripts \
   .github/workflows \
+  doc/generate-tables.el \
+  doc/generated/keys.texi \
+  doc/generated/commands.texi \
   doc/screenshots

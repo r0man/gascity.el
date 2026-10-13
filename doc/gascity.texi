@@ -3381,6 +3381,23 @@ Show recent terminal output read-only: @kbd{a v} or @kbd{v}.
 
 
 @c ====================================================================
+@node Generated Reference Tables
+@appendix Generated Reference Tables
+@cindex generated reference tables
+
+The two tables below are generated from the running code by
+@file{doc/generate-tables.el} and committed under @file{doc/generated/}.
+They are part of the distribution, so a clean checkout builds the manual
+from them without running Emacs; a normal @command{make} never rewrites
+them.  @command{make regen-doc-tables} refreshes the tracked copies and
+@command{make check-doc-drift} (run by @command{make check}) fails when
+they no longer match the code.
+
+@include generated/keys.texi
+@include generated/commands.texi
+
+
+@c ====================================================================
 @node Capability Gaps
 @appendix Capability Gaps
 @cindex capability gaps
