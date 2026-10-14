@@ -385,7 +385,7 @@ it like on any agent row."
               :face (gascity-section-state-face awake)
               'gascity-agent obj)))
 
-(defun gascity-status--named-sessions-vnode (named-sessions socket)
+(defun gascity-status--named-sessions-vnode (named-sessions socket &optional collapsed)
   "Return the named-sessions section vnode, or nil when there is nothing to show.
 SOCKET is the shared tmux socket the rows' action keys attach through.
 NAMED-SESSIONS is the `gascity-domain-named-sessions-from-sessions'
@@ -394,15 +394,21 @@ empty derivation — no canonical city-scoped row, which is also what a
 pending or failed session load with no snapshot in hand yields — returns
 nil, so nothing unmounts (the stale-while-revalidate rule: the section's
 absence must never blank its neighbors).  Otherwise this is a dim
-\"Named sessions\" header and one row per derived object."
+\"Named sessions\" header and one row per derived object.  COLLAPSED
+folds the rows away behind a ▸ indicator; the header carries a fold
+thing so SPC/RET toggle it (like the rig and pool sections)."
   (when named-sessions
     (vui-vstack
-     (vui-text "Named sessions" :face 'gascity-dim 'gascity-section t)
-     (vui-list named-sessions
-               (lambda (named)
-                 (gascity-status--named-session-row named socket))
-               (lambda (named)
-                 (or (gascity-named-session-identity named) "?"))))))
+     (vui-text (format "%s Named sessions" (if collapsed "▸" "▾"))
+               :face 'gascity-dim
+               'gascity-section t
+               'beads-thing (gascity-status--fold-thing 'named "Named sessions"))
+     (unless collapsed
+       (vui-list named-sessions
+                 (lambda (named)
+                   (gascity-status--named-session-row named socket))
+                 (lambda (named)
+                   (or (gascity-named-session-identity named) "?")))))))
 
 ;;; Components
 

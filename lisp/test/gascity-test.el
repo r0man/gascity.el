@@ -310,7 +310,8 @@ shape (127 is a shell exit, never a signal status)."
   (should (equal (gascity-tabulated--format-timestamp "") ""))
   (should (equal (gascity-tabulated--format-timestamp nil) ""))
   (should (equal (gascity-tabulated--str 42) "42"))
-  (should (equal (gascity-tabulated--str nil) ""))
+  (should (equal (gascity-tabulated--str nil) "—"))
+  (should (equal (gascity-tabulated--str nil t) ""))
   (should (equal (gascity-tabulated--str t) "yes")))
 
 (ert-deftest gascity-test-tabulated-format-timestamp ()
@@ -685,6 +686,15 @@ the faithful rendering of the underlying value alongside it (gce-79f)."
     (should (equal (gascity-agent-work-dir id) "/wd"))
     (should (equal (gascity-agent-socket id) "sock"))
     (should (eq (gascity-agent-running id) t))))
+
+(ert-deftest gascity-test-session-entry-provider-dash-for-absent ()
+  "An absent Provider (a pool worker) renders as an em-dash, never blank."
+  (let* ((s (gascity-domain-decode
+             'gascity-session
+             '((agent_name . "gastown.polecat-1") (rig . "gascity.el")
+               (state . "active") (work_dir . "/wd"))))
+         (cells (cadr (gascity-session-list--entry s "sock"))))
+    (should (equal (substring-no-properties (aref cells 3)) "—"))))
 
 (ert-deftest gascity-test-session-name-prefers-agent-name ()
   "The qualified `agent_name' is preferred over the volatile `name'.
@@ -3017,6 +3027,22 @@ REQ-003).  A row whose gc session row lacks a mode renders no placeholder at all
                  (gascity-status--named-sessions-vnode named "sock"))))
       (should (string-search "(on_demand)" text))
       (should-not (string-search "(mode —)" text)))))
+
+(ert-deftest gascity-test-status-named-sessions-folds ()
+  "The Named sessions header folds its rows with a ▸/▾ indicator.
+The header carries a fold thing, so SPC/RET toggle it like a rig or pool."
+  (let* ((session (gascity-domain-decode 'gascity-session
+                   '((agent_name . "mayor") (name . "mayor") (template . "mayor")
+                     (state . "active") (work_dir . "/city"))))
+         (named (gascity-domain-named-sessions-from-sessions (list session))))
+    (let ((text (gascity-test--vnode-text
+                 (gascity-status--named-sessions-vnode named "sock" nil))))
+      (should (string-search "▾ Named sessions" text))
+      (should (string-search "mayor awake" text)))
+    (let ((text (gascity-test--vnode-text
+                 (gascity-status--named-sessions-vnode named "sock" t))))
+      (should (string-search "▸ Named sessions" text))
+      (should-not (string-search "mayor awake" text)))))
 
 
 

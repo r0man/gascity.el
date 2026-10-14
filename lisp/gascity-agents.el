@@ -571,7 +571,8 @@ the §5.3 agent keys act on the row at point.
 
 (vui-defcomponent gascity-agents-tree-app ()
   "The Agents tree: city → rigs → pools → agents (dashboard-v3 §7.3)."
-  :state ((refresh-tick 0) (collapsed-rigs nil) (collapsed-pools nil))
+  :state ((refresh-tick 0) (collapsed-rigs nil) (collapsed-pools nil)
+          (collapsed-city nil) (collapsed-named nil))
   :render
   (let* ((status (gascity-ui-store-load
                   (gascity-store-use '("status") :tick refresh-tick)))
@@ -588,13 +589,15 @@ the §5.3 agent keys act on the row at point.
         (plist-get sessions :data)
         (gascity-status--pool-templates
          (alist-get 'agents (plist-get agents :data)))
-        collapsed-rigs collapsed-pools)))))
+        collapsed-rigs collapsed-pools collapsed-city collapsed-named)))))
 
 (defun gascity-agents--tree-vnode (status sessions-payload templates
-                                          collapsed-rigs collapsed-pools)
+                                          collapsed-rigs collapsed-pools
+                                          collapsed-city collapsed-named)
   "Return the tree of STATUS joined to SESSIONS-PAYLOAD, pools by TEMPLATES.
-COLLAPSED-RIGS / COLLAPSED-POOLS name the folded groups.  Named
-sessions without a status agent (the mayor) join the city scope."
+COLLAPSED-RIGS / COLLAPSED-POOLS name the folded groups; COLLAPSED-CITY
+folds the whole city block, COLLAPSED-NAMED its named-sessions rows.
+Named sessions without a status agent (the mayor) join the city scope."
   (let* ((session-rows (gascity-domain-decode-list
                         'gascity-session
                         (or (alist-get 'sessions sessions-payload) [])))
@@ -613,14 +616,30 @@ sessions without a status agent (the mayor) join the city scope."
                  session-rows))
          (all (append agents named))
          (rigs (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status)))
-         (city-agents (seq-filter #'gascity-status--city-agent-p all)))
+         (city-agents (seq-filter #'gascity-status--city-agent-p agents)))
     (vui-vstack
      :spacing 1
      (vui-vstack
-      (gascity-ui-section-header "City" nil)
-      (gascity-status--agent-group-vnodes
-       (gascity-status--group-agents city-agents templates session-map)
-       nil session-map socket collapsed-pools))
+      (gascity-ui-section-header
+       (format "%s City" (if collapsed-city "▸" "▾"))
+       nil
+       'beads-thing (gascity-status--fold-thing 'city "City"))
+      (unless collapsed-city
+        (gascity-status--agent-group-vnodes
+         (gascity-status--group-agents city-agents templates session-map)
+         nil session-map socket collapsed-pools)))
+     (when named
+       (vui-vstack
+        (gascity-ui-section-header
+         (format "%s Named sessions" (if collapsed-named "▸" "▾"))
+         nil
+         'beads-thing (gascity-status--fold-thing 'named "Named sessions"))
+        (unless collapsed-named
+          (vui-list named
+                    (lambda (a)
+                      (gascity-status--agent-row a nil session-map socket))
+                    (lambda (a)
+                      (or (alist-get 'qualified_name a) "?"))))))
      (vui-list rigs
                (lambda (rig)
                  (vui-component 'gascity-status-rig
@@ -634,9 +653,14 @@ sessions without a status agent (the mayor) join the city scope."
                :spacing 1))))
 
 (defun gascity-agents-tree--toggle (kind name)
-  "Fold or unfold the tree's rig or pool (KIND `rig'/`pool') NAME."
+  "Fold or unfold the tree's city, rig, pool or named block (KIND) NAME."
   (when-let* ((root (and (boundp 'vui--root-instance) vui--root-instance)))
-    (let* ((key (if (eq kind 'rig) :collapsed-rigs :collapsed-pools))
+    (let* ((key (pcase kind
+                  ('rig :collapsed-rigs)
+                  ('pool :collapsed-pools)
+                  ('city :collapsed-city)
+                  ('named :collapsed-named)
+                  (_ (error "Unknown fold kind: %S" kind))))
            (state (vui-instance-state root))
            (current (plist-get state key)))
       (setf (vui-instance-state root)
