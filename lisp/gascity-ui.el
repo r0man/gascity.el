@@ -146,7 +146,7 @@ are left alone; nothing here reads gc or touches a file."
       "T" (group (= 2 digit)) ":" (group (= 2 digit)) ":" (group (= 2 digit))
       (? "." (+ digit))
       (or (group "Z")
-          (seq (group (any "+-")) (group (= 2 digit)) ":" (group (= 2 digit))))
+          (seq (group "[+-]") (group (= 2 digit)) ":" (group (= 2 digit))))
       eos)
   "The timestamp shape gc prints: RFC 3339, `Z' or a `±HH:MM' offset.")
 

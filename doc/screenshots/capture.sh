@@ -38,7 +38,16 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
+# Resolve the repository root from the script's own location, independent of
+# the caller's working directory (`make screenshots' runs the script by path).
+# Prefer the enclosing git work tree, so a copy in a VPATH build tree still
+# finds the source root; fall back to the historical script-relative
+# doc/screenshots -> repo-root assumption when git is unavailable or this is
+# not a checkout (e.g. a distributed copy).
+REPO="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$REPO" ]; then
+  REPO="$(cd "$HERE/../.." && pwd)"
+fi
 IMAGES_DIR="${GASCITY_SHOT_IMAGES:-$REPO/doc/images}"
 STAGING="${GASCITY_SHOT_STAGING:-/tmp/gascity-shots}"
 SHOTS_EL="$HERE/gascity-shots.el"

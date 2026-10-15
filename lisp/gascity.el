@@ -4,7 +4,7 @@
 
 ;; Author: Gas City Contributors
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (transient "0.10.1") (vui "1.0.0") (beads "0.1.0") (sesman "0.3.2"))
+;; Package-Requires: ((emacs "29.1") (transient "0.10.1") (vui "1.0.0") (beads "0.1.0"))
 ;; Keywords: tools, processes
 ;; URL: https://github.com/r0man/gascity.el
 

@@ -12,7 +12,7 @@
 ;; manifest and scope resolver, gascity-shots.el's shot list,
 ;; doc/gascity.texi's `@shot' macro and area map, and fixture.sh's
 ;; isolation variables --- instead of a live city, so they run under
-;; `eldev test' without the graphical capture stack.  Only bash is
+;; `make check' without the graphical capture stack.  Only bash is
 ;; spawned; the parts that need sway, a GUI Emacs or ImageMagick stay in
 ;; `capture.sh --self-test' and are skipped there without those tools.
 
@@ -155,6 +155,22 @@ Return a plist with :status, the captured :stdout and the captured
       (and (boundp 'beads-test-isolation-env-vars)
            (symbol-value 'beads-test-isolation-env-vars)))))
 
+(defun gascity-manual-test--key-registry-const (name)
+  "Return the value of the key-registry test's NAME `defconst'.
+NAME is a symbol; its literal `(defconst NAME VALUE ...)' form is read
+from `gascity-key-registry-test.el' so this file need not load the
+package just to learn the registered surface."
+  (let* ((text (gascity-manual-test--read
+                "lisp/test/gascity-key-registry-test.el"))
+         (start (string-match (concat "(defconst "
+                                      (regexp-quote (symbol-name name))
+                                      "\\b")
+                              text)))
+    (should start)
+    (let ((form (read (substring text start))))
+      (should (eq (car form) 'defconst))
+      (eval (nth 2 form) t))))
+
 ;;; Tests
 
 (ert-deftest gascity-test-manual-fixture-parses ()
@@ -193,6 +209,27 @@ Return a plist with :status, the captured :stdout and the captured
                                         "--list-scope" "--scope" "nope")))
     (should-not (equal 0 (plist-get res :status)))
     (should (string-match-p "nope" (plist-get res :stderr)))))
+
+(ert-deftest gascity-test-manual-capture-root-resolution ()
+  "capture.sh finds the repo root from any working directory (REQ-015).
+It resolves the root with `git rev-parse --show-toplevel' (or its own
+parent-parent), so `make screenshots' can run it by absolute path."
+  (let ((text (gascity-manual-test--read "doc/screenshots/capture.sh")))
+    (should (string-match-p "rev-parse --show-toplevel" text)))
+  (let* ((script (expand-file-name "doc/screenshots/capture.sh"
+                                   gascity-manual-test--root))
+         (tmp (make-temp-file "gascity-capture-cwd" t))
+         (errfile (make-temp-file "gascity-manual-err"))
+         (views (gascity-manual-test--views)))
+    (unwind-protect
+        (with-temp-buffer
+          (let ((default-directory (file-name-as-directory tmp)))
+            (should (equal 0 (call-process
+                              "bash" nil (list t errfile) nil script
+                              "--list-scope" "--scope" "all")))
+            (should (equal views (split-string (buffer-string) "\n" t)))))
+      (delete-file errfile)
+      (delete-directory tmp t))))
 
 (ert-deftest gascity-test-manual-manifest-views-have-shots ()
   "Every manifest view has a shot thunk, and vice versa (REQ-001, REQ-006)."
@@ -269,6 +306,89 @@ resolve a sibling repository's formula."
                   ".beads/formulas/user-manual-screenshots.formula.toml")
                  (gascity-manual-test--read
                   ".beads/formulas/user-manual-screenshots.toml"))))
+
+(ert-deftest gascity-test-manual-key-registry-coverage ()
+  "Every registered view, key and verb appears in the manual (REQ-012, AC-6).
+The key registry is the coverage checklist: a new view, keymap or agent
+command fails this test until it is documented in `doc/gascity.texi'."
+  (let* ((texi (gascity-manual-test--read "doc/gascity.texi"))
+         (views (gascity-manual-test--key-registry-const
+                 'gascity-key-registry--views))
+         (contract (gascity-manual-test--key-registry-const
+                    'gascity-key-registry--contract))
+         (vui-contract (gascity-manual-test--key-registry-const
+                        'gascity-key-registry--vui-contract))
+         (namespaced (gascity-manual-test--key-registry-const
+                      'gascity-key-registry--namespaced-verbs))
+         (agent-only (gascity-manual-test--key-registry-const
+                      'gascity-key-registry--agent-only-verbs)))
+    ;; Every view name and its mode map are documented.
+    (dolist (view views)
+      (ert-info ((format "view %s" (car view)))
+        (should (string-match-p (regexp-quote (symbol-name (car view))) texi))
+        (should (string-match-p (regexp-quote (symbol-name (nth 1 view)))
+                                texi))))
+    ;; Every universal and vui contract key is in the key index.
+    (dolist (key (append contract vui-contract))
+      (ert-info ((format "key %s" key))
+        (should (string-match-p (regexp-quote (concat "@kindex " key)) texi))))
+    ;; Every namespaced (`a' prefix) verb names its command.
+    (dolist (entry namespaced)
+      (ert-info ((format "a %s" (car entry)))
+        (should (string-match-p
+                 (regexp-quote (symbol-name (cdr entry))) texi))))
+    ;; Every agent-only bare alias names each command it may mean.
+    (dolist (entry agent-only)
+      (dolist (cmd (cdr entry))
+        (ert-info ((format "bare %s" (car entry)))
+          (should (string-match-p (regexp-quote (symbol-name cmd)) texi)))))))
+
+(ert-deftest gascity-test-manual-generated-tables-tracked ()
+  "The generated reference tables are shipped and included (REQ-014).
+A normal `make' builds the manual from the tracked `doc/generated/*.texi';
+if either file drops out of `gascity_TEXINFOS' it stops shipping, and
+`make check-doc-drift' would have nothing to compare against.  Each file
+must also be `@include'd by `doc/gascity.texi' or the generated tables
+never reach the built manual."
+  (let ((makefile (gascity-manual-test--read "doc/Makefile.am"))
+        (texi (gascity-manual-test--read "doc/gascity.texi")))
+    (dolist (include '("generated/keys.texi" "generated/commands.texi"))
+      (ert-info ((format "%s" include))
+        (should (string-match-p (regexp-quote include) makefile))
+        (should (string-match-p (regexp-quote (concat "@include " include))
+                                texi))))))
+
+(ert-deftest gascity-test-manual-quality-sections ()
+  "The manual carries the Guix/PostgreSQL quality elements (REQ-013).
+A review checklist in test form: a concept section, a task-organized
+reference, worked examples, complete indexes, correct cross-references,
+a contributing chapter and a troubleshooting chapter, plus the two
+required autotools/lint nodes."
+  (let ((texi (gascity-manual-test--read "doc/gascity.texi")))
+    ;; Concept, terminology, examples, reference, troubleshooting, contributing.
+    (dolist (node '("@node Introduction"
+                    "@node Terminology"
+                    "@node Worked Examples"
+                    "@node View and Key Reference"
+                    "@node Troubleshooting"
+                    "@node Contributing"))
+      (ert-info ((format "node %s" node))
+        (should (string-match-p (regexp-quote node) texi))))
+    ;; The two nodes W6 is required to add.
+    (dolist (node '("@node Building and installing with autotools"
+                    "@node Linting and documentation drift"))
+      (ert-info ((format "new node %s" node))
+        (should (string-match-p (regexp-quote node) texi))))
+    ;; Concept, function and variable index entries all appear.
+    (dolist (index '("@cindex " "@findex " "@vindex "))
+      (should (string-match-p (regexp-quote index) texi)))
+    ;; Both printed indexes are wired: the variable index is folded into
+    ;; the function index (`@syncodeindex vr fn'), and the key index prints.
+    (should (string-match-p "@syncodeindex vr fn" texi))
+    (should (string-match-p "@printindex fn" texi))
+    ;; Cross-references are present.
+    (should (string-match-p "@xref{" texi))
+    (should (string-match-p "@pxref{" texi))))
 
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here

@@ -4,6 +4,24 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### Toolchain: autotools replaces Eldev
+
+The build system is now a real GNU autotools project.  From a clean checkout,
+`./autogen.sh && ./configure --with-beads-dir="$HOME/workspace/beads.el" &&
+make && make check` byte-compiles every `lisp/*.el` with warnings promoted to
+errors, runs the full ERT suite, and installs the package and its Info manual
+(`make install`).  `make` replaces `eldev compile --warnings-as-errors`,
+`make check` replaces `eldev test`, and `make lint` (backed by
+`scripts/lint.el`) replaces `eldev -p -dtT lint`; `scripts/gate.sh` and
+`scripts/lint.sh` keep their semantics.  The non-ELPA `beads.el`/`vui`
+dependencies are resolved by `configure --with-beads-dir`/`--with-vui-dir`,
+with the vui bundled in the `beads.el` checkout taking precedence over any vui
+installed in the host Emacs.  `transient` 0.10.1 or later is resolved from the
+ambient `EMACSLOADPATH` or `--with-transient-dir`, because Emacs 29/30 bundle an
+older copy that lacks the macro `beads.el`'s menu macro expands to;
+`scripts/ci-deps` installs it (and `package-lint`) for CI.  `Eldev` and
+`.eldev/` are removed.
+
 ### Dashboard polish: fold the City block, show — for absent cells, refresh the inbox after send
 
 The Agents tree's **City** header now folds and unfolds with `SPC`/`TAB` (and

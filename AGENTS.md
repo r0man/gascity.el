@@ -14,17 +14,18 @@ The binding design is `docs/DESIGN.md` (read-only views) and
 sections (e.g. "DESIGN.md §4.3").
 
 Status is experimental. Emacs 29.1+. Dependencies `beads.el` and `vui` are not
-on ELPA: the `Eldev` file resolves them from a sibling checkout at
-`~/workspace/beads.el` (and the vui it bundles). `guix shell -D -f guix.scm`
-gives a dev environment for the Guix-available deps only.
+on ELPA: `./configure --with-beads-dir=DIR` resolves them from a sibling
+checkout at `~/workspace/beads.el` (and the vui it bundles; `--with-vui-dir`
+overrides it). `guix shell -D -f guix.scm` gives a dev environment for the
+Guix-available deps only.
 
 ## Build & test
 
 The standard quality gate, run from the repo root before every push:
 
 ```bash
-scripts/gate.sh   # eldev compile --warnings-as-errors  +  eldev test
-scripts/lint.sh   # the CI lint job's exact command (eldev -p -dtT lint)
+scripts/gate.sh   # make (byte-compile, warnings as errors) + make check (ERT)
+scripts/lint.sh   # the CI lint job's exact command (make lint)
 ```
 
 Run `scripts/lint.sh` too: its warnings are a CI failure (the `lint`
@@ -33,21 +34,20 @@ not part of `gate.sh` - the doc linter's checkdoc rules differ across the
 Emacs versions in the test matrix (29.4/30.2 flag docstring verbs that
 31.1 accepts).
 
-The halves, and how to narrow them:
+The targets, and what each one runs:
 
 ```bash
-eldev compile --warnings-as-errors      # byte-compile gate (offline)
-eldev test                              # whole ERT suite (lisp/test/gascity-test.el)
-eldev test gascity-test-remote          # tests whose name matches a selector (prefixes: status, remote, tabulated, rig, session, terminal, bd, beads, ...)
-eldev test -s -b                        # stop on first failure, print backtraces
+make                                    # byte-compile gate (offline, warnings as errors)
+make check                              # whole ERT suite (lisp/test/gascity-test.el)
+make lint                               # checkdoc + package-lint (the CI bar)
 make -C doc                             # Texinfo manual → doc/gascity.info + doc/gascity.html/
-make -C doc screenshots                 # regenerate doc/images/ from a live city (headless sway)
+make screenshots                        # regenerate doc/images/ from a live city (headless sway)
 ```
 
 `--warnings-as-errors` is the only check that catches an undefined-function
 reference. Action verbs are wired across files (a keymap or menu in one file
 names a command defined in another), so a missing forward `declare-function`
-compiles clean under plain `eldev compile` and is invisible to `eldev test`.
+compiles clean under a plain byte-compile and is invisible to `make check`.
 Always compile the whole package, never an "affected" subset.
 
 All tests are named `gascity-test-*` and live in `lisp/test/` (the big
@@ -80,7 +80,7 @@ make -C doc screenshots                       # scope all (fixture city)
 doc/screenshots/capture.sh --scope changed    # only the changed views
 doc/screenshots/capture.sh --verify all       # two runs, byte-identical
 doc/screenshots/capture.sh --check-isolation cockpit
-eldev test gascity-test-manual               # offline fixture/scope/shot checks
+make check                                  # includes offline fixture/scope/shot checks
 ```
 
 There are no permitted pixel differences: fixture ids are `demo-<role>` and
@@ -278,5 +278,5 @@ stranded.
   dialect), `parenmedic fix <files-or-globs>` to auto-fix.
   On `PATH` as `parenmedic` (Guix: `~/.guix-profile/bin/parenmedic`). `parenmedic` has
   exactly two subcommands (`diagnose`, `fix`) — it does not compile anything;
-  byte-compilation is `eldev compile --warnings-as-errors` (or just
+  byte-compilation is `make` with `byte-compile-error-on-warn` (or just
   `scripts/gate.sh`).
