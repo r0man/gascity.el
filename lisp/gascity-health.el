@@ -29,7 +29,9 @@
 ;;
 ;; - `gascity-costs' (`j $', §5.2): `gc costs' output as text in a
 ;;   read-only buffer.  gc has no JSON mode for it (§11 gap 1), so the
-;;   text is shown as gc prints it.
+;;   text is shown as gc prints it, plus a note under the table naming
+;;   any zero-usage rows (`no usage recorded', with
+;;   GC_DISABLE_USAGE_METRICS as the first thing to check).
 ;;
 ;; Rendering is pure over store snapshots (§8.3 R2): no gc call, no
 ;; file operation on a remote name while a view renders.
@@ -731,17 +733,73 @@ after confirmation; `g' re-reads everything else.
 (defconst gascity-costs-buffer-name "*gascity-costs: %s*"
   "Base name of the `gc costs' buffer, formatted with the city name.")
 
+(defun gascity-costs--table-runs (text)
+  "Return the per-run field lists in `gc costs' TEXT.
+gc prints a fixed text table: a RUN header, one row per run, a TOTAL
+row, then a trailing prose note.  Return only the per-run rows, each
+nine columns: RUN INVOCATIONS IN OUT CACHE_R CACHE_C WALL_S EST_USD
+UNPRICED.  A line that does not match that shape (the header, a TOTAL
+row, the trailing note) is skipped."
+  (let (runs)
+    (dolist (line (split-string text "\n"))
+      (let ((fields (split-string (string-trim line) " " t)))
+        (when (and (= (length fields) 9)
+                   (not (member (car fields) '("RUN" "TOTAL")))
+                   (string-match-p "\\`[0-9]+\\'" (nth 1 fields)))
+          (push fields runs))))
+    (nreverse runs)))
+
+(defun gascity-costs--zero-usage-runs (text)
+  "Return the RUN ids in TEXT whose usage and cost were not recorded.
+A row is unrecorded when gc reports all of INVOCATIONS IN OUT CACHE_R
+CACHE_C as 0 and EST_USD as 0.0000: the zero is \"no estimate
+available\", not a genuinely free run."
+  (let (ids)
+    (dolist (fields (gascity-costs--table-runs text))
+      (when (and (seq-every-p (lambda (i) (string= (nth i fields) "0"))
+                              '(1 2 3 4 5))
+                 (string-match-p "\\`0\\.0+\\'" (nth 7 fields)))
+        (push (car fields) ids)))
+    (nreverse ids)))
+
+(defun gascity-costs--annotation (text)
+  "Return a note explaining zero-usage rows in `gc costs' TEXT, or nil.
+gc prints 0 and 0.0000 for a run whose usage was never recorded, which
+is indistinguishable from a genuinely free run.  Name the state so the
+bare zeroes do not mislead (ga-jqt9q.3).  The note names
+GC_DISABLE_USAGE_METRICS as the first thing to check but does not read
+the local environment: gc may run on another host, so only gc's own
+output is authoritative here."
+  (when-let* ((ids (gascity-costs--zero-usage-runs text)))
+    (let* ((n (length ids))
+           (shown (if (> n 5)
+                      (concat (string-join (seq-take ids 5) ", ")
+                              (format " and %d more" (- n 5)))
+                    (string-join ids ", "))))
+      (concat
+       (gascity-dashboard--dim
+        (format "%d run%s with INVOCATIONS 0 and EST_USD 0.0000: no usage recorded,\n"
+                n (if (= n 1) "" "s")))
+       (gascity-dashboard--dim
+        "so no cost estimate is available.  Usage metrics may be disabled; check GC_DISABLE_USAGE_METRICS.\n")
+       (gascity-dashboard--dim (format "runs: %s\n" shown))))))
+
 (defun gascity-costs--fill (buffer text &optional error)
-  "Show TEXT (gc's output) in costs BUFFER; ERROR marks a failure line."
+  "Show TEXT (gc's output) in costs BUFFER; ERROR marks a failure line.
+A successful read whose runs recorded no usage gets an explanatory
+note (`gascity-costs--annotation') under the table."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (let ((inhibit-read-only t)
             (line (line-number-at-pos)))
         (erase-buffer)
-        (insert (if error
-                    (concat (gascity-ui-glyph 'fail) " "
-                            (gascity-dashboard--dim (concat text "   g retry")))
-                  text))
+        (if error
+            (insert (gascity-ui-glyph 'fail) " "
+                    (gascity-dashboard--dim (concat text "   g retry")))
+          (insert text)
+          (unless (bolp) (insert "\n"))
+          (when-let* ((note (gascity-costs--annotation text)))
+            (insert note)))
         (unless (bolp) (insert "\n"))
         (goto-char (point-min))
         (forward-line (1- line))
@@ -792,7 +850,8 @@ after confirmation; `g' re-reads everything else.
 ;;;###autoload
 (defun gascity-costs ()
   "Show `gc costs' (recorded usage by run) for this city (`j $').
-gc prints a text table; it is shown as-is, read in the background."
+gc prints a text table; it is shown as-is, read in the background,
+with an explanatory note under any rows that recorded no usage."
   (interactive)
   (let* ((dir (beads-prefix-invocation-directory))
          (city (or (gascity-context-city-name dir) "city"))

@@ -651,6 +651,36 @@ a contextless view whose reads fail and whose live indicator spins
 
 ;;; Costs (`j $')
 
+(ert-deftest gascity-test-costs-annotation-zero-usage ()
+  "Zero-usage rows get an explanatory note (ga-jqt9q.3)."
+  (let ((note (gascity-costs--annotation
+               (gascity-health-test--text "emacs-city.costs.txt"))))
+    (should note)
+    (should (string-match-p "12 runs with INVOCATIONS 0 and EST_USD 0.0000" note))
+    (should (string-match-p "ec-0c4x" note))
+    (should (string-match-p "GC_DISABLE_USAGE_METRICS" note))))
+
+(ert-deftest gascity-test-costs-annotation-none-when-priced ()
+  "A row with recorded usage and cost is not annotated."
+  (should-not
+   (gascity-costs--annotation
+    (concat "RUN  INVOCATIONS  IN  OUT  CACHE_R  CACHE_C  WALL_S  EST_USD  UNPRICED\n"
+            "x-1  3  100  50  10  5  12.5  0.0042  0\n"
+            "TOTAL  3  100  50  10  5  12.5  0.0042  0\n"
+            "Estimates are list-price decision-support, not authoritative charges.\n"))))
+
+(ert-deftest gascity-test-costs-annotation-not-for-unpriced-usage ()
+  "A run with usage but a 0.0000 estimate (unpriced) is not no-usage."
+  (should-not
+   (gascity-costs--annotation
+    (concat "RUN  INVOCATIONS  IN  OUT  CACHE_R  CACHE_C  WALL_S  EST_USD  UNPRICED\n"
+            "x-1  2  100  50  10  5  12.5  0.0000  2\n"
+            "TOTAL  2  100  50  10  5  12.5  0.0000  2\n"))))
+
+(ert-deftest gascity-test-costs-annotation-nil-for-error-text ()
+  "Non-table text (a failure line) is never annotated."
+  (should-not (gascity-costs--annotation "gc costs failed: boom")))
+
 (ert-deftest gascity-test-costs-shows-text ()
   "`gascity-costs' starts `gc costs' async and shows its text as-is."
   (let ((calls nil)
@@ -675,6 +705,9 @@ a contextless view whose reads fail and whose live indicator spins
                             (< (float-time) deadline))
                   (accept-process-output nil 0.02)))
               (should (string-match-p "^RUN +INVOCATIONS" (buffer-string)))
+              ;; The fixture is all zero-usage rows: the fill adds the
+              ;; explanatory note under the table (ga-jqt9q.3).
+              (should (string-match-p "no usage recorded" (buffer-string)))
               (should buffer-read-only)
               (should (eq (keymap-lookup (current-local-map) "g")
                           #'gascity-costs-refresh)))
