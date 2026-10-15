@@ -444,5 +444,93 @@ in a remote city never walk for `city.toml' (a TRAMP connection setup)."
       (should-not walked))
     (clrhash gascity-context--root-cache)))
 
+;;; View-open city guard (ga-br1av)
+
+(ert-deftest gascity-test-city-for-view-resolves-inside-a-city ()
+  "A view opened inside a city is scoped to that city's root, honoring
+`gascity-context-city' and the memo."
+  (let ((city (file-name-as-directory (make-temp-file "gascity-view-city" t)))
+        (override (file-name-as-directory
+                   (make-temp-file "gascity-view-override" t))))
+    (unwind-protect
+        (progn
+          (write-region "" nil (expand-file-name "city.toml" city))
+          (clrhash gascity-context--root-cache)
+          (should (equal (gascity-context-city-for-view city) city))
+          (should (equal (gascity-context-city-for-view
+                          (file-name-as-directory (expand-file-name "a/b" city)))
+                         city))
+          (let ((gascity-context-city override))
+            (should (equal (gascity-context-city-for-view city) override))))
+      (delete-directory city t)
+      (delete-directory override t)
+      (clrhash gascity-context--root-cache))))
+
+(ert-deftest gascity-test-city-for-view-refuses-outside-a-city-in-batch ()
+  "In batch a view opened outside every city refuses instead of falling
+back to the non-city directory, which gc would auto-discover a
+DIFFERENT city for (ga-br1av)."
+  (let ((home (file-name-as-directory (make-temp-file "gascity-view-home" t))))
+    (unwind-protect
+        (progn
+          (clrhash gascity-context--root-cache)
+          (should-error (gascity-context-city-for-view home) :type 'user-error)
+          ;; A real view entry point refuses the same way, before any
+          ;; buffer is made.
+          (let ((default-directory home))
+            (should-error (gascity-events) :type 'user-error)
+            (should-not (get-buffer (format gascity-events-buffer-name "city")))))
+      (delete-directory home t)
+      (clrhash gascity-context--root-cache))))
+
+(ert-deftest gascity-test-city-for-view-prompts-outside-a-city ()
+  "Interactively the guard prompts for a city and returns the chosen
+root, so a view is never silently scoped to a different city."
+  (let ((home (file-name-as-directory (make-temp-file "gascity-view-home" t)))
+        (city (file-name-as-directory (make-temp-file "gascity-view-city" t)))
+        (reads 0))
+    (unwind-protect
+        (progn
+          (write-region "" nil (expand-file-name "city.toml" city))
+          (clrhash gascity-context--root-cache)
+          (let ((noninteractive nil))
+            (cl-letf (((symbol-function 'gascity-context--known-city-roots)
+                       (lambda () (list city)))
+                      ((symbol-function 'completing-read)
+                       (lambda (&rest _) (cl-incf reads) city)))
+              (should (equal (gascity-context-city-for-view home) city))
+              (should (= reads 1)))))
+      (delete-directory home t)
+      (delete-directory city t)
+      (clrhash gascity-context--root-cache))))
+
+(ert-deftest gascity-test-view-open-uses-resolved-city ()
+  "A view opened inside a city names its buffer and header after that
+city, so the resolved scope is visible (mode line / header, ga-br1av)."
+  (let* ((city (file-name-as-directory (make-temp-file "gascity-view-city" t)))
+         (name (file-name-nondirectory (directory-file-name city)))
+         (base nil))
+    (unwind-protect
+        (progn
+          (write-region "" nil (expand-file-name "city.toml" city))
+          (clrhash gascity-context--root-cache)
+          (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+                     (lambda (b &optional _dir)
+                       (setq base b)
+                       (get-buffer-create "*gascity-events-guard-test*")))
+                    ((symbol-function 'gascity-events-refresh) #'ignore)
+                    ((symbol-function 'gascity-events--live-setup) #'ignore)
+                    ((symbol-function 'pop-to-buffer) #'ignore))
+            (let ((default-directory city))
+              (gascity-events))
+            (should (equal base (format gascity-events-buffer-name name)))
+            (with-current-buffer "*gascity-events-guard-test*"
+              (should (equal gascity-events--city name))
+              (should (string-search name (gascity-events--header-line))))))
+      (when (get-buffer "*gascity-events-guard-test*")
+        (kill-buffer "*gascity-events-guard-test*"))
+      (delete-directory city t)
+      (clrhash gascity-context--root-cache))))
+
 (provide 'gascity-invariants-test)
 ;;; gascity-invariants-test.el ends here

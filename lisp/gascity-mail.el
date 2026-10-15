@@ -905,7 +905,7 @@ act on every row of an active region.
 The buffer is keyed to the city (host-qualified name, pinned
 `default-directory')."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (city (or (gascity-context-city-name dir) "city"))
          (buf (gascity-view-get-buffer-create
                (format gascity-mail-inbox-buffer-name city) dir)))

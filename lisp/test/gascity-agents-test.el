@@ -194,6 +194,8 @@ free entry, the accessor never errors."
   (declare (indent 0))
   `(cl-letf (((symbol-function 'gascity-reader-read-async) #'gascity-agents-test--read)
              ((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+             ((symbol-function 'gascity-context-city-for-view)
+              (lambda (&rest _) "/home/roman/emacs-city/"))
              ((symbol-function 'gascity-view-get-buffer-create)
               (lambda (&rest _) (get-buffer-create "*gascity-agents-test*")))
              ((symbol-function 'pop-to-buffer) #'ignore))

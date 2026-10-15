@@ -691,7 +691,7 @@ FILTER, from Lisp, replaces the view's filter plist (see
 `gascity-events--filter'): the cockpit opens it narrowed to a churn
 group with (:group GROUP :window WINDOW)."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (city (or (gascity-context-city-name dir) "city"))
          (buf (gascity-view-get-buffer-create
                (format gascity-events-buffer-name city) dir)))

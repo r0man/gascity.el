@@ -26,6 +26,12 @@
 ;; name (the governing city root, host-only outside any city) and a
 ;; `default-directory' pinned to its city.
 ;;
+;; Opening a VIEW from a buffer outside every city is guarded
+;; (`gascity-context-city-for-view', ga-br1av): the view entry points
+;; resolve the city through it instead of letting gc auto-discover one,
+;; which could silently render a DIFFERENT city's data.  It prompts for
+;; a city root interactively, and refuses with a `user-error' in batch.
+;;
 ;; Every such buffer also gets an I/O-free `project' instance
 ;; (`gascity-context-install-project').  project.el's default backend,
 ;; `project-try-vc', walks up from `default-directory' with
@@ -192,6 +198,67 @@ be reclaimed while the view is still refreshing)."
   (let ((dir (expand-file-name (or dir default-directory))))
     (or (gascity-context-city-root dir)
         (file-name-as-directory dir))))
+
+(defun gascity-context--known-city-roots ()
+  "Return the distinct city roots this session already knows.
+From `gascity-context-city', every live buffer's pinned
+`gascity-context-project-root', and the values of the city-root memo.
+Pure: no file access, so it is safe on the view-open path."
+  (delete-dups
+   (delq nil
+         (append
+          (when gascity-context-city
+            (list (file-name-as-directory
+                   (expand-file-name gascity-context-city))))
+          (mapcar (lambda (buffer)
+                    (buffer-local-value 'gascity-context-project-root buffer))
+                  (buffer-list))
+          (let (roots)
+            (maphash (lambda (_start root)
+                       (when root (push root roots)))
+                     gascity-context--root-cache)
+            roots)))))
+
+(defun gascity-context--read-city-root (dir)
+  "Read a Gas City root from the user to scope a view opened from DIR.
+DIR, a directory outside every city, is only the prompt's default.
+Completes over `gascity-context--known-city-roots' when some are known,
+else reads a directory name; re-prompts until the choice is inside a
+city (has `gascity-context-city-file' at or above it)."
+  (let ((roots (gascity-context--known-city-roots))
+        (root nil))
+    (while (null root)
+      (let* ((choice (if roots
+                         (completing-read
+                          (format "No city at %s — choose a city: " dir)
+                          roots nil nil nil nil (car roots))
+                       (read-directory-name
+                        (format "No city at %s — Gas City root: " dir)
+                        dir nil nil dir)))
+             (choice (if (and roots (string-empty-p choice)) (car roots) choice))
+             (candidate (file-name-as-directory (expand-file-name choice))))
+        (setq root (gascity-context-city-root candidate))
+        (unless root
+          (message "gascity: %s is not inside a Gas City" choice))))
+    root))
+
+(defun gascity-context-city-for-view (&optional dir)
+  "Return the city root a view opened from DIR should be scoped to.
+DIR defaults to `default-directory'.  Honours `gascity-context-city'
+and the city-root memo.  When DIR is not inside a Gas City this never
+falls back to DIR: it prompts for a city root interactively, and
+signals a `user-error' in batch instead.  The view-open guard exists
+because gc would otherwise auto-discover a city (ga-br1av), so a view
+opened from an arbitrary buffer could silently render another city's
+data.
+The result is always a city root (an absolute directory name)."
+  (let ((dir (expand-file-name (or dir default-directory))))
+    (or (gascity-context-city-root dir)
+        (if noninteractive
+            (user-error
+             "Not inside a Gas City (%s); open the view from a city or set `gascity-context-city'"
+             dir)
+          (gascity-context--read-city-root dir)))))
 
 (defun gascity-context-city-args ()
   "Return the gc argv tokens explicitly targeting the current city, or nil.

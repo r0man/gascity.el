@@ -783,6 +783,8 @@ the same run again refreshes in place."
                (lambda (base &optional _dir)
                  (push base bases)
                  (get-buffer-create (concat base "<fake>"))))
+              ((symbol-function 'gascity-context-city-for-view)
+               (lambda (&rest _) "/home/roman/emacs-city/"))
               ((symbol-function 'gascity-context-city-name) (lambda (&rest _) "emacs-city"))
               ((symbol-function 'gascity-section-refresh-instance)
                (lambda (_buf) (> mounts 0)))

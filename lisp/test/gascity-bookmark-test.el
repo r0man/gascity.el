@@ -169,16 +169,21 @@ bookmark.el gets the view's buffer to display."
 
 (defun gascity-bookmark-test--jump-cockpit (dir)
   "Bookmark a cockpit in DIR, kill it, jump back.
-Returns (RECORD . NEW-BUFFER).  Every gc read is parked (never answered)."
+Returns (RECORD . NEW-BUFFER).  Every gc read is parked (never answered).
+DIR here is an artificial non-city directory, so the view-open guard
+is bypassed (it would prompt/refuse); the guard itself is covered by
+`gascity-test-city-for-view-*'."
   (gascity-test-with-store-stubs reads _actions
     (let ((vui-render-delay nil) rec buf)
       (gascity-context-remember-city-root dir)
-      (let ((default-directory dir))
-        (save-window-excursion (gascity-dashboard) (setq buf (current-buffer))))
-      (with-current-buffer buf (setq rec (bookmark-make-record)))
-      (let ((kill-buffer-query-functions nil)) (kill-buffer buf))
-      (ignore reads)
-      (cons rec (gascity-bookmark-test--jump rec)))))
+      (cl-letf (((symbol-function 'gascity-context-city-for-view)
+                 (lambda (&optional _) default-directory)))
+        (let ((default-directory dir))
+          (save-window-excursion (gascity-dashboard) (setq buf (current-buffer))))
+        (with-current-buffer buf (setq rec (bookmark-make-record)))
+        (let ((kill-buffer-query-functions nil)) (kill-buffer buf))
+        (ignore reads)
+        (cons rec (gascity-bookmark-test--jump rec))))))
 
 (ert-deftest gascity-test-bookmark-jump-cockpit-local-and-remote ()
   "A real cockpit jump, local and over /mock::, opens at once with `…'."

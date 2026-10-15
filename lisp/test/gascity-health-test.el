@@ -704,6 +704,8 @@ a contextless view whose reads fail and whose live indicator spins
         (gascity-store-synchronous-delivery t))
     (cl-letf (((symbol-function 'gascity-reader-run-async)
                (lambda (args callback) (push (list args callback) calls) nil))
+              ((symbol-function 'gascity-context-city-for-view)
+               (lambda (&rest _) "/home/roman/emacs-city/"))
               ((symbol-function 'pop-to-buffer) (lambda (b &rest _) (set-buffer b))))
       (save-window-excursion
         (let ((default-directory "/tmp/"))
