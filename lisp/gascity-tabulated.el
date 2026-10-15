@@ -292,6 +292,14 @@ is.  Idempotent."
 (defvar-local gascity-tabulated--base-name ""
   "Label shown before the page indicator in the mode line.")
 
+(defvar-local gascity-tabulated--empty-message nil
+  "Body text for a list with no entries, or nil for a bare header.
+Set by a list's decode function when the payload itself explains the
+empty result — the Dolt list's `gc dolt health' `skipped' payload
+\(ga-zh6ks) — and cleared at the start of every refresh, so it never
+outlives the read it describes.  Rendered by
+`gascity-tabulated--insert-empty-message'.")
+
 ;; Pagination arithmetic is single-sourced from beads.el's `beads-pager'
 ;; pure core (gce-9aw); the helpers below only thread this buffer's local
 ;; state (entry list, current page, explicit page size) into those public
@@ -461,7 +469,8 @@ the shared read's process when one is running, else nil."
                   :error error-msg)))
   (setq gascity-tabulated--filter-description
         (gascity-tabulated--format-filter filter)
-        gascity-tabulated--base-name base-name)
+        gascity-tabulated--base-name base-name
+        gascity-tabulated--empty-message nil)
   (let* ((buffer (current-buffer))
          (generation (cl-incf gascity-tabulated--refresh-generation))
          ;; The argv tail only: the reader adds the executable itself,
@@ -556,6 +565,21 @@ returned untouched when nothing is pending (dashboard-v3 §8.5)."
         (aset out i (gascity-ui-pending-glyph target (aref out i)))
         out))))
 
+(defun gascity-tabulated--insert-empty-message ()
+  "Insert `gascity-tabulated--empty-message' below an empty list's header.
+No-op unless the list has no entries and a message is set.  The body is
+read-only (the mode derives from `special-mode'), so insertion binds
+`inhibit-read-only'.  The Dolt list uses this to explain a skipped
+`gc dolt health' payload instead of showing a blank table (ga-zh6ks)."
+  (when (and (null gascity-tabulated--all-entries)
+             (stringp gascity-tabulated--empty-message)
+             (not (string-empty-p gascity-tabulated--empty-message)))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char (point-max))
+        (insert (propertize (concat "  " gascity-tabulated--empty-message)
+                            'face 'gascity-dim))))))
+
 (defun gascity-tabulated--refresh-display ()
   "Slice the current page into `tabulated-list-entries' and redraw.
 The full entry list is first ordered by the active sort key across every
@@ -574,6 +598,7 @@ the full data."
                          (gascity-tabulated--truncate-row (cadr entry)))))
                 (gascity-tabulated--page-slice)))
   (tabulated-list-print t)
+  (gascity-tabulated--insert-empty-message)
   (gascity-tabulated--update-mode-name))
 
 (defun gascity-tabulated--init-paged (base-name all-entries)
@@ -1472,16 +1497,30 @@ row of zeros.  Dropped here (gce-x72) as it was from the rig dashboard
              (gascity-tabulated--str (alist-get 'name db))
              (gascity-tabulated--str (alist-get 'commits db)))))
 
+(defun gascity-dolt-list--entries (payload)
+  "Decode a `gc dolt health' PAYLOAD into Dolt list entries.
+A skipped payload — a bd-owned/proxied scope owns the dolt lifecycle —
+has no `databases' key; record `skipped''s reason as this buffer's
+empty-state message (`gascity-tabulated--empty-message') so the list
+explains the empty body instead of showing a blank table (ga-zh6ks)."
+  (let ((skipped (alist-get 'skipped payload)))
+    (setq gascity-tabulated--empty-message
+          (when skipped
+            (concat "Dolt: "
+                    (or (alist-get 'message skipped)
+                        (alist-get 'reason skipped)
+                        "skipped by gc"))))
+    (mapcar #'gascity-dolt-list--entry
+            (gascity-tabulated--vector->list
+             (alist-get 'databases payload)))))
+
 (defun gascity-dolt-list-refresh ()
   "Refresh the Dolt database list (from `gc dolt health').
 Asynchronous (`gascity-tabulated--refresh-async')."
   (interactive)
   (gascity-tabulated--refresh-async
    "Dolt" (gascity-command-dolt-health)
-   (lambda (payload)
-     (mapcar #'gascity-dolt-list--entry
-             (gascity-tabulated--vector->list
-              (alist-get 'databases payload))))))
+   #'gascity-dolt-list--entries))
 
 (beads-define-prefix gascity-dolt-list-filter ()
   "Sort the Dolt database list (§5.5: `/' is the one menu in every view)."

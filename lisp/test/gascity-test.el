@@ -746,6 +746,66 @@ non-zero `open_beads' in the input must still not surface."
                    '((name . "beads") (commits . 42) (open_beads . 7))))
                  '("beads" "42"))))
 
+(ert-deftest gascity-test-dolt-list-skipped-entries ()
+  "A skipped `gc dolt health' payload yields no rows but a reason (ga-zh6ks).
+A bd-owned/proxied city answers `dolt health' with a `skipped' object and
+no `databases'; the list must explain that instead of rendering a blank
+table.  A normal payload clears any recorded message and yields the rows."
+  (let ((gascity-tabulated--empty-message nil))
+    (should (null (gascity-dolt-list--entries
+                   '((skipped . ((reason . "bd-owned-proxied-scope")
+                                 (message . "dolt lifecycle is owned by bd for proxied scopes; nothing to do")))))))
+    (should (equal gascity-tabulated--empty-message
+                   "Dolt: dolt lifecycle is owned by bd for proxied scopes; nothing to do")))
+  ;; A skipped payload without `message' falls back to the reason.
+  (let ((gascity-tabulated--empty-message nil))
+    (gascity-dolt-list--entries '((skipped . ((reason . "bd-owned-proxied-scope")))))
+    (should (equal gascity-tabulated--empty-message
+                   "Dolt: bd-owned-proxied-scope")))
+  (let ((gascity-tabulated--empty-message "stale reason"))
+    (should (equal (gascity-dolt-list--entries
+                    '((databases . [((name . "beads") (commits . 42))])))
+                   (list (gascity-dolt-list--entry
+                          '((name . "beads") (commits . 42))))))
+    (should (null gascity-tabulated--empty-message))))
+
+(ert-deftest gascity-test-dolt-list-skipped-renders-reason ()
+  "An empty list renders its `gascity-tabulated--empty-message' below the header.
+And a list with rows renders no such message."
+  (with-temp-buffer
+    (gascity-dolt-list-mode)
+    (setq gascity-tabulated--all-entries nil
+          gascity-tabulated--empty-message "Dolt: nothing to do")
+    (gascity-tabulated--refresh-display)
+    (should (save-excursion
+              (goto-char (point-min))
+              (search-forward "Dolt: nothing to do" nil t))))
+  (with-temp-buffer
+    (gascity-dolt-list-mode)
+    (setq gascity-tabulated--all-entries
+          (list (gascity-dolt-list--entry '((name . "beads") (commits . 1))))
+          gascity-tabulated--empty-message "Dolt: should not show")
+    (gascity-tabulated--refresh-display)
+    (should-not (save-excursion
+                  (goto-char (point-min))
+                  (search-forward "should not show" nil t)))))
+
+(ert-deftest gascity-test-dolt-list-skipped-async ()
+  "Settling a skipped payload through the real refresh renders the reason (ga-zh6ks)."
+  (gascity-test--with-async-list (calls)
+    (gascity-dolt-list-mode)
+    (gascity-dolt-list-refresh)
+    (should (= (length calls) 1))
+    (funcall (nth 1 (car calls))
+             '((skipped . ((reason . "bd-owned-proxied-scope")
+                           (message . "dolt lifecycle is owned by bd for proxied scopes; nothing to do")))))
+    (should (null gascity-tabulated--all-entries))
+    (should (equal gascity-tabulated--empty-message
+                   "Dolt: dolt lifecycle is owned by bd for proxied scopes; nothing to do"))
+    (should (save-excursion
+              (goto-char (point-min))
+              (search-forward "nothing to do" nil t)))))
+
 ;;; Typed domain objects + at-point dispatch (gce-fjt)
 
 (ert-deftest gascity-test-domain-decode-rig ()
