@@ -844,7 +844,7 @@ PROPS are the row's text properties (its thing and object)."
 (defun gascity-dashboard--context (loads filters now)
   "Return the render context from the section LOADS under FILTERS at NOW.
 LOADS is a plist of `gascity-dashboard--effective-load' results keyed
-:status :sessions :mail :events :work :convoys :escalations :runs."
+:status :sessions :mail :events :work :convoys :escalations :runs :rigs."
   (let* ((status (gascity-dashboard--data (plist-get loads :status)))
          (sessions (append (alist-get 'sessions
                                       (gascity-dashboard--data
@@ -855,7 +855,13 @@ LOADS is a plist of `gascity-dashboard--effective-load' results keyed
          (socket (gascity-resolve-tmux-socket (alist-get 'city_name status)
                                               'no-probe))
          (rig (plist-get filters :rig))
-         (rigs (append (alist-get 'rigs status) nil))
+         ;; `gc status' omits the city HQ rig; `gc rig list' carries it
+         ;; (WI-11 finding F4).  Prefer the full list so the Rigs section
+         ;; agrees with `gascity-rig-list' (ga-jqt9q.4), and fall back to
+         ;; the status rows while the rig-list read is in flight or failed.
+         (rig-list (gascity-dashboard--data (plist-get loads :rigs)))
+         (rigs (or (append (alist-get 'rigs rig-list) nil)
+                   (append (alist-get 'rigs status) nil)))
          (agents (gascity-dashboard--agents status sessions beads socket now))
          (events (car (gascity-dashboard--data (plist-get loads :events)))))
     (list :now now
@@ -1650,7 +1656,7 @@ The Events window follows the cockpit's (CTX's filters)."
     (gascity-dashboard--section-lines
      "rigs" "Rigs" (and rows (number-to-string (length rows)))
      (gascity-dashboard--cap-groups rows "rigs" #'gascity-rig-list)
-     ctx :loads '(:status) :label "status")))
+     ctx :loads '(:status :rigs) :label "status/rig list")))
 
 (defun gascity-dashboard--lines (ctx)
   "Return every cockpit line for render context CTX."

@@ -89,7 +89,7 @@ nil (answer from the scenario), `park', or (error . MESSAGE).")
         (gascity-dashboard-refresh)
         (should (gascity-inv--has "^Activity  ◐\\|^Activity"))
         (should (gascity-inv--has "^Work  [0-9]+ ready"))
-        (should (gascity-inv--has "^Rigs  2"))
+        (should (gascity-inv--has "^Rigs  3"))
         (should (gascity-inv--has "^Agents  "))))))
 
 (ert-deftest gascity-test-cockpit-first-load-error-line ()
