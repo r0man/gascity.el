@@ -943,5 +943,38 @@ finding F4)."
        nil (vector '((name . "gascity.el") (prefix . "ga"))))
       (should (equal (mapcar #'gascity-rig-name seen) '("gascity.el"))))))
 
+(ert-deftest gascity-test-cockpit-rigs-context-prefers-rig-list ()
+  "The Rigs context prefers `gc rig list', which carries the HQ city rig
+`gc status' omits, so the section agrees with `gascity-rig-list'
+\(ga-jqt9q.4)."
+  (let* ((status (gascity-cockpit-test--json "emacs-city.status.json"))
+         (rig-list (gascity-cockpit-test--json "emacs-city.rig-list.json"))
+         (ctx (gascity-dashboard--context
+               (list :status (gascity-cockpit-test--load status)
+                     :rigs (gascity-cockpit-test--load rig-list))
+               nil (float-time))))
+    (should (equal (mapcar (lambda (r) (alist-get 'name r)) (plist-get ctx :rigs))
+                   '("emacs-city" "beads.el" "gascity.el")))
+    ;; The HQ prefix joins the prefix map too, for id routing.
+    (should (equal (cdr (assoc "emacs-city" (plist-get ctx :rig-prefixes))) "ec"))))
+
+(ert-deftest gascity-test-cockpit-rigs-context-falls-back-to-status ()
+  "Without a rig-list load the Rigs context falls back to `gc status'."
+  (let* ((status (gascity-cockpit-test--json "emacs-city.status.json"))
+         (ctx (gascity-dashboard--context
+               (list :status (gascity-cockpit-test--load status))
+               nil (float-time))))
+    (should (equal (mapcar (lambda (r) (alist-get 'name r)) (plist-get ctx :rigs))
+                   '("beads.el" "gascity.el")))))
+
+(ert-deftest gascity-test-cockpit-rigs-section-includes-hq ()
+  "The Rigs section lists the HQ city rig; its count matches its rows."
+  (gascity-cockpit-test--with-cockpit
+    (let ((text (buffer-string)))
+      (should (string-match-p "^Rigs  3" text))
+      (should (string-match-p "  emacs-city +ec " text))
+      (should (string-match-p "  beads.el +be " text))
+      (should (string-match-p "  gascity.el +ga " text)))))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here

@@ -1313,7 +1313,9 @@ Recent events (@code{gascity-dashboard-window}, two hours by default).
 Order firings, noise-bead lifecycle and bead updates fold into
 @samp{×N} rows per 15 minutes; signal events never fold.
 @item Rigs
-One row per rig: prefix, path, agents running, work in progress.
+One row per rig: prefix, path, agents running, work in progress.  The
+city's HQ rig is listed too, so the count matches @kbd{M-x
+gascity-rig-list} instead of silently omitting it.
 @end table
 
 Sections show their load state the common way (@pxref{Visual
