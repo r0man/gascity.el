@@ -314,6 +314,62 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
                                   (gc.outcome . "pass")))
                      (gascity-rig . "gascity.el"))))
 
+(defun gascity-runs-test--plain-run (id state time)
+  "Return a minimal run summary ID in STATE dated TIME."
+  (list :id id :state state :formula "build-basic" :rig "beads.el"
+        :time time :ladder nil :label "" :progress "" :worker-bead nil
+        :parent nil :outcome nil :failure nil))
+
+(ert-deftest gascity-test-runs-partition-splits-active-waiting ()
+  "`:in-progress' and `:waiting' are separate; `:active' keeps both (ga-jqt9q.2)."
+  (let* ((runs (list (gascity-runs-test--plain-run "be-d" 'done "2026-09-23T10:00:00Z")
+                     (gascity-runs-test--plain-run "be-a" 'active "2026-09-25T10:00:00Z")
+                     (gascity-runs-test--plain-run "be-w" 'waiting "2026-09-24T10:00:00Z")))
+         (parts (gascity-runs-partition runs nil
+                                        (gascity-ui-parse-time "2026-09-25T20:00:00Z")))
+         (ids (lambda (key) (mapcar (lambda (r) (plist-get r :id))
+                                    (plist-get parts key)))))
+    (should (equal (funcall ids :in-progress) '("be-a")))
+    (should (equal (funcall ids :waiting) '("be-w")))
+    (should (equal (funcall ids :active) '("be-a" "be-w")))
+    (should (equal (plist-get parts :counts)
+                   '((active . 1) (waiting . 1) (done . 1) (failed . 0))))))
+
+(ert-deftest gascity-test-runs-waiting-section-is-separate ()
+  "Waiting runs get their own section so the header matches the summary (ga-jqt9q.2)."
+  (let* ((runs (list (gascity-runs-test--plain-run "be-live" 'active
+                                                   (gascity-runs-test--ts 120))
+                     (gascity-runs-test--plain-run "be-wait" 'waiting
+                                                   (gascity-runs-test--ts 90000))))
+         (ctx (list :city "emacs-city" :now (float-time) :filters nil
+                    :loads (list :beads (gascity-runs-test--load (list :beads nil)))
+                    :runs runs :sessions nil :socket nil :view nil))
+         (text (gascity-runs-test--text (gascity-runs-lines ctx))))
+    (should (string-match-p
+             "^Runs  emacs-city   1 active · 1 waiting · 0 done · 0 failed" text))
+    (should (string-match-p "^Active  1$" text))
+    (should (string-match-p "^Waiting  1$" text))
+    (should (string-match-p "^  ⬣ be-live\\b" text))
+    (should (string-match-p "^  · be-wait\\b" text))
+    (should (< (string-match-p "^Active" text) (string-match-p "be-live" text)))
+    (should (< (string-match-p "be-live" text) (string-match-p "^Waiting" text)))
+    (should (< (string-match-p "^Waiting" text) (string-match-p "be-wait" text)))))
+
+(ert-deftest gascity-test-runs-waiting-section-hidden-when-empty ()
+  "An empty Waiting section is not rendered in the default view (ga-jqt9q.2)."
+  (let* ((runs (list (gascity-runs-test--plain-run "be-live" 'active
+                                                   (gascity-runs-test--ts 120))))
+         (ctx (list :city "emacs-city" :now (float-time) :filters nil
+                    :loads (list :beads (gascity-runs-test--load (list :beads nil)))
+                    :runs runs :sessions nil :socket nil :view nil))
+         (text (gascity-runs-test--text (gascity-runs-lines ctx))))
+    (should (string-match-p "^Active  1$" text))
+    (should-not (string-match-p "^Waiting" text))
+    ;; The state filter still shows an empty Waiting section.
+    (let ((ctx (plist-put (copy-sequence ctx) :filters '(:state "waiting"))))
+      (should (string-match-p "^Waiting  none$"
+                              (gascity-runs-test--text (gascity-runs-lines ctx)))))))
+
 (ert-deftest gascity-test-runs-history-paging ()
   "`H' shows closed runs newest first, 20 per page; `+' adds a page."
   (let* ((beads (gascity-runs-test--many-closed 45))
