@@ -1739,9 +1739,12 @@ model tokens and compute wall-seconds recorded per run, with a
 list-price estimate --- in a read-only buffer,
 @file{*gascity-costs:@: CITY*}.  @command{gc} prints it as a text table
 and has no JSON form of it, so the text is shown exactly as @command{gc}
-prints it.  It is read in the background; @kbd{g}
-(@code{gascity-costs-refresh}) re-reads it and the header line says how
-long ago it did.
+prints it.  When a run records no usage (zero invocations), the view adds
+a note under the table saying so: a @samp{0.0000} estimate means no
+usage was recorded, not that the run was free, and the note points at
+@env{GC_DISABLE_USAGE_METRICS} as the first thing to check.  It is read
+in the background; @kbd{g} (@code{gascity-costs-refresh}) re-reads it and
+the header line says how long ago it did.
 
 @shot{costs-dark, The Costs view --- recorded usage by run (ef-elea-dark)}
 
@@ -3884,8 +3887,8 @@ one, it leaves the item out rather than printing an apology.
 @table @asis
 @item Costs as data
 @command{gc costs} has no @option{--json} and no per-run or daily
-aggregates, so costs are shown as @command{gc}'s text (@pxref{Costs})
-and the cockpit shows no usage.
+aggregates, so costs are shown as @command{gc}'s text (@pxref{Costs}),
+annotated when runs recorded no usage, and the cockpit shows no usage.
 @item Sessions awaiting input
 There is no @code{gc session pending} listing and no way to answer an
 approval prompt from the CLI, so Needs you cannot list agents waiting
