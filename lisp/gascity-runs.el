@@ -294,11 +294,13 @@ does not depend on which store answered first."
 
 (defun gascity-runs-partition (runs filters now)
   "Split RUNS (summaries) into the view's sections under FILTERS at NOW.
-Returns a plist: :active (in progress, then waiting, newest first),
-:failed (failed within the window: the `:window' filter, else
-`gascity-runs-failed-window'), :closed (every closed run within the
-`:window' filter, newest first: the history) and :counts, an alist of
-state → count over RUNS after the rig and formula filters."
+Returns a plist.  :in-progress is the live runs, newest first;
+:waiting is open but not in progress, newest first; :active is the
+two combined; :failed is failed within the window (the `:window'
+filter, else `gascity-runs-failed-window'); :closed is every closed
+run within the `:window' filter, newest first (the history); and
+:counts is an alist of state → count over RUNS after the rig and
+formula filters."
   (let* ((runs (seq-filter (lambda (r) (gascity-runs--matches-p r filters)) runs))
          (window (plist-get filters :window))
          (failed-secs (gascity-runs-window-seconds
@@ -306,7 +308,9 @@ state → count over RUNS after the rig and formula filters."
          (closed-secs (gascity-runs-window-seconds window))
          (of (lambda (&rest states)
                (seq-filter (lambda (r) (memq (plist-get r :state) states)) runs))))
-    (list :active (append (gascity-runs--newest-first (funcall of 'active))
+    (list :in-progress (gascity-runs--newest-first (funcall of 'active))
+          :waiting (gascity-runs--newest-first (funcall of 'waiting))
+          :active (append (gascity-runs--newest-first (funcall of 'active))
                           (gascity-runs--newest-first (funcall of 'waiting)))
           :failed (gascity-runs--newest-first
                    (seq-filter (lambda (r) (gascity-runs--within-p r failed-secs now))
@@ -456,6 +460,23 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
     (and parts (gascity-dashboard--dim (concat " filter  " (string-join parts " · ")
                                                "   x reset in /")))))
 
+(defun gascity-runs--run-section (name title runs ctx)
+  "Return the section lines of section NAME, titled TITLE, over RUNS.
+RUNS render as nested two-line cards under CTX; the header counts the
+top-level runs (in progress before waiting) and their sub-runs."
+  (let* ((nest (gascity-runs--nest runs))
+         (subs (seq-count (lambda (n) (> (cdr n) 0)) nest))
+         (summary (and nest
+                       (concat (number-to-string (- (length nest) subs))
+                               (if (> subs 0)
+                                   (format " · %d sub-run%s" subs
+                                           (if (= subs 1) "" "s"))
+                                 "")))))
+    (gascity-dashboard--section-lines
+     name title summary
+     (mapcan (lambda (n) (gascity-runs--card (car n) ctx (cdr n))) nest)
+     ctx :loads '(:beads) :label "bd list")))
+
 (defun gascity-runs-lines (ctx)
   "Return every Runs view line for render context CTX.
 CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
@@ -489,19 +510,15 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
     (when (funcall show "active")
       (setq lines
             (append lines (list "")
-                    (gascity-dashboard--section-lines
-                     "active" "Active"
-                     (let* ((nest (gascity-runs--nest (plist-get parts :active)))
-                            (subs (seq-count (lambda (n) (> (cdr n) 0)) nest)))
-                       (and nest
-                            (concat (number-to-string (- (length nest) subs))
-                                    (if (> subs 0)
-                                        (format " · %d sub-run%s" subs
-                                                (if (= subs 1) "" "s"))
-                                      ""))))
-                     (mapcan (lambda (n) (gascity-runs--card (car n) ctx (cdr n)))
-                             (gascity-runs--nest (plist-get parts :active)))
-                     ctx :loads '(:beads) :label "bd list"))))
+                    (gascity-runs--run-section
+                     "active" "Active" (plist-get parts :in-progress) ctx))))
+    (let ((waiting (plist-get parts :waiting)))
+      (when (and (funcall show "waiting")
+                 (or waiting (equal state "waiting")))
+        (setq lines
+              (append lines (list "")
+                      (gascity-runs--run-section
+                       "waiting" "Waiting" waiting ctx)))))
     (when (funcall show "failed")
       (setq lines
             (append lines (list "")
@@ -715,7 +732,7 @@ Never blocks: a cold rig memo is filled through the store first
 (gascity-filter-define-choice gascity-runs-filter-formula
   :formula "formula" gascity-runs--formulas)
 (gascity-filter-define-choice gascity-runs-filter-state
-  :state "state" '("active" "failed" "done"))
+  :state "state" '("active" "waiting" "failed" "done"))
 (gascity-filter-define-choice gascity-runs-filter-window
   :window "window" '("1h" "24h" "7d" "30d") "failed 24h, done all")
 
