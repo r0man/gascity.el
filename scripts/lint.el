@@ -69,7 +69,7 @@ possible through the batch entry point.  Errors and warnings are fatal,
 matching `package-lint-batch-fail-on-warnings'."
   (package-initialize)
   (setq package-lint-main-file gascity-lint--main-file)
-  (dolist (name '(beads vui))
+  (dolist (name '(beads vui transient))
     (gascity-lint--register-local-package name))
   (let ((failed nil))
     (dolist (file gascity-lint--files)
