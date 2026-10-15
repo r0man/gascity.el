@@ -1413,7 +1413,9 @@ by @command{gc}'s account, with no live session) are pinned to the top.
 @findex gascity-agents-tree
 Switch to the tree, @file{*gascity-agents-tree:@: CITY*}: city, then
 rigs, then pools (with their @samp{scaled 0--2} bounds), then agents.
-@kbd{T} there switches back.
+The @strong{City} and @strong{Named sessions} headers fold like a rig or
+pool with @key{SPC}, showing @samp{▸}/@samp{▾}, and the fold survives
+@kbd{g}.  @kbd{T} there switches back.
 @item /
 @kindex / @r{(agents)}
 @findex gascity-agents-filter
@@ -2091,7 +2093,8 @@ Filter by status (running, suspended, stopped).
 
 @file{*gascity-sessions*}, in @code{gascity-session-list-mode}: columns
 @emph{Agent}, @emph{Rig}, @emph{State}, @emph{Provider}, @emph{Working
-dir}.
+dir}.  An absent value such as a pool worker's Provider renders as
+@samp{—}, so a blank column is never mistaken for a broken one.
 
 @shot{session-list-dark, The session list (ef-elea-dark)}
 

@@ -833,5 +833,23 @@ invalidates the mail reads: the inbox and `mail count'."
         (gascity-comms-test--finish (car actions) 1)
         (should (equal (car kill-ring) "precious body"))))))
 
+(ert-deftest gascity-test-comms-send-refreshes-inbox ()
+  "A successful send re-reads the inbox it was composed from.
+The review item was suspected stale; this pins `:origin origin' on
+`gascity-command-act-async' (ga-2zcgl item 3): the parked action fires
+its success callback, which refreshes the origin inbox buffer."
+  (gascity-comms-test--with-inbox (reads actions)
+    (let ((n (length reads)))
+      (cl-letf (((symbol-function 'message) #'ignore))
+        (gascity-mail--send-async
+         (gascity-command-mail-send :to "mayor" :subject "hi" :message "body")
+         (current-buffer)
+         "Sent to mayor")
+        (should (= (length actions) 1))
+        ;; Success refreshes the origin inbox: one more store read.
+        (gascity-comms-test--finish (car actions))
+        (should (= (length reads) (1+ n)))
+        (should (equal (car (car reads)) '("mail" "inbox")))))))
+
 (provide 'gascity-comms-test)
 ;;; gascity-comms-test.el ends here

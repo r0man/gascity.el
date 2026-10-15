@@ -16,7 +16,27 @@ errors, runs the full ERT suite, and installs the package and its Info manual
 `scripts/lint.sh` keep their semantics.  The non-ELPA `beads.el`/`vui`
 dependencies are resolved by `configure --with-beads-dir`/`--with-vui-dir`,
 with the vui bundled in the `beads.el` checkout taking precedence over any vui
-installed in the host Emacs.  `Eldev` and `.eldev/` are removed.
+installed in the host Emacs.  `transient` 0.10.1 or later is resolved from the
+ambient `EMACSLOADPATH` or `--with-transient-dir`, because Emacs 29/30 bundle an
+older copy that lacks the macro `beads.el`'s menu macro expands to;
+`scripts/ci-deps` installs it (and `package-lint`) for CI.  `Eldev` and
+`.eldev/` are removed.
+
+### Dashboard polish: fold the City block, show — for absent cells, refresh the inbox after send
+
+The Agents tree's **City** header now folds and unfolds with `SPC`/`TAB` (and
+`RET`), showing a `▸`/`▾` indicator like every rig and pool header, and the
+fold survives `g`; the **Named sessions** block folds the same way, matching
+the CLI's layout.
+
+An absent value in a tabulated list no longer renders as a blank cell: the
+shared cell helper draws an em-dash (`—`), so a pool worker's empty
+**Provider** column reads as absent rather than broken.  Columns that are
+genuinely blank by design opt out with the helper's `blank` argument.
+
+Sending or replying to mail from the inbox already re-read the inbox on
+success (`:origin`, since c876ceb); a regression test now pins that — no
+change was needed.
 
 ### Task-organized user manual and reproducible screenshots (REQ-001 to REQ-008)
 
