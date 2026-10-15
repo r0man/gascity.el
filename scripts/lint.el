@@ -45,16 +45,19 @@ uninstallable -- so it must name `gascity.el', exactly as Eldev's
 (defun gascity-lint--register-local-package (name)
   "Register the local source checkout of package NAME with package.el.
 
-NAME is a runtime dependency this project resolves from a source checkout
-rather than a package archive: `beads' and the `vui' that checkout bundles.
+NAME is a runtime dependency this project resolves from a source checkout,
+ELPA install or `EMACSLOADPATH' rather than a package archive: `beads',
+`vui' and `transient'.
 package-lint decides installability from `package-alist', so without a
 descriptor it would report the dependency as \"not installable\" even though
 the build finds it on `EMACSLOADPATH'.  The descriptor is parsed from the
-package's own main file, so its version tracks the checkout.
+package's own Lisp source (the `.el', not the `.elc' `locate-library'
+returns), so its version tracks the checkout.
 
 This mirrors Eldev's internal-pseudoarchive handling
 \(`eldev--linter-package-present-archives') for `eldev -p -dtT lint'."
-  (when-let* ((file (locate-library (symbol-name name)))
+  (when-let* ((file (or (locate-file (concat (symbol-name name) ".el") load-path)
+                        (locate-library (symbol-name name))))
               (desc (with-current-buffer (find-file-noselect file)
                       (ignore-errors (package-buffer-info)))))
     (push desc (alist-get name package-alist nil nil #'eq))))
