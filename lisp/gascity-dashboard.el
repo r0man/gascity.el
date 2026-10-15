@@ -760,7 +760,9 @@ reopened beads, escalated/held beads, unread mail, store health."
         (when (or partial (and health (alist-get 'warning health)))
           (add :level 'watch :kind "store" :id "store"
                :text (if partial
-                         (format "health: %s" (car partial))
+                         (format "health: %s"
+                                 (gascity-dashboard--store-health-message
+                                  (car partial)))
                        (format "%s per row over threshold"
                                (gascity-dashboard--ratio health)))
                :right "j h health"
@@ -774,6 +776,17 @@ reopened beads, escalated/held beads, unread mail, store health."
   (mapcar (lambda (e) (if (stringp e) e
                         (or (alist-get 'message e) (format "%s" e))))
           (append (alist-get 'partial_errors status) nil)))
+
+(defun gascity-dashboard--store-health-message (message)
+  "Return store-health partial MESSAGE without a leading label.
+`gc status --json' already prefixes these messages with \"store
+health: \"; a view that prepends its own label rendered the text
+twice (ga-jqt9q.1).  MESSAGE is returned unchanged when it carries
+no label, so a payload from a gc that omits it still displays."
+  (let ((label "store health: "))
+    (if (string-prefix-p label message)
+        (substring message (length label))
+      message)))
 
 (defun gascity-dashboard--ratio (health)
   "Return store HEALTH's MB-per-row ratio as a short string."
@@ -1110,7 +1123,9 @@ properties.  The row is a thing whose SPC toggles the drawer."
                                      (propertize (gascity-ui-glyph 'partial)
                                                  'help-echo
                                                  (concat "store health: "
-                                                         (string-join partial "; "))))
+                                                         (mapconcat
+                                                          #'gascity-dashboard--store-health-message
+                                                          partial "; "))))
                                     ((alist-get 'warning health)
                                      (gascity-ui-glyph 'watch))
                                     (t (gascity-ui-glyph 'ok)))))))))

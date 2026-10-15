@@ -54,6 +54,8 @@
 (declare-function gascity-rig-dashboard "gascity-rig")
 (declare-function gascity-rig-list "gascity-tabulated")
 (declare-function gascity-dolt-list "gascity-tabulated")
+(declare-function gascity-dashboard--store-health-message "gascity-dashboard"
+                  (message))
 
 (defcustom gascity-health-doctor-timeout 300
   "Seconds before a `gc doctor' run is killed.
@@ -276,7 +278,9 @@ rig is a row of its own)."
       (dolist (p partial)
         (add (gascity-health--row
               (concat (gascity-ui-glyph 'partial) " "
-                      (gascity-dashboard--dim (concat "store health: " p))))))
+                      (gascity-dashboard--dim
+                       (concat "store health: "
+                               (gascity-dashboard--store-health-message p)))))))
       (when server
         (add (gascity-health--row
               (cond

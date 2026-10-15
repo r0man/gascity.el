@@ -37,13 +37,18 @@
   "Return fixture NAME decoded as the reader decodes gc JSON."
   (gascity-reader-parse-json (gascity-health-test--text name)))
 
+(defvar gascity-health-test--status-override nil
+  "When non-nil, the payload `gascity-health-test--read' answers `status' with.")
+
 (defun gascity-health-test--read (args callback &optional errback &rest _)
   "Canned `gascity-reader-read-async': answer ARGS from the emacs-city fixtures.
 Calls CALLBACK synchronously; ERRBACK for an unknown read."
   (let ((args (seq-drop-while (lambda (a) (member a '("--city")))
                               (remove "--json" args))))
     (pcase args
-      (`("status") (funcall callback (gascity-health-test--json "emacs-city.status.json")))
+      (`("status") (funcall callback
+                            (or gascity-health-test--status-override
+                                (gascity-health-test--json "emacs-city.status.json"))))
       (`("version") (funcall callback (gascity-health-test--json "emacs-city.version.json")))
       (`("dolt" "health")
        (funcall callback (gascity-health-test--json "emacs-city.dolt-health.json")))
@@ -127,6 +132,18 @@ Calls CALLBACK synchronously; ERRBACK for an unknown read."
 					(should (gascity-health-test--line "^Doctor  not run.*! run  F run --fix"))
 					;; No apology line.
 					(should-not (string-match-p "not exposed\\|no JSON\\|unavailable" text))))))
+
+(ert-deftest gascity-test-health-store-partial-error-single-label ()
+  "gc store-health partials already say \"store health: \"; render once (ga-jqt9q.1)."
+  (gascity-test-with-fixture-home
+    (let ((gascity-health-test--status-override
+           `((store_health)
+             (partial_errors
+              . ["store health: counting retained bead rows: list timed out"]))))
+      (gascity-health-test--with-health "/tmp/"
+        (let ((text (buffer-string)))
+          (should (string-match-p "store health: counting retained bead rows" text))
+          (should-not (string-match-p "store health: store health:" text)))))))
 
 (ert-deftest gascity-test-health-doctor-on-demand ()
   "`!' starts doctor async: header `running…', then the cached report with
