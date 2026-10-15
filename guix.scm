@@ -128,7 +128,7 @@
           ;; expand-load-path, so build EMACSLOADPATH explicitly from every
           ;; input's share/emacs/site-lisp directory and the versioned
           ;; sub-directory Guix installs each ELPA package into
-          ;; (transient.el, sesman.el and the like).  Byte-compilation then
+          ;; (transient.el and the like).  Byte-compilation then
           ;; finds the ELPA dependencies, while the Makefile prepends the
           ;; beads.el checkout's lisp/ and its bundled vui (R2).
           (add-after 'set-paths 'set-emacs-load-path
@@ -173,7 +173,7 @@
     (native-inputs
      (list autoconf automake texinfo emacs emacs-package-lint))
     (propagated-inputs
-     (list emacs-transient emacs-vui emacs-sesman))
+     (list emacs-transient emacs-vui))
     (home-page "https://github.com/r0man/gascity.el")
     (synopsis "Magit-style Emacs porcelain for Gas City")
     (description

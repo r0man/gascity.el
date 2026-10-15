@@ -616,10 +616,12 @@ modern @code{transient}) that assume a recent Emacs.
 gascity shells out to @command{gc} for every read and every action.  A
 bare command name is looked up on @code{exec-path}; set
 @code{gascity-executable} to use an absolute path (@pxref{Customization}).
-@item @code{beads.el} and @code{vui} on the @code{load-path}
+@item @code{beads.el}, @code{vui} and @code{transient} on the @code{load-path}
 @code{beads.el} provides the @code{beads-meta}, @code{beads-section},
 @code{beads-terminal} and @code{beads-pager} features that gascity builds
-on; @code{vui} is the dashboard reconciler.
+on; @code{vui} is the dashboard reconciler, and @code{transient} (0.10.1
+or later) is the menu backend, which the Emacs 29.1--30 builds do not
+bundle.
 @item A running city (for live data)
 With no reachable @command{gc}, a view never signals: each section whose
 read failed shows one @samp{■ gc @dots{}: @var{reason}   g retry} line
@@ -636,12 +638,14 @@ The package header declares the full dependency set:
 
 @example
 (emacs "29.1") (transient "0.10.1") (vui "1.0.0")
-(beads "0.1.0") (sesman "0.3.2")
+(beads "0.1.0")
 @end example
 
 @noindent
-where @code{beads} is beads.el and @code{sesman} is pulled in
-transitively through beads.el's terminal stack.
+where @code{beads} is beads.el, @code{vui} is its dashboard reconciler and
+@code{transient} (0.10.1 or later) is the menu backend.  Emacs 31 and
+later bundle a new enough @code{transient}; on 29.1--30 it comes from GNU
+ELPA (@command{scripts/ci-deps} installs it in CI).
 
 @node Loading from a checkout
 @section Loading from a checkout
@@ -682,7 +686,9 @@ make install
 @noindent
 @command{autogen.sh} runs @command{autoreconf}.  @command{configure}
 finds Emacs, byte-compiles every @file{lisp/*.el} with warnings promoted
-to errors, and can be pointed at the two non-ELPA dependencies:
+to errors, and can be pointed at the non-ELPA dependencies
+(@code{beads.el} and @code{vui}) and, on Emacs 29.1--30, at
+@code{transient}:
 
 @table @option
 @item --with-beads-dir=@var{dir}
@@ -692,6 +698,11 @@ The beads.el checkout to build against (default
 The @code{vui} checkout to build against.  The default is the @code{vui}
 bundled with @code{beads.el}, which deliberately wins over any
 @code{emacs-vui} package from an ELPA or a distribution.
+@item --with-transient-dir=@var{dir}
+A directory containing @code{transient.el} to prepend to
+@code{EMACSLOADPATH}, shadowing the older @code{transient} bundled with
+Emacs 29.1--30.  The default is the ambient @code{EMACSLOADPATH} (and,
+on Emacs 31+, the bundled copy).
 @end table
 
 @noindent

@@ -76,6 +76,17 @@ jobs:
           git clone --depth 1 --branch v1.4.0 https://github.com/d12frosted/vui.el.git "$HOME/workspace/vui"
           git -C "$HOME/workspace/vui" rev-parse --short HEAD
 
+      # transient is a runtime dependency: beads.el's `beads-define-prefix'
+      # expands to `transient-define-group', which the transient bundled with
+      # Emacs 29/30 (0.7) lacks.  Eldev used to install it from GNU ELPA;
+      # scripts/ci-deps reproduces that without Eldev and exports a load path
+      # with a trailing colon, so Emacs's own lisp directory (and the bundled
+      # transient on Emacs 31+) is still found after the dependency.
+      - name: Install Elisp dependencies
+        run: |
+          deps=$(scripts/ci-deps transient)
+          echo "EMACSLOADPATH=$deps" >> "$GITHUB_ENV"
+
       # gc v1.4.2 from gastownhall/gascity. Bump by changing the version in
       # the URL.
       - name: Install Gascity v1.4.2

@@ -101,8 +101,43 @@ if test -z "$gascity_vui_dir_abs" \
 fi
 AC_MSG_RESULT([$gascity_vui_dir_abs])
 
+dnl --------------------------------------------------------------------
+dnl transient (runtime dependency).
+dnl
+dnl `transient-define-group' is newer than the transient bundled with
+dnl Emacs 29/30 (0.7, which lacks the macro).  beads.el's
+dnl `beads-define-prefix' expands to `transient-define-group', so the build
+dnl must put transient >= 0.10.1 (the version in Package-Requires) ahead of
+dnl the bundled copy.  One comes from the ambient EMACSLOADPATH
+dnl (scripts/ci-deps does this for CI) or from this explicit option; when
+dnl neither is given, Emacs 31+'s bundled transient is new enough.
+dnl --------------------------------------------------------------------
+
+AC_ARG_WITH([transient-dir],
+  [AS_HELP_STRING([--with-transient-dir=DIR],
+                  [directory containing transient.el, prepended to
+                   EMACSLOADPATH (default: the ambient EMACSLOADPATH,
+                   else Emacs's bundled transient)])],
+  [gascity_transient_dir="$withval"],
+  [gascity_transient_dir=""])
+
+if test -n "$gascity_transient_dir"; then
+  AC_MSG_CHECKING([for transient.el])
+  gascity_transient_dir_abs=`cd "$gascity_transient_dir" >/dev/null 2>&1 && pwd`
+  if test -z "$gascity_transient_dir_abs" \
+     || test ! -f "$gascity_transient_dir_abs/transient.el"; then
+    AC_MSG_ERROR([transient.el not found in $gascity_transient_dir.
+  Use --with-transient-dir=DIR to point at a directory containing transient.el.])
+  fi
+  gascity_transient_dir="$gascity_transient_dir_abs"
+  AC_MSG_RESULT([$gascity_transient_dir])
+else
+  gascity_transient_dir=""
+fi
+
 AC_SUBST([beads_dir], [$gascity_beads_dir_abs])
 AC_SUBST([vui_dir], [$gascity_vui_dir_abs])
+AC_SUBST([transient_dir], [$gascity_transient_dir])
 
 AC_CONFIG_FILES([Makefile doc/Makefile])
 AC_OUTPUT

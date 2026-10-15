@@ -54,6 +54,12 @@ option, when `lisp/beads-meta.el` is missing. The `vui` bundled in that
 checkout is used by default (`--with-vui-dir` overrides it) and
 deliberately shadows any installed `emacs-vui`.
 
+`transient` 0.10.1 or later is also required. Emacs 31+ bundles a new
+enough copy; on Emacs 29.1-30 it comes from GNU ELPA (in CI,
+`scripts/ci-deps transient` installs it into a throwaway directory and
+exports `EMACSLOADPATH`). `--with-transient-dir=DIR` points the build at
+one explicitly.
+
 To run from a checkout without installing, put `lisp/` on `load-path` and
 `(require 'gascity)`.
 

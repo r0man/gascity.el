@@ -9,9 +9,10 @@ on:
 
 # The lint bar is `make lint`: scripts/lint.el runs checkdoc over every
 # lisp/*.el and then package-lint under Emacs 31.1, and any finding is fatal
-# (REQ-008).  Eldev is not installed; package-lint is installed into a temp
-# directory and handed to `make` as an extra EMACSLOADPATH entry, so a fresh
-# package-lint release cannot change the rest of the build.  This matches what
+# (REQ-008).  Eldev is not installed; scripts/ci-deps installs transient, vui
+# and package-lint into a throwaway directory and exports a trailing-colon
+# EMACSLOADPATH, so the linter sees the dependencies without clobbering
+# Emacs's own lisp directory (checkdoc, simple.el).  This matches what
 # `scripts/lint.sh` wraps locally.
 
 jobs:
@@ -56,31 +57,21 @@ jobs:
             | tar -xz -C /usr/local/bin gc
           gc version
 
-      # package-lint is a development dependency (plan D3); install the
-      # current MELPA release into a throwaway package directory.
-      - name: Install package-lint
+      # transient (a build/runtime dependency), vui and package-lint are
+      # installed into a throwaway package directory and handed to the build
+      # as a trailing-colon EMACSLOADPATH, so checkdoc and simple.el still
+      # resolve from Emacs's own lisp directory (REQ-008, plan D3).
+      - name: Install Elisp dependencies
         run: |
-          mkdir -p "$RUNNER_TEMP/package-lint"
-          emacs --batch -Q \
-            --eval "(progn
-                      (require 'package)
-                      (setq package-user-dir (expand-file-name \"package-lint\" (getenv \"RUNNER_TEMP\")))
-                      (setq package-archives '((\"melpa\" . \"https://melpa.org/packages/\")))
-                      (package-initialize)
-                      (package-refresh-contents)
-                      (package-install 'package-lint))"
-          ls -d "$RUNNER_TEMP"/package-lint/package-lint-*/
+          deps=$(scripts/ci-deps transient vui package-lint)
+          echo "EMACSLOADPATH=$deps" >> "$GITHUB_ENV"
 
       - name: Bootstrap and configure
         run: |
           ./autogen.sh
           ./configure --with-beads-dir="$HOME/workspace/beads.el"
 
-      # PACKAGE_LINT_DIR is the installed package directory; `make` prepends
-      # the build's own EMACSLOADPATH (beads, vui) ahead of it, so
-      # scripts/lint.el `require`s package-lint and still sees the local
-      # source-checkout dependencies.  Findings are fatal.
+      # scripts/lint.el `require`s package-lint from the EMACSLOADPATH that
+      # ci-deps exported; findings are fatal.
       - name: Lint
-        run: |
-          PACKAGE_LINT_DIR="$(ls -d "$RUNNER_TEMP"/package-lint/package-lint-*/)"
-          make EMACSLOADPATH="$PACKAGE_LINT_DIR" lint
+        run: make lint

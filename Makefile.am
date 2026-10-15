@@ -9,14 +9,22 @@ SUBDIRS = doc
 EMACS = @EMACS@
 beads_dir = @beads_dir@
 vui_dir = @vui_dir@
+transient_dir = @transient_dir@
 
 ## R2 --- vui precedence.  The beads.el checkout's `lisp' directory and
 ## the vui it bundles are prepended to EMACSLOADPATH, so the bundled vui
 ## deliberately shadows any separately installed `vui' (for example
 ## Guix's `emacs-vui'): it is the exact vui this beads.el was built
-## against.  The trailing $(EMACSLOADPATH) preserves the caller's own
-## load path (site-lisp, Guix profiles, ...).
-AM_EMACSLOADPATH = $(beads_dir)/lisp:$(vui_dir):$$EMACSLOADPATH
+## against.  `transient_dir' (from `--with-transient-dir') is prepended
+## when configure was given one, so a transient >= 0.10.1 shadows Emacs
+## 29/30's older bundled copy.
+##
+## The trailing colon is deliberate: setting EMACSLOADPATH *replaces*
+## Emacs's standard load path, and a trailing empty element re-adds it
+## (checkdoc, simple.el, and Emacs 31+'s bundled transient) after the
+## dependencies.  Without it `make lint' invoked with a non-empty
+## EMACSLOADPATH fails with "Cannot open load file: checkdoc".
+AM_EMACSLOADPATH = $(beads_dir)/lisp:$(vui_dir)$(if $(transient_dir),:$(transient_dir),):$$EMACSLOADPATH:
 
 GASCITY_LISP_FILES = $(filter-out %/gascity-autoloads.el, \
   $(sort $(wildcard $(top_srcdir)/lisp/*.el)))
