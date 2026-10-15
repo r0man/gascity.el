@@ -330,6 +330,26 @@ steps alone it would read idle while its members work."
                  :status '((partial_errors . ["counting retained bead rows: list timed out"]))))))
     (should (string-match-p "list timed out" (plist-get (car items) :text)))))
 
+(ert-deftest gascity-test-cockpit-store-partial-single-label ()
+  "A store-health partial keeps one label: gc's, not the view's too (ga-jqt9q.1)."
+  (let* ((items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx
+                  :status '((partial_errors
+                             . ["store health: counting retained bead rows: list timed out"])))))
+         (text (plist-get (car items) :text)))
+    (should (string-match-p "list timed out" text))
+    (should-not (string-match-p "store health: store health:" text))
+    (should-not (string-match-p "health: store health:" text))))
+
+(ert-deftest gascity-test-cockpit-store-health-message-dedupes ()
+  "The partial helper strips gc's lead label, leaving unlabelled text alone."
+  (should (equal (gascity-dashboard--store-health-message
+                  "store health: counting retained bead rows")
+                 "counting retained bead rows"))
+  (should (equal (gascity-dashboard--store-health-message
+                  "counting retained bead rows")
+                 "counting retained bead rows")))
+
 (ert-deftest gascity-test-cockpit-needs-you-order ()
   "■ items precede ▲ items whatever order the sources yield them."
   (let* ((status '((agents . [((qualified_name . "w") (running . t))])))
