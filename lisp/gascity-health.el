@@ -710,7 +710,7 @@ after confirmation; `g' re-reads everything else.
 (defun gascity-health ()
   "Show the health of this city: supervisor, versions, stores, doctor."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (city (or (gascity-context-city-name dir) "city"))
          (buf (gascity-view-get-buffer-create
                (format gascity-health-buffer-name city) dir)))
@@ -857,7 +857,7 @@ note (`gascity-costs--annotation') under the table."
 gc prints a text table; it is shown as-is, read in the background,
 with an explanatory note under any rows that recorded no usage."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (city (or (gascity-context-city-name dir) "city"))
          (buf (gascity-view-get-buffer-create
                (format gascity-costs-buffer-name city) dir)))

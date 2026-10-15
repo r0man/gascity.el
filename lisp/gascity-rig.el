@@ -456,7 +456,8 @@ city.toml' error."
   ;; the prompt cannot mount the un-retryable error screen (ga-94fvy.1).
   (gascity-rig--refuse-hq rig-name)
   (let ((buf (gascity-view-get-buffer-create
-              (gascity-rig-dashboard--buffer-name rig-name))))
+              (gascity-rig-dashboard--buffer-name rig-name)
+              (gascity-context-city-for-view))))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-rig-dashboard-mode)
         (gascity-rig-dashboard-mode))

@@ -7028,7 +7028,11 @@ timers keep hitting the same host and a local view coexists."
   (gascity-test--with-mock-remote
     (let ((remote-prefix (file-remote-p default-directory))
           (buf nil))
-      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b)))
+      (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) b))
+                ;; An artificial non-city dir: bypass the view-open guard
+                ;; to keep testing the host qualification it covers.
+                ((symbol-function 'gascity-context-city-for-view)
+                 (lambda (&optional _) default-directory)))
         (unwind-protect
             (progn
               (setq buf (gascity-tabulated--show "*gascity-test-view*"
@@ -8564,7 +8568,9 @@ the shape the dashboard expects."
 mandatory for TRAMP parity (REQ-011); a second call returns the same
 buffer."
   (let ((factory-calls 0))
-    (cl-letf (((symbol-function 'gascity-view-get-buffer-create)
+    (cl-letf (((symbol-function 'gascity-context-city-for-view)
+               (lambda (&rest _) "/home/roman/emacs-city/"))
+              ((symbol-function 'gascity-view-get-buffer-create)
                (lambda (base &optional dir)
                  (setq factory-calls (1+ factory-calls))
                  (get-buffer-create "*gascity-dashboard-fake*")))
@@ -8722,14 +8728,25 @@ calls it for PROJECT."
 
 (ert-deftest gascity-test-dashboards-open-city-of-switched-project ()
   "From the menu of `project-switch-project', the city cockpit opens
-the chosen project's city, not the current buffer's."
+the chosen project's city, not the current buffer's — and outside any
+city it refuses instead of silently reading whichever city gc would
+auto-discover (ga-br1av)."
   (require 'gascity-dashboard)
-  (dolist (command '(gascity-dashboard))
-    (should (equal (gascity-test--view-directory
-                    command "/tmp/home/" "/tmp/city")
-                   "/tmp/city/"))
-    (should (equal (gascity-test--view-directory command "/tmp/home/" nil)
-                   "/tmp/home/"))))
+  (let ((home (file-name-as-directory (make-temp-file "gascity-home" t)))
+        (city (file-name-as-directory (make-temp-file "gascity-city" t))))
+    (unwind-protect
+        (progn
+          (write-region "" nil (expand-file-name "city.toml" city))
+          (clrhash gascity-context--root-cache)
+          (dolist (command '(gascity-dashboard))
+            (should (equal (gascity-test--view-directory command home city)
+                           city))
+            (with-temp-buffer
+              (setq default-directory home)
+              (should-error (funcall command) :type 'user-error))))
+      (delete-directory home t)
+      (delete-directory city t)
+      (clrhash gascity-context--root-cache))))
 
 (ert-deftest gascity-test-menu-suffix-runs-in-switched-project ()
   "A suffix of the `gascity' front door opened from `project-switch-project'

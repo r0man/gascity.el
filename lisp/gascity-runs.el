@@ -788,7 +788,7 @@ opens its detail, `b' its root bead, `H' the history, `/' filters.
 The buffer is keyed to the city (host-qualified name, pinned
 `default-directory'); `j r' reaches it from every view."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (city (or (gascity-context-city-name dir) "city"))
          (buf (gascity-view-get-buffer-create
                (format gascity-runs-buffer-name city) dir)))

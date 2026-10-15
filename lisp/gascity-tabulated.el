@@ -105,8 +105,13 @@ does not recognize."
     ""))
 
 (defun gascity-tabulated--abbreviate-path (path)
-  "Return PATH with the home-directory prefix abbreviated to \"~\"."
-  (if (and path (stringp path)) (abbreviate-file-name path) (or path "")))
+  "Return PATH with the home-directory prefix abbreviated to \"~\".
+Pure (`gascity-ui-path'), safe at render time (§8.3 R2):
+`abbreviate-file-name' expands `~' against `default-directory', so in a
+remote list it did a TRAMP round trip on every redisplay of the Working
+Dir column — caught by the every-view render guard once the session
+list is actually scoped to its remote city."
+  (if (and path (stringp path)) (gascity-ui-path path) (or path "")))
 
 (defun gascity-tabulated--str (value &optional blank)
   "Coerce VALUE to a display string.
@@ -239,7 +244,10 @@ remote city (a local and a remote list coexist) and the buffer's
 `default-directory' is pinned to that city's root, so `g' refreshes and
 at-point actions keep resolving the same gc — and, remotely, the same
 host — regardless of where they are invoked from."
-  (let ((buf (gascity-view-get-buffer-create buffer-name)))
+  (let ((buf (gascity-view-get-buffer-create
+              buffer-name
+              (gascity-context-city-for-view
+               (beads-prefix-invocation-directory)))))
     (with-current-buffer buf
       (unless (derived-mode-p mode-sym) (funcall mode-sym))
       (gascity-tabulated-attach-live)

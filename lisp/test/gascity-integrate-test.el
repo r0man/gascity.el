@@ -64,6 +64,8 @@ the city at point (`gascity-live-city-function')."
           (should (memq (current-buffer) log))))))
   (gascity-test-integrate--with-attach-log log
     (cl-letf (((symbol-function 'pop-to-buffer) #'ignore)
+              ((symbol-function 'gascity-context-city-for-view)
+               (lambda (&rest _) "/tmp/city/"))
               ((symbol-function 'gascity-view-get-buffer-create)
                (lambda (name &rest _) (get-buffer-create name))))
       (unwind-protect

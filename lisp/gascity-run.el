@@ -643,8 +643,9 @@ refreshes it in place."
   (setq run (and (stringp run) (string-trim run)))
   (unless (and run (not (string-empty-p run)))
     (user-error "No run root bead id"))
-  (let* ((city (gascity-context-city-name))
-         (buf (gascity-view-get-buffer-create (format gascity-run-buffer-name run))))
+  (let* ((dir (gascity-context-city-for-view))
+         (city (gascity-context-city-name dir))
+         (buf (gascity-view-get-buffer-create (format gascity-run-buffer-name run) dir)))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-run-mode)
         (gascity-run-mode))

@@ -2417,7 +2417,7 @@ pinned `default-directory'), so local and remote cockpits coexist.
 Called from the menu of `project-switch-project', it opens the cockpit
 of the chosen project's city."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (city (or (gascity-context-city-name dir) "city"))
          (buf (gascity-view-get-buffer-create
                (format gascity-dashboard-buffer-name city) dir)))

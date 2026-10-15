@@ -4,6 +4,17 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### Opening a view outside a city no longer silently reads another city
+
+Every city-scoped view (cockpit, runs, events, mail, agents, health, costs,
+and the rig/session/convoy/order/dolt lists) now resolves its city at open
+time through `gascity-context-city-for-view`.  When the invoking buffer is
+not inside a Gas City, the view prompts for a city root interactively and
+refuses with a clear message in batch, instead of letting `gc`
+auto-discover a city — which could render a **different** city's data with
+no warning (ga-br1av, dogfood A5).  The resolved city is what names the
+buffer and fills the header line, so the scope is always visible.
+
 ### Toolchain: autotools replaces Eldev
 
 The build system is now a real GNU autotools project.  From a clean checkout,

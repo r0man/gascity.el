@@ -557,7 +557,7 @@ the §5.3 agent keys act on the row at point.
 (defun gascity-agents ()
   "Show the city's agents in a table (`j a', dashboard-v3 §7.3)."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (buf (gascity-view-get-buffer-create
                (format gascity-agents-buffer-name (gascity-agents--city dir)) dir)))
     (with-current-buffer buf
@@ -710,7 +710,7 @@ SPC folds a rig or a pool, `T' returns to the table.
 (defun gascity-agents-tree ()
   "Show the city's agents as a tree: city → rigs → pools → agents (`T')."
   (interactive)
-  (let* ((dir (beads-prefix-invocation-directory))
+  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
          (buf (gascity-view-get-buffer-create
                (format gascity-agents-tree-buffer-name (gascity-agents--city dir)) dir)))
     (with-current-buffer buf

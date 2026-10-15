@@ -168,7 +168,13 @@ session looks after its first view opened.  Streams stay off (batch)."
        (setf (gascity-store--host-primed
               (gascity-store--host (file-remote-p gascity-audit--root)))
              t)
-       (cl-letf (((symbol-function 'gascity-reader-read-async) #'gascity-audit--read)
+       (cl-letf (((symbol-function 'gascity-context-city-for-view)
+                  ;; The audit opens every view on ONE remote city; pin
+                  ;; the resolver to it so a view still resolves after
+                  ;; `pop-to-buffer' moved `default-directory'.
+                  (lambda (&optional dir)
+                    (or (gascity-context-city-root dir) gascity-audit--root)))
+                 ((symbol-function 'gascity-reader-read-async) #'gascity-audit--read)
                  ((symbol-function 'gascity-reader-run-async) #'gascity-audit--run)
                  ;; The mock method stands in for ssh: the ssh-only paths
                  ;; (log follow) take their ssh branch.

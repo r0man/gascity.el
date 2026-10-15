@@ -561,7 +561,8 @@ Anywhere else RET attaches the agent's terminal (§5.3)."
 AGENT is the action object carried by an agent row in any view."
   (let* ((name (or (gascity-agent-name agent) (user-error "Agent has no name")))
          (buf (gascity-view-get-buffer-create
-               (gascity-session-detail--buffer-name name))))
+               (gascity-session-detail--buffer-name name)
+               (gascity-context-city-for-view))))
     (with-current-buffer buf
       (unless (derived-mode-p 'gascity-session-detail-mode)
         (gascity-session-detail-mode))
