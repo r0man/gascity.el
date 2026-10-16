@@ -459,23 +459,56 @@ the cold menu.  Returns nil so the whole frame is captured
    (list "lighter" #'gascity-shots--lighter-frame :whole-frame t)))
 
 (defun gascity-shots--wrapped ()
-  "Return `gascity-shots-all' with every buffer thunk waiting for its data."
-  (mapcar (lambda (shot)
-            (if (plist-get (cddr shot) :whole-frame)
-                shot
-              (cons (car shot) (cons (gascity-shots--ready (cadr shot)) (cddr shot)))))
-          (gascity-shots-all)))
+  "Return `gascity-shots-all' with every thunk scoped and awaited.
+Each shot runs with `default-directory' pinned to the fixture city, so a
+prior shot cannot leak its own directory into the next one: the Cities
+list belongs to no city and pins its buffer to the local home, and
+without this a following city-scoped view (the rig list, a sling
+preview, ...) would call into the view-open guard, find no city, and
+prompt for one -- hanging the headless capture."
+  (let ((dir (file-name-as-directory
+              (gascity-shots-getenv "GASCITY_SHOT_DIR"
+                                    (expand-file-name "~/emacs-city")))))
+    (mapcar
+     (lambda (shot)
+       (let* ((name (car shot))
+              (thunk (cadr shot))
+              (props (cddr shot))
+              (scoped (lambda () (let ((default-directory dir))
+                                   (funcall thunk)))))
+         (cons name
+               (cons (if (plist-get props :whole-frame)
+                         scoped
+                       (gascity-shots--ready scoped))
+                     props))))
+     (gascity-shots-all))))
 
 (defun gascity-shots-selected ()
-  "Return the shots requested by GASCITY_SHOT_VIEWS (or all), suffixed."
+  "Return the shots requested by GASCITY_SHOT_VIEWS (or all), suffixed.
+Every thunk runs with `default-directory' pinned to the shot city
+\(GASCITY_SHOT_DIR).  A shot that deliberately opens another directory
+— the Cities view pins its buffer to the local home — must not leave
+the next shot with a contextless directory: `beads-prefix-invocation-directory'
+reads the current buffer's `default-directory', so an unpinned shot would
+fall through `gascity-context-city-for-view' to its interactive
+city-root prompt and hang a headless capture (WI-07)."
   (let* ((suffix (gascity-shots-getenv "GASCITY_SHOT_SUFFIX" ""))
          (want (split-string (gascity-shots-getenv "GASCITY_SHOT_VIEWS" "") nil t))
          (all (gascity-shots--wrapped))
          (chosen (if want
                      (cl-remove-if-not (lambda (s) (member (nth 0 s) want)) all)
-                   all)))
+                   all))
+         (dir (file-name-as-directory
+               (gascity-shots-getenv
+                "GASCITY_SHOT_DIR"
+                (expand-file-name "~/emacs-city")))))
     (mapcar (lambda (s)
-              (cons (concat (nth 0 s) suffix) (cdr s)))
+              (let ((thunk (nth 1 s)))
+                (cons (concat (nth 0 s) suffix)
+                      (cons (lambda ()
+                              (let ((default-directory dir))
+                                (funcall thunk)))
+                            (cddr s)))))
             chosen)))
 
 ;;; Entry point
