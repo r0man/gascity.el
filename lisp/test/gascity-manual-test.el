@@ -729,5 +729,40 @@ not installed."
             (should (string-match-p "^\\* .*:\\s-+" fn))))
       (delete-file info))))
 
+(ert-deftest gascity-test-manual-no-burningswell ()
+  "The offline leak gate is wired and effective (REQ-009, REQ-011).
+The private `burningswell' host must not reappear in the manual
+sources: the script is executable, `make check' runs it through the
+`check-leak' target, it passes on the tracked tree, and an injected
+token makes it fail with the offending `file:line' rather than
+passing silently."
+  (let ((script (expand-file-name "scripts/check-no-burningswell.sh"
+                                  gascity-manual-test--root))
+        (makefile (gascity-manual-test--read "Makefile.am")))
+    ;; The gate is shipped, executable and wired into `make check'.
+    (should (file-executable-p script))
+    (should (string-match-p (regexp-quote "check-leak") makefile))
+    (should (string-match-p (regexp-quote "check-no-burningswell.sh") makefile))
+    ;; The tracked sources are clean.
+    (should (equal 0 (plist-get (gascity-manual-test--call script) :status)))
+    ;; An injected token fails, naming the file and line.
+    (let ((tmp (make-temp-file "gascity-leak" t)))
+      (unwind-protect
+          (progn
+            (make-directory (expand-file-name "scripts" tmp) t)
+            (make-directory (expand-file-name "doc" tmp) t)
+            (let ((copy (expand-file-name
+                         "scripts/check-no-burningswell.sh" tmp)))
+              (copy-file script copy t)
+              (set-file-modes copy #o755)
+              (with-temp-file (expand-file-name "doc/gascity.texi" tmp)
+                (insert "a leak: burningswell.com\n"))
+              (let ((res (gascity-manual-test--call copy)))
+                (should-not (equal 0 (plist-get res :status)))
+                (should (string-match-p
+                         "doc/gascity\\.texi:[0-9]+:.*burningswell"
+                         (plist-get res :stdout))))))
+        (delete-directory tmp t)))))
+
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here

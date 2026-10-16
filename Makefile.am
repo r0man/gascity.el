@@ -31,7 +31,7 @@ GASCITY_LISP_FILES = $(filter-out %/gascity-autoloads.el, \
 ELCFILES = $(GASCITY_LISP_FILES:.el=.elc)
 AUTOLOADS = $(top_srcdir)/lisp/gascity-autoloads.el
 
-.PHONY: byte-compile lint screenshots check-doc-drift regen-doc-tables
+.PHONY: byte-compile lint screenshots check-doc-drift check-leak regen-doc-tables
 
 ## Byte-compile the whole package in a single Emacs invocation, with
 ## warnings promoted to errors (REQ-002).  The single invocation over
@@ -56,7 +56,7 @@ all-local: byte-compile $(AUTOLOADS)
 ## `make check' runs the whole ERT suite exactly once (REQ-003, REQ-021).
 ## scripts/run-tests.el loads each test file unless its feature is already
 ## present, so a file pulled in through `require' is not evaluated twice.
-check-local: all-local check-doc-drift
+check-local: all-local check-doc-drift check-leak
 	GASCITY_TEST_DIR='$(top_srcdir)/lisp/test' \
 	  EMACSLOADPATH="$(AM_EMACSLOADPATH)" \
 	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' -L '$(top_srcdir)/lisp/test' \
@@ -87,6 +87,13 @@ check-doc-drift:
 	  fi; \
 	done; \
 	exit $$status
+
+## `check-leak' keeps the maintainer's private host name out of the
+## manual sources (REQ-009, plan D4).  It is the offline half of the
+## gate; the Pages workflow also runs the same script with `--html'
+## over the generated pages (plan D5).
+check-leak:
+	$(top_srcdir)/scripts/check-no-burningswell.sh
 
 ## `make lint' is the `eldev -p -dtT lint' bar preserved without Eldev
 ## (REQ-008, REQ-021): scripts/lint.el checkdocs every source and runs
