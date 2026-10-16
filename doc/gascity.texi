@@ -341,22 +341,22 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 @headitem Feature area @tab Screenshot(s) @tab Why this image
 @item Getting started; the dispatcher @tab dispatch-dark @tab The @kbd{?} dispatch transient over the cockpit.
 @item Buffers and navigation (move/toggle, jump prefix, filter menus, visual language, objects at point) @tab cockpit-dark, cockpit-light, dispatch-dark @tab Non-visual keys and glyphs; the cockpit and its dispatch menu exercise them.
-@item Lists: pagination, sorting, detail @tab order-list-light @tab A paginated tabulated list with the shared list keys.
+@item Lists: pagination, sorting, detail @tab order-list-dark @tab A paginated tabulated list with the shared list keys.
 @item Cockpit @tab cockpit-dark, cockpit-light @tab The triage buffer, in both themes.
-@item Agents (list, tree, detail) @tab agents-dark, agents-tree-light @tab The agents list and tree; the detail opens from the list.
+@item Agents (list, tree, detail) @tab agents-dark, agents-tree-dark @tab The agents list and tree; the detail opens from the list.
 @item Rig dashboard @tab rig-dashboard-dark @tab The single-rig counterpart to the cockpit.
 @item Health @tab health-dark @tab Plumbing, versions, store and doctor.
-@item Cities @tab cities-light @tab Every reachable city and host.
+@item Cities @tab cities-dark @tab Every reachable city and host.
 @item Costs @tab costs-dark @tab Recorded usage by run, wall-seconds and list-price estimate.
 @item Mode-line lighter @tab lighter-dark @tab The lighter in a mode line.
 @item Runs and run detail @tab runs-dark @tab The run cards; a run's steps open from them.
 @item Live refresh @tab cockpit-dark, events-dark @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
 @item Events @tab events-dark @tab The event log.
-@item Mail (inbox, thread, compose) @tab mail-inbox-light @tab The inbox; thread and compose are the same buffer family.
-@item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-light, session-list-dark, convoy-list-dark, order-list-light, mail-inbox-light, dolt-list-dark @tab One image per list.
+@item Mail (inbox, thread, compose) @tab mail-inbox-dark @tab The inbox; thread and compose are the same buffer family.
+@item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-dark, session-list-dark, convoy-list-dark, order-list-dark, mail-inbox-dark, dolt-list-dark @tab One image per list.
 @item Formula sling and dispatch @tab sling-plain-dark, sling-cold-dark, sling-formula-dark, sling-on-dark, sling-preview-dark @tab The dispatch transient across its shapes and the full preview buffer.
 @item Session/polecat detail and terminal attach @tab session-list-dark, terminal-attach-dark @tab The session list, and a terminal buffer attached to a tmux session.
-@item Remote/TRAMP cities @tab remote-cities-light @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
+@item Remote/TRAMP cities @tab remote-cities-dark @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
 @item Bookmarks @tab bookmarks-dark @tab The bookmark list with gascity views.
 @end multitable
 
@@ -814,7 +814,7 @@ filter.
 @noindent
 Its heading names the city and its path.
 
-@shot{dispatch-dark, The ? dispatch over the cockpit (ef-elea-dark)}
+@shot{dispatch-dark, The ? dispatch over the cockpit (ef-deuteranopia-dark)}
 
 @node Filter menus
 @section Filter menus
@@ -961,7 +961,7 @@ triages; @ref{Terminology} fixes the term.  No section shows more than
 @samp{@dots{} N more} line whose @key{RET} opens the full view, and
 @kbd{+}/@kbd{-} show more or fewer rows in place.
 
-@shot{cockpit-dark, The cockpit of emacs-city (ef-elea-dark)}
+@shot{cockpit-dark, The cockpit of emacs-city (ef-deuteranopia-dark)}
 
 @section What it shows
 
@@ -1146,7 +1146,7 @@ such as the mayor.  Each row shows the agent's state, last activity, the
 bead on its hook and its provider.  Stalled agents (@samp{■}: running
 by @command{gc}'s account, with no live session) are pinned to the top.
 
-@shot{agents-dark, The Agents view (ef-elea-dark)}
+@shot{agents-dark, The Agents view (ef-deuteranopia-dark)}
 
 @table @kbd
 @item T
@@ -1180,7 +1180,7 @@ Agent detail, peek, Dired.
 Nudge, suspend, kill, wake, drain, reset, undrain (@pxref{Actions}).
 @end table
 
-@shot{agents-tree-light, The Agents tree: city rigs pools agents (ef-cyprus)}
+@shot{agents-tree-dark, The Agents tree: city rigs pools agents (ef-deuteranopia-dark)}
 
 @noindent
 The list shares the keys of every tabulated list (@pxref{Lists}); the
@@ -1275,7 +1275,7 @@ toggles @code{gascity-terminal-scroll-mode}, which translates the Emacs
 scroll keys into copy-mode sequences so the agent receives no keys.
 @xref{Actions}.
 
-@shot{terminal-attach-dark, A terminal buffer attached to a fixture tmux session (ef-elea-dark)}
+@shot{terminal-attach-dark, A terminal buffer attached to a fixture tmux session (ef-deuteranopia-dark)}
 
 @c ====================================================================
 @node The Rig Dashboard
@@ -1290,7 +1290,7 @@ city that owns its own store and agent pool (@pxref{Terminology}).  It is the si
 the cockpit, with five independently-loaded sections so that a slow
 or failing one never blanks the rest.
 
-@shot{rig-dashboard-dark, The rig dashboard (ef-elea-dark)}
+@shot{rig-dashboard-dark, The rig dashboard (ef-deuteranopia-dark)}
 
 @section What it shows
 
@@ -1394,7 +1394,7 @@ can reach, one row each, in @file{*gascity-cities*}; a city runs on a
  ● bright-lights    /ssh:localhost:~/bright-lights/    2/4         ▲4   ●
 @end example
 
-@shot{cities-light, The Cities view (ef-cyprus)}
+@shot{cities-dark, The Cities view (ef-deuteranopia-dark)}
 
 @cindex hosts, Cities view
 @vindex gascity-remote-hosts
@@ -1450,7 +1450,7 @@ C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
 M-x gascity-dashboard
 @end example
 
-@shot{remote-cities-light, The Cities list with one row per city and host (ef-cyprus)}
+@shot{remote-cities-dark, The Cities list with one row per city and host (ef-deuteranopia-dark)}
 
 @menu
 * Remote buffers::        Host-qualified names, paths, attach.
@@ -1854,7 +1854,7 @@ Failed  1 · last 24h
      ◆◆◆◆◆◆◆✕◆◆  review         9/10   control_dispatch_error
 @end example
 
-@shot{runs-dark, The Runs view (ef-elea-dark)}
+@shot{runs-dark, The Runs view (ef-deuteranopia-dark)}
 
 @noindent
 A card's second line is the step ladder (@pxref{Visual language}), the
@@ -2008,7 +2008,7 @@ row per 15 minutes; signal events (@code{gascity-dashboard-event-levels})
 never fold and carry their @samp{■}/@samp{▲} in the Sig column.  With
 live refresh on, new events are appended as they arrive.
 
-@shot{events-dark, The Events view (ef-elea-dark)}
+@shot{events-dark, The Events view (ef-deuteranopia-dark)}
 
 @table @kbd
 @item @key{RET}
@@ -2068,7 +2068,7 @@ offline).  @xref{Live Refresh}.
 @file{*gascity-mail:@: CITY*}: sender, subject and age, unread rows in
 bold with @samp{●}.
 
-@shot{mail-inbox-light, The mail inbox (ef-cyprus)}
+@shot{mail-inbox-dark, The mail inbox (ef-deuteranopia-dark)}
 
 @table @kbd
 @item @key{RET}
@@ -2153,7 +2153,7 @@ binds @kbd{g} to refresh and @key{RET} to drill in, and (except Dolt)
 @file{*gascity-rigs*}, in @code{gascity-rig-list-mode}: columns
 @emph{Name}, @emph{Prefix}, @emph{Status}, @emph{Branch}, @emph{Store}.
 
-@shot{rig-list-light, The rig list (ef-cyprus)}
+@shot{rig-list-dark, The rig list (ef-deuteranopia-dark)}
 
 @table @kbd
 @item @key{RET}
@@ -2190,7 +2190,7 @@ Filter by status (running, suspended, stopped).
 dir}.  An absent value such as a pool worker's Provider renders as
 @samp{—}, so a blank column is never mistaken for a broken one.
 
-@shot{session-list-dark, The session list (ef-elea-dark)}
+@shot{session-list-dark, The session list (ef-deuteranopia-dark)}
 
 @table @kbd
 @item @key{RET}
@@ -2238,7 +2238,7 @@ numerically by completed fraction).  A @dfn{convoy} is a collection of
 beads moved together through a workflow (@pxref{Terminology}).  @key{RET} opens the convoy bead in
 beads.el; @kbd{/} filters by status (open, closed).
 
-@shot{convoy-list-dark, The convoy list (ef-elea-dark)}
+@shot{convoy-list-dark, The convoy list (ef-deuteranopia-dark)}
 
 @node Orders
 @section Orders
@@ -2249,7 +2249,7 @@ beads.el; @kbd{/} filters by status (open, closed).
 @emph{On} (@code{●} when enabled).  An @dfn{order} is a scheduled or
 triggered unit of work (@pxref{Terminology}).
 
-@shot{order-list-light, The order list — paginated (ef-cyprus)}
+@shot{order-list-dark, The order list — paginated (ef-deuteranopia-dark)}
 
 @table @kbd
 @item @key{RET}
@@ -2275,7 +2275,7 @@ plane behind beads; this list reports each database's commit count from
 @code{gc dolt health}.  @key{RET} echoes the commit count.  There is no
 filter transient.
 
-@shot{dolt-list-dark, The Dolt database list (ef-elea-dark)}
+@shot{dolt-list-dark, The Dolt database list (ef-deuteranopia-dark)}
 
 @c ====================================================================
 @node Sling and Dispatch
@@ -2407,12 +2407,12 @@ and the binding stays live, so the key that answered it changes it
 again.  An unanswered stage shows its pick hint.  With a bead at
 point and a remembered target, every stage holds an answer:
 
-@shot{sling-plain-dark, The sling menu pre-seeded for a plain dispatch (ef-elea-dark)}
+@shot{sling-plain-dark, The sling menu pre-seeded for a plain dispatch (ef-deuteranopia-dark)}
 
 Pressing @kbd{S} with nothing pre-seeded shows the hints instead ---
 and the header sentence still reads as one line:
 
-@shot{sling-cold-dark, A cold sling entry with nothing pre-seeded (ef-elea-dark)}
+@shot{sling-cold-dark, A cold sling entry with nothing pre-seeded (ef-deuteranopia-dark)}
 
 @node Picking work
 @section Picking work
@@ -2460,7 +2460,7 @@ without work, targetless (@option{--formula}).  A formula that
 declares no variables --- @samp{pancakes} --- keeps the How stage out
 of the menu entirely; the flow is What, Who, @kbd{s}.
 
-@shot{sling-formula-dark, The formula shape with no work attached (ef-elea-dark)}
+@shot{sling-formula-dark, The formula shape with no work attached (ef-deuteranopia-dark)}
 
 @node Picking the target
 @section Picking the target
@@ -2562,7 +2562,7 @@ Variable keys are assigned deterministically and avoid the reserved
 single letters (@pxref{Sling key summary}), so a formula's variables
 bind the same keys in every session.
 
-@shot{sling-on-dark, The targeted shape with its typed How group (ef-elea-dark)}
+@shot{sling-on-dark, The targeted shape with its typed How group (ef-deuteranopia-dark)}
 
 @node The live footer
 @section The live footer
@@ -2667,7 +2667,7 @@ it.  @kbd{r} keeps its old job, the server-substituted recipe
 preview.  The preview is never a gate: @kbd{s} works in the menu at
 any time, warning or not.
 
-@shot{sling-preview-dark, The P full preview buffer (ef-elea-dark)}
+@shot{sling-preview-dark, The P full preview buffer (ef-deuteranopia-dark)}
 
 @node Launch and follow
 @section Launch and follow
@@ -3028,7 +3028,7 @@ Doctor  88 passed · 5 warned · 0 failed · ran 4m ago   ! run  F run --fix
   ▸ 88 checks ok
 @end example
 
-@shot{health-dark, Health of emacs-city (ef-elea-dark)}
+@shot{health-dark, Health of emacs-city (ef-deuteranopia-dark)}
 
 @section What it shows
 
@@ -3124,7 +3124,7 @@ usage was recorded, not that the run was free, and the note points at
 in the background; @kbd{g} (@code{gascity-costs-refresh}) re-reads it and
 the header line says how long ago it did.
 
-@shot{costs-dark, The Costs view --- recorded usage by run (ef-elea-dark)}
+@shot{costs-dark, The Costs view --- recorded usage by run (ef-deuteranopia-dark)}
 
 @node The Mode-Line Lighter
 @section The Mode-Line Lighter
@@ -3139,7 +3139,7 @@ that shows what needs you in every open city in every mode line:
  GC[bl ▲1 · ec ■1▲2]
 @end example
 
-@shot{lighter-dark, The lighter in the mode line (ef-elea-dark)}
+@shot{lighter-dark, The lighter in the mode line (ef-deuteranopia-dark)}
 
 @noindent
 One segment per open cockpit: the city's initials (@samp{emacs-city}
@@ -3191,7 +3191,7 @@ run, agent, thread) and its filters.  Making it reads buffer state
 only; nothing runs, locally or on the host.  A thread's bookmark keeps
 its first message's headers, never a body.
 
-@shot{bookmarks-dark, The bookmark list with two fixture gascity views (ef-elea-dark)}
+@shot{bookmarks-dark, The bookmark list with two fixture gascity views (ef-deuteranopia-dark)}
 
 @fnindex gascity-bookmark-jump
 A jump opens the view the usual way, in its city: at once, @samp{…}
@@ -4506,6 +4506,19 @@ A failed or errored state (error).
 @item gascity-dim
 Secondary, de-emphasized text (shadow).
 @end table
+
+@section Theming
+
+@cindex themes
+@cindex screenshots, theme
+gascity does not impose a theme of its own: every face it defines
+inherits from a standard face, so the porcelain follows whatever theme
+you load.  The manual's screenshots standardize on a single dark theme,
+@code{ef-deuteranopia-dark}, so the images match what most users see.
+The one deliberate exception is @code{cockpit-light}, captured in
+@code{ef-cyprus} beside its @code{cockpit-dark} twin to demonstrate the
+same buffer under a light and a dark theme (@pxref{The Cockpit}); every
+other image is a @code{-dark} capture of @code{ef-deuteranopia-dark}.
 
 @c ====================================================================
 @node Capability Gaps

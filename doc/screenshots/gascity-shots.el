@@ -14,7 +14,7 @@
 ;;
 ;;   GASCITY_REPO        repo root (default: derived from this file)
 ;;   BEADS_REPO          beads.el checkout (default: ~/workspace/beads.el)
-;;   GASCITY_SHOT_THEME  theme symbol, e.g. ef-elea-dark
+;;   GASCITY_SHOT_THEME  theme symbol, e.g. ef-deuteranopia-dark
 ;;   GASCITY_SHOT_OUTDIR directory for the raw PNGs
 ;;   GASCITY_SHOT_SUFFIX appended to every shot name, e.g. -dark
 ;;   GASCITY_SHOT_VIEWS  space-separated view names; empty = all
@@ -76,7 +76,7 @@
 (setq screenshot-output-dir
       (gascity-shots-getenv "GASCITY_SHOT_OUTDIR" temporary-file-directory)
       screenshot-theme
-      (intern (gascity-shots-getenv "GASCITY_SHOT_THEME" "ef-elea-dark"))
+      (intern (gascity-shots-getenv "GASCITY_SHOT_THEME" "ef-deuteranopia-dark"))
       screenshot-theme-library "ef-themes"
       screenshot-async-process-regexp "gascity-gc"
       screenshot-log-function #'gascity-shots--progress)

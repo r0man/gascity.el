@@ -70,9 +70,12 @@ THUMB_COLORS=128  # a preview needs fewer colours
 # in two themes is captured twice (e.g. the cockpit, to show theming).
 # The suffix is the "-<theme>" half of the committed name, so the output is
 # exactly <view>-<theme>.png and <view>-<theme>-thumb.png.
+# ef-deuteranopia-dark is the standard dark theme for every view; ef-cyprus
+# is kept for the single deliberate light capture, cockpit-light, which
+# pairs with cockpit-dark to demonstrate theming.
 read -r -d '' MANIFEST <<'EOF' || true
-ef-elea-dark  -dark   cockpit dispatch agents runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus     -light  cockpit agents-tree mail-inbox cities rig-list order-list remote-cities
+ef-deuteranopia-dark  -dark   cockpit dispatch agents agents-tree runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+ef-cyprus             -light  cockpit
 EOF
 
 # Owning source file(s) per view, for `--scope changed` (plan-review P2).
