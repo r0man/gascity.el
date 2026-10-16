@@ -259,6 +259,23 @@ KIND is \"fn\", \"v\", \"k\" or \"c\"; a key entry keeps any
       (setq text (substring text (match-end 0))))
     (nreverse names)))
 
+(defun gascity-manual-test--generated-tables ()
+  "Return the base names of the tracked `doc/generated/*.texi' tables.
+Read from the directory rather than a hard-coded list, so a new generated
+table must be wired into the build, the manual and the drift check."
+  (sort (mapcar #'file-name-nondirectory
+                (directory-files
+                 (expand-file-name "doc/generated" gascity-manual-test--root)
+                 t "\\.texi\\'"))
+        #'string<))
+
+(defconst gascity-manual-test--standard-dark-shots
+  '("agents-tree-dark" "cities-dark" "mail-inbox-dark"
+    "order-list-dark" "remote-cities-dark" "rig-list-dark")
+  "The dark shots added when the screenshot theme standardized (REQ-005).
+Pinned so a rename that drops one from the manifest, the shot list or the
+manual fails the gate instead of silently shrinking the shipped set.")
+
 (defun gascity-manual-test--nodes ()
   "Return every `@node' name in doc/gascity.texi, in order."
   (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
@@ -605,19 +622,63 @@ hand-written; `options.texi' is only the enumeration (REQ-002, REQ-003)."
 (ert-deftest gascity-test-manual-generated-tables-tracked ()
   "The generated reference tables are shipped and included (REQ-014).
 A normal `make' builds the manual from the tracked `doc/generated/*.texi';
-if either file drops out of `gascity_TEXINFOS' it stops shipping, and
+if a table drops out of `gascity_TEXINFOS' it stops shipping, and
 `make check-doc-drift' would have nothing to compare against.  Each file
 must also be `@include'd by `doc/gascity.texi' or the generated tables
-never reach the built manual."
+never reach the built manual, and listed in the top-level `EXTRA_DIST' so
+the drift-checked artifact ships.  The table list is read from the
+directory, so a new `options.texi'-style table cannot bypass the checks."
   (let ((makefile (gascity-manual-test--read "doc/Makefile.am"))
+        (top (gascity-manual-test--read "Makefile.am"))
+        (texi (gascity-manual-test--read "doc/gascity.texi"))
+        (tables (gascity-manual-test--generated-tables)))
+    ;; The new option table is one of the tracked generated tables.
+    (should (member "options.texi" tables))
+    (dolist (base tables)
+      (let ((include (concat "generated/" base)))
+        (ert-info ((format "%s" include))
+          (should (string-match-p (regexp-quote include) makefile))
+          (should (string-match-p (regexp-quote (concat "@include " include))
+                                  texi))
+          (should (string-match-p
+                   (regexp-quote (concat "doc/generated/" base)) top)))))))
+
+(ert-deftest gascity-test-manual-standard-shots-present ()
+  "Every standardized dark shot is committed and embedded (REQ-005, REQ-006).
+The manifest, the shot list and the manual must agree on the names the
+theme standardization added; a rename that drops one from any of the three
+fails here rather than quietly shipping a smaller screenshot set."
+  (let ((outputs (gascity-manual-test--output-names))
+        (shots (gascity-manual-test--shot-names))
+        (embedded (gascity-manual-test--texi-shots)))
+    (dolist (name gascity-manual-test--standard-dark-shots)
+      (ert-info ((format "%s" name))
+        (should (member name outputs))
+        (should (member (string-remove-suffix "-dark" name) shots))
+        (should (member name embedded))))))
+
+(ert-deftest gascity-test-manual-html-presentation-held ()
+  "The built HTML keeps the shipped presentation (REQ-010).
+The manual stays a self-contained HTML tree: the stylesheet is inlined
+through `--css-include', the lightbox script through the `PRE_BODY_CLOSE'
+customization variable, and the screenshot images are mirrored into the
+output directory.  The stylesheet bounds the previews, and Org is not
+reintroduced as a manual source."
+  (let ((makefile (gascity-manual-test--read "doc/Makefile.am"))
+        (css (gascity-manual-test--read "doc/manual.css"))
         (texi (gascity-manual-test--read "doc/gascity.texi")))
-    (dolist (include '("generated/keys.texi"
-                       "generated/commands.texi"
-                       "generated/options.texi"))
-      (ert-info ((format "%s" include))
-        (should (string-match-p (regexp-quote include) makefile))
-        (should (string-match-p (regexp-quote (concat "@include " include))
-                                texi))))))
+    ;; Inlined stylesheet and lightbox, mirrored images.
+    (should (string-match-p "--css-include=.*manual\\.css" makefile))
+    (should (string-match-p "PRE_BODY_CLOSE" makefile))
+    (should (string-match-p "lightbox\\.js" makefile))
+    (should (string-match-p "html-local" makefile))
+    (should (string-match-p "images" makefile))
+    ;; The stylesheet bounds the inline preview and the lightbox image.
+    (should (string-match-p "div\\.screenshot img" css))
+    (should (string-match-p "max-width" css))
+    ;; A Texinfo source, not Org: no Org keywords or Org major mode.
+    (should-not (string-match-p "\n#\\+" (concat "\n" texi)))
+    (should-not (string-match-p "org-mode" texi))))
 
 (ert-deftest gascity-test-manual-nodes-reachable ()
   "Every `@node' is named by some menu entry (REQ-001, REQ-004).
