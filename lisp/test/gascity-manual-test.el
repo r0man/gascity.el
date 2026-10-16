@@ -155,6 +155,14 @@ Return a plist with :status, the captured :stdout and the captured
       (and (boundp 'beads-test-isolation-env-vars)
            (symbol-value 'beads-test-isolation-env-vars)))))
 
+(defun gascity-manual-test--unset-location-vars (text)
+  "Return the gc location/identity names TEXT unsets after `unset GC_CITY'.
+The list may continue across lines with a trailing backslash.  Used to
+compare capture.sh's copy against fixture.sh's `unset_gc_location_vars'
+body, which duplicate the same 12 names (RF-2)."
+  (when (string-match "unset GC_CITY\\(\\(?:\\\\\n\\|[^\n]\\)*\\)" text)
+    (split-string (match-string 1 text) "[ \t\n\\\\]+" t)))
+
 (defun gascity-manual-test--key-registry-const (name)
   "Return the value of the key-registry test's NAME `defconst'.
 NAME is a symbol; its literal `(defconst NAME VALUE ...)' form is read
@@ -402,7 +410,17 @@ This covers `gascity-fixture.sh', the process that actually runs
       (let ((res (gascity-manual-test--call "bash" script
                                             "print-isolation-vars")))
         (should (equal 0 (plist-get res :status)))
-        (should (equal beads (split-string (plist-get res :stdout) "\n" t)))))))
+        (should (equal beads (split-string (plist-get res :stdout) "\n" t)))))
+    ;; The 12-name gc location/identity list lives in both capture.sh and
+    ;; fixture.sh (`unset_gc_location_vars'); a drift between the copies
+    ;; silently reintroduces the WI-07 non-reproducible capture, so assert
+    ;; the two lists are equal rather than trusting a sync comment (RF-2).
+    (let ((capture (gascity-manual-test--unset-location-vars
+                    (gascity-manual-test--read "doc/screenshots/capture.sh")))
+          (fixture (gascity-manual-test--unset-location-vars
+                    (gascity-manual-test--read "doc/screenshots/fixture.sh"))))
+      (should (> (length capture) 1))
+      (should (equal capture fixture)))))
 
 (ert-deftest gascity-test-manual-view-sources-cover-manifest ()
   "Every manifest view has a VIEW_SOURCES entry (REQ-002).
@@ -534,48 +552,19 @@ reference entry -- fails this test until `doc/gascity.texi' documents it."
                  (regexp-quote (concat "@fnindex " command)) texi))))))
 
 (ert-deftest gascity-test-manual-reference-coverage ()
-  "Every registered view/key/verb and generated option has a reference entry.
-The key registry in `gascity-key-registry-test.el' and the generated
-`doc/generated/options.texi' table are the checklists: every view needs a
-`@deffn {Command}' entry naming its mode, every universal and vui
-contract key a `@kindex', every namespaced and agent-only agent verb its
-command entry and key index, and every `gascity-*' user option a
-`@defopt'/`@defvr {User Option}' entry and a `@vindex'.  A new view, key,
-verb or option -- or a removed reference entry -- fails this test until
-`doc/gascity.texi' documents it.  Per plan-review O1 the entries are
-hand-written; `options.texi' is only the enumeration (REQ-002, REQ-003)."
-  (let* ((texi (gascity-manual-test--read "doc/gascity.texi"))
-         (blocks (gascity-manual-test--deffn-blocks))
-         (options (gascity-manual-test--generated-options))
-         (defopt (gascity-manual-test--defopt-names))
-         (defvr (gascity-manual-test--user-option-defvr-names))
-         (views (gascity-manual-test--key-registry-const
-                 'gascity-key-registry--views))
-         (contract (gascity-manual-test--key-registry-const
-                    'gascity-key-registry--contract))
-         (vui-contract (gascity-manual-test--key-registry-const
-                        'gascity-key-registry--vui-contract))
-         (namespaced (gascity-manual-test--key-registry-const
-                      'gascity-key-registry--namespaced-verbs))
-         (agent-only (gascity-manual-test--key-registry-const
-                      'gascity-key-registry--agent-only-verbs))
-         (command-block-p
-          (lambda (regexp)
-            (cl-some (lambda (block)
-                       (and (string-match-p "\\`@deffn {Command} " block)
-                            (string-match-p regexp block)))
-                     blocks))))
-    ;; Every `@deffn' reference entry carries its explicit function index
-    ;; entry, and every option and keymap definition its variable index
-    ;; entry, so both printed indexes are complete (REQ-003, D8).
-    (dolist (name (gascity-manual-test--deffn-names))
-      (ert-info ((format "function index %s" name))
-        (should (member name (gascity-manual-test--index-lines "fn")))))
-    (dolist (name (append (gascity-manual-test--defopt-names)
-                          (gascity-manual-test--user-option-defvr-names)
-                          (gascity-manual-test--keymap-defvr-names)))
-      (ert-info ((format "variable index %s" name))
-        (should (member name (gascity-manual-test--index-lines "v")))))
+  "Every generated user option has a reference entry (REQ-002).
+The generated `doc/generated/options.texi' table is the checklist: every
+`gascity-*' user option needs a `@defopt'/`@defvr {User Option}' entry
+and a `@vindex' in the reference chapters, so a new option or a removed
+entry fails here.  Per plan-review O1 the entries are hand-written;
+`options.texi' is only the enumeration.  The view/key/verb surface and
+the printed-index contract have their own single owners,
+`gascity-test-manual-key-registry-coverage' and
+`gascity-test-manual-reference-entry-indexes' (RF-3)."
+  (let ((texi (gascity-manual-test--read "doc/gascity.texi"))
+        (options (gascity-manual-test--generated-options))
+        (defopt (gascity-manual-test--defopt-names))
+        (defvr (gascity-manual-test--user-option-defvr-names)))
     ;; Every generated user option has a definition and a variable index
     ;; entry, written once by hand in the reference chapters.
     (should (> (length options) 30))
@@ -583,41 +572,7 @@ hand-written; `options.texi' is only the enumeration (REQ-002, REQ-003)."
       (ert-info ((format "option %s" option))
         (should (or (member option defopt) (member option defvr)))
         (should (string-match-p
-                 (regexp-quote (concat "@vindex " option)) texi))))
-    ;; Every view has a definition entry naming its view and mode.
-    (dolist (view views)
-      (let* ((name (symbol-name (car view)))
-             (map (symbol-name (nth 1 view)))
-             (mode (string-remove-suffix "-map" map)))
-        (ert-info ((format "view %s" name))
-          (should (funcall command-block-p
-                           (concat "@code{" (regexp-quote name) "}"))))
-        (ert-info ((format "view %s mode" name))
-          (should (funcall command-block-p
-                           (concat "@code{" (regexp-quote mode) "}"))))))
-    ;; Every universal and vui contract key is in the key index.
-    (dolist (key (append contract vui-contract))
-      (ert-info ((format "key %s" key))
-        (should (string-match-p (regexp-quote (concat "@kindex " key)) texi))))
-    ;; Every namespaced (`a' prefix) verb has an entry and its key index.
-    (dolist (entry namespaced)
-      (let ((key (car entry))
-            (cmd (symbol-name (cdr entry))))
-        (ert-info ((format "a %s -> %s" key cmd))
-          (should (funcall command-block-p
-                           (concat "@deffn {Command} " (regexp-quote cmd))))
-          (should (string-match-p
-                   (regexp-quote (concat "@kindex a " key)) texi)))))
-    ;; Every agent-only bare alias has its command entry and key index.
-    (dolist (entry agent-only)
-      (let ((key (car entry)))
-        (dolist (cmd (cdr entry))
-          (ert-info ((format "bare %s -> %s" key (symbol-name cmd)))
-            (should (funcall command-block-p
-                             (concat "@deffn {Command} "
-                                     (regexp-quote (symbol-name cmd)))))
-            (should (string-match-p
-                     (regexp-quote (concat "@kindex " key)) texi))))))))
+                 (regexp-quote (concat "@vindex " option)) texi))))))
 
 (ert-deftest gascity-test-manual-generated-tables-tracked ()
   "The generated reference tables are shipped and included (REQ-014).
