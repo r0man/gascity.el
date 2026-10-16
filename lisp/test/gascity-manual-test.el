@@ -186,6 +186,47 @@ mention, so it must look inside these blocks."
           (setq text (substring text (match-end 0))))))
     (nreverse blocks)))
 
+(defun gascity-manual-test--deffn-names ()
+  "Return every name defined by a `@deffn @dots{}' line in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@deffn {[^}]*} \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--keymap-defvr-names ()
+  "Return every name defined by `@defvr {Keymap} NAME' in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@defvr {Keymap} \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--index-lines (kind)
+  "Return the entries of the `@KINDindex' index in the manual.
+KIND is \"fn\", \"v\", \"k\" or \"c\"; a key entry keeps any
+`@r{(...)}' qualifier it carries."
+  (let* ((text (gascity-manual-test--read "doc/gascity.texi"))
+         (regexp (concat "^@" kind "index \\(.+\\)$"))
+         names)
+    (while (string-match regexp text)
+      (push (string-trim (match-string 1 text)) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defconst gascity-manual-test--concepts
+  '("bead" "rig" "city" "sling" "convoy" "polecat" "workflow"
+    "store" "live refresh")
+  "The core vocabulary the manual must define and cross-link (REQ-003).")
+
+(defun gascity-manual-test--info-index-node (text node)
+  "Return the region of built Info TEXT for index NODE, or nil."
+  (when (string-match (concat "Node: " (regexp-quote node) "\\b") text)
+    (let ((start (match-beginning 0)))
+      (if (string-match "\nFile: " text (match-end 0))
+          (substring text start (match-beginning 0))
+        (substring text start)))))
+
 (defun gascity-manual-test--generated-commands ()
   "Return every `gascity-command-*' class in the generated command table."
   (let ((text (gascity-manual-test--read "doc/generated/commands.texi")) names)
@@ -417,7 +458,18 @@ fails this test until `doc/gascity.texi' documents it."
                            (concat "@code{" (regexp-quote mode) "}"))))
         (ert-info ((format "view %s map" name))
           (should (funcall command-block-p
-                           (concat "@code{" (regexp-quote map) "}"))))))
+                           (concat "@code{" (regexp-quote map) "}"))))
+        ;; Widen the assertion to functions: the view's own definition
+        ;; block carries the command's `@fnindex' entry (REQ-003, D8).
+        (let ((block (cl-find-if
+                      (lambda (b) (string-match-p (regexp-quote map) b))
+                      blocks)))
+          (ert-info ((format "view %s fnindex" name))
+            (should block)
+            (should (string-match "\\`@deffn {Command} \\([^ \n]+\\)" block))
+            (should (string-match-p
+                     (regexp-quote (concat "@fnindex " (match-string 1 block)))
+                     block))))))
     ;; Every universal and vui contract key is in the key index.
     (dolist (key (append contract vui-contract))
       (ert-info ((format "key %s" key))
@@ -496,6 +548,17 @@ hand-written; `options.texi' is only the enumeration (REQ-002, REQ-003)."
                        (and (string-match-p "\\`@deffn {Command} " block)
                             (string-match-p regexp block)))
                      blocks))))
+    ;; Every `@deffn' reference entry carries its explicit function index
+    ;; entry, and every option and keymap definition its variable index
+    ;; entry, so both printed indexes are complete (REQ-003, D8).
+    (dolist (name (gascity-manual-test--deffn-names))
+      (ert-info ((format "function index %s" name))
+        (should (member name (gascity-manual-test--index-lines "fn")))))
+    (dolist (name (append (gascity-manual-test--defopt-names)
+                          (gascity-manual-test--user-option-defvr-names)
+                          (gascity-manual-test--keymap-defvr-names)))
+      (ert-info ((format "variable index %s" name))
+        (should (member name (gascity-manual-test--index-lines "v")))))
     ;; Every generated user option has a definition and a variable index
     ;; entry, written once by hand in the reference chapters.
     (should (> (length options) 30))
@@ -591,7 +654,7 @@ required autotools/lint nodes."
       (ert-info ((format "new node %s" node))
         (should (string-match-p (regexp-quote node) texi))))
     ;; Concept, function and variable index entries all appear.
-    (dolist (index '("@cindex " "@findex " "@vindex "))
+    (dolist (index '("@cindex " "@fnindex " "@vindex " "@kindex "))
       (should (string-match-p (regexp-quote index) texi)))
     ;; Both printed indexes are wired: the variable index is folded into
     ;; the function index (`@syncodeindex vr fn'), and the key index prints.
@@ -600,6 +663,71 @@ required autotools/lint nodes."
     ;; Cross-references are present.
     (should (string-match-p "@xref{" texi))
     (should (string-match-p "@pxref{" texi))))
+
+(ert-deftest gascity-test-manual-reference-entry-indexes ()
+  "Every reference entry has its explicit printed-index entry (REQ-003).
+The manual has four reference entry kinds: `@deffn', `@defopt',
+`@defvr {User Option}' and `@defvr {Keymap}'.  Each `@deffn' name must
+appear on a `@fnindex' line and each option or keymap name on a
+`@vindex' line, so the printed indexes name every entry a reader can
+look up.  A definition added without its index entry fails here."
+  (let ((fnindex (gascity-manual-test--index-lines "fn"))
+        (vindex (gascity-manual-test--index-lines "v"))
+        (deffn (gascity-manual-test--deffn-names))
+        (defopt (gascity-manual-test--defopt-names))
+        (defvr (gascity-manual-test--user-option-defvr-names))
+        (keymaps (gascity-manual-test--keymap-defvr-names)))
+    (should (> (length deffn) 80))
+    (dolist (name deffn)
+      (ert-info ((format "@deffn %s fnindex" name))
+        (should (member name fnindex))))
+    (should (> (length keymaps) 15))
+    (dolist (name (append defopt defvr keymaps))
+      (ert-info ((format "definition %s vindex" name))
+        (should (member name vindex))))))
+
+(ert-deftest gascity-test-manual-concepts-cross-referenced ()
+  "Every core concept is defined once and cross-linked (REQ-003, D8).
+The Terminology section is the single definition point; the task
+chapters must cross-reference it the first time they lean on a concept.
+The Introduction names the chapter, and the body carries at least one
+`@pxref{Terminology}' per concept, so the cross-reference web the
+Concepts chapter promises actually exists."
+  (let ((texi (gascity-manual-test--read "doc/gascity.texi")))
+    (dolist (concept gascity-manual-test--concepts)
+      (ert-info ((format "concept %s cindex" concept))
+        (should (string-match-p
+                 (regexp-quote (concat "@cindex " concept)) texi))))
+    ;; The Introduction names the Concepts chapter...
+    (should (string-match-p (regexp-quote "@ref{Concepts") texi))
+    ;; ...and the task chapters each link back to the Terminology section.
+    (should (>= (length (split-string texi "@pxref{Terminology}" t))
+                (1+ (length gascity-manual-test--concepts))))))
+
+(ert-deftest gascity-test-manual-info-indexes-populated ()
+  "Both printed indexes are populated in the built Info output (REQ-003).
+Building the manual with `makeinfo' and reading the two generated index
+nodes proves the `@printindex' lines are wired to entries, not merely
+that index commands appear in the source.  Skipped when `makeinfo' is
+not installed."
+  (skip-unless (executable-find "makeinfo"))
+  (let* ((info (make-temp-file "gascity-manual" nil ".info"))
+         (res (gascity-manual-test--call "makeinfo" "--no-split"
+                                         "-o" info "doc/gascity.texi")))
+    (unwind-protect
+        (progn
+          (should (equal 0 (plist-get res :status)))
+          (let* ((text (with-temp-buffer
+                         (insert-file-contents info)
+                         (buffer-string)))
+                 (key (gascity-manual-test--info-index-node text "Key Index"))
+                 (fn (gascity-manual-test--info-index-node
+                      text "Command and Variable Index")))
+            (should key)
+            (should (string-match-p "^\\* .*:\\s-+" key))
+            (should fn)
+            (should (string-match-p "^\\* .*:\\s-+" fn))))
+      (delete-file info))))
 
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here
