@@ -186,6 +186,14 @@ mention, so it must look inside these blocks."
           (setq text (substring text (match-end 0))))))
     (nreverse blocks)))
 
+(defun gascity-manual-test--generated-commands ()
+  "Return every `gascity-command-*' class in the generated command table."
+  (let ((text (gascity-manual-test--read "doc/generated/commands.texi")) names)
+    (while (string-match "^@item @code{\\(gascity-command-[^}]+\\)}" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
 (defun gascity-manual-test--nodes ()
   "Return every `@node' name in doc/gascity.texi, in order."
   (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
@@ -409,6 +417,28 @@ fails this test until `doc/gascity.texi' documents it."
                                      (regexp-quote (symbol-name cmd)))))
             (should (string-match-p
                      (regexp-quote (concat "@kindex " key)) texi))))))))
+
+(ert-deftest gascity-test-manual-command-coverage ()
+  "Every generated command class has a reference entry (REQ-002, REQ-003).
+The command registry, as emitted to `doc/generated/commands.texi', is the
+coverage checklist: every concrete `gascity-command-*' class must have a
+`@deffn {Command}' entry and an `@fnindex' entry in the Command and
+Variable Reference chapter.  A new command class -- or a removed
+reference entry -- fails this test until `doc/gascity.texi' documents it."
+  (let ((commands (gascity-manual-test--generated-commands))
+        (blocks (gascity-manual-test--deffn-blocks))
+        (texi (gascity-manual-test--read "doc/gascity.texi")))
+    (should (> (length commands) 40))
+    (dolist (command commands)
+      (ert-info ((format "command %s" command))
+        (should (cl-some (lambda (block)
+                           (string-match-p
+                            (concat "\\`@deffn {Command} "
+                                    (regexp-quote command) "\\b")
+                            block))
+                         blocks))
+        (should (string-match-p
+                 (regexp-quote (concat "@fnindex " command)) texi))))))
 
 (ert-deftest gascity-test-manual-generated-tables-tracked ()
   "The generated reference tables are shipped and included (REQ-014).

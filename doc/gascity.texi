@@ -3424,6 +3424,7 @@ Key Bindings}; neither is restated here.
 * View Reference::
 * Key Reference::
 * Agent Action Verbs::
+* Command Reference::
 @end menu
 
 @c ====================================================================
@@ -3710,6 +3711,285 @@ Open the polecat detail view.
 @kindex a v
 @kindex v @r{(agent-only)}
 Show recent terminal output read-only.
+@end deffn
+
+@node Command Reference
+@section Commands
+@cindex command reference
+@cindex registered commands
+@cindex gascity-command
+
+Every concrete @code{gascity-command} class is listed here, in the same
+alphabetical order as @ref{Generated Command Reference}, which is the
+generated, drift-gated copy of the same registry.  A class is the typed
+Emacs model of one @command{gc} subcommand: its slots declare that
+subcommand's positional arguments and options, and its @code{NAME!}
+function executes it and returns the parsed payload.  The task chapters
+introduce the porcelain views and keys that drive these classes;
+@ref{Generated Command Reference} carries each derived @command{gc}
+subcommand and the first line of the class docstring.
+
+@deffn {Command} gascity-command-bd-assign
+@fnindex gascity-command-bd-assign
+Assign a bead to an agent or human (@command{gc bd assign}).  Store-routed
+with @option{-C} from the bead id's prefix.
+@end deffn
+
+@deffn {Command} gascity-command-bd-close
+@fnindex gascity-command-bd-close
+Close a bead, optionally recording a reason (@command{gc bd close}).
+Store-routed with @option{-C}; the porcelain confirms.
+@end deffn
+
+@deffn {Command} gascity-command-bd-create
+@fnindex gascity-command-bd-create
+Quick-capture a bead from a title, type, priority and assignee
+(@command{gc bd create}); deep authoring stays in beads.el.  Store-routed
+with @option{-C}.
+@end deffn
+
+@deffn {Command} gascity-command-bd-dep-add
+@fnindex gascity-command-bd-dep-add
+Record that one bead depends on another (@command{gc bd dep add}).
+Store-routed with @option{-C}.
+@end deffn
+
+@deffn {Command} gascity-command-bd-dep-remove
+@fnindex gascity-command-bd-dep-remove
+Remove that dependency edge (@command{gc bd dep remove}).  Store-routed
+with @option{-C}.
+@end deffn
+
+@deffn {Command} gascity-command-bd-note
+@fnindex gascity-command-bd-note
+Append a note to a bead's discussion (@command{gc bd note}).  Store-routed
+with @option{-C}.
+@end deffn
+
+@deffn {Command} gascity-command-bd-reopen
+@fnindex gascity-command-bd-reopen
+Reopen a closed bead, clearing its close time (@command{gc bd reopen}).
+Store-routed with @option{-C}.
+@end deffn
+
+@deffn {Command} gascity-command-bd-update
+@fnindex gascity-command-bd-update
+Update a bead's status, priority, assignee or description
+(@command{gc bd update}); at least one field must be set.  Store-routed
+with @option{-C}.
+@end deffn
+
+@deffn {Command} gascity-command-convoy-list
+@fnindex gascity-command-convoy-list
+List the city's convoys (@command{gc convoy list}).
+@end deffn
+
+@deffn {Command} gascity-command-dolt-health
+@fnindex gascity-command-dolt-health
+Report Dolt server health and per-database stats (@command{gc dolt
+health}); used in place of @code{gc dolt list}, which has no JSON output.
+@end deffn
+
+@deffn {Command} gascity-command-formula-catalog
+@fnindex gascity-command-formula-catalog
+List the formulas available in the city (@command{gc formula catalog});
+backs the sling transient's formula picker.
+@end deffn
+
+@deffn {Command} gascity-command-formula-show
+@fnindex gascity-command-formula-show
+Show a formula's compiled recipe (@command{gc formula show}), optionally
+with variable substitutions.
+@end deffn
+
+@deffn {Command} gascity-command-mail-archive
+@fnindex gascity-command-mail-archive
+Archive a message without reading it (@command{gc mail archive}).
+@end deffn
+
+@deffn {Command} gascity-command-mail-inbox
+@fnindex gascity-command-mail-inbox
+Show the current agent's mail inbox (@command{gc mail inbox}).
+@end deffn
+
+@deffn {Command} gascity-command-mail-mark-read
+@fnindex gascity-command-mail-mark-read
+Mark a message read without opening it (@command{gc mail mark-read}).
+@end deffn
+
+@deffn {Command} gascity-command-mail-mark-unread
+@fnindex gascity-command-mail-mark-unread
+Mark a message unread (@command{gc mail mark-unread}).
+@end deffn
+
+@deffn {Command} gascity-command-mail-read
+@fnindex gascity-command-mail-read
+Read a message and mark it read (@command{gc mail read}); the
+human-readable body is shown verbatim.
+@end deffn
+
+@deffn {Command} gascity-command-mail-reply
+@fnindex gascity-command-mail-reply
+Reply to a message, addressed to its original sender
+(@command{gc mail reply}); driven from the compose buffer.
+@end deffn
+
+@deffn {Command} gascity-command-mail-send
+@fnindex gascity-command-mail-send
+Send a message to a session alias or human (@command{gc mail send});
+driven from the compose buffer.
+@end deffn
+
+@deffn {Command} gascity-command-order-list
+@fnindex gascity-command-order-list
+List the city's orders, the scheduled and cooldown jobs
+(@command{gc order list}).
+@end deffn
+
+@deffn {Command} gascity-command-order-run
+@fnindex gascity-command-order-run
+Execute an order manually, bypassing its trigger conditions
+(@command{gc order run}).
+@end deffn
+
+@deffn {Command} gascity-command-reload
+@fnindex gascity-command-reload
+Re-read effective config and process one reload tick (@command{gc
+reload}); @option{--soft} absorbs drift on open sessions.
+@end deffn
+
+@deffn {Command} gascity-command-rig-add
+@fnindex gascity-command-rig-add
+Register a project directory as a rig (@command{gc rig add}).
+@end deffn
+
+@deffn {Command} gascity-command-rig-list
+@fnindex gascity-command-rig-list
+List the rigs registered in the city (@command{gc rig list}).
+@end deffn
+
+@deffn {Command} gascity-command-rig-remove
+@fnindex gascity-command-rig-remove
+Remove a rig from the city config (@command{gc rig remove}); the porcelain
+confirms.
+@end deffn
+
+@deffn {Command} gascity-command-rig-restart
+@fnindex gascity-command-rig-restart
+Restart a rig by killing its agent sessions (@command{gc rig restart}).
+@end deffn
+
+@deffn {Command} gascity-command-rig-resume
+@fnindex gascity-command-rig-resume
+Resume a suspended rig (@command{gc rig resume}).
+@end deffn
+
+@deffn {Command} gascity-command-rig-suspend
+@fnindex gascity-command-rig-suspend
+Suspend a rig, so the reconciler skips its agents (@command{gc rig
+suspend}).
+@end deffn
+
+@deffn {Command} gascity-command-runtime-drain
+@fnindex gascity-command-runtime-drain
+Signal a session to drain and wind down gracefully (@command{gc runtime
+drain}).
+@end deffn
+
+@deffn {Command} gascity-command-runtime-undrain
+@fnindex gascity-command-runtime-undrain
+Clear a session's drain flag (@command{gc runtime undrain}), the inverse
+of @code{runtime drain}.
+@end deffn
+
+@deffn {Command} gascity-command-session-close
+@fnindex gascity-command-session-close
+Close a session permanently, stopping its runtime and closing its bead
+(@command{gc session close}); the porcelain confirms.
+@end deffn
+
+@deffn {Command} gascity-command-session-kill
+@fnindex gascity-command-session-kill
+Force-kill a session's runtime (@command{gc session kill}); the reconciler
+restarts it.
+@end deffn
+
+@deffn {Command} gascity-command-session-list
+@fnindex gascity-command-session-list
+List the city's agent sessions (@command{gc session list}); @option{--state}
+is the one server-side list filter.
+@end deffn
+
+@deffn {Command} gascity-command-session-nudge
+@fnindex gascity-command-session-nudge
+Send a text message to a running session (@command{gc session nudge}).
+@end deffn
+
+@deffn {Command} gascity-command-session-peek
+@fnindex gascity-command-session-peek
+View a session's recent output without attaching (@command{gc session
+peek}); read-only.
+@end deffn
+
+@deffn {Command} gascity-command-session-pin
+@fnindex gascity-command-session-pin
+Pin a session awake (@command{gc session pin}), setting a durable awake
+override.
+@end deffn
+
+@deffn {Command} gascity-command-session-prune
+@fnindex gascity-command-session-prune
+Close dormant sessions older than an age (@command{gc session prune});
+active sessions are never pruned.
+@end deffn
+
+@deffn {Command} gascity-command-session-rename
+@fnindex gascity-command-session-rename
+Rename a session (@command{gc session rename}).
+@end deffn
+
+@deffn {Command} gascity-command-session-reset
+@fnindex gascity-command-session-reset
+Restart a session fresh while preserving its bead (@command{gc session
+reset}).
+@end deffn
+
+@deffn {Command} gascity-command-session-suspend
+@fnindex gascity-command-session-suspend
+Suspend a session, stopping its runtime while its bead persists
+(@command{gc session suspend}).
+@end deffn
+
+@deffn {Command} gascity-command-session-unpin
+@fnindex gascity-command-session-unpin
+Remove a session's durable awake pin (@command{gc session unpin}).
+@end deffn
+
+@deffn {Command} gascity-command-session-wake
+@fnindex gascity-command-session-wake
+Wake a session and clear its holds (@command{gc session wake}).
+@end deffn
+
+@deffn {Command} gascity-command-sling
+@fnindex gascity-command-sling
+Route a bead, task text or formula to a session or agent (@command{gc
+sling}); the flag-heavy verb behind the sling transient.
+@end deffn
+
+@deffn {Command} gascity-command-start
+@fnindex gascity-command-start
+Start the city under the machine-wide supervisor (@command{gc start}).
+@end deffn
+
+@deffn {Command} gascity-command-status
+@fnindex gascity-command-status
+Show the Gas City town status (@command{gc status}).
+@end deffn
+
+@deffn {Command} gascity-command-stop
+@fnindex gascity-command-stop
+Stop all agent sessions in the city (@command{gc stop}); the porcelain
+confirms.
 @end deffn
 
 @c ====================================================================
