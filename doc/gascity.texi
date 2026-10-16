@@ -3178,9 +3178,9 @@ The default name says what the view shows and where:
 
 @example
 gascity: bright-lights
-gascity: burningswell@@burningswell.com
+gascity: bright-lights@@localhost
 gascity-runs: bright-lights
-gascity-run: bs-8jif@@burningswell.com
+gascity-run: hw-1a2b@@localhost
 gascity-rig: hello-world
 @end example
 

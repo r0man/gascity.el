@@ -201,7 +201,7 @@ view's filter plist; :no-city marks a view not pinned to one city.")
 
 (defun gascity-bookmark--default-name (spec args dir)
   "Return the default bookmark name of a SPEC view with ARGS in DIR.
-\"gascity: bright-lights\", \"gascity-runs: burningswell@host\",
+\"gascity: bright-lights\", \"gascity-runs: bright-lights@localhost\",
 \"gascity-run: bs-8jif@host\": the view's prefix, then its subject (the
 object it shows, else the city), `@host' for a remote city."
   (let ((subject-fn (plist-get spec :subject))
