@@ -420,13 +420,26 @@ ELPA (@command{scripts/ci-deps} installs it in CI).
 @section Loading from a checkout
 
 @cindex loading
-Put the @file{lisp} directory on your @code{load-path} and require the
-entry point, which loads every module:
+Put gascity's @file{lisp} directory and its dependencies
+(@pxref{Requirements}) on your @code{load-path}, then require the entry
+point, which loads every module:
 
 @lisp
 (add-to-list 'load-path "/path/to/gascity.el/lisp")
+(add-to-list 'load-path "/path/to/beads.el/lisp")
+;; The vui bundled with the beads.el checkout, or a standalone copy.
+(add-to-list 'load-path "/path/to/vui")
 (require 'gascity)
 @end lisp
+
+@noindent
+@code{beads.el} and @code{vui} are not on ELPA, so a fresh
+@code{emacs -Q} must be told where they are: point the second entry at
+the beads.el checkout and the third at the @code{vui} that checkout
+bundles (for example
+@file{beads.el/.eldev/31.1/packages/vui-1.4.0/}) or at a standalone
+@code{vui} checkout.  @code{transient} (0.10.1 or later) is bundled
+with Emacs 31 and later; on Emacs 29.1--30 install it from GNU ELPA.
 
 @noindent
 You are ready: run @kbd{M-x gascity-dashboard} (@pxref{Getting Started}).
@@ -600,24 +613,25 @@ The dispatcher transient.
 @section Install and Start
 
 gascity.el is an Emacs package that shells out to the @command{gc}
-CLI: load it from your init file, make sure @command{gc} is on
-@code{PATH}, and start a city before you open a view.  The
-requirements and the checkout load path are in @ref{Installation} and
-@ref{Getting Started}.
+CLI.  Three steps get you to the cockpit:
 
-The fastest way in is the cockpit:
-
-@example
-M-x gascity-dashboard
-@end example
-
-@noindent
-@code{gascity-dashboard} resolves the city by walking up from
-@code{default-directory} for @file{city.toml}, so open it from inside
-the city tree.  @kbd{M-x gascity} raises the dispatcher transient, whose
-left columns open the porcelain views and whose @strong{City} column
-starts and stops the city (@pxref{The Cockpit}, @pxref{Actions},
-@pxref{Customization and Theming}).
+@enumerate
+@item
+Load it.  Put the checkout's @file{lisp} directory and its dependencies
+on the @code{load-path} and @code{(require 'gascity)}, or install the
+package (@pxref{Installation}).
+@item
+Make sure @command{gc} is on @code{PATH} and the city is running.  No
+reachable @command{gc} is not fatal: each failed section shows one
+retry line and the others keep working (@pxref{Requirements}).
+@item
+Open the cockpit.  @code{gascity-dashboard} resolves the city by
+walking up from @code{default-directory} for @file{city.toml}, so run
+it from inside the city tree.  @kbd{M-x gascity} raises the dispatcher
+transient instead, whose @strong{City} column starts and stops the city
+(@pxref{The Cockpit}, @pxref{Actions}, @pxref{Customization and
+Theming}).
+@end enumerate
 
 Inside any gascity buffer one set of keys means the same thing:
 @key{TAB}/@kbd{S-@key{TAB}} move between things, @key{SPC} toggles the
@@ -2282,12 +2296,13 @@ filter transient.
 @chapter Sling and Dispatch
 @cindex sling
 @cindex dispatching work
-@fnindex gascity-sling
+@fnindex gascity-sling-dispatch
 @kindex S
 
 The @dfn{sling} is gascity's one command for putting work in front of an
-@dfn{agent}.  @kbd{S} from any gascity view --- or @kbd{M-x gascity-sling}
-anywhere --- opens @code{gascity-sling-dispatch}, a single adaptive
+@dfn{agent}.  @kbd{S} from any gascity view --- or @kbd{M-x
+gascity-sling-dispatch} anywhere --- opens @code{gascity-sling-dispatch},
+a single adaptive
 menu that routes a @dfn{bead}, a @dfn{formula} run, or freeform task text
 to the agent that should take it (@pxref{Terminology}).  The menu asks only the questions context
 has not already answered: with a bead at point and a remembered
@@ -2746,8 +2761,8 @@ moved to @kbd{P}.
 
 Routing work means putting a bead, a formula run or free task text in
 front of the agent that should take it.  gascity has one command for
-it: the sling, @kbd{S} from any view (or @kbd{M-x gascity-sling}
-anywhere).  @xref{Sling and Dispatch}.
+it: the sling, @kbd{S} from any view (or @kbd{M-x
+gascity-sling-dispatch} anywhere).  @xref{Sling and Dispatch}.
 
 The menu asks what, who and how, in typed completion: @kbd{A} picks the
 work (beads and convoys; @kbd{C-u} for free text), @kbd{f} a formula,
@@ -2767,7 +2782,7 @@ section and the rig dashboard's @strong{Ready} section
 
 A formula is a reusable workflow; dispatching it to an agent (or
 against a bead) is the sling's job.  @kbd{S} from any view, or
-@kbd{M-x gascity-sling}, opens the one adaptive menu.
+@kbd{M-x gascity-sling-dispatch}, opens the one adaptive menu.
 @xref{Sling and Dispatch}.
 
 The shape is inferred, never flagged: work with no formula is the plain
@@ -2895,7 +2910,7 @@ at point in the rig list:
 @cindex city lifecycle
 @table @asis
 @item Sling --- dispatcher @kbd{S}
-@fnindex gascity-sling
+@fnindex gascity-sling-dispatch
 @code{gc sling}: route a bead id, a formula, or free task text to an
 agent --- one unified, adaptive menu covering all three shapes
 (@pxref{Sling and Dispatch}).
