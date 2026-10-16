@@ -32,6 +32,7 @@ gascity_TEXINFOS = \
   lightbox.js \
   generated/keys.texi \
   generated/commands.texi \
+  generated/options.texi \
   $(sort $(wildcard $(srcdir)/images/*.png))
 
 EXTRA_DIST = $(gascity_TEXINFOS) generate-tables.el screenshots

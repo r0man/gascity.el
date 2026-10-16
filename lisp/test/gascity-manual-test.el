@@ -194,6 +194,30 @@ mention, so it must look inside these blocks."
       (setq text (substring text (match-end 0))))
     (nreverse names)))
 
+(defun gascity-manual-test--generated-options ()
+  "Return every `gascity-*' user option in the generated option table."
+  (let ((text (gascity-manual-test--read "doc/generated/options.texi")) names)
+    (while (string-match "^@item @code{\\(gascity-[^}\n]+\\)}" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--defopt-names ()
+  "Return every name defined by a `@defopt' line in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@defopt \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--user-option-defvr-names ()
+  "Return every name defined by `@defvr {User Option} NAME' in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@defvr {User Option} \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
 (defun gascity-manual-test--nodes ()
   "Return every `@node' name in doc/gascity.texi, in order."
   (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
@@ -440,6 +464,81 @@ reference entry -- fails this test until `doc/gascity.texi' documents it."
         (should (string-match-p
                  (regexp-quote (concat "@fnindex " command)) texi))))))
 
+(ert-deftest gascity-test-manual-reference-coverage ()
+  "Every registered view/key/verb and generated option has a reference entry.
+The key registry in `gascity-key-registry-test.el' and the generated
+`doc/generated/options.texi' table are the checklists: every view needs a
+`@deffn {Command}' entry naming its mode, every universal and vui
+contract key a `@kindex', every namespaced and agent-only agent verb its
+command entry and key index, and every `gascity-*' user option a
+`@defopt'/`@defvr {User Option}' entry and a `@vindex'.  A new view, key,
+verb or option -- or a removed reference entry -- fails this test until
+`doc/gascity.texi' documents it.  Per plan-review O1 the entries are
+hand-written; `options.texi' is only the enumeration (REQ-002, REQ-003)."
+  (let* ((texi (gascity-manual-test--read "doc/gascity.texi"))
+         (blocks (gascity-manual-test--deffn-blocks))
+         (options (gascity-manual-test--generated-options))
+         (defopt (gascity-manual-test--defopt-names))
+         (defvr (gascity-manual-test--user-option-defvr-names))
+         (views (gascity-manual-test--key-registry-const
+                 'gascity-key-registry--views))
+         (contract (gascity-manual-test--key-registry-const
+                    'gascity-key-registry--contract))
+         (vui-contract (gascity-manual-test--key-registry-const
+                        'gascity-key-registry--vui-contract))
+         (namespaced (gascity-manual-test--key-registry-const
+                      'gascity-key-registry--namespaced-verbs))
+         (agent-only (gascity-manual-test--key-registry-const
+                      'gascity-key-registry--agent-only-verbs))
+         (command-block-p
+          (lambda (regexp)
+            (cl-some (lambda (block)
+                       (and (string-match-p "\\`@deffn {Command} " block)
+                            (string-match-p regexp block)))
+                     blocks))))
+    ;; Every generated user option has a definition and a variable index
+    ;; entry, written once by hand in the reference chapters.
+    (should (> (length options) 30))
+    (dolist (option options)
+      (ert-info ((format "option %s" option))
+        (should (or (member option defopt) (member option defvr)))
+        (should (string-match-p
+                 (regexp-quote (concat "@vindex " option)) texi))))
+    ;; Every view has a definition entry naming its view and mode.
+    (dolist (view views)
+      (let* ((name (symbol-name (car view)))
+             (map (symbol-name (nth 1 view)))
+             (mode (string-remove-suffix "-map" map)))
+        (ert-info ((format "view %s" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote name) "}"))))
+        (ert-info ((format "view %s mode" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote mode) "}"))))))
+    ;; Every universal and vui contract key is in the key index.
+    (dolist (key (append contract vui-contract))
+      (ert-info ((format "key %s" key))
+        (should (string-match-p (regexp-quote (concat "@kindex " key)) texi))))
+    ;; Every namespaced (`a' prefix) verb has an entry and its key index.
+    (dolist (entry namespaced)
+      (let ((key (car entry))
+            (cmd (symbol-name (cdr entry))))
+        (ert-info ((format "a %s -> %s" key cmd))
+          (should (funcall command-block-p
+                           (concat "@deffn {Command} " (regexp-quote cmd))))
+          (should (string-match-p
+                   (regexp-quote (concat "@kindex a " key)) texi)))))
+    ;; Every agent-only bare alias has its command entry and key index.
+    (dolist (entry agent-only)
+      (let ((key (car entry)))
+        (dolist (cmd (cdr entry))
+          (ert-info ((format "bare %s -> %s" key (symbol-name cmd)))
+            (should (funcall command-block-p
+                             (concat "@deffn {Command} "
+                                     (regexp-quote (symbol-name cmd)))))
+            (should (string-match-p
+                     (regexp-quote (concat "@kindex " key)) texi))))))))
+
 (ert-deftest gascity-test-manual-generated-tables-tracked ()
   "The generated reference tables are shipped and included (REQ-014).
 A normal `make' builds the manual from the tracked `doc/generated/*.texi';
@@ -449,7 +548,9 @@ must also be `@include'd by `doc/gascity.texi' or the generated tables
 never reach the built manual."
   (let ((makefile (gascity-manual-test--read "doc/Makefile.am"))
         (texi (gascity-manual-test--read "doc/gascity.texi")))
-    (dolist (include '("generated/keys.texi" "generated/commands.texi"))
+    (dolist (include '("generated/keys.texi"
+                       "generated/commands.texi"
+                       "generated/options.texi"))
       (ert-info ((format "%s" include))
         (should (string-match-p (regexp-quote include) makefile))
         (should (string-match-p (regexp-quote (concat "@include " include))

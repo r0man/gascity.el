@@ -80,7 +80,7 @@ check-doc-drift:
 	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' -L '$(top_srcdir)/lisp/test' \
 	    -l '$(top_srcdir)/doc/generate-tables.el' "$$directory" >/dev/null; \
 	status=0; \
-	for file in keys.texi commands.texi; do \
+	for file in keys.texi commands.texi options.texi; do \
 	  if ! diff -u "$(top_srcdir)/doc/generated/$$file" "$$directory/$$file"; then \
 	    echo "check-doc-drift: doc/generated/$$file is stale; run 'make regen-doc-tables'" >&2; \
 	    status=1; \
@@ -138,4 +138,5 @@ EXTRA_DIST = \
   doc/generate-tables.el \
   doc/generated/keys.texi \
   doc/generated/commands.texi \
+  doc/generated/options.texi \
   doc/screenshots

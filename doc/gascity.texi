@@ -1537,12 +1537,14 @@ ControlMaster with @code{ControlPersist=60}).  gascity always adds
 Reads and actions are scheduled per host, in two lanes so that actions
 never queue behind reads.  A view in a visible window is served first.
 
+@vindex gascity-remote-max-inflight
 @defvr {User Option} gascity-remote-max-inflight
 At most this many @command{gc} processes run at once per remote host
 and lane (default 3); the rest wait in a queue.  Local cities are not
 capped.  @code{nil} means unlimited.
 @end defvr
 
+@vindex gascity-remote-async-timeout
 @defvr {User Option} gascity-remote-async-timeout
 Seconds before a background @command{gc} process is killed (default
 30), locally as well as remotely: a wedged @command{gc} must never hold
@@ -1551,6 +1553,7 @@ data, marked @samp{◐ timed out}.  @command{gc doctor} has its own,
 longer deadline, @code{gascity-health-doctor-timeout}.
 @end defvr
 
+@vindex gascity-remote-sync-timeout
 @defvr {User Option} gascity-remote-sync-timeout
 Seconds before a @emph{synchronous} remote call is abandoned (default
 30, 0 disables): the few calls Emacs itself makes synchronously --- a
@@ -3412,13 +3415,14 @@ Show recent terminal output read-only: @kbd{a v} or @kbd{v}.
 @cindex command reference
 @cindex variable reference
 This chapter is the authoritative reference for every user-visible
-command, function and user option.  It is populated from the source
-surface --- the view and key registry, the @code{gascity-command-*}
-classes, and every @code{gascity-*} @code{defcustom} --- rather than by
-hand, so it cannot silently fall behind the code.  The generated tables
-in @ref{Generated Reference Tables} are the compact, per-view view of the
-same surface, and the per-view effective bindings are in @ref{Effective
-Key Bindings}; neither is restated here.
+command, function and key.  It is populated from the source surface ---
+the view and key registry and the @code{gascity-command-*} classes ---
+rather than by hand, so it cannot silently fall behind the code.  The
+@code{gascity-*} user options have their annotated reference in
+@ref{Customization and Theming}.  The generated tables in @ref{Generated
+Reference Tables} are the compact, per-view enumeration of the same
+surface, and the per-view effective bindings are in @ref{Effective Key
+Bindings}; neither is restated here.
 
 @menu
 * View Reference::
@@ -3997,7 +4001,7 @@ confirms.
 @appendix Generated Reference Tables
 @cindex generated reference tables
 
-The two tables below are generated from the running code by
+The three tables below are generated from the running code by
 @file{doc/generate-tables.el} and committed under @file{doc/generated/}.
 They are part of the distribution, so a clean checkout builds the manual
 from them without running Emacs; a normal @command{make} never rewrites
@@ -4007,6 +4011,7 @@ they no longer match the code.
 
 @include generated/keys.texi
 @include generated/commands.texi
+@include generated/options.texi
 
 @c ====================================================================
 @node Customization and Theming
@@ -4020,130 +4025,278 @@ file.
 
 @section User options
 
-@defvr {User Option} gascity-executable
+The annotated reference for every @code{gascity-*} user option
+(@code{defcustom}); @ref{Generated Reference Tables} has the compact
+name/default/type table generated from the live definitions.  The remote
+options are described in their own chapter, @ref{Remote Cities}.
+
+@vindex gascity-executable
+@defopt gascity-executable
 Name of, or path to, the @command{gc} executable (default @code{"gc"}).  A
 bare command name is resolved against @code{exec-path}; an absolute path
-is used as-is.
-@end defvr
+is used as-is.  For a remote city a bare name is resolved on the host
+(@pxref{Finding gc}).
+@end defopt
 
-@defvr {User Option} gascity-enable-debug
+@vindex gascity-enable-debug
+@defopt gascity-enable-debug
 When non-@code{nil}, log @command{gc} invocations to the
 @file{*gascity-log*} buffer (default @code{nil}).
-@end defvr
+@end defopt
 
-@defvr {User Option} gascity-debug-level
+@vindex gascity-debug-level
+@defopt gascity-debug-level
 Verbosity of debug logging when enabled: @code{error}, @code{info}
 (default), or @code{verbose} (which also logs command output).
-@end defvr
+@end defopt
 
 @defvr {User Option} gascity-terminal-backend
-Backend used when attaching to an agent's tmux session: @code{nil}
-auto-detects (@code{vterm}, then @code{eat}, then the built-in
-@code{term}), or force one of @code{vterm}, @code{eat}, @code{term}
-(default @code{nil}).
+Obsolete alias of the beads.el option @code{beads-terminal-tmux-backend}.
 @end defvr
 
-@defvr {User Option} gascity-tmux-socket
+@vindex gascity-tmux-socket
+@defopt gascity-tmux-socket
 The tmux server socket the city's agents run on (@code{tmux -L}).  When
 @code{nil} (default) it is auto-detected as the city name; a string
 overrides it, and the literal @code{"default"} means the default tmux
 server.
-@end defvr
+@end defopt
 
 @defvr {User Option} gascity-terminal-unshadow-minor-modes
-Global minor modes whose keymaps gascity neutralises inside its terminal
-buffers, so keys the terminal should own are not swallowed before they
-reach it (default @code{(pixel-scroll-precision-mode)}; see @ref{Actions,,
-Attached terminals}).  Each mode listed is given an empty keymap in the
-buffer's @code{minor-mode-overriding-map-alist} --- buffer-locally, and
-never over an entry another package already made.  Set to @code{nil} to
-touch no keymaps.
+Obsolete alias of @code{beads-terminal-tmux-unshadow-minor-modes}.
 @end defvr
 
 @defvr {User Option} gascity-terminal-mode-line-status
-When non-@code{nil} (default), on attaching to an agent gascity turns that
-session's own tmux status bar off and mirrors it --- the friendly name and
-the window list --- as a buffer-local mode-line segment, so the terminal
-shows one status line instead of two.  Reverted when the buffer is killed.
+Obsolete alias of @code{beads-terminal-tmux-mode-line-status}.
 @end defvr
 
 @defvr {User Option} gascity-terminal-preload-idle
-Seconds of idle after the first gascity view before the terminal
-backend's library (vterm, eat, term) is loaded ahead of the first
-attach (default 10).  That load is one indivisible step of a few
-hundred milliseconds; it runs only on genuine idle and waits again when
-input is pending, so it never lands while you type.  @code{nil}
-disables it: the first attach then pays the cost.
+Obsolete alias of @code{beads-terminal-tmux-preload-idle}.
 @end defvr
 
 @defvr {User Option} gascity-terminal-status-interval
-Seconds between refreshes of that mode-line tmux-status segment (default
-@code{5}; values at or below zero fall back to 5).
+Obsolete alias of @code{beads-terminal-tmux-status-interval}.
 @end defvr
 
 @subheading The cockpit
 
-@defvr {User Option} gascity-dashboard-section-rows
-Rows a cockpit section shows before its @samp{@dots{} N more} line
-(default 5).
-@end defvr
+@vindex gascity-dashboard-section-rows
+@defopt gascity-dashboard-section-rows
+Maximum number of rows a cockpit section shows (default 5); the rest
+collapse into a @samp{@dots{} N more} line that opens the full view.
+@end defopt
 
-@defvr {User Option} gascity-dashboard-window
+@vindex gascity-dashboard-section-batch
+@defopt gascity-dashboard-section-batch
+Rows @kbd{+} adds to (and @kbd{-} takes from) a capped section at point
+(default 10).  The cockpit sections, the rig dashboard's bead sections
+and an unfolded churn row start at their cap; @kbd{+} shows this many
+more, @kbd{-} this many fewer, never below the cap.
+@end defopt
+
+@vindex gascity-dashboard-churn-unfold-rows
+@defopt gascity-dashboard-churn-unfold-rows
+Most events @kbd{SPC} unfolds under a cockpit @samp{×N} churn row
+(default 20); the rest is a @samp{@dots{} N more} line whose @kbd{RET}
+opens the Events view narrowed to that churn group.
+@end defopt
+
+@vindex gascity-dashboard-window
+@defopt gascity-dashboard-window
 The Activity section's time window, a @code{gc events --since} duration
 (default @code{"2h"}); @kbd{/ -W} changes it per city.
-@end defvr
+@end defopt
 
-@defvr {User Option} gascity-dashboard-run-idle-threshold
+@vindex gascity-events-window
+@defopt gascity-events-window
+Default time window of the Events view, a @code{gc events --since}
+duration (default @code{"2h"}); days are passed to @command{gc} as hours
+(its durations have no @samp{d} unit).
+@end defopt
+
+@vindex gascity-dashboard-run-idle-threshold
+@defopt gascity-dashboard-run-idle-threshold
 Seconds without step progress after which an active run is listed in
 Needs you (default 1800).
-@end defvr
+@end defopt
 
-@defvr {User Option} gascity-dashboard-agent-idle-threshold
+@vindex gascity-dashboard-agent-idle-threshold
+@defopt gascity-dashboard-agent-idle-threshold
 Seconds of inactivity after which a running agent counts as idle
-(default 3600).
-@end defvr
+(default 3600); only the Agents section's running/idle split reads it.
+@end defopt
 
-@defvr {User Option} gascity-live-enabled
-Whether views keep their city's event stream running (default
-@code{t}); @kbd{W} flips it per city.  See @ref{Live Refresh} for
-@code{gascity-live-debounce}, @code{gascity-live-backoff} and
-@code{gascity-live-poll-interval}.
-@end defvr
-
-@defvr {User Option} gascity-dashboard-event-levels
+@vindex gascity-event-levels
+@defopt gascity-event-levels
 Which event types are signals: an alist of (@var{regexp} . @var{level}),
-@var{level} @code{attention} (@samp{■}) or @code{watch} (@samp{▲}).
-Signal events are never folded into churn.
-@end defvr
+@var{level} @code{attention} (@samp{■}) or @code{watch} (@samp{▲}); the
+first match wins and a type no entry matches is a plain event.  Signal
+events are never folded into churn.
+@end defopt
+
+@vindex gascity-live-enabled
+@defopt gascity-live-enabled
+Whether views keep their city's event stream running (default
+@code{t}); @kbd{W} flips it per city.  See @ref{Live Refresh}.
+@end defopt
+
+@vindex gascity-live-debounce
+@defopt gascity-live-debounce
+Seconds events are collected before their views are invalidated
+(default 2.5).  The first event of a batch arms the timer; later ones
+join the batch, so a view is at most this late under a trickle.
+@end defopt
+
+@vindex gascity-live-backoff
+@defopt gascity-live-backoff
+Seconds to wait before each reconnect attempt, the last element repeating
+(default @code{(2 5 15 60)}); the sequence restarts once a stream stayed
+up for @code{gascity-live-stable-after} seconds.
+@end defopt
+
+@vindex gascity-live-stable-after
+@defopt gascity-live-stable-after
+Seconds a stream must stay up before its backoff resets (default 15).
+@end defopt
+
+@vindex gascity-live-confirm-after
+@defopt gascity-live-confirm-after
+Seconds a (re)started stream must stay up before it counts as live
+(default 3).  @command{gc} prints nothing until an event arrives, so a
+fresh @code{gc events --follow} cannot prove it connected; its first
+event confirms it at once.
+@end defopt
+
+@vindex gascity-live-poll-interval
+@defopt gascity-live-poll-interval
+Seconds between event polls for a city without a stream (default 30),
+for remote methods a plain ssh cannot reach (docker, sudo, multi-hop).
+@end defopt
+
+@vindex gascity-live-poll-watch
+@defopt gascity-live-poll-watch
+How long each poll waits for a first event when none is pending
+(default @code{"2s"}).  A poll is @code{gc events --watch --after SEQ
+--timeout} this: @command{gc} replays every event after SEQ and exits at
+once, or waits this long for one.
+@end defopt
+
+@vindex gascity-live-poll-bootstrap
+@defopt gascity-live-poll-bootstrap
+The @code{gc events --since} window of a poll that knows no seq yet
+(default @code{"60s"}); it must cover @code{gascity-live-poll-interval}.
+@end defopt
+
+@vindex gascity-live-events-reconcile
+@defopt gascity-live-events-reconcile
+Seconds between re-reads of a city's event feed (default 600), to
+reconcile events missed across a reconnect gap with @command{gc}.
+@end defopt
+
+@vindex gascity-live-in-batch
+@defopt gascity-live-in-batch
+When non-@code{nil}, streams also start in a batch (noninteractive)
+Emacs (default @code{nil}), so tests and batch scripts that open views
+never spawn a long-lived @code{gc events --follow}.
+@end defopt
 
 @subheading Health, Cities and the lighter
 
-@defvr {User Option} gascity-health-doctor-timeout
+@vindex gascity-health-doctor-timeout
+@defopt gascity-health-doctor-timeout
 Seconds before a @command{gc doctor} run is killed (default 300).
-@end defvr
+Doctor runs every check in sequence, so it gets a longer deadline than
+@code{gascity-remote-async-timeout}.
+@end defopt
 
-@defvr {User Option} gascity-remote-hosts
+@vindex gascity-remote-hosts
+@defopt gascity-remote-hosts
 Remote hosts whose cities the Cities view lists, as TRAMP prefixes
 (@code{"/ssh:build-box:"}) or bare host names (meaning
 @code{"/ssh:@var{host}:"}).  Hosts visited this session are listed
 without being named here.  Default @code{nil}.
-@end defvr
+@end defopt
 
-@defvr {User Option} gascity-pulse-store-samples
+@vindex gascity-pulse-store-samples
+@defopt gascity-pulse-store-samples
 How many store-size samples to keep per city for Health's sparkline
 (default 40).
-@end defvr
+@end defopt
 
 @subheading Runs
 
-@defvr {User Option} gascity-runs-history-page
+@vindex gascity-runs-history-page
+@defopt gascity-runs-history-page
 Closed runs per history page of the Runs view (default 20).
-@end defvr
+@end defopt
 
-@defvr {User Option} gascity-runs-failed-window
+@vindex gascity-runs-failed-window
+@defopt gascity-runs-failed-window
 How far back the Runs view's Failed section looks (default
 @code{"24h"}); @kbd{/ -W} overrides it.
-@end defvr
+@end defopt
+
+@subheading Sling and formulas
+
+@vindex gascity-sling-var-readers
+@defopt gascity-sling-var-readers
+Alist of formula var names to the readers overriding the heuristic,
+@code{(VAR-NAME . READER)} (default @code{nil}).  @var{reader} is a typed
+reader, any function of one infix object, or an infix class symbol; an
+unmatched var falls through to @code{gascity-sling-formula--var-class}.
+@end defopt
+
+@subheading The store and scheduling
+
+@vindex gascity-store-ttl-alist
+@defopt gascity-store-ttl-alist
+Freshness per read kind, @code{(KIND . TTL)} (default @code{((status .
+5) (bd . 15) (doctor . manual))}).  @var{ttl} is a number of seconds or
+the symbol @code{manual} (fresh until invalidated); kinds not listed use
+@code{gascity-store-default-ttl}.
+@end defopt
+
+@vindex gascity-store-default-ttl
+@defopt gascity-store-default-ttl
+Freshness in seconds of a read kind absent from
+@code{gascity-store-ttl-alist} (default 5).
+@end defopt
+
+@vindex gascity-store-offline-backoff
+@defopt gascity-store-offline-backoff
+Seconds between reconnect probes of an offline host (default @code{(2 5
+15 60)}); the Nth retry waits the Nth element and the last repeats.
+@end defopt
+
+@vindex gascity-store-action-followups
+@defopt gascity-store-action-followups
+Seconds after a completed action at which its kinds are invalidated again
+(default @code{(5 15 45 90 180)}); @command{gc} does not report all the
+transitions an action sets off, so the views re-read what it touched.
+Only visible views actually re-read.  @code{nil} disables the follow-ups.
+@end defopt
+
+@vindex gascity-store-background-kinds
+@defopt gascity-store-background-kinds
+Read kinds that yield to every other kind in a host's read queue
+(default @code{(events bd convoy order)}): the heavy or high-churn ones
+must not make a light read wait on a capped remote host.
+@end defopt
+
+@vindex gascity-store-refetch-hidden
+@defopt gascity-store-refetch-hidden
+When non-@code{nil}, an invalidated entry is re-read even when no view of
+it is visible (default @code{nil}): a buried view's entries are just
+marked stale and re-read when the view is shown again, so a city's event
+stream does not make hidden views spawn @command{gc}.
+@end defopt
+
+@vindex gascity-timer-watchdog-interval
+@defopt gascity-timer-watchdog-interval
+Seconds between runs of the watchdog that rescues lost deferred calls
+(default 0.5): a deferred call whose own timer TRAMP's timer suspension
+discarded runs at most this long after it was due.
+@end defopt
 
 @noindent
 The remote options --- @code{gascity-remote-transport},
