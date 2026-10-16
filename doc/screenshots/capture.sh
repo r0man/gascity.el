@@ -156,6 +156,15 @@ for _var in BEADS_DIR BEADS_DOLT_PORT BEADS_DOLT_SERVER_PORT GC_DOLT_PORT; do
   unset "$_var"
 done
 unset _var
+# gc's location and identity variables reroute `bd'/`gc' at a real store or
+# bind a view to the developer's or agent's live session.  A leaked
+# GC_SESSION_ID made `gc mail inbox' fail with a session-not-found banner that
+# embedded the worker's session id, so the mail-inbox shot was neither honest
+# nor reproducible (WI-07).  fixture.sh unsets this same set for its own gc
+# calls (`unset_gc_location_vars'); keep the two lists in sync.
+unset GC_CITY GC_CITY_PATH GC_CITY_RUNTIME_DIR GC_CITY_NAME \
+      GC_DIR GC_RIG GC_RIG_ROOT GC_BEADS_SCOPE_ROOT \
+      GC_SESSION_ID GC_SESSION_NAME GC_AGENT GC_ALIAS
 # The terminal-attach shot creates and attaches to a fixture tmux session.
 # A leaked TMUX from a developer's own tmux client would split the pre-step
 # and the terminal across two servers (the terminal backend does not forward
