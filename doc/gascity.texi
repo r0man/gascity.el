@@ -3417,10 +3417,300 @@ surface --- the view and key registry, the @code{gascity-command-*}
 classes, and every @code{gascity-*} @code{defcustom} --- rather than by
 hand, so it cannot silently fall behind the code.  The generated tables
 in @ref{Generated Reference Tables} are the compact, per-view view of the
-same surface.
+same surface, and the per-view effective bindings are in @ref{Effective
+Key Bindings}; neither is restated here.
 
-The reference entries are added by the follow-on reference work items;
-this node anchors the chapter and its position in the reading order.
+@menu
+* View Reference::
+* Key Reference::
+* Agent Action Verbs::
+@end menu
+
+@c ====================================================================
+@node View Reference
+@section Views
+@cindex view reference
+@cindex registered views
+
+A @dfn{view} is a major mode that renders one part of a city and binds
+the universal navigation contract.  The key registry in
+@file{lisp/test/gascity-key-registry-test.el} is the checklist these
+entries are written from, so a new view cannot ship undocumented.  A
+@dfn{namespaced} view may also hold a bead, so its agent verbs live
+under the @kbd{a} prefix; a @dfn{mixed} view shows agents but no beads
+and keeps the bare aliases; an @dfn{agent-only} view keeps the bare
+aliases too.  The task chapters describe how to use each view, and
+@ref{Effective Key Bindings} lists its effective bindings.
+
+@deffn {Command} gascity-dashboard
+Open the @dfn{cockpit} (view @code{cockpit}), the city triage buffer, in
+@code{gascity-dashboard-mode} with keymap
+@code{gascity-dashboard-mode-map} (@pxref{The Cockpit}).  Mixed: agent
+verbs keep their bare keys.
+@end deffn
+
+@deffn {Command} gascity-rig-dashboard
+Open one rig's dashboard (view @code{rig-dashboard}) in
+@code{gascity-rig-dashboard-mode} with keymap
+@code{gascity-rig-dashboard-mode-map} (@pxref{The Rig Dashboard});
+prompts for a rig.  Namespaced: agent verbs are under @kbd{a}.
+@end deffn
+
+@deffn {Command} gascity-polecat-detail
+Open one agent's detail (view @code{agent-detail}) in
+@code{gascity-session-detail-mode} with keymap
+@code{gascity-session-detail-mode-map} (@pxref{Agents}).  Namespaced.
+@end deffn
+
+@deffn {Command} gascity-agents-tree
+Open the hierarchical agent tree (view @code{agents-tree}) in
+@code{gascity-agents-tree-mode} with keymap
+@code{gascity-agents-tree-mode-map} (@pxref{Agents}).  Mixed.
+@end deffn
+
+@deffn {Command} gascity-agents
+Open the flat agent table (view @code{agents}) in
+@code{gascity-agents-mode} with keymap @code{gascity-agents-mode-map}
+(@pxref{Agents}).  Mixed.
+@end deffn
+
+@deffn {Command} gascity-session-list
+Open every session (view @code{session-list}) in
+@code{gascity-session-list-mode} with keymap
+@code{gascity-session-list-mode-map} (@pxref{Sessions}).  Mixed.
+@end deffn
+
+@deffn {Command} gascity-runs
+Open the workflow runs (view @code{runs}) in @code{gascity-runs-mode}
+with keymap @code{gascity-runs-mode-map} (@pxref{Runs and Live
+Events}).
+@end deffn
+
+@deffn {Command} gascity-run-show
+Open one run's step ladder (view @code{run-detail}) in
+@code{gascity-run-mode} with keymap @code{gascity-run-mode-map}
+(@pxref{Runs and Live Events}); takes a run and optional convoy and rig.
+@end deffn
+
+@deffn {Command} gascity-health
+Open supervisor, versions, stores and doctor (view @code{health}) in
+@code{gascity-health-mode} with keymap @code{gascity-health-mode-map}
+(@pxref{Health Costs and the Lighter}).
+@end deffn
+
+@deffn {Command} gascity-cities
+Open every city on every host (view @code{cities}) in
+@code{gascity-cities-mode} with keymap @code{gascity-cities-mode-map}
+(@pxref{Cities and Remote Cities}).
+@end deffn
+
+@deffn {Command} gascity-rig-list
+Open the tabulated rig list (view @code{rig-list}) in
+@code{gascity-rig-list-mode} with keymap
+@code{gascity-rig-list-mode-map} (@pxref{Rigs}).
+@end deffn
+
+@deffn {Command} gascity-convoy-list
+Open the convoys (view @code{convoy-list}) in
+@code{gascity-convoy-list-mode} with keymap
+@code{gascity-convoy-list-mode-map} (@pxref{Convoys}).
+@end deffn
+
+@deffn {Command} gascity-order-list
+Open the orders (view @code{order-list}) in
+@code{gascity-order-list-mode} with keymap
+@code{gascity-order-list-mode-map} (@pxref{Orders}).
+@end deffn
+
+@deffn {Command} gascity-dolt-list
+Open the Dolt stores (view @code{dolt-list}) in
+@code{gascity-dolt-list-mode} with keymap
+@code{gascity-dolt-list-mode-map} (@pxref{Dolt}).
+@end deffn
+
+@deffn {Command} gascity-events
+Open the event log (view @code{events}) in @code{gascity-events-mode}
+with keymap @code{gascity-events-mode-map} (@pxref{Events}).
+@end deffn
+
+@deffn {Command} gascity-mail
+Open the mail inbox (view @code{mail-inbox}) in
+@code{gascity-mail-inbox-mode} with keymap
+@code{gascity-mail-inbox-mode-map} (@pxref{Mail}).
+@end deffn
+
+@deffn {Command} gascity-mail-thread-show
+Open one mail thread (view @code{mail-thread}) in
+@code{gascity-mail-thread-mode} with keymap
+@code{gascity-mail-thread-mode-map} (@pxref{Mail}); a text view, not
+tabulated or vui.  Takes the first message and an optional inbox.
+@end deffn
+
+@c ====================================================================
+@node Key Reference
+@section Universal keys
+@cindex key reference
+@cindex universal keys
+
+Every view binds the same navigation contract, so these commands are the
+reference for the contract keys @kbd{q}, @kbd{g}, @kbd{?}, @kbd{j},
+@key{TAB}, @kbd{S-@key{TAB}}, @key{SPC} and @key{RET}, and for the vui
+movement keys @kbd{n}, @kbd{p}, @kbd{N} and @kbd{P}.  The two
+@dfn{view-specific} contract keys, @kbd{g} and @key{RET}, run the
+current view's own refresh and activate command --- for the cockpit,
+@code{gascity-dashboard-refresh} and @code{gascity-dashboard-activate}
+--- and @ref{Effective Key Bindings} names both per view.  The task
+chapter is @ref{Buffers and Navigation}.
+
+@deffn {Command} next-line
+@kindex n
+Move point down one line (@pxref{Moving and toggling}).
+@end deffn
+
+@deffn {Command} previous-line
+@kindex p
+Move point up one line.
+@end deffn
+
+@deffn {Command} gascity-section-next
+@kindex N
+Move point to the next top-level section header, the coarse
+counterpart to @kbd{n} (@pxref{The Cockpit}).
+@end deffn
+
+@deffn {Command} gascity-section-previous
+@kindex P
+Move point to the previous top-level section header.
+@end deffn
+
+@deffn {Command} gascity-thing-forward
+@kindex TAB
+Move to the next thing (section header, row, fold or @samp{@dots{} N
+more} line), marking this view's things first and wrapping at the end
+(@pxref{Moving and toggling}).
+@end deffn
+
+@deffn {Command} gascity-thing-backward
+@kindex S-TAB
+Move to the previous thing.
+@end deffn
+
+@deffn {Command} gascity-thing-toggle
+@kindex SPC
+Toggle the thing at point: fold or unfold a section, expand or collapse
+a fold row, or open or close an inline drawer.
+@end deffn
+
+@deffn {Command} gascity-dispatch
+@kindex ?
+Open the one dispatch menu for every gascity verb and view
+(@pxref{The ? dispatch}).
+@end deffn
+
+@deffn {Command} gascity-jump-prefix
+@kindex j
+Open the jump prefix that moves between views
+(@pxref{The jump prefix}).
+@end deffn
+
+@deffn {Command} quit-window
+@kindex q
+Bury the current view's buffer.
+@end deffn
+
+@c ====================================================================
+@node Agent Action Verbs
+@section Agent action verbs
+@cindex agent verbs
+@cindex namespaced agent verbs
+@cindex agent-only aliases
+
+Each entry acts on the agent or session at point.  In the views that can
+also hold a bead the verb is @dfn{namespaced} under the @kbd{a} prefix;
+in the agent-only views it keeps the bare, fast single-letter alias.
+The registry's @code{gascity-key-registry--namespaced-verbs} and
+@code{gascity-key-registry--agent-only-verbs} lists are the checklist
+these entries are written from.  The compact, per-view bindings are in
+@ref{Effective Key Bindings}, and the task chapter is @ref{Actions}.
+
+@deffn {Command} gascity-session-nudge-at-point
+@kindex a n
+@kindex M @r{(agent-only)}
+Prompt for a message and send it to the agent at point.
+@end deffn
+
+@deffn {Command} gascity-dashboard-suspend
+@kindex a s
+@kindex s @r{(agent-only)}
+Suspend the agent, rig or session at point.
+@end deffn
+
+@deffn {Command} gascity-session-suspend-at-point
+@kindex s @r{(agent-only)}
+Suspend the session at point; the bare @kbd{s} alias of an agent-only
+view, equivalent to @code{gascity-dashboard-suspend}.
+@end deffn
+
+@deffn {Command} gascity-session-wake-at-point
+@kindex a w
+@kindex w @r{(agent-only)}
+Wake a suspended agent.
+@end deffn
+
+@deffn {Command} gascity-session-kill-at-point
+@kindex a k
+@kindex K @r{(agent-only)}
+Force-kill the agent's runtime after confirmation.
+@end deffn
+
+@deffn {Command} gascity-session-drain-at-point
+@kindex a D
+@kindex D @r{(agent-only)}
+Wind the agent down gracefully.
+@end deffn
+
+@deffn {Command} gascity-dashboard-reset
+@kindex a r
+@kindex R @r{(agent-only)}
+Restart the agent's session fresh after confirmation.
+@end deffn
+
+@deffn {Command} gascity-session-reset-at-point
+@kindex R @r{(agent-only)}
+Reset the session at point after confirmation; the bare @kbd{R} alias
+of an agent-only view, equivalent to @code{gascity-dashboard-reset}.
+@end deffn
+
+@deffn {Command} gascity-session-undrain-at-point
+@kindex a u
+@kindex U @r{(agent-only)}
+Cancel a drain.
+@end deffn
+
+@deffn {Command} gascity-tmux-at-point
+@kindex a t
+@kindex t @r{(agent-only)}
+Attach a terminal to the agent's tmux session
+(@pxref{Attach to a Terminal}).
+@end deffn
+
+@deffn {Command} gascity-dired-at-point
+@kindex a d
+@kindex d @r{(agent-only)}
+Open the agent's working directory in Dired.
+@end deffn
+
+@deffn {Command} gascity-polecat-detail-at-point
+@kindex a i
+@kindex i @r{(agent-only)}
+Open the polecat detail view.
+@end deffn
+
+@deffn {Command} gascity-session-peek-at-point
+@kindex a v
+@kindex v @r{(agent-only)}
+Show recent terminal output read-only.
+@end deffn
 
 @c ====================================================================
 @node Generated Reference Tables

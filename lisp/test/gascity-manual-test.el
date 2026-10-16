@@ -171,6 +171,21 @@ package just to learn the registered surface."
       (should (eq (car form) 'defconst))
       (eval (nth 2 form) t))))
 
+(defun gascity-manual-test--deffn-blocks ()
+  "Return the text of every `@deffn @dots{} @end deffn' block in the manual.
+The reference coverage test asserts a definition entry, not a bare
+mention, so it must look inside these blocks."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) blocks)
+    (while (string-match "^@deffn " text)
+      (let ((start (match-beginning 0))
+            (end (string-match "^@end deffn" text (match-end 0))))
+        (if end
+            (progn
+              (push (substring text start end) blocks)
+              (setq text (substring text end)))
+          (setq text (substring text (match-end 0))))))
+    (nreverse blocks)))
+
 (defun gascity-manual-test--nodes ()
   "Return every `@node' name in doc/gascity.texi, in order."
   (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
@@ -332,10 +347,15 @@ resolve a sibling repository's formula."
                   ".beads/formulas/user-manual-screenshots.toml"))))
 
 (ert-deftest gascity-test-manual-key-registry-coverage ()
-  "Every registered view, key and verb appears in the manual (REQ-012, AC-6).
-The key registry is the coverage checklist: a new view, keymap or agent
-command fails this test until it is documented in `doc/gascity.texi'."
+  "Every registered view, key and verb has a reference entry (REQ-002, REQ-003).
+The key registry is the coverage checklist: each view must have a
+`@deffn {Command}' entry naming its view, mode and keymap; every
+universal and vui contract key must carry a `@kindex'; and every agent
+verb must have a `@deffn {Command}' entry with its `@kindex' key(s).  A
+new view, keymap or agent command -- or a removed reference entry --
+fails this test until `doc/gascity.texi' documents it."
   (let* ((texi (gascity-manual-test--read "doc/gascity.texi"))
+         (blocks (gascity-manual-test--deffn-blocks))
          (views (gascity-manual-test--key-registry-const
                  'gascity-key-registry--views))
          (contract (gascity-manual-test--key-registry-const
@@ -345,27 +365,50 @@ command fails this test until it is documented in `doc/gascity.texi'."
          (namespaced (gascity-manual-test--key-registry-const
                       'gascity-key-registry--namespaced-verbs))
          (agent-only (gascity-manual-test--key-registry-const
-                      'gascity-key-registry--agent-only-verbs)))
-    ;; Every view name and its mode map are documented.
+                      'gascity-key-registry--agent-only-verbs))
+         (command-block-p
+          (lambda (regexp)
+            (cl-some (lambda (block)
+                       (and (string-match-p "\\`@deffn {Command} " block)
+                            (string-match-p regexp block)))
+                     blocks))))
+    ;; Every view has a definition entry naming its view, mode and keymap.
     (dolist (view views)
-      (ert-info ((format "view %s" (car view)))
-        (should (string-match-p (regexp-quote (symbol-name (car view))) texi))
-        (should (string-match-p (regexp-quote (symbol-name (nth 1 view)))
-                                texi))))
+      (let* ((name (symbol-name (car view)))
+             (map (symbol-name (nth 1 view)))
+             (mode (string-remove-suffix "-map" map)))
+        (ert-info ((format "view %s" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote name) "}"))))
+        (ert-info ((format "view %s mode" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote mode) "}"))))
+        (ert-info ((format "view %s map" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote map) "}"))))))
     ;; Every universal and vui contract key is in the key index.
     (dolist (key (append contract vui-contract))
       (ert-info ((format "key %s" key))
         (should (string-match-p (regexp-quote (concat "@kindex " key)) texi))))
-    ;; Every namespaced (`a' prefix) verb names its command.
+    ;; Every namespaced (`a' prefix) verb has an entry and its key index.
     (dolist (entry namespaced)
-      (ert-info ((format "a %s" (car entry)))
-        (should (string-match-p
-                 (regexp-quote (symbol-name (cdr entry))) texi))))
-    ;; Every agent-only bare alias names each command it may mean.
+      (let ((key (car entry))
+            (cmd (symbol-name (cdr entry))))
+        (ert-info ((format "a %s -> %s" key cmd))
+          (should (funcall command-block-p
+                           (concat "@deffn {Command} " (regexp-quote cmd))))
+          (should (string-match-p
+                   (regexp-quote (concat "@kindex a " key)) texi)))))
+    ;; Every agent-only bare alias has its command entry and key index.
     (dolist (entry agent-only)
-      (dolist (cmd (cdr entry))
-        (ert-info ((format "bare %s" (car entry)))
-          (should (string-match-p (regexp-quote (symbol-name cmd)) texi)))))))
+      (let ((key (car entry)))
+        (dolist (cmd (cdr entry))
+          (ert-info ((format "bare %s -> %s" key (symbol-name cmd)))
+            (should (funcall command-block-p
+                             (concat "@deffn {Command} "
+                                     (regexp-quote (symbol-name cmd)))))
+            (should (string-match-p
+                     (regexp-quote (concat "@kindex " key)) texi))))))))
 
 (ert-deftest gascity-test-manual-generated-tables-tracked ()
   "The generated reference tables are shipped and included (REQ-014).
