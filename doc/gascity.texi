@@ -77,333 +77,33 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 @end ifnottex
 
 @menu
-* Task Guide::              The things you do, in the order you do them.
 * Introduction::            What gascity.el is.
+* Concepts and Terminology:: The vocabulary, defined once.
 * Installation::            Requirements and loading.
 * Getting Started::         Your first dashboard.
-* Worked Examples::         Three end-to-end walkthroughs.
 * Buffers and Navigation::  Moving, toggling, jumping, filtering.
 * The Cockpit::             The city triage buffer.
 * Agents::                  Every agent, and one agent in detail.
 * The Rig Dashboard::       A single rig in detail.
-* Health::                  Supervisor, versions, stores, doctor.
-* Cities::                  Every city on every host.
-* Costs::                   Recorded usage by run.
-* The Mode-Line Lighter::   Needs-you totals in every mode line.
-* Runs::                    Workflow runs and one run in detail.
-* Live Refresh::            One event stream per city.
-* Events and Mail::         The event log, inbox, threads, compose.
-* The Lists::               Tabulated rigs, sessions, convoys, orders, mail, Dolt.
-* The Sling Command::      Dispatching work: the unified sling menu.
+* Cities and Remote Cities:: Every city on every host, over TRAMP and ssh.
+* Runs and Live Events::    Workflow runs and the event stream.
+* Mail::                    Inbox, threads and a compose buffer.
+* Tabulated Lists::         Rigs, sessions, convoys, orders and Dolt.
+* Sling and Dispatch::      Dispatching work: the unified sling menu.
 * Actions::                 Mutating commands, run asynchronously.
+* Health, Costs and the Lighter: Health Costs and the Lighter.  Supervisor, versions, stores, usage and the mode line.
 * Bookmarks::               Every view as an Emacs bookmark.
-* Remote Cities::           Cities on other hosts, over TRAMP and ssh.
-* Customization::           Variables and faces.
+* Worked Examples::         Three end-to-end walkthroughs.
+* View and Key Reference::  Every registered view, key and action verb.
+* Command and Variable Reference:: Every command, function and user option.
+* Generated Reference Tables:: Key and command tables generated from code.
+* Customization and Theming:: Variables and faces.
+* Capability Gaps::         What gc does not expose, so gascity cannot show.
 * Troubleshooting::         When something does not work.
 * Contributing::            Hacking on gascity.el and this manual.
-* View and Key Reference::  Every registered view, key and action verb.
-* Generated Reference Tables:: Key and command tables generated from code.
-* Capability Gaps::         What gc does not expose, so gascity cannot show.
 * Key Index::               Keystrokes.
 * Command and Variable Index:: Commands, functions and user options.
 @end menu
-
-@c ====================================================================
-@node Task Guide
-@chapter Task Guide
-@cindex task guide
-@cindex by task
-
-The reference chapters that follow document every view, key and user
-option.  This chapter is the other order.  It starts from something you
-want to do --- install the package, route work to an agent, read the
-cockpit, drive a city on another host --- and points at the view and
-keys that do it.  Read a section when you are trying to get something
-done, then follow its cross-reference to the chapter that documents the
-view in full.  @xref{Area to Screenshot Map} says which screenshot shows
-each feature area.
-
-@menu
-* Install and Start::       Load gascity.el and open a dashboard.
-* Route Work::              Hand a bead, a formula or free text to an agent.
-* Watch the Cockpit::       Read city triage at a glance.
-* Inspect Agents and Sessions::  Find one agent and act on it.
-* Manage Rigs::             Suspend, resume and restart rigs.
-* Cities and Costs::        Every city, and what runs cost.
-* Runs and Live Events::    Follow a workflow run and the event log.
-* Read Mail::               Inbox, threads and a compose buffer.
-* Dispatch a Formula::      The sling menu, its shapes and its keys.
-* Attach to a Terminal::    Drive an agent's tmux session from Emacs.
-* Work Remotely::           Open and drive a city on another host.
-* Area to Screenshot Map::  Which image documents which feature area.
-@end menu
-
-@node Install and Start
-@section Install and Start
-
-gascity.el is an Emacs package that shells out to the @command{gc}
-CLI: load it from your init file, make sure @command{gc} is on
-@code{PATH}, and start a city before you open a view.  The
-requirements and the checkout load path are in @ref{Installation} and
-@ref{Getting Started}.
-
-The fastest way in is the cockpit:
-
-@example
-M-x gascity-dashboard
-@end example
-
-@noindent
-@code{gascity-dashboard} resolves the city by walking up from
-@code{default-directory} for @file{city.toml}, so open it from inside
-the city tree.  @kbd{M-x gascity} raises the dispatcher transient, whose
-left columns open the porcelain views and whose @strong{City} column
-starts and stops the city (@pxref{The Cockpit}, @pxref{Actions},
-@pxref{Customization}).
-
-Inside any gascity buffer one set of keys means the same thing:
-@key{TAB}/@kbd{S-@key{TAB}} move between things, @key{SPC} toggles the
-thing at point, @key{RET} acts on it, @kbd{g} reloads, @kbd{q} buries,
-@kbd{j} jumps to another view, @kbd{/} filters and @kbd{?} lists every
-verb under its view key.  @xref{Buffers and Navigation}.
-
-@node Route Work
-@section Route Work
-
-Routing work means putting a bead, a formula run or free task text in
-front of the agent that should take it.  gascity has one command for
-it: the sling, @kbd{S} from any view (or @kbd{M-x gascity-sling}
-anywhere).  @xref{The Sling Command}.
-
-The menu asks what, who and how, in typed completion: @kbd{A} picks the
-work (beads and convoys; @kbd{C-u} for free text), @kbd{f} a formula,
-@kbd{T} the target agent, the generated infix keys fill the formula's
-variables, and @kbd{s} launches.  With a bead at point and a remembered
-target, @kbd{S} @kbd{s} dispatches with no prompts at all; @kbd{P}
-opens the full preview first.  @xref{Sling key summary}.
-
-Beads themselves are managed in beads.el.  @kbd{j b} opens the beads of
-the rig at point (or a chosen rig) in beads.el, and @kbd{c} opens the
-bead-actions menu; ready work also shows in the cockpit's @strong{Work}
-section and the rig dashboard's @strong{Ready} section
-(@pxref{The ? dispatch}, @pxref{The Cockpit}, @pxref{The Rig Dashboard}).
-
-@node Watch the Cockpit
-@section Watch the Cockpit
-
-@kbd{M-x gascity-dashboard} opens the city's cockpit, one short triage
-buffer whose six sections answer, top to bottom, what needs you, what is
-moving, who is working, what is queued and what just happened:
-@strong{Needs you}, @strong{Moving}, @strong{Agents}, @strong{Work},
-@strong{Activity} and @strong{Rigs}.  @xref{The Cockpit}.
-
-The shared navigation keys carry you through it; @key{RET} opens the
-view behind a section header, an agent, a run, a bead or a rig;
-@kbd{+}/@kbd{-} show more or fewer rows of a capped section; @kbd{/}
-opens the filter; @kbd{W} toggles the city's live event stream; @kbd{S},
-@kbd{c} and @kbd{m} sling, act on a bead or act on mail; and @kbd{C} is
-the city lifecycle menu, @kbd{O} runs an order.
-
-If you want the counts in every mode line, turn on the global, opt-in
-lighter (it never runs @command{gc} of its own):
-
-@lisp
-(gascity-mode-line-mode 1)
-@end lisp
-
-@noindent
-@xref{The Mode-Line Lighter}.  With live refresh on, the cockpit
-re-renders when an event arrives (@pxref{Live Refresh}).
-
-@node Inspect Agents and Sessions
-@section Inspect Agents and Sessions
-
-@kbd{j a} lists every agent of the city, or @kbd{M-x gascity-agents};
-@kbd{T} switches to the city/rigs/pools/agents tree.  Each row shows the
-agent's state, last activity, current bead and provider, with stalled
-agents pinned to the top.  @xref{The Agents view}.
-
-@key{RET} (or @kbd{t}) attaches the agent's terminal; @kbd{i} opens its
-detail view with its work, current run, transcript, mail and history;
-@kbd{M} nudges, @kbd{s} suspends, @kbd{w} wakes, @kbd{K} kills,
-@kbd{D} drains, @kbd{R} resets and @kbd{v} peeks at recent output.
-@xref{Agent Detail}, @ref{Actions}.
-
-The same agents appear in the @strong{Sessions} tabulated list, with
-their rig, state, provider and working directory; @key{RET} and @kbd{t}
-attach, @kbd{i} opens the detail, and @kbd{d} opens Dired in the
-worktree.  @xref{Sessions}.
-
-@node Manage Rigs
-@section Manage Rigs
-
-A rig is a repository that owns a beads store and runs its own pool of
-agents.  The @strong{Rigs} tabulated list shows each rig's prefix,
-status, branch and store; @key{RET} opens its dashboard, @kbd{b} opens
-its beads in beads.el, @kbd{s}/@kbd{r}/@kbd{R} suspend, resume and
-restart it (restart confirms, since it kills the rig's sessions), and
-@kbd{d} opens Dired in the rig directory.  @xref{Rigs}.
-
-@kbd{M-x gascity-rig-dashboard} (or @kbd{j g}) opens the single-rig
-counterpart to the cockpit: header, agents, ready and in-progress beads,
-orders and Dolt, each section loaded independently.  @kbd{b} opens the
-whole rig's bead board, and the agent keys act on the rig's agents.
-@xref{The Rig Dashboard}.
-
-Adding a rig, removing one and editing the city configuration are
-@command{gc} commands (@command{gc rig add}, @command{gc rig remove}),
-not porcelain verbs; gascity renders their result.  @xref{Installation},
-@pxref{Customization}.
-
-@node Cities and Costs
-@section Cities and Costs
-
-@kbd{j c} lists every city gascity can reach --- the local one, each
-host in @code{gascity-remote-hosts}, and any host a view has already
-read from --- with each city's agents, unread mail and health;
-@key{RET} opens that city's cockpit in place.  @xref{Cities}.
-
-@kbd{j $} shows @command{gc costs} --- model tokens and compute
-wall-seconds recorded per run, with a list-price estimate.  @command{gc}
-has no JSON form for it, so the view shows its text table verbatim and
-@kbd{g} re-reads it.  @xref{Costs}.
-
-Starting and stopping a city is the dispatcher's @strong{City}
-lifecycle (@kbd{C} in a view); both confirm first and stream their
-long-running output.  @xref{Actions}, @pxref{Remote Cities}.
-
-@node Runs and Live Events
-@section Runs and Live Events
-
-@kbd{j r} shows the city's workflow runs as cards grouped into Active,
-Waiting and Failed, each with its step ladder and workers, derived from
-the run's bead graph.  @key{RET} opens the run's detail (its steps,
-iterations, nested and drain-member runs, plan files and control nodes),
-@kbd{H} pages the history, @kbd{b} opens the run's root bead and
-@kbd{/} filters by rig, formula, state and window.  @xref{Runs},
-@xref{Run Detail}.
-
-@kbd{j e} lists the city's events, newest first, folding routine churn
-into @samp{×N} rows and never folding signal events; @key{RET} drills
-into a bead, a session or a churn group.  @xref{Events}.
-
-Nothing polls.  While a view of a city is open, one
-@code{gc events --follow} stream per city refreshes only the sections
-the events touch; @kbd{W} turns the stream off and on and the header
-line shows its state (live, off, reconnecting, supervisor down,
-offline).  @xref{Live Refresh}.
-
-@node Read Mail
-@section Read Mail
-
-@kbd{j m} opens the city's inbox.  @key{RET} previews a message in its
-thread from data already loaded --- no @command{gc} call, and it stays
-unread --- while @kbd{r} reads the thread and marks it read, @kbd{R}
-replies, @kbd{a} archives, @kbd{u} marks unread and @kbd{c} opens the
-mail actions menu.  @xref{Mail View}.
-
-A reply or a new message opens a compose buffer: write the body,
-@kbd{C-c C-c} sends, @kbd{C-c C-k} cancels, @kbd{C-c C-n} toggles
-@option{--notify}.  The @strong{Mail} list is the same inbox in
-tabulated-list form (@pxref{Mail}).  Agents prefer ephemeral nudges to
-mail for routine signalling (@pxref{Actions}).
-
-@node Dispatch a Formula
-@section Dispatch a Formula
-
-A formula is a reusable workflow; dispatching it to an agent (or
-against a bead) is the sling's job.  @kbd{S} from any view, or
-@kbd{M-x gascity-sling}, opens the one adaptive menu.
-@xref{The Sling Command}.
-
-The shape is inferred, never flagged: work with no formula is the plain
-route, a formula with work is the targeted @option{--on} shape, and a
-formula without work is the targetless @option{--formula} shape.
-@kbd{A} picks work, @kbd{f} picks the formula (whose declared variables
-become typed infix keys), @kbd{T} picks the target, the live footer
-summarizes the dispatch and warns about traps, @kbd{s} launches (the
-preview is never a gate), @kbd{P} opens the full preview and the
-momentary @kbd{F} follows the run a launch created.
-@xref{The sling shapes}, @xref{Sling key summary}.
-
-@node Attach to a Terminal
-@section Attach to a Terminal
-
-@kbd{t} on an agent --- in the cockpit, the Agents view, the session
-list, the rig dashboard or the agent detail --- opens a terminal buffer
-holding a live @command{tmux} client attached to the agent's session.
-@xref{The Agents view}, @ref{Agent Detail}.
-
-A tmux client draws on the alternate screen, so scrolling goes through
-tmux: @kbd{C-b [} enters copy-mode and @key{PageUp}/@key{PageDown}
-page through the history.  For Magit-flavoured reading, @kbd{C-c s}
-toggles @code{gascity-terminal-scroll-mode}, which translates the Emacs
-scroll keys into copy-mode sequences so the agent receives no keys.
-@xref{Actions}.
-
-@shot{terminal-attach-dark, A terminal buffer attached to a fixture tmux session (ef-elea-dark)}
-
-@node Work Remotely
-@section Work Remotely
-
-Every view works the same on a city on another host.  Open any directory
-of the city over TRAMP and start a view from there; every read, action
-and refresh then runs @command{gc} on that host, never a silent local
-fallback:
-
-@example
-C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
-M-x gascity-dashboard
-@end example
-
-@noindent
-Buffer names are host-qualified, so a local and a remote view of the
-same city coexist; the header line shows @samp{@@host}.
-@xref{Remote Cities}.
-
-For a single-hop ssh-family host, background reads run as local
-@code{ssh -T} pipes rather than TRAMP processes, with a per-host
-scheduler, a deadline on every process and an @samp{○ offline} state
-with backoff probes when a host cannot be reached; tmux attach spawns a
-local @code{ssh -t HOST} in the terminal backend.  @xref{Transport},
-@xref{Scheduling}, @xref{Remote buffers}.
-
-@node Area to Screenshot Map
-@section Area to Screenshot Map
-
-The manual embeds its screenshots with the @code{@@shot} macro (in HTML a
-click-to-enlarge thumbnail, in Info a plain image).  This table maps
-each feature area named in the manual requirements to the image that
-documents it.  Where an area has no window of its own --- a key-binding
-or visual-language area, or the live event stream, whose state is a
-header line rather than a view --- the table names a proxy: an image of
-a view that exercises the same rendering or shows the state in
-question.  The @emph{Why this image} column says which.  Every image is
-captured from the throwaway fixture city by @code{doc/screenshots/}
-(@pxref{Contributing}); none is hand-drawn or taken from a live store.
-
-@multitable @columnfractions .30 .40 .30
-@headitem Feature area @tab Screenshot(s) @tab Why this image
-@item Getting started; the dispatcher @tab dispatch-dark @tab The @kbd{?} dispatch transient over the cockpit.
-@item Buffers and navigation (move/toggle, jump prefix, filter menus, visual language, objects at point) @tab cockpit-dark, cockpit-light, dispatch-dark @tab Non-visual keys and glyphs; the cockpit and its dispatch menu exercise them.
-@item Lists: pagination, sorting, detail @tab order-list-light @tab A paginated tabulated list with the shared list keys.
-@item Cockpit @tab cockpit-dark, cockpit-light @tab The triage buffer, in both themes.
-@item Agents (list, tree, detail) @tab agents-dark, agents-tree-light @tab The agents list and tree; the detail opens from the list.
-@item Rig dashboard @tab rig-dashboard-dark @tab The single-rig counterpart to the cockpit.
-@item Health @tab health-dark @tab Plumbing, versions, store and doctor.
-@item Cities @tab cities-light @tab Every reachable city and host.
-@item Costs @tab costs-dark @tab Recorded usage by run, wall-seconds and list-price estimate.
-@item Mode-line lighter @tab lighter-dark @tab The lighter in a mode line.
-@item Runs and run detail @tab runs-dark @tab The run cards; a run's steps open from them.
-@item Live refresh @tab cockpit-dark, events-dark @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
-@item Events @tab events-dark @tab The event log.
-@item Mail (inbox, thread, compose) @tab mail-inbox-light @tab The inbox; thread and compose are the same buffer family.
-@item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-light, session-list-dark, convoy-list-dark, order-list-light, mail-inbox-light, dolt-list-dark @tab One image per list.
-@item Formula sling and dispatch @tab sling-plain-dark, sling-cold-dark, sling-formula-dark, sling-on-dark, sling-preview-dark @tab The dispatch transient across its shapes and the full preview buffer.
-@item Session/polecat detail and terminal attach @tab session-list-dark, terminal-attach-dark @tab The session list, and a terminal buffer attached to a tmux session.
-@item Remote/TRAMP cities @tab remote-cities-light @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
-@item Bookmarks @tab bookmarks-dark @tab The bookmark list with gascity views.
-@end multitable
 
 @c ====================================================================
 @node Introduction
@@ -419,11 +119,20 @@ stops agents, routes work, and stores issues.  @code{gascity.el} is the
 render @command{gc}'s state and run its commands, in the deliberate style
 of Magit and Forge.
 
+The manual has two reading orders.  The reference chapters document every
+view, key and user option in full.  The task-oriented chapters are the
+other order: they start from something you want to do --- install the
+package, route work to an agent, read the cockpit, drive a city on
+another host --- and point at the view and keys that do it.  Read a task
+chapter when you are trying to get something done, then follow its
+cross-reference to the chapter that documents the view in full.
+@xref{Area to Screenshot Map} says which screenshot shows each feature
+area.
+
 @menu
 * Every view is a function of gc output::  The one rule behind the package.
-* What you get::            The feature map.
-* Two kinds of buffer::     vui and tabulated-list-mode.
-* Terminology::             The vocabulary, defined once.
+* What you get::  The feature map.
+* Two kinds of buffer::  vui and tabulated-list-mode.
 @end menu
 
 @node Every view is a function of gc output
@@ -463,7 +172,7 @@ command you typed returns at once (@pxref{Actions}).
 per city: what needs you, what is moving, who is working, what is
 queued, what just happened, and the rigs.
 @item
-@strong{Agents and runs} (@pxref{Agents}, @pxref{Runs}) --- every
+@strong{Agents and runs} (@pxref{Agents}, @pxref{Runs and Live Events}) --- every
 agent as a table or a tree, every workflow run with its step ladder,
 and each of them in detail.
 @item
@@ -473,14 +182,14 @@ its agents, work, orders and Dolt.
 @strong{Live refresh} (@pxref{Live Refresh}) --- one event stream per
 city; views refresh when something changes, never on a timer.
 @item
-@strong{City plumbing} (@pxref{Health}, @pxref{Cities}, @pxref{Costs})
+@strong{City plumbing} (@pxref{Health Costs and the Lighter}, @pxref{Cities and Remote Cities}, @pxref{Costs})
 --- the supervisor, versions, stores and @command{gc doctor}; every
 city on every host; recorded usage.
 @item
 @strong{A mode-line lighter} (@pxref{The Mode-Line Lighter}) --- what
 needs you, across every open city, in every mode line.
 @item
-@strong{Tabulated lists} (@pxref{The Lists}) --- rigs, sessions,
+@strong{Tabulated lists} (@pxref{Tabulated Lists}) --- rigs, sessions,
 convoys, orders, mail and Dolt databases, each paginated, sortable and
 filterable.
 @item
@@ -516,6 +225,21 @@ Issue (@dfn{bead}) display itself is delegated to a sibling package,
 @code{beads.el}: when you press @key{RET} on a bead, gascity opens it in
 beads.el, scoped to the right rig's store.  gascity is the city-level
 porcelain; beads.el is the issue-level porcelain.
+
+@c ====================================================================
+@node Concepts and Terminology
+@chapter Concepts and Terminology
+@cindex concepts
+@cindex terminology
+This chapter fixes the vocabulary the rest of the manual uses.  Every
+term is defined once here and used the same way everywhere; the chapters
+that put the terms to work cross-reference back to this one.  The final
+section maps each feature area to the screenshot that documents it.
+
+@menu
+* Terminology::  The vocabulary, defined once.
+* Area to Screenshot Map::  Which image documents which feature area.
+@end menu
 
 @node Terminology
 @section Terminology
@@ -573,13 +297,13 @@ A scheduled or triggered unit of work that runs a command at a time or
 interval (@pxref{Orders}).
 @item sling
 The one menu that routes a bead, a formula or free text to an agent
-(@pxref{The Sling Command}).
+(@pxref{Sling and Dispatch}).
 @item formula
 A workflow template that expands into beads and runs
 (@pxref{Dispatch a Formula}).
 @item run
 One instantiation of a formula, with a step ladder and a state
-(@pxref{Runs}).
+(@pxref{Runs and Live Events}).
 @item step
 One node of a run's ladder; the steps carry the run's progress
 (@pxref{Run Detail}).
@@ -592,13 +316,51 @@ A read-only gascity buffer --- the cockpit, a dashboard, a list or a
 detail buffer.  The full set is in @ref{View and Key Reference}.
 @end table
 
+@node Area to Screenshot Map
+@section Area to Screenshot Map
+
+The manual embeds its screenshots with the @code{@@shot} macro (in HTML a
+click-to-enlarge thumbnail, in Info a plain image).  This table maps
+each feature area named in the manual requirements to the image that
+documents it.  Where an area has no window of its own --- a key-binding
+or visual-language area, or the live event stream, whose state is a
+header line rather than a view --- the table names a proxy: an image of
+a view that exercises the same rendering or shows the state in
+question.  The @emph{Why this image} column says which.  Every image is
+captured from the throwaway fixture city by @code{doc/screenshots/}
+(@pxref{Contributing}); none is hand-drawn or taken from a live store.
+
+@multitable @columnfractions .30 .40 .30
+@headitem Feature area @tab Screenshot(s) @tab Why this image
+@item Getting started; the dispatcher @tab dispatch-dark @tab The @kbd{?} dispatch transient over the cockpit.
+@item Buffers and navigation (move/toggle, jump prefix, filter menus, visual language, objects at point) @tab cockpit-dark, cockpit-light, dispatch-dark @tab Non-visual keys and glyphs; the cockpit and its dispatch menu exercise them.
+@item Lists: pagination, sorting, detail @tab order-list-light @tab A paginated tabulated list with the shared list keys.
+@item Cockpit @tab cockpit-dark, cockpit-light @tab The triage buffer, in both themes.
+@item Agents (list, tree, detail) @tab agents-dark, agents-tree-light @tab The agents list and tree; the detail opens from the list.
+@item Rig dashboard @tab rig-dashboard-dark @tab The single-rig counterpart to the cockpit.
+@item Health @tab health-dark @tab Plumbing, versions, store and doctor.
+@item Cities @tab cities-light @tab Every reachable city and host.
+@item Costs @tab costs-dark @tab Recorded usage by run, wall-seconds and list-price estimate.
+@item Mode-line lighter @tab lighter-dark @tab The lighter in a mode line.
+@item Runs and run detail @tab runs-dark @tab The run cards; a run's steps open from them.
+@item Live refresh @tab cockpit-dark, events-dark @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
+@item Events @tab events-dark @tab The event log.
+@item Mail (inbox, thread, compose) @tab mail-inbox-light @tab The inbox; thread and compose are the same buffer family.
+@item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-light, session-list-dark, convoy-list-dark, order-list-light, mail-inbox-light, dolt-list-dark @tab One image per list.
+@item Formula sling and dispatch @tab sling-plain-dark, sling-cold-dark, sling-formula-dark, sling-on-dark, sling-preview-dark @tab The dispatch transient across its shapes and the full preview buffer.
+@item Session/polecat detail and terminal attach @tab session-list-dark, terminal-attach-dark @tab The session list, and a terminal buffer attached to a tmux session.
+@item Remote/TRAMP cities @tab remote-cities-light @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
+@item Bookmarks @tab bookmarks-dark @tab The bookmark list with gascity views.
+@end multitable
+
 @c ====================================================================
 @node Installation
-@chapter Installation
+@chapter Installation and Requirements
 @cindex installation
 
+
 @menu
-* Requirements::            Emacs, gc, beads.el and vui.
+* Requirements::  Emacs, gc, beads.el and vui.
 * Loading from a checkout::  Put lisp/ on the load-path.
 * Building and installing with autotools::  autogen.sh, configure, make.
 @end menu
@@ -615,7 +377,7 @@ modern @code{transient}) that assume a recent Emacs.
 @item The @command{gc} CLI on @code{exec-path}
 gascity shells out to @command{gc} for every read and every action.  A
 bare command name is looked up on @code{exec-path}; set
-@code{gascity-executable} to use an absolute path (@pxref{Customization}).
+@code{gascity-executable} to use an absolute path (@pxref{Customization and Theming}).
 @item @code{beads.el}, @code{vui} and @code{transient} on the @code{load-path}
 @code{beads.el} provides the @code{beads-meta}, @code{beads-section},
 @code{beads-terminal} and @code{beads-pager} features that gascity builds
@@ -632,7 +394,7 @@ and the others keep working.
 @cindex eat
 Optionally, install @code{vterm} or @code{eat} for a nicer terminal when
 attaching to an agent's tmux session; without either, gascity falls back
-to the built-in @code{term} (@pxref{Customization}).
+to the built-in @code{term} (@pxref{Customization and Theming}).
 
 The package header declares the full dependency set:
 
@@ -792,13 +554,13 @@ A single rig in detail; prompts for the rig (@pxref{The Rig Dashboard}).
 Every agent of the city; @kbd{T} for the tree (@pxref{Agents}).
 @item gascity-runs
 @findex gascity-runs
-Workflow runs (@pxref{Runs}).
+Workflow runs (@pxref{Runs and Live Events}).
 @item gascity-health
 @findex gascity-health
-Supervisor, versions, stores and @command{gc doctor} (@pxref{Health}).
+Supervisor, versions, stores and @command{gc doctor} (@pxref{Health Costs and the Lighter}).
 @item gascity-cities
 @findex gascity-cities
-Every city on this machine and the remote hosts (@pxref{Cities}).
+Every city on this machine and the remote hosts (@pxref{Cities and Remote Cities}).
 @item gascity-costs
 @findex gascity-costs
 @command{gc costs} output (@pxref{Costs}).
@@ -814,7 +576,7 @@ Every city on this machine and the remote hosts (@pxref{Cities}).
 @findex gascity-order-list
 @itemx gascity-dolt-list
 @findex gascity-dolt-list
-The six tabulated lists (@pxref{The Lists}).
+The six tabulated lists (@pxref{Tabulated Lists}).
 @item gascity-mode-line-mode
 @findex gascity-mode-line-mode
 The global, opt-in mode-line lighter (@pxref{The Mode-Line Lighter}).
@@ -822,107 +584,38 @@ The global, opt-in mode-line lighter (@pxref{The Mode-Line Lighter}).
 The dispatcher transient.
 @end table
 
-@c ====================================================================
-@node Worked Examples
-@chapter Worked Examples
-
-@cindex worked examples
-@cindex walkthroughs
-The task guide lists what each view is for.  This chapter walks three
-jobs from start to finish, with the exact keys.  Each example assumes a
-running city and a gascity view opened from inside it
-(@pxref{Install and Start}).
-
 @menu
-* Route a bead through a workflow::  From ready bead to a running run.
-* Recover a stalled agent::          Find it, read it, nudge or reset it.
-* Open and drive a remote city::     Work on another host over TRAMP.
+* Install and Start::  Load gascity.el and open a dashboard.
 @end menu
 
-@node Route a bead through a workflow
-@section Route a bead through a workflow
+@node Install and Start
+@section Install and Start
 
-@cindex route work, example
-@cindex sling, example
-A bead is ready in beads.el and you want an agent to take it through a
-formula.
+gascity.el is an Emacs package that shells out to the @command{gc}
+CLI: load it from your init file, make sure @command{gc} is on
+@code{PATH}, and start a city before you open a view.  The
+requirements and the checkout load path are in @ref{Installation} and
+@ref{Getting Started}.
 
-@enumerate
-@item
-Open the cockpit: @kbd{M-x gascity-dashboard}.  The @strong{Work}
-section lists ready beads; put point on yours and press @key{RET} to
-open it in beads.el (@pxref{Route Work}).
-@item
-From any gascity buffer, press @kbd{S} to raise the sling
-(@pxref{The Sling Command}).  @kbd{A} picks the work by completion (the
-bead at point is offered first); @kbd{C-u} @kbd{A} takes free text
-instead.
-@item
-@kbd{f} picks a formula, @kbd{T} picks the target agent, and the
-generated infix keys fill the formula's variables (@pxref{Typed
-variables}).  The live footer shows what will be dispatched
-(@pxref{The live footer}).
-@item
-@kbd{P} opens the preview first (@pxref{The preview buffer}); @kbd{s}
-launches.  The echo area confirms the dispatch and the new run appears
-in the target rig.
-@end enumerate
-
-@noindent
-Watch it from the Runs view: @kbd{j r} (or @kbd{M-x gascity-runs}),
-then @key{RET} on the run for the step ladder, where each step's state
-comes from its bead (@pxref{Runs}).  When the run closes, its source
-bead closes with it.
-
-@node Recover a stalled agent
-@section Recover a stalled agent
-
-@cindex stalled agent, example
-@cindex nudge, example
-An agent stopped reporting progress.
-
-@enumerate
-@item
-@kbd{j a} opens the Agents list.  Stalled agents sort to the top; the
-@strong{Needs you} section of the cockpit also flags a run whose steps
-have not moved for @code{gascity-dashboard-run-idle-threshold}
-(@pxref{The Agents view}).
-@item
-@key{RET} on the agent attaches its terminal, @kbd{i} opens the polecat
-detail with its work, run, transcript, mail and history
-(@pxref{Agent Detail}).  @kbd{v} peeks at recent output read-only.
-@item
-@kbd{M} nudges the agent with a message (@pxref{Actions}).  If it is
-suspended, @kbd{w} wakes it; if it is wedged, @kbd{R} resets the
-session (confirming first), and @kbd{K} force-kills it if needed.
-@item
-@kbd{d} opens the agent's worktree in Dired so you can inspect what it
-left behind.
-@end enumerate
-
-@noindent
-None of these block: each reports in the echo area, and the row shows
-@samp{@dots{}} until @command{gc} answers (@pxref{Actions}).
-
-@node Open and drive a remote city
-@section Open and drive a remote city
-
-@cindex remote city, example
-Open any directory of the city over TRAMP, then start a view from there
-(@pxref{Remote Cities}):
+The fastest way in is the cockpit:
 
 @example
-C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
 M-x gascity-dashboard
 @end example
 
 @noindent
-The header shows @samp{@@example.com}, every read and action runs
-@command{gc} on that host, and @kbd{t} attaches the agent's tmux session
-through a local @code{ssh -t} (@pxref{Remote buffers}).  @kbd{W} toggles
-that city's live event stream, and a host that cannot be reached flips
-the city to @samp{○ offline @@example.com} instead of erroring in every
-section (@pxref{Scheduling}).
+@code{gascity-dashboard} resolves the city by walking up from
+@code{default-directory} for @file{city.toml}, so open it from inside
+the city tree.  @kbd{M-x gascity} raises the dispatcher transient, whose
+left columns open the porcelain views and whose @strong{City} column
+starts and stops the city (@pxref{The Cockpit}, @pxref{Actions},
+@pxref{Customization and Theming}).
+
+Inside any gascity buffer one set of keys means the same thing:
+@key{TAB}/@kbd{S-@key{TAB}} move between things, @key{SPC} toggles the
+thing at point, @key{RET} acts on it, @kbd{g} reloads, @kbd{q} buries,
+@kbd{j} jumps to another view, @kbd{/} filters and @kbd{?} lists every
+verb under its view key.  @xref{Buffers and Navigation}.
 
 @c ====================================================================
 @node Buffers and Navigation
@@ -1069,13 +762,13 @@ reset.)
 @headitem Keys @tab View
 @item @kbd{j j} @tab the cockpit (@pxref{The Cockpit})
 @item @kbd{j a} @tab agents (@pxref{Agents})
-@item @kbd{j r} @tab runs (@pxref{Runs})
+@item @kbd{j r} @tab runs (@pxref{Runs and Live Events})
 @item @kbd{j b} @tab beads in beads.el, scoped to the rig at point, else chosen: a rig or the city
-@item @kbd{j m} @tab the mail inbox (@pxref{Mail View})
+@item @kbd{j m} @tab the mail inbox (@pxref{Mail})
 @item @kbd{j e} @tab events (@pxref{Events})
-@item @kbd{j h} @tab Health (@pxref{Health})
-@item @kbd{j c} @tab Cities (@pxref{Cities})
-@item @kbd{j o} @kbd{j v} @kbd{j d} @tab the order, convoy and Dolt lists (@pxref{The Lists})
+@item @kbd{j h} @tab Health (@pxref{Health Costs and the Lighter})
+@item @kbd{j c} @tab Cities (@pxref{Cities and Remote Cities})
+@item @kbd{j o} @kbd{j v} @kbd{j d} @tab the order, convoy and Dolt lists (@pxref{Tabulated Lists})
 @item @kbd{j g} @tab the dashboard of the rig at point, else chosen
 @item @kbd{j $} @tab @command{gc costs} output (@pxref{Costs})
 @end multitable
@@ -1326,7 +1019,7 @@ in place of its glyph until @command{gc} answers.
 Every time the cockpit renders with a status payload in hand it
 publishes its Needs you @samp{■}/@samp{▲} totals and active-run count
 for the session; the mode-line lighter (@pxref{The Mode-Line Lighter})
-and the Cities view (@pxref{Cities}) show them from there, without a
+and the Cities view (@pxref{Cities and Remote Cities}) show them from there, without a
 @command{gc} call of their own.
 
 @shot{cockpit-light, The same cockpit in a light theme (ef-cyprus)}
@@ -1385,14 +1078,48 @@ Reload the city's configuration, the city lifecycle menu (start, stop,
 suspend) and run an order.
 @end table
 
+@menu
+* Watch the Cockpit::  Read city triage at a glance.
+@end menu
+
+@node Watch the Cockpit
+@section Watch the Cockpit
+
+@kbd{M-x gascity-dashboard} opens the city's cockpit, one short triage
+buffer whose six sections answer, top to bottom, what needs you, what is
+moving, who is working, what is queued and what just happened:
+@strong{Needs you}, @strong{Moving}, @strong{Agents}, @strong{Work},
+@strong{Activity} and @strong{Rigs}.  @xref{The Cockpit}.
+
+The shared navigation keys carry you through it; @key{RET} opens the
+view behind a section header, an agent, a run, a bead or a rig;
+@kbd{+}/@kbd{-} show more or fewer rows of a capped section; @kbd{/}
+opens the filter; @kbd{W} toggles the city's live event stream; @kbd{S},
+@kbd{c} and @kbd{m} sling, act on a bead or act on mail; and @kbd{C} is
+the city lifecycle menu, @kbd{O} runs an order.
+
+If you want the counts in every mode line, turn on the global, opt-in
+lighter (it never runs @command{gc} of its own):
+
+@lisp
+(gascity-mode-line-mode 1)
+@end lisp
+
+@noindent
+@xref{The Mode-Line Lighter}.  With live refresh on, the cockpit
+re-renders when an event arrives (@pxref{Live Refresh}).
+
 @c ====================================================================
 @node Agents
 @chapter Agents
 @cindex agents
 
+
 @menu
-* The Agents view::   @kbd{j a}: every agent of the city.
-* Agent Detail::      @kbd{i}: one agent in detail.
+* The Agents view::  Every agent of the city.
+* Agent Detail::  One agent in detail.
+* Inspect Agents and Sessions::  Find one agent and act on it.
+* Attach to a Terminal::  Drive an agent's tmux session from Emacs.
 @end menu
 
 @node The Agents view
@@ -1501,6 +1228,42 @@ The agent keys; they act on the buffer's agent wherever point is.
 Bead actions and sling.
 @end table
 
+@node Inspect Agents and Sessions
+@section Inspect Agents and Sessions
+
+@kbd{j a} lists every agent of the city, or @kbd{M-x gascity-agents};
+@kbd{T} switches to the city/rigs/pools/agents tree.  Each row shows the
+agent's state, last activity, current bead and provider, with stalled
+agents pinned to the top.  @xref{The Agents view}.
+
+@key{RET} (or @kbd{t}) attaches the agent's terminal; @kbd{i} opens its
+detail view with its work, current run, transcript, mail and history;
+@kbd{M} nudges, @kbd{s} suspends, @kbd{w} wakes, @kbd{K} kills,
+@kbd{D} drains, @kbd{R} resets and @kbd{v} peeks at recent output.
+@xref{Agent Detail}, @ref{Actions}.
+
+The same agents appear in the @strong{Sessions} tabulated list, with
+their rig, state, provider and working directory; @key{RET} and @kbd{t}
+attach, @kbd{i} opens the detail, and @kbd{d} opens Dired in the
+worktree.  @xref{Sessions}.
+
+@node Attach to a Terminal
+@section Attach to a Terminal
+
+@kbd{t} on an agent --- in the cockpit, the Agents view, the session
+list, the rig dashboard or the agent detail --- opens a terminal buffer
+holding a live @command{tmux} client attached to the agent's session.
+@xref{The Agents view}, @ref{Agent Detail}.
+
+A tmux client draws on the alternate screen, so scrolling goes through
+tmux: @kbd{C-b [} enters copy-mode and @key{PageUp}/@key{PageDown}
+page through the history.  For Magit-flavoured reading, @kbd{C-c s}
+toggles @code{gascity-terminal-scroll-mode}, which translates the Emacs
+scroll keys into copy-mode sequences so the agent receives no keys.
+@xref{Actions}.
+
+@shot{terminal-attach-dark, A terminal buffer attached to a fixture tmux session (ef-elea-dark)}
+
 @c ====================================================================
 @node The Rig Dashboard
 @chapter The Rig Dashboard
@@ -1574,112 +1337,34 @@ configured rig and has no dashboard; @key{RET} on it points you to
 @code{gascity-dashboard} instead.
 @end quotation
 
-@c ====================================================================
-@node Health
-@chapter Health
-@cindex health
-@findex gascity-health
-@kindex j h
+@menu
+* Manage Rigs::  Suspend, resume and restart rigs.
+@end menu
 
-@kbd{j h} (or @kbd{M-x gascity-health}) opens
-@file{*gascity-health:@: CITY*} in @code{gascity-health-mode}: the
-city's plumbing, one section per @command{gc} read so that one failure
-never blanks the others.
+@node Manage Rigs
+@section Manage Rigs
 
-@example
-Health  bright-lights                                         ▲ watch
-Supervisor
-  pid 22262 · supervisor · ▲ degraded (no_agents_running) · not suspended
-Versions
-  gc 1.4.2 · bd 1.3.0 · dolt 2.3.5 · store NativeDoltStore
-Store  ◐
-  ~/bright-lights/.beads/dolt        109 MB   threshold 1 MB/row
-  ◐ store health: runtime status probe incomplete
-  ● dolt :41586 · pid 23571 · 120 ms · 2 databases
-  size (this session)  ▁▁▂▂▃
-Rig stores  1
-  ● hello-world    ~/hello-world                              dolt ok
-Doctor  88 passed · 5 warned · 0 failed · ran 4m ago   ! run  F run --fix
-  ▲ formula-requirements         blocking  36 formula requirement warning(s)
-  ▸ 88 checks ok
-@end example
+A rig is a repository that owns a beads store and runs its own pool of
+agents.  The @strong{Rigs} tabulated list shows each rig's prefix,
+status, branch and store; @key{RET} opens its dashboard, @kbd{b} opens
+its beads in beads.el, @kbd{s}/@kbd{r}/@kbd{R} suspend, resume and
+restart it (restart confirms, since it kills the rig's sessions), and
+@kbd{d} opens Dired in the rig directory.  @xref{Rigs}.
 
-@shot{health-dark, Health of emacs-city (ef-elea-dark)}
+@kbd{M-x gascity-rig-dashboard} (or @kbd{j g}) opens the single-rig
+counterpart to the cockpit: header, agents, ready and in-progress beads,
+orders and Dolt, each section loaded independently.  @kbd{b} opens the
+whole rig's bead board, and the agent keys act on the rig's agents.
+@xref{The Rig Dashboard}.
 
-@section What it shows
-
-@table @asis
-@item The top line
-The city (with @samp{@@host} for a remote one) and an overall verdict:
-@samp{■ attention} when the controller is down, the city is unusable,
-the Dolt server is not running, a doctor check failed or a rig store
-cannot be read; @samp{▲ watch} when the city is degraded, the store is
-over its size threshold, @command{gc} reports partial errors, or
-doctor warned; else @samp{● ok}.  While the host is unreachable it
-reads @samp{○ offline @@host}.
-@item Supervisor
-From @code{gc status}: the controller's pid and mode, health
-(@samp{health ok}, @samp{▲ degraded (@var{signals})} or @samp{■
-unusable}) and whether the city is suspended.
-@item Versions
-@code{gc version}, and the beads store kind from @code{gc status}.  The
-@command{bd} and @command{dolt} versions appear once doctor has run:
-its report is the only place @command{gc} exposes them.
-@item Store
-From @code{gc status}: the store's path, size, rows-per-megabyte ratio
-and threshold, a @samp{▲} line when the store is over it and a
-@samp{◐} line per partial error.  From @code{gc dolt health}: the Dolt
-server's port, pid, latency and database count, with @samp{▲} lines for
-orphan databases, zombie processes or stale backups; @key{RET} on the
-server line opens the Dolt list.  Then @samp{size (this session)}, a
-@samp{▁▂▃} sparkline of the store sizes sampled this session (every
-status read the cockpit or this view got; the tooltip gives the range).
-@item Rig stores
-One @code{gc rig status @var{name}} per rig: @samp{● dolt ok} when the
-rig's beads are initialized and its Dolt database exists, @samp{▲} with
-the reason otherwise, @samp{○ suspended}, or @samp{■} with the error for
-a rig whose read failed.  @key{SPC} shows the rig's prefix, branch and
-agents; @key{RET} opens its dashboard; @kbd{l} its git log.
-@item Doctor
-The last @command{gc doctor} report of the session: counts and how long
-ago it ran.  Failed checks, then warnings, get a row each ---
-@samp{■ @var{name}  @var{severity}  @var{message}} --- and @key{SPC}
-opens a check's fix hint and details.  Passing checks fold into
-@samp{▸ N checks ok}.
-@end table
-
-@section Keys
-
-@table @kbd
-@item !
-@kindex ! @r{(health)}
-@findex gascity-health-doctor
-Run @command{gc doctor} in the background.  It is never run on open or
-on @kbd{g} --- it takes tens of seconds --- so the section reads
-@samp{not run} until you ask.  While it runs the header reads
-@samp{running@dots{}} and the rest of the view stays usable; the report
-is cached for the session, so reopening the view shows it with its age.
-Doctor has its own deadline, @code{gascity-health-doctor-timeout}.
-@item F
-@kindex F @r{(health)}
-@findex gascity-health-doctor-fix
-Run @command{gc doctor --fix} after a confirmation, in the background,
-the same way.
-@item g
-@kindex g @r{(health)}
-@findex gascity-health-refresh
-Re-read every section but Doctor.
-@item @key{RET}
-@kindex RET @r{(health)}
-@findex gascity-health-activate
-On a rig, open its dashboard; on the Store header or Dolt line, the Dolt
-list; on the Rig stores header, the rig list; on the Doctor header, run
-doctor.
-@end table
+Adding a rig, removing one and editing the city configuration are
+@command{gc} commands (@command{gc rig add}, @command{gc rig remove}),
+not porcelain verbs; gascity renders their result.  @xref{Installation},
+@pxref{Customization and Theming}.
 
 @c ====================================================================
-@node Cities
-@chapter Cities
+@node Cities and Remote Cities
+@chapter Cities and Remote Cities
 @cindex cities
 @findex gascity-cities
 @kindex j c
@@ -1729,73 +1414,400 @@ Re-read every host and city.
 @noindent
 The list shares the keys of every tabulated list (@pxref{Lists}).
 
-@c ====================================================================
-@node Costs
-@chapter Costs
-@cindex costs
-@findex gascity-costs
-@kindex j $
+@menu
+* Remote Cities::  Cities on other hosts, over TRAMP and ssh.
+* Cities and Costs::  Every city, and what runs cost.
+* Work Remotely::  Open and drive a city on another host.
+@end menu
 
-@kbd{j $} (or @kbd{M-x gascity-costs}) shows @command{gc costs} ---
-model tokens and compute wall-seconds recorded per run, with a
-list-price estimate --- in a read-only buffer,
-@file{*gascity-costs:@: CITY*}.  @command{gc} prints it as a text table
-and has no JSON form of it, so the text is shown exactly as @command{gc}
-prints it.  When a run records no usage (zero invocations), the view adds
-a note under the table saying so: a @samp{0.0000} estimate means no
-usage was recorded, not that the run was free, and the note points at
-@env{GC_DISABLE_USAGE_METRICS} as the first thing to check.  It is read
-in the background; @kbd{g} (@code{gascity-costs-refresh}) re-reads it and
-the header line says how long ago it did.
+@node Remote Cities
+@section Remote Cities
+@cindex remote cities
+@cindex TRAMP
 
-@shot{costs-dark, The Costs view --- recorded usage by run (ef-elea-dark)}
-
-@c ====================================================================
-@node The Mode-Line Lighter
-@chapter The Mode-Line Lighter
-@cindex mode-line lighter
-@cindex lighter
-@findex gascity-mode-line-mode
-
-@code{gascity-mode-line-mode} is a global minor mode, off by default,
-that shows what needs you in every open city in every mode line:
+Every view works the same on a city on another host.  Open any
+directory of the city over TRAMP and start a view from there; every
+read, action and refresh then runs @command{gc} on that host, never a
+silent local fallback:
 
 @example
- GC[bl ▲1 · ec ■1▲2]
+C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
+M-x gascity-dashboard
 @end example
 
-@shot{lighter-dark, The lighter in the mode line (ef-elea-dark)}
+@shot{remote-cities-light, The Cities list with one row per city and host (ef-cyprus)}
+
+@menu
+* Remote buffers::        Host-qualified names, paths, attach.
+* Transport::             How gc runs on the host: local ssh pipes.
+* Scheduling::            Concurrency, deadlines, offline hosts.
+* Finding gc::            Resolving the executable on the host.
+* ssh configuration::     ForwardX11 and connection sharing.
+* Shell history::         Keeping remote history files clean.
+@end menu
+
+@node Remote buffers
+@subsection Remote buffers
+
+@itemize @bullet
+@item
+Buffer names are host-qualified
+(@file{*gascity:@: city@@/ssh:user@@example.com:/home/user/city/*}), so a
+local and a remote view of the same city coexist; the header line shows
+@samp{@@host}.  Each view pins its @code{default-directory} to the city
+it was opened for, so refreshes keep hitting that host.
+@item
+Paths @command{gc} reports (agent worktrees, rig directories, order
+sources, the store) are host-local; @kbd{d} (Dired), @kbd{l} (git log)
+and @key{RET} re-prefix them and open them on the city's host.
+@item
+Rendering, redisplay, timers, tooltips, @key{TAB} and @key{SPC} use
+only data already in memory: no view touches the remote host except
+through its explicit reads.  Home-directory abbreviation (@samp{~/}) on
+a remote path is pure string work.
+@item
+@kbd{t} and @key{RET} tmux attach spawn a @emph{local}
+@code{ssh -t HOST env -u TMUX tmux @dots{}} in the terminal backend.
+Supported for the ssh-based TRAMP methods (@code{ssh}, @code{sshx},
+@code{scp}, @code{scpx}); other methods and multi-hop names signal a
+clear error.
+@end itemize
+
+@node Transport
+@subsection Transport: local ssh pipes
+
+@cindex ssh pipe
+@cindex transport
+@vindex gascity-remote-transport
+@vindex gascity-remote-ssh-options
+For a single-hop ssh-family city, every background read and action runs
+as a @emph{local} @code{ssh -T} process with pipes, not as a TRAMP
+process.  Starting one never blocks Emacs (a TRAMP @code{make-process}
+sets up a remote shell synchronously, about half a second of frozen
+Emacs per read), its output is byte-exact (no pty) and its errors arrive
+separately.  ssh runs with @code{BatchMode=yes}, so it never prompts:
+key or agent authentication is required.  The processes share one ssh
+master of their own (a ControlPath distinct from TRAMP's), so only the
+first pays for the handshake.
+
+@defvr {User Option} gascity-remote-transport
+@code{ssh} (default): the local ssh pipe described above.
+@code{tramp}: always use TRAMP's @code{make-process}.  Other TRAMP
+methods (docker, sudo, multi-hop) always use TRAMP.
+@end defvr
+
+@cindex connection sharing
+@vindex tramp-use-connection-share
+With @code{tramp} on an ssh-family host, gascity binds
+@code{tramp-use-connection-share} to @code{suppress} around its own
+TRAMP processes and @code{process-file} calls, so each gets its own ssh
+connection instead of a session multiplexed over TRAMP's ControlMaster.
+A multiplexed session writes into a pty, and the master blocks on a full
+one while TRAMP waits on another channel: under load that shows as
+seconds-long freezes and ``Process has died'' errors.  With
+direct-async processes (connection-local
+@code{tramp-direct-async-process}), which have no pty, the setting is
+left alone.
+
+@code{tramp} is a @emph{fallback}, without the responsiveness
+guarantees the rest of this chapter describes: every TRAMP process start
+blocks Emacs while TRAMP sets up a remote shell (about 0.7 seconds each,
+several seconds when many views refresh at once).  For an ssh-family
+host use @code{ssh} (the default), or TRAMP direct-async processes
+(connection-local @code{tramp-direct-async-process} set to @code{t}),
+which start without that setup.
 
 @noindent
-One segment per open cockpit: the city's initials (@samp{emacs-city}
-@result{} @samp{ec}; a remote one adds @samp{@@host}), then its Needs
-you totals --- @samp{■} attention and @samp{▲} watch --- or @samp{●}
-when it needs nothing.  @kbd{mouse-1} on a segment shows that city's
-cockpit; the tooltip spells the counts out.  Killing a cockpit drops its
-segment.
+The live event stream (@pxref{Live Refresh}) runs the same way, as one
+long-lived local ssh pipe per city.
 
-The counts are the ones each cockpit publishes when it renders
-(@pxref{The Cockpit}).  The lighter never runs @command{gc} and never
-touches a remote host: its mode-line construct is a string rebuilt only
-when a count changes, so redisplay does no work at all.
+@defvr {User Option} gascity-remote-ssh-options
+Extra @command{ssh} options for the pipe processes (default: a
+ControlMaster with @code{ControlPersist=60}).  gascity always adds
+@code{-T}, @code{-n}, @code{-o BatchMode=yes} and
+@code{-o ForwardX11=no}.
+@end defvr
+
+@node Scheduling
+@subsection Scheduling, deadlines and offline hosts
+
+@cindex scheduler
+@cindex deadline
+@cindex offline host
+Reads and actions are scheduled per host, in two lanes so that actions
+never queue behind reads.  A view in a visible window is served first.
+
+@defvr {User Option} gascity-remote-max-inflight
+At most this many @command{gc} processes run at once per remote host
+and lane (default 3); the rest wait in a queue.  Local cities are not
+capped.  @code{nil} means unlimited.
+@end defvr
+
+@defvr {User Option} gascity-remote-async-timeout
+Seconds before a background @command{gc} process is killed (default
+30), locally as well as remotely: a wedged @command{gc} must never hold
+a view forever.  A read that times out keeps its section's last good
+data, marked @samp{◐ timed out}.  @command{gc doctor} has its own,
+longer deadline, @code{gascity-health-doctor-timeout}.
+@end defvr
+
+@defvr {User Option} gascity-remote-sync-timeout
+Seconds before a @emph{synchronous} remote call is abandoned (default
+30, 0 disables): the few calls Emacs itself makes synchronously --- a
+Dired or git log you asked for, and the first contact with a host.
+@end defvr
+
+@vindex gascity-store-offline-backoff
+When a read fails because the host cannot be reached, the whole city
+flips to @samp{○ offline @@host} in the view's header --- not an error
+in every section --- the host's queue pauses, and one probe is retried
+after 2, 5, 15, then every 60 seconds (@code{gascity-store-offline-backoff}).
+The Cities view shows such a host as one @samp{○ offline} row.
+
+@vindex gascity-store-ttl-alist
+Payloads are shared by every view of a city and fresh for a few seconds
+per kind of read (@code{gascity-store-ttl-alist}: @code{gc status} five
+seconds, @code{gc bd} reads fifteen, doctor until you run it again).
+@kbd{g} always re-reads.
+
+@node Finding gc
+@subsection Finding @command{gc} on the host
+
+@cindex executable resolution
+@vindex beads-remote-search-path
+Setup is usually none.  A bare program name is resolved on the host ---
+first against @code{tramp-remote-path}, then, when that misses, by
+probing the profile directories in @code{beads-remote-search-path}
+(shared with beads.el): the Guix profiles (@file{~/.guix-home/profile/bin},
+@file{~/.guix-profile/bin}, @file{/run/current-system/profile/bin}),
+then Nix, @file{~/.local/bin} and @file{~/bin}.  Resolutions are cached
+per connection; @kbd{M-x gascity-context-clear-cache} forgets them.
+@command{tmux} is resolved the same way.  Every remote invocation also
+puts those directories on @env{PATH}, so @command{gc}'s own children
+(@command{git}, @command{dolt}) resolve too.
+
+For other layouts, extend TRAMP's search path:
 
 @lisp
-(gascity-mode-line-mode 1)
+(add-to-list 'tramp-remote-path 'tramp-own-remote-path)
 @end lisp
 
 @noindent
-With live refresh (@pxref{Live Refresh}) the cockpit re-renders when an
-event arrives, so the lighter follows the city's event stream.
+or set a per-host absolute path with connection-local variables:
+
+@lisp
+(connection-local-set-profile-variables
+ 'gascity-remote-gc
+ '((gascity-executable . "/home/user/.guix-home/profile/bin/gc")))
+(connection-local-set-profiles
+ '(:machine "example.com") 'gascity-remote-gc)
+@end lisp
+
+@node ssh configuration
+@subsection ssh configuration
+
+@cindex ForwardX11
+@cindex @code{tramp-use-connection-share}
+@cindex wedge, TRAMP
+Two ssh settings can freeze Emacs over TRAMP.  gascity's own ssh pipes
+avoid both, but TRAMP's connection (Dired, the first contact with a
+host) does not, so check your setup:
+
+@table @asis
+@item @code{ForwardX11 yes}
+With X11 forwarding on for the host (often via a @code{Host *} block in
+@file{~/.ssh/config}), the ssh master prints @samp{Warning: No xauth
+data; @dots{}} into TRAMP's connection for every multiplexed session.
+When those warnings land after TRAMP's prompt, TRAMP never sees the
+prompt and spins.  Turn X11 forwarding off for the hosts you open
+cities on:
+
+@example
+Host build-box
+    ForwardX11 no
+@end example
+
+@noindent
+or for TRAMP only:
+
+@lisp
+(with-eval-after-load 'tramp-sh
+  (dolist (method '("ssh" "sshx" "scp" "scpx"))
+    (let ((args (assq 'tramp-login-args
+                      (cdr (assoc method tramp-methods)))))
+      (when (and args
+                 (not (member '("-o" "ForwardX11=no") (cadr args))))
+        (setcar (cdr args)
+                (cons '("-o" "ForwardX11=no") (cadr args)))))))
+@end lisp
+
+@item TRAMP connection sharing
+TRAMP runs its processes as clients of one ssh ControlMaster, over
+ptys.  The master writes each client's output into its pty with
+blocking writes; while TRAMP waits (without a timeout) for one
+command, a large output on another pty can fill it and block the
+master, so the awaited command is never forwarded.  If a remote city
+ever freezes Emacs inside a TRAMP wait, stop TRAMP from sharing the
+connection:
+
+@lisp
+(setq tramp-use-connection-share 'suppress)
+@end lisp
+
+@noindent
+This costs one full ssh handshake per TRAMP connection.
+@end table
+
+@node Shell history
+@subsection Shell history on the host
+
+@subheading The host's @file{~/.bashrc}
+
+@cindex TRAMP, host shell history pollution
+@cindex shell history guard
+@cindex @file{~/.bashrc}
+Every connection TRAMP opens spawns a login shell on the remote host, and
+@command{sshd} sources @file{~/.bashrc} for non-interactive commands too
+(on many setups even @kbd{ssh host true} appends a line to
+@file{~/.bash_history}).  When @file{~/.bashrc} contains a multi-window
+@code{PROMPT_COMMAND} history trick (an @code{shopt -s histappend} block
+that runs @code{history -a} after every prompt), each of those shells also
+writes the login command into the history files.  With gascity.el's
+auto-refreshing remote views this can mean an entry per refresh tick.
+gascity.el does not write the history itself; this is host-side shell
+behavior, so the fix lives in your @file{~/.bashrc} and works regardless
+of gascity.el.
+
+Put the following guard at the very top of @file{~/.bashrc} on the host,
+before anything else --- before profile sourcing and in particular before
+the @code{PROMPT_COMMAND} history block:
+
+@example
+# Non-interactive shells spawned over ssh (one-shot @command{ssh}
+# commands, Emacs/TRAMP plumbing, remote cron, ...): record no history.
+if [[ $- != *i* && -n $SSH_CONNECTION ]]; then
+    unset HISTFILE
+    return 2>/dev/null || exit
+fi
+@end example
+
+@table @asis
+@item @code{$- != *i*}
+True for any shell without interactive mode: @command{sshd} runs one-shot
+commands and remote process execution through exactly such shells, and
+they source @file{~/.bashrc} even though they never show a prompt.
+@item @code{unset HISTFILE}
+With no history file recorded, nothing the shell runs is written to
+@file{~/.bash_history} (or anywhere else) when it exits.
+@item @code{return 2>/dev/null || exit}
+@file{~/.bashrc} is being @emph{sourced}, so @code{return} skips the rest
+of the file --- including the interactive multi-window
+@code{PROMPT_COMMAND} history trick further down.  The @code{|| exit}
+fallback covers the corner case of the file being executed rather than
+sourced.  Interactive shells ($- contains @code{i}) are unaffected and
+keep their normal history behavior.
+@end table
+
+You can verify the guard without Emacs: run @kbd{ssh localhost true} a few
+times and confirm @file{~/.bash_history} stops growing.  The guard does
+not touch existing history files; truncating a @file{~/.tramp_history}
+that has already grown is a user-run command, never something this package
+executes for you.
+
+@subheading @file{~/.tramp_history}
+
+@cindex TRAMP, remote shell history
+@cindex @file{~/.tramp_history}
+@cindex @code{tramp-remote-process-environment}
+Every shell TRAMP opens on a remote host records its history into
+@file{~/.tramp_history} on that host: TRAMP overrides @code{HISTFILE}
+itself (@code{tramp-histfile-override}, by default
+@file{~/.tramp_history}), so the connection's login shell and every
+inner shell spawned for the reads behind the auto-refreshing remote
+views append to the same file.  With several cities watched over TRAMP
+this can grow to hundreds of kilobytes.
+
+gascity.el points @code{HISTFILE} at the null device for its own remote
+buffers: the view buffer factory appends the entry
+@code{HISTFILE=/dev/null} to the buffer-local
+@code{tramp-remote-process-environment} of every buffer it creates
+(the environment TRAMP consults when spawning a remote process from
+that buffer).  The entry is appended, never rebound wholesale, so
+TRAMP's own default environment entries survive; and the override is
+scoped to gascity.el's buffers --- your other TRAMP usage outside
+gascity.el keeps the untouched global value.  If you want the
+silencing everywhere, set the same entry yourself:
+
+@example
+(with-eval-after-load 'tramp
+  (add-to-list 'tramp-remote-process-environment
+               "HISTFILE=/dev/null"))
+@end example
+
+The override does not shrink a @file{~/.tramp_history} that has already
+grown.  Truncating it is a user-run command on the remote host ---
+never something gascity.el (or any agent or workflow) executes for
+you:
+
+@example
+: > ~/.tramp_history
+@end example
+
+@node Cities and Costs
+@section Cities and Costs
+
+@kbd{j c} lists every city gascity can reach --- the local one, each
+host in @code{gascity-remote-hosts}, and any host a view has already
+read from --- with each city's agents, unread mail and health;
+@key{RET} opens that city's cockpit in place.  @xref{Cities and Remote Cities}.
+
+@kbd{j $} shows @command{gc costs} --- model tokens and compute
+wall-seconds recorded per run, with a list-price estimate.  @command{gc}
+has no JSON form for it, so the view shows its text table verbatim and
+@kbd{g} re-reads it.  @xref{Costs}.
+
+Starting and stopping a city is the dispatcher's @strong{City}
+lifecycle (@kbd{C} in a view); both confirm first and stream their
+long-running output.  @xref{Actions}, @pxref{Remote Cities}.
+
+@node Work Remotely
+@section Work Remotely
+
+Every view works the same on a city on another host.  Open any directory
+of the city over TRAMP and start a view from there; every read, action
+and refresh then runs @command{gc} on that host, never a silent local
+fallback:
+
+@example
+C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
+M-x gascity-dashboard
+@end example
+
+@noindent
+Buffer names are host-qualified, so a local and a remote view of the
+same city coexist; the header line shows @samp{@@host}.
+@xref{Remote Cities}.
+
+For a single-hop ssh-family host, background reads run as local
+@code{ssh -T} pipes rather than TRAMP processes, with a per-host
+scheduler, a deadline on every process and an @samp{○ offline} state
+with backoff probes when a host cannot be reached; tmux attach spawns a
+local @code{ssh -t HOST} in the terminal backend.  @xref{Transport},
+@xref{Scheduling}, @xref{Remote buffers}.
 
 @c ====================================================================
-@node Runs
-@chapter Runs
+@node Runs and Live Events
+@chapter Runs and Live Events
 @cindex runs
 @cindex workflow runs
 
+
 @menu
-* The Runs view::   @kbd{j r}: every workflow run.
-* Run Detail::      @key{RET} on a run.
+* The Runs view::  Workflow run cards.
+* Run Detail::  One run in detail.
+* Live Refresh::  One event stream per city.
+* Events::  The event log.
+* Follow Runs and Live Events::  Follow a workflow run and the event log.
 @end menu
 
 @node The Runs view
@@ -1911,9 +1923,8 @@ Reload.
 Opening a run from the Runs view costs no @command{gc} call: both share
 one read.
 
-@c ====================================================================
 @node Live Refresh
-@chapter Live Refresh
+@section Live Refresh
 @cindex live refresh
 @cindex event stream
 @findex gascity-live-toggle
@@ -1958,15 +1969,6 @@ For remote methods plain ssh cannot reach (docker, sudo, multi-hop),
 gascity polls @code{gc events} every @code{gascity-live-poll-interval}
 seconds (30) instead.
 
-@c ====================================================================
-@node Events and Mail
-@chapter Events and Mail
-
-@menu
-* Events::         @kbd{j e}: the city's event log.
-* Mail View::      @kbd{j m}: inbox, thread and compose.
-@end menu
-
 @node Events
 @section Events
 @cindex events
@@ -1998,6 +2000,38 @@ level (@kbd{-l}), search (@kbd{-q}); @kbd{-c} unfolds churn.
 @item W
 Toggle the city's live event stream.
 @end table
+
+@node Follow Runs and Live Events
+@section Follow Runs and Live Events
+
+@kbd{j r} shows the city's workflow runs as cards grouped into Active,
+Waiting and Failed, each with its step ladder and workers, derived from
+the run's bead graph.  @key{RET} opens the run's detail (its steps,
+iterations, nested and drain-member runs, plan files and control nodes),
+@kbd{H} pages the history, @kbd{b} opens the run's root bead and
+@kbd{/} filters by rig, formula, state and window.  @xref{Runs and Live Events},
+@xref{Run Detail}.
+
+@kbd{j e} lists the city's events, newest first, folding routine churn
+into @samp{×N} rows and never folding signal events; @key{RET} drills
+into a bead, a session or a churn group.  @xref{Events}.
+
+Nothing polls.  While a view of a city is open, one
+@code{gc events --follow} stream per city refreshes only the sections
+the events touch; @kbd{W} turns the stream off and on and the header
+line shows its state (live, off, reconnecting, supervisor down,
+offline).  @xref{Live Refresh}.
+
+@c ====================================================================
+@node Mail
+@chapter Mail
+
+
+@menu
+* Mail View::  Inbox, threads and compose.
+* The Mail list::  The same inbox in tabulated-list form.
+* Read Mail::  Read, reply and archive.
+@end menu
 
 @node Mail View
 @section Mail View
@@ -2037,9 +2071,39 @@ A reply or a new message opens a compose buffer: write the body,
 background), @kbd{C-c C-k} cancels, @kbd{C-c C-n} toggles
 @option{--notify}.
 
+@node The Mail list
+@section The Mail list
+@findex gascity-mail-inbox
+
+@file{*gascity-mail*}, in @code{gascity-mail-inbox-mode}: columns
+@emph{From}, @emph{Subject}, @emph{Date}, @emph{New} (@code{●} for
+unread).  @key{RET} previews the message in its thread buffer without
+marking it read (@pxref{Mail}); @kbd{/} filters to unread only.
+
+@quotation Note
+Agents prefer ephemeral @dfn{nudges} (@pxref{Actions}) to mail for
+routine signalling, so an inbox is often empty.  Mail is reserved for
+messages that must survive a restart.
+@end quotation
+
+@node Read Mail
+@section Read Mail
+
+@kbd{j m} opens the city's inbox.  @key{RET} previews a message in its
+thread from data already loaded --- no @command{gc} call, and it stays
+unread --- while @kbd{r} reads the thread and marks it read, @kbd{R}
+replies, @kbd{a} archives, @kbd{u} marks unread and @kbd{c} opens the
+mail actions menu.  @xref{Mail}.
+
+A reply or a new message opens a compose buffer: write the body,
+@kbd{C-c C-c} sends, @kbd{C-c C-k} cancels, @kbd{C-c C-n} toggles
+@option{--notify}.  The @strong{Mail} list is the same inbox in
+tabulated-list form (@pxref{The Mail list}).  Agents prefer ephemeral nudges to
+mail for routine signalling (@pxref{Actions}).
+
 @c ====================================================================
-@node The Lists
-@chapter The Lists
+@node Tabulated Lists
+@chapter Tabulated Lists
 @cindex lists
 @cindex tabulated lists
 
@@ -2048,13 +2112,13 @@ described in @ref{Buffers and Navigation}.  Each names its own buffer,
 binds @kbd{g} to refresh and @key{RET} to drill in, and (except Dolt)
 @kbd{/} to a filter transient.
 
+
 @menu
-* Rigs::          @code{gascity-rig-list}.
-* Sessions::      @code{gascity-session-list}.
-* Convoys::       @code{gascity-convoy-list}.
-* Orders::        @code{gascity-order-list}.
-* Mail::          @code{gascity-mail-inbox}.
-* Dolt::          @code{gascity-dolt-list}.
+* Rigs::  The rig list.
+* Sessions::  The session list.
+* Convoys::  The convoy list.
+* Orders::  The order list.
+* Dolt::  The Dolt database list.
 @end menu
 
 @node Rigs
@@ -2174,21 +2238,6 @@ Run the order now, bypassing its trigger (@code{gc order run}).
 Filter by enabled-only and by type.
 @end table
 
-@node Mail
-@section Mail
-@findex gascity-mail-inbox
-
-@file{*gascity-mail*}, in @code{gascity-mail-inbox-mode}: columns
-@emph{From}, @emph{Subject}, @emph{Date}, @emph{New} (@code{●} for
-unread).  @key{RET} previews the message in its thread buffer without
-marking it read (@pxref{Mail View}); @kbd{/} filters to unread only.
-
-@quotation Note
-Agents prefer ephemeral @dfn{nudges} (@pxref{Actions}) to mail for
-routine signalling, so an inbox is often empty.  Mail is reserved for
-messages that must survive a restart.
-@end quotation
-
 @node Dolt
 @section Dolt
 @findex gascity-dolt-list
@@ -2202,8 +2251,8 @@ filter transient.
 @shot{dolt-list-dark, The Dolt database list (ef-elea-dark)}
 
 @c ====================================================================
-@node The Sling Command
-@chapter The Sling Command
+@node Sling and Dispatch
+@chapter Sling and Dispatch
 @cindex sling
 @cindex dispatching work
 @findex gascity-sling
@@ -2231,19 +2280,22 @@ and Follow is the momentary offer to jump to the workflow a launch
 created.  The menu works the same over TRAMP (@pxref{Remote
 Cities}): every reader keeps the city the menu was opened for.
 
+
 @menu
-* The sling shapes::    Plain, formula and targeted — inferred, never flagged.
-* The sling menu::       Stages, the header sentence, the live footer.
-* Picking work::         @kbd{A}: beads, convoys, or freeform text.
-* Picking a formula::    @kbd{f}: the catalog, and the shape it implies.
-* Picking the target::   @kbd{T}: agents, and the derived default.
-* Typed variables::      File, directory, agent, numeric, choice and bool readers.
-* The live footer::      The always-on summary and its warnings.
-* Validation warnings::  The bl-bdj trap and cross-store routes.
-* The preview buffer::   @kbd{P}: the full picture, on demand.
-* Launch and follow::    @kbd{s}, and the momentary @kbd{F}.
-* Remembered state::     History, target memory, city pinning.
-* Sling key summary::    Every key in the menu.
+* The sling shapes::  One menu, three shapes.
+* The sling menu::  What, who and how.
+* Picking work::  Beads, convoys and free text.
+* Picking a formula::  The formula and its variables.
+* Picking the target::  The agent or rig.
+* Typed variables::  Generated infix keys.
+* The live footer::  A summary of the dispatch.
+* Validation warnings::  Traps and how to avoid them.
+* The preview buffer::  The full dispatch, before launch.
+* Launch and follow::  Start the run and follow it.
+* Remembered state::  The sling remembers your choices.
+* Sling key summary::  Every sling key.
+* Route Work::  Hand a bead, a formula or free text to an agent.
+* Dispatch a Formula::  The sling menu, its shapes and its keys.
 @end menu
 
 @node The sling shapes
@@ -2609,7 +2661,7 @@ Launched workflow bl-9xyz (build-basic on bl-5ja) — F: run view
 @noindent
 The offer is momentary: @kbd{F} opens the run view
 (@code{gascity-run-show}) on the created workflow's root bead
-(@pxref{Runs}), and any other key dismisses the offer.  Nothing is
+(@pxref{Runs and Live Events}), and any other key dismisses the offer.  Nothing is
 yanked away --- you stay where you are unless you take it.
 
 @node Remembered state
@@ -2661,6 +2713,45 @@ q   Quit
 The generated variable keys avoid the reserved single letters
 @samp{A f T c a n m t s P r g x q} --- @kbd{p} is free, the preview
 moved to @kbd{P}.
+
+@node Route Work
+@section Route Work
+
+Routing work means putting a bead, a formula run or free task text in
+front of the agent that should take it.  gascity has one command for
+it: the sling, @kbd{S} from any view (or @kbd{M-x gascity-sling}
+anywhere).  @xref{Sling and Dispatch}.
+
+The menu asks what, who and how, in typed completion: @kbd{A} picks the
+work (beads and convoys; @kbd{C-u} for free text), @kbd{f} a formula,
+@kbd{T} the target agent, the generated infix keys fill the formula's
+variables, and @kbd{s} launches.  With a bead at point and a remembered
+target, @kbd{S} @kbd{s} dispatches with no prompts at all; @kbd{P}
+opens the full preview first.  @xref{Sling key summary}.
+
+Beads themselves are managed in beads.el.  @kbd{j b} opens the beads of
+the rig at point (or a chosen rig) in beads.el, and @kbd{c} opens the
+bead-actions menu; ready work also shows in the cockpit's @strong{Work}
+section and the rig dashboard's @strong{Ready} section
+(@pxref{The ? dispatch}, @pxref{The Cockpit}, @pxref{The Rig Dashboard}).
+
+@node Dispatch a Formula
+@section Dispatch a Formula
+
+A formula is a reusable workflow; dispatching it to an agent (or
+against a bead) is the sling's job.  @kbd{S} from any view, or
+@kbd{M-x gascity-sling}, opens the one adaptive menu.
+@xref{Sling and Dispatch}.
+
+The shape is inferred, never flagged: work with no formula is the plain
+route, a formula with work is the targeted @option{--on} shape, and a
+formula without work is the targetless @option{--formula} shape.
+@kbd{A} picks work, @kbd{f} picks the formula (whose declared variables
+become typed infix keys), @kbd{T} picks the target, the live footer
+summarizes the dispatch and warns about traps, @kbd{s} launches (the
+preview is never a gate), @kbd{P} opens the full preview and the
+momentary @kbd{F} follows the run a launch created.
+@xref{The sling shapes}, @xref{Sling key summary}.
 
 @c ====================================================================
 @node Actions
@@ -2780,7 +2871,7 @@ at point in the rig list:
 @findex gascity-sling
 @code{gc sling}: route a bead id, a formula, or free task text to an
 agent --- one unified, adaptive menu covering all three shapes
-(@pxref{The Sling Command}).
+(@pxref{Sling and Dispatch}).
 @item Run order --- dispatcher @kbd{O}, list @kbd{x}
 @findex gascity-order-run
 @code{gc order run}: run an order now, bypassing its trigger.
@@ -2880,6 +2971,170 @@ scroll is tmux's @code{history-limit} --- 2000 lines unless the city says
 otherwise.
 
 @c ====================================================================
+@node Health Costs and the Lighter
+@chapter Health, Costs and the Lighter
+@cindex health
+@findex gascity-health
+@kindex j h
+
+@kbd{j h} (or @kbd{M-x gascity-health}) opens
+@file{*gascity-health:@: CITY*} in @code{gascity-health-mode}: the
+city's plumbing, one section per @command{gc} read so that one failure
+never blanks the others.
+
+@example
+Health  bright-lights                                         ▲ watch
+Supervisor
+  pid 22262 · supervisor · ▲ degraded (no_agents_running) · not suspended
+Versions
+  gc 1.4.2 · bd 1.3.0 · dolt 2.3.5 · store NativeDoltStore
+Store  ◐
+  ~/bright-lights/.beads/dolt        109 MB   threshold 1 MB/row
+  ◐ store health: runtime status probe incomplete
+  ● dolt :41586 · pid 23571 · 120 ms · 2 databases
+  size (this session)  ▁▁▂▂▃
+Rig stores  1
+  ● hello-world    ~/hello-world                              dolt ok
+Doctor  88 passed · 5 warned · 0 failed · ran 4m ago   ! run  F run --fix
+  ▲ formula-requirements         blocking  36 formula requirement warning(s)
+  ▸ 88 checks ok
+@end example
+
+@shot{health-dark, Health of emacs-city (ef-elea-dark)}
+
+@section What it shows
+
+@table @asis
+@item The top line
+The city (with @samp{@@host} for a remote one) and an overall verdict:
+@samp{■ attention} when the controller is down, the city is unusable,
+the Dolt server is not running, a doctor check failed or a rig store
+cannot be read; @samp{▲ watch} when the city is degraded, the store is
+over its size threshold, @command{gc} reports partial errors, or
+doctor warned; else @samp{● ok}.  While the host is unreachable it
+reads @samp{○ offline @@host}.
+@item Supervisor
+From @code{gc status}: the controller's pid and mode, health
+(@samp{health ok}, @samp{▲ degraded (@var{signals})} or @samp{■
+unusable}) and whether the city is suspended.
+@item Versions
+@code{gc version}, and the beads store kind from @code{gc status}.  The
+@command{bd} and @command{dolt} versions appear once doctor has run:
+its report is the only place @command{gc} exposes them.
+@item Store
+From @code{gc status}: the store's path, size, rows-per-megabyte ratio
+and threshold, a @samp{▲} line when the store is over it and a
+@samp{◐} line per partial error.  From @code{gc dolt health}: the Dolt
+server's port, pid, latency and database count, with @samp{▲} lines for
+orphan databases, zombie processes or stale backups; @key{RET} on the
+server line opens the Dolt list.  Then @samp{size (this session)}, a
+@samp{▁▂▃} sparkline of the store sizes sampled this session (every
+status read the cockpit or this view got; the tooltip gives the range).
+@item Rig stores
+One @code{gc rig status @var{name}} per rig: @samp{● dolt ok} when the
+rig's beads are initialized and its Dolt database exists, @samp{▲} with
+the reason otherwise, @samp{○ suspended}, or @samp{■} with the error for
+a rig whose read failed.  @key{SPC} shows the rig's prefix, branch and
+agents; @key{RET} opens its dashboard; @kbd{l} its git log.
+@item Doctor
+The last @command{gc doctor} report of the session: counts and how long
+ago it ran.  Failed checks, then warnings, get a row each ---
+@samp{■ @var{name}  @var{severity}  @var{message}} --- and @key{SPC}
+opens a check's fix hint and details.  Passing checks fold into
+@samp{▸ N checks ok}.
+@end table
+
+@section Keys
+
+@table @kbd
+@item !
+@kindex ! @r{(health)}
+@findex gascity-health-doctor
+Run @command{gc doctor} in the background.  It is never run on open or
+on @kbd{g} --- it takes tens of seconds --- so the section reads
+@samp{not run} until you ask.  While it runs the header reads
+@samp{running@dots{}} and the rest of the view stays usable; the report
+is cached for the session, so reopening the view shows it with its age.
+Doctor has its own deadline, @code{gascity-health-doctor-timeout}.
+@item F
+@kindex F @r{(health)}
+@findex gascity-health-doctor-fix
+Run @command{gc doctor --fix} after a confirmation, in the background,
+the same way.
+@item g
+@kindex g @r{(health)}
+@findex gascity-health-refresh
+Re-read every section but Doctor.
+@item @key{RET}
+@kindex RET @r{(health)}
+@findex gascity-health-activate
+On a rig, open its dashboard; on the Store header or Dolt line, the Dolt
+list; on the Rig stores header, the rig list; on the Doctor header, run
+doctor.
+@end table
+
+@menu
+* Costs::  Recorded usage by run.
+* The Mode-Line Lighter::  Needs-you totals in every mode line.
+@end menu
+
+@node Costs
+@section Costs
+@cindex costs
+@findex gascity-costs
+@kindex j $
+
+@kbd{j $} (or @kbd{M-x gascity-costs}) shows @command{gc costs} ---
+model tokens and compute wall-seconds recorded per run, with a
+list-price estimate --- in a read-only buffer,
+@file{*gascity-costs:@: CITY*}.  @command{gc} prints it as a text table
+and has no JSON form of it, so the text is shown exactly as @command{gc}
+prints it.  When a run records no usage (zero invocations), the view adds
+a note under the table saying so: a @samp{0.0000} estimate means no
+usage was recorded, not that the run was free, and the note points at
+@env{GC_DISABLE_USAGE_METRICS} as the first thing to check.  It is read
+in the background; @kbd{g} (@code{gascity-costs-refresh}) re-reads it and
+the header line says how long ago it did.
+
+@shot{costs-dark, The Costs view --- recorded usage by run (ef-elea-dark)}
+
+@node The Mode-Line Lighter
+@section The Mode-Line Lighter
+@cindex mode-line lighter
+@cindex lighter
+@findex gascity-mode-line-mode
+
+@code{gascity-mode-line-mode} is a global minor mode, off by default,
+that shows what needs you in every open city in every mode line:
+
+@example
+ GC[bl ▲1 · ec ■1▲2]
+@end example
+
+@shot{lighter-dark, The lighter in the mode line (ef-elea-dark)}
+
+@noindent
+One segment per open cockpit: the city's initials (@samp{emacs-city}
+@result{} @samp{ec}; a remote one adds @samp{@@host}), then its Needs
+you totals --- @samp{■} attention and @samp{▲} watch --- or @samp{●}
+when it needs nothing.  @kbd{mouse-1} on a segment shows that city's
+cockpit; the tooltip spells the counts out.  Killing a cockpit drops its
+segment.
+
+The counts are the ones each cockpit publishes when it renders
+(@pxref{The Cockpit}).  The lighter never runs @command{gc} and never
+touches a remote host: its mode-line construct is a string rebuilt only
+when a count changes, so redisplay does no work at all.
+
+@lisp
+(gascity-mode-line-mode 1)
+@end lisp
+
+@noindent
+With live refresh (@pxref{Live Refresh}) the cockpit re-renders when an
+event arrives, so the lighter follows the city's event stream.
+
+@c ====================================================================
 @node Bookmarks
 @chapter Bookmarks
 @cindex bookmarks
@@ -2918,342 +3173,274 @@ even the first jump to a remote city walks nothing over TRAMP.  The
 view's filters are then set as they were recorded.
 
 @c ====================================================================
-@node Remote Cities
-@chapter Remote Cities
-@cindex remote cities
-@cindex TRAMP
+@node Worked Examples
+@chapter Worked Examples
 
-Every view works the same on a city on another host.  Open any
-directory of the city over TRAMP and start a view from there; every
-read, action and refresh then runs @command{gc} on that host, never a
-silent local fallback:
+@cindex worked examples
+@cindex walkthroughs
+The task guide lists what each view is for.  This chapter walks three
+jobs from start to finish, with the exact keys.  Each example assumes a
+running city and a gascity view opened from inside it
+(@pxref{Install and Start}).
+
+@menu
+* Route a bead through a workflow::  From ready bead to a running run.
+* Recover a stalled agent::          Find it, read it, nudge or reset it.
+* Open and drive a remote city::     Work on another host over TRAMP.
+@end menu
+
+@node Route a bead through a workflow
+@section Route a bead through a workflow
+
+@cindex route work, example
+@cindex sling, example
+A bead is ready in beads.el and you want an agent to take it through a
+formula.
+
+@enumerate
+@item
+Open the cockpit: @kbd{M-x gascity-dashboard}.  The @strong{Work}
+section lists ready beads; put point on yours and press @key{RET} to
+open it in beads.el (@pxref{Route Work}).
+@item
+From any gascity buffer, press @kbd{S} to raise the sling
+(@pxref{Sling and Dispatch}).  @kbd{A} picks the work by completion (the
+bead at point is offered first); @kbd{C-u} @kbd{A} takes free text
+instead.
+@item
+@kbd{f} picks a formula, @kbd{T} picks the target agent, and the
+generated infix keys fill the formula's variables (@pxref{Typed
+variables}).  The live footer shows what will be dispatched
+(@pxref{The live footer}).
+@item
+@kbd{P} opens the preview first (@pxref{The preview buffer}); @kbd{s}
+launches.  The echo area confirms the dispatch and the new run appears
+in the target rig.
+@end enumerate
+
+@noindent
+Watch it from the Runs view: @kbd{j r} (or @kbd{M-x gascity-runs}),
+then @key{RET} on the run for the step ladder, where each step's state
+comes from its bead (@pxref{Runs and Live Events}).  When the run closes, its source
+bead closes with it.
+
+@node Recover a stalled agent
+@section Recover a stalled agent
+
+@cindex stalled agent, example
+@cindex nudge, example
+An agent stopped reporting progress.
+
+@enumerate
+@item
+@kbd{j a} opens the Agents list.  Stalled agents sort to the top; the
+@strong{Needs you} section of the cockpit also flags a run whose steps
+have not moved for @code{gascity-dashboard-run-idle-threshold}
+(@pxref{The Agents view}).
+@item
+@key{RET} on the agent attaches its terminal, @kbd{i} opens the polecat
+detail with its work, run, transcript, mail and history
+(@pxref{Agent Detail}).  @kbd{v} peeks at recent output read-only.
+@item
+@kbd{M} nudges the agent with a message (@pxref{Actions}).  If it is
+suspended, @kbd{w} wakes it; if it is wedged, @kbd{R} resets the
+session (confirming first), and @kbd{K} force-kills it if needed.
+@item
+@kbd{d} opens the agent's worktree in Dired so you can inspect what it
+left behind.
+@end enumerate
+
+@noindent
+None of these block: each reports in the echo area, and the row shows
+@samp{@dots{}} until @command{gc} answers (@pxref{Actions}).
+
+@node Open and drive a remote city
+@section Open and drive a remote city
+
+@cindex remote city, example
+Open any directory of the city over TRAMP, then start a view from there
+(@pxref{Remote Cities}):
 
 @example
 C-x d /ssh:user@@example.com:/home/user/city/ @key{RET}
 M-x gascity-dashboard
 @end example
 
-@shot{remote-cities-light, The Cities list with one row per city and host (ef-cyprus)}
-
-@menu
-* Remote buffers::        Host-qualified names, paths, attach.
-* Transport::             How gc runs on the host: local ssh pipes.
-* Scheduling::            Concurrency, deadlines, offline hosts.
-* Finding gc::            Resolving the executable on the host.
-* ssh configuration::     ForwardX11 and connection sharing.
-* Shell history::         Keeping remote history files clean.
-@end menu
-
-@node Remote buffers
-@section Remote buffers
-
-@itemize @bullet
-@item
-Buffer names are host-qualified
-(@file{*gascity:@: city@@/ssh:user@@example.com:/home/user/city/*}), so a
-local and a remote view of the same city coexist; the header line shows
-@samp{@@host}.  Each view pins its @code{default-directory} to the city
-it was opened for, so refreshes keep hitting that host.
-@item
-Paths @command{gc} reports (agent worktrees, rig directories, order
-sources, the store) are host-local; @kbd{d} (Dired), @kbd{l} (git log)
-and @key{RET} re-prefix them and open them on the city's host.
-@item
-Rendering, redisplay, timers, tooltips, @key{TAB} and @key{SPC} use
-only data already in memory: no view touches the remote host except
-through its explicit reads.  Home-directory abbreviation (@samp{~/}) on
-a remote path is pure string work.
-@item
-@kbd{t} and @key{RET} tmux attach spawn a @emph{local}
-@code{ssh -t HOST env -u TMUX tmux @dots{}} in the terminal backend.
-Supported for the ssh-based TRAMP methods (@code{ssh}, @code{sshx},
-@code{scp}, @code{scpx}); other methods and multi-hop names signal a
-clear error.
-@end itemize
-
-@node Transport
-@section Transport: local ssh pipes
-
-@cindex ssh pipe
-@cindex transport
-@vindex gascity-remote-transport
-@vindex gascity-remote-ssh-options
-For a single-hop ssh-family city, every background read and action runs
-as a @emph{local} @code{ssh -T} process with pipes, not as a TRAMP
-process.  Starting one never blocks Emacs (a TRAMP @code{make-process}
-sets up a remote shell synchronously, about half a second of frozen
-Emacs per read), its output is byte-exact (no pty) and its errors arrive
-separately.  ssh runs with @code{BatchMode=yes}, so it never prompts:
-key or agent authentication is required.  The processes share one ssh
-master of their own (a ControlPath distinct from TRAMP's), so only the
-first pays for the handshake.
-
-@defvr {User Option} gascity-remote-transport
-@code{ssh} (default): the local ssh pipe described above.
-@code{tramp}: always use TRAMP's @code{make-process}.  Other TRAMP
-methods (docker, sudo, multi-hop) always use TRAMP.
-@end defvr
-
-@cindex connection sharing
-@vindex tramp-use-connection-share
-With @code{tramp} on an ssh-family host, gascity binds
-@code{tramp-use-connection-share} to @code{suppress} around its own
-TRAMP processes and @code{process-file} calls, so each gets its own ssh
-connection instead of a session multiplexed over TRAMP's ControlMaster.
-A multiplexed session writes into a pty, and the master blocks on a full
-one while TRAMP waits on another channel: under load that shows as
-seconds-long freezes and ``Process has died'' errors.  With
-direct-async processes (connection-local
-@code{tramp-direct-async-process}), which have no pty, the setting is
-left alone.
-
-@code{tramp} is a @emph{fallback}, without the responsiveness
-guarantees the rest of this chapter describes: every TRAMP process start
-blocks Emacs while TRAMP sets up a remote shell (about 0.7 seconds each,
-several seconds when many views refresh at once).  For an ssh-family
-host use @code{ssh} (the default), or TRAMP direct-async processes
-(connection-local @code{tramp-direct-async-process} set to @code{t}),
-which start without that setup.
-
 @noindent
-The live event stream (@pxref{Live Refresh}) runs the same way, as one
-long-lived local ssh pipe per city.
-
-@defvr {User Option} gascity-remote-ssh-options
-Extra @command{ssh} options for the pipe processes (default: a
-ControlMaster with @code{ControlPersist=60}).  gascity always adds
-@code{-T}, @code{-n}, @code{-o BatchMode=yes} and
-@code{-o ForwardX11=no}.
-@end defvr
-
-@node Scheduling
-@section Scheduling, deadlines and offline hosts
-
-@cindex scheduler
-@cindex deadline
-@cindex offline host
-Reads and actions are scheduled per host, in two lanes so that actions
-never queue behind reads.  A view in a visible window is served first.
-
-@defvr {User Option} gascity-remote-max-inflight
-At most this many @command{gc} processes run at once per remote host
-and lane (default 3); the rest wait in a queue.  Local cities are not
-capped.  @code{nil} means unlimited.
-@end defvr
-
-@defvr {User Option} gascity-remote-async-timeout
-Seconds before a background @command{gc} process is killed (default
-30), locally as well as remotely: a wedged @command{gc} must never hold
-a view forever.  A read that times out keeps its section's last good
-data, marked @samp{◐ timed out}.  @command{gc doctor} has its own,
-longer deadline, @code{gascity-health-doctor-timeout}.
-@end defvr
-
-@defvr {User Option} gascity-remote-sync-timeout
-Seconds before a @emph{synchronous} remote call is abandoned (default
-30, 0 disables): the few calls Emacs itself makes synchronously --- a
-Dired or git log you asked for, and the first contact with a host.
-@end defvr
-
-@vindex gascity-store-offline-backoff
-When a read fails because the host cannot be reached, the whole city
-flips to @samp{○ offline @@host} in the view's header --- not an error
-in every section --- the host's queue pauses, and one probe is retried
-after 2, 5, 15, then every 60 seconds (@code{gascity-store-offline-backoff}).
-The Cities view shows such a host as one @samp{○ offline} row.
-
-@vindex gascity-store-ttl-alist
-Payloads are shared by every view of a city and fresh for a few seconds
-per kind of read (@code{gascity-store-ttl-alist}: @code{gc status} five
-seconds, @code{gc bd} reads fifteen, doctor until you run it again).
-@kbd{g} always re-reads.
-
-@node Finding gc
-@section Finding @command{gc} on the host
-
-@cindex executable resolution
-@vindex beads-remote-search-path
-Setup is usually none.  A bare program name is resolved on the host ---
-first against @code{tramp-remote-path}, then, when that misses, by
-probing the profile directories in @code{beads-remote-search-path}
-(shared with beads.el): the Guix profiles (@file{~/.guix-home/profile/bin},
-@file{~/.guix-profile/bin}, @file{/run/current-system/profile/bin}),
-then Nix, @file{~/.local/bin} and @file{~/bin}.  Resolutions are cached
-per connection; @kbd{M-x gascity-context-clear-cache} forgets them.
-@command{tmux} is resolved the same way.  Every remote invocation also
-puts those directories on @env{PATH}, so @command{gc}'s own children
-(@command{git}, @command{dolt}) resolve too.
-
-For other layouts, extend TRAMP's search path:
-
-@lisp
-(add-to-list 'tramp-remote-path 'tramp-own-remote-path)
-@end lisp
-
-@noindent
-or set a per-host absolute path with connection-local variables:
-
-@lisp
-(connection-local-set-profile-variables
- 'gascity-remote-gc
- '((gascity-executable . "/home/user/.guix-home/profile/bin/gc")))
-(connection-local-set-profiles
- '(:machine "example.com") 'gascity-remote-gc)
-@end lisp
-
-@node ssh configuration
-@section ssh configuration
-
-@cindex ForwardX11
-@cindex @code{tramp-use-connection-share}
-@cindex wedge, TRAMP
-Two ssh settings can freeze Emacs over TRAMP.  gascity's own ssh pipes
-avoid both, but TRAMP's connection (Dired, the first contact with a
-host) does not, so check your setup:
-
-@table @asis
-@item @code{ForwardX11 yes}
-With X11 forwarding on for the host (often via a @code{Host *} block in
-@file{~/.ssh/config}), the ssh master prints @samp{Warning: No xauth
-data; @dots{}} into TRAMP's connection for every multiplexed session.
-When those warnings land after TRAMP's prompt, TRAMP never sees the
-prompt and spins.  Turn X11 forwarding off for the hosts you open
-cities on:
-
-@example
-Host build-box
-    ForwardX11 no
-@end example
-
-@noindent
-or for TRAMP only:
-
-@lisp
-(with-eval-after-load 'tramp-sh
-  (dolist (method '("ssh" "sshx" "scp" "scpx"))
-    (let ((args (assq 'tramp-login-args
-                      (cdr (assoc method tramp-methods)))))
-      (when (and args
-                 (not (member '("-o" "ForwardX11=no") (cadr args))))
-        (setcar (cdr args)
-                (cons '("-o" "ForwardX11=no") (cadr args)))))))
-@end lisp
-
-@item TRAMP connection sharing
-TRAMP runs its processes as clients of one ssh ControlMaster, over
-ptys.  The master writes each client's output into its pty with
-blocking writes; while TRAMP waits (without a timeout) for one
-command, a large output on another pty can fill it and block the
-master, so the awaited command is never forwarded.  If a remote city
-ever freezes Emacs inside a TRAMP wait, stop TRAMP from sharing the
-connection:
-
-@lisp
-(setq tramp-use-connection-share 'suppress)
-@end lisp
-
-@noindent
-This costs one full ssh handshake per TRAMP connection.
-@end table
-
-@node Shell history
-@section Shell history on the host
-
-@subheading The host's @file{~/.bashrc}
-
-@cindex TRAMP, host shell history pollution
-@cindex shell history guard
-@cindex @file{~/.bashrc}
-Every connection TRAMP opens spawns a login shell on the remote host, and
-@command{sshd} sources @file{~/.bashrc} for non-interactive commands too
-(on many setups even @kbd{ssh host true} appends a line to
-@file{~/.bash_history}).  When @file{~/.bashrc} contains a multi-window
-@code{PROMPT_COMMAND} history trick (an @code{shopt -s histappend} block
-that runs @code{history -a} after every prompt), each of those shells also
-writes the login command into the history files.  With gascity.el's
-auto-refreshing remote views this can mean an entry per refresh tick.
-gascity.el does not write the history itself; this is host-side shell
-behavior, so the fix lives in your @file{~/.bashrc} and works regardless
-of gascity.el.
-
-Put the following guard at the very top of @file{~/.bashrc} on the host,
-before anything else --- before profile sourcing and in particular before
-the @code{PROMPT_COMMAND} history block:
-
-@example
-# Non-interactive shells spawned over ssh (one-shot @command{ssh}
-# commands, Emacs/TRAMP plumbing, remote cron, ...): record no history.
-if [[ $- != *i* && -n $SSH_CONNECTION ]]; then
-    unset HISTFILE
-    return 2>/dev/null || exit
-fi
-@end example
-
-@table @asis
-@item @code{$- != *i*}
-True for any shell without interactive mode: @command{sshd} runs one-shot
-commands and remote process execution through exactly such shells, and
-they source @file{~/.bashrc} even though they never show a prompt.
-@item @code{unset HISTFILE}
-With no history file recorded, nothing the shell runs is written to
-@file{~/.bash_history} (or anywhere else) when it exits.
-@item @code{return 2>/dev/null || exit}
-@file{~/.bashrc} is being @emph{sourced}, so @code{return} skips the rest
-of the file --- including the interactive multi-window
-@code{PROMPT_COMMAND} history trick further down.  The @code{|| exit}
-fallback covers the corner case of the file being executed rather than
-sourced.  Interactive shells ($- contains @code{i}) are unaffected and
-keep their normal history behavior.
-@end table
-
-You can verify the guard without Emacs: run @kbd{ssh localhost true} a few
-times and confirm @file{~/.bash_history} stops growing.  The guard does
-not touch existing history files; truncating a @file{~/.tramp_history}
-that has already grown is a user-run command, never something this package
-executes for you.
-
-@subheading @file{~/.tramp_history}
-
-@cindex TRAMP, remote shell history
-@cindex @file{~/.tramp_history}
-@cindex @code{tramp-remote-process-environment}
-Every shell TRAMP opens on a remote host records its history into
-@file{~/.tramp_history} on that host: TRAMP overrides @code{HISTFILE}
-itself (@code{tramp-histfile-override}, by default
-@file{~/.tramp_history}), so the connection's login shell and every
-inner shell spawned for the reads behind the auto-refreshing remote
-views append to the same file.  With several cities watched over TRAMP
-this can grow to hundreds of kilobytes.
-
-gascity.el points @code{HISTFILE} at the null device for its own remote
-buffers: the view buffer factory appends the entry
-@code{HISTFILE=/dev/null} to the buffer-local
-@code{tramp-remote-process-environment} of every buffer it creates
-(the environment TRAMP consults when spawning a remote process from
-that buffer).  The entry is appended, never rebound wholesale, so
-TRAMP's own default environment entries survive; and the override is
-scoped to gascity.el's buffers --- your other TRAMP usage outside
-gascity.el keeps the untouched global value.  If you want the
-silencing everywhere, set the same entry yourself:
-
-@example
-(with-eval-after-load 'tramp
-  (add-to-list 'tramp-remote-process-environment
-               "HISTFILE=/dev/null"))
-@end example
-
-The override does not shrink a @file{~/.tramp_history} that has already
-grown.  Truncating it is a user-run command on the remote host ---
-never something gascity.el (or any agent or workflow) executes for
-you:
-
-@example
-: > ~/.tramp_history
-@end example
+The header shows @samp{@@example.com}, every read and action runs
+@command{gc} on that host, and @kbd{t} attaches the agent's tmux session
+through a local @code{ssh -t} (@pxref{Remote buffers}).  @kbd{W} toggles
+that city's live event stream, and a host that cannot be reached flips
+the city to @samp{○ offline @@example.com} instead of erroring in every
+section (@pxref{Scheduling}).
 
 @c ====================================================================
-@node Customization
-@chapter Customization
+@node View and Key Reference
+@chapter View and Key Reference
+@cindex view reference
+@cindex key reference
+@cindex verb reference
+
+This chapter is the exhaustive reference for the surface the manual is
+required to cover (REQ-012).  It names every registered view, its mode
+map, and every agent action verb with the Emacs command it runs; the
+universal keys themselves are described once in @ref{Buffers and
+Navigation}.  @code{lisp/test/gascity-manual-test.el} checks that every
+name below still appears here, so a new view or verb cannot ship
+undocumented.
+
+@section Registered views
+
+@cindex views, registered
+Every gascity view is read-only and keyboard-driven.  A @dfn{namespaced}
+view may also hold a bead, so its agent verbs live under the @kbd{a}
+prefix; an @dfn{agent-only} view keeps the bare single-letter aliases,
+and a @dfn{mixed} view shows agents but no beads, so it keeps the bare
+aliases too.
+
+@table @asis
+@item @code{cockpit} --- @code{gascity-dashboard-mode-map}
+@cindex cockpit view
+The city triage buffer: vui sections over one city's state
+(@pxref{The Cockpit}).  Mixed; agent verbs keep their bare keys.
+@item @code{rig-dashboard} --- @code{gascity-rig-dashboard-mode-map}
+@cindex rig dashboard view
+One rig's beads, agents and convoys (@pxref{The Rig Dashboard}).
+Namespaced: agent verbs are under @kbd{a}.
+@item @code{agent-detail} --- @code{gascity-session-detail-mode-map}
+@cindex agent detail view
+One agent's detail (@pxref{Agents}).  Namespaced.
+@item @code{agents-tree} --- @code{gascity-agents-tree-mode-map}
+@cindex agents tree view
+The hierarchical agent tree (@pxref{Agents}).  Mixed.
+@item @code{agents} --- @code{gascity-agents-mode-map}
+@cindex agents view
+The flat agent table (@pxref{Agents}).  Mixed.
+@item @code{session-list} --- @code{gascity-session-list-mode-map}
+@cindex session list view
+The session list (@pxref{Sessions}).  Mixed.
+@item @code{runs} --- @code{gascity-runs-mode-map}
+@cindex runs view
+Workflow runs (@pxref{Runs and Live Events}).
+@item @code{run-detail} --- @code{gascity-run-mode-map}
+@cindex run detail view
+One run's step ladder (@pxref{Runs and Live Events}).
+@item @code{health} --- @code{gascity-health-mode-map}
+@cindex health view
+Supervisor, versions, stores and doctor (@pxref{Health Costs and the Lighter}).
+@item @code{cities} --- @code{gascity-cities-mode-map}
+@cindex cities view
+Every city on every host (@pxref{Cities and Remote Cities}).
+@item @code{rig-list} --- @code{gascity-rig-list-mode-map}
+@cindex rig list view
+The tabulated rig list (@pxref{Rigs}).
+@item @code{convoy-list} --- @code{gascity-convoy-list-mode-map}
+@cindex convoy list view
+Convoys (@pxref{Convoys}).
+@item @code{order-list} --- @code{gascity-order-list-mode-map}
+@cindex order list view
+Orders (@pxref{Orders}).
+@item @code{dolt-list} --- @code{gascity-dolt-list-mode-map}
+@cindex dolt list view
+The Dolt stores (@pxref{Dolt}).
+@item @code{events} --- @code{gascity-events-mode-map}
+@cindex events view
+The event log (@pxref{Events}).
+@item @code{mail-inbox} --- @code{gascity-mail-inbox-mode-map}
+@cindex mail inbox view
+The mail inbox (@pxref{Mail}).
+@item @code{mail-thread} --- @code{gascity-mail-thread-mode-map}
+@cindex mail thread view
+One mail thread; a text view, not tabulated or vui
+(@pxref{Mail}).
+@end table
+
+@section Agent action verbs
+
+@cindex agent verbs
+Each verb below acts on the agent or session at point.  It is reachable
+under @kbd{a} in the namespaced views and on the bare key shown in the
+agent-only views (@pxref{Actions}); the dispatcher also exposes it by
+prompt (@pxref{The ? dispatch}).
+
+@table @asis
+@item Nudge --- @code{gascity-session-nudge-at-point}
+@findex gascity-session-nudge-at-point
+Prompt for a message and send it to the agent: @kbd{a n}, or @kbd{M}
+in the agent-only views.
+@item Suspend --- @code{gascity-dashboard-suspend}
+@findex gascity-dashboard-suspend
+Suspend the session (the namespaced @kbd{a s}), or the equivalent
+@code{gascity-session-suspend-at-point} on the bare @kbd{s} of an
+agent-only view.
+@item Wake --- @code{gascity-session-wake-at-point}
+@findex gascity-session-wake-at-point
+Wake a suspended agent: @kbd{a w} or @kbd{w}.
+@item Kill --- @code{gascity-session-kill-at-point}
+@findex gascity-session-kill-at-point
+Force-kill the agent's runtime: @kbd{a k} or @kbd{K}.  Confirms first.
+@item Drain --- @code{gascity-session-drain-at-point}
+@findex gascity-session-drain-at-point
+Wind the agent down gracefully: @kbd{a D} or @kbd{D}.
+@item Reset --- @code{gascity-dashboard-reset}
+@findex gascity-dashboard-reset
+Restart the agent's session fresh: @kbd{a r}, or @kbd{R} on an
+agent-only view through @code{gascity-session-reset-at-point}.  Confirms
+first.
+@item Undrain --- @code{gascity-session-undrain-at-point}
+@findex gascity-session-undrain-at-point
+Cancel a drain: @kbd{a u} or @kbd{U}.
+@item Attach --- @code{gascity-tmux-at-point}
+@findex gascity-tmux-at-point
+Attach a terminal to the agent's tmux session: @kbd{a t} or @kbd{t}
+(@pxref{Attach to a Terminal}).
+@item Dired --- @code{gascity-dired-at-point}
+@findex gascity-dired-at-point
+Open the agent's working directory in Dired: @kbd{a d} or @kbd{d}.
+@item Detail --- @code{gascity-polecat-detail-at-point}
+@findex gascity-polecat-detail-at-point
+Open the polecat detail view: @kbd{a i} or @kbd{i}.
+@item Peek --- @code{gascity-session-peek-at-point}
+@findex gascity-session-peek-at-point
+Show recent terminal output read-only: @kbd{a v} or @kbd{v}.
+@end table
+
+@c ====================================================================
+@node Command and Variable Reference
+@chapter Command and Variable Reference
+@cindex reference
+@cindex command reference
+@cindex variable reference
+This chapter is the authoritative reference for every user-visible
+command, function and user option.  It is populated from the source
+surface --- the view and key registry, the @code{gascity-command-*}
+classes, and every @code{gascity-*} @code{defcustom} --- rather than by
+hand, so it cannot silently fall behind the code.  The generated tables
+in @ref{Generated Reference Tables} are the compact, per-view view of the
+same surface.
+
+The reference entries are added by the follow-on reference work items;
+this node anchors the chapter and its position in the reading order.
+
+@c ====================================================================
+@node Generated Reference Tables
+@appendix Generated Reference Tables
+@cindex generated reference tables
+
+The two tables below are generated from the running code by
+@file{doc/generate-tables.el} and committed under @file{doc/generated/}.
+They are part of the distribution, so a clean checkout builds the manual
+from them without running Emacs; a normal @command{make} never rewrites
+them.  @command{make regen-doc-tables} refreshes the tracked copies and
+@command{make check-doc-drift} (run by @command{make check}) fails when
+they no longer match the code.
+
+@include generated/keys.texi
+@include generated/commands.texi
+
+@c ====================================================================
+@node Customization and Theming
+@chapter Customization and Theming
 @cindex customization
 
 All user options live in the @code{gascity} group; faces live in
@@ -3433,6 +3620,47 @@ Secondary, de-emphasized text (shadow).
 @end table
 
 @c ====================================================================
+@node Capability Gaps
+@appendix Capability Gaps
+@cindex capability gaps
+@cindex missing data
+
+gascity shows only what the @command{gc} CLI exposes; it never calls
+the supervisor's HTTP API@.  The following are not available in gascity
+because @command{gc} does not expose them.  Where a view would need
+one, it leaves the item out rather than printing an apology.
+
+@table @asis
+@item Costs as data
+@command{gc costs} has no @option{--json} and no per-run or daily
+aggregates, so costs are shown as @command{gc}'s text (@pxref{Costs}),
+annotated when runs recorded no usage, and the cockpit shows no usage.
+@item Sessions awaiting input
+There is no @code{gc session pending} listing and no way to answer an
+approval prompt from the CLI, so Needs you cannot list agents waiting
+for you and agent rows have no approve/deny keys.
+@item Context use and model
+@code{gc session list --json} carries no context-window percentage and
+no model, so the agent views show neither.
+@item Run summaries
+There is no @code{gc runs --json}; runs, their phase and their step
+ladder are derived from the beads of the run's graph.
+@item Reading mail as another identity
+@code{gc mail inbox} has no @option{--as}, so the inbox is always the
+operator's.
+@item Supervisor uptime
+@code{gc status} reports the controller's pid but not how long it has
+been up, so Health shows no uptime.
+@item bd and dolt versions
+@code{gc version} reports only @command{gc}; the @command{bd} and
+@command{dolt} versions appear in Health only after a doctor run, whose
+report is the one place that carries them.
+@item Run counts per city
+No single read reports a city's active runs, so the Cities view shows
+them only for cities whose cockpit is open.
+@end table
+
+@c ====================================================================
 @node Troubleshooting
 @chapter Troubleshooting
 
@@ -3479,7 +3707,7 @@ usually the store's short TTL, not a failure: @kbd{g} always re-reads.
 If every section fails with @samp{gc: not found}, the CLI is not on
 Emacs's @code{exec-path}.  Install it, add its directory to
 @code{exec-path}, or set @code{gascity-executable} to an absolute path
-(@pxref{Customization}).  On a remote host the same name is resolved by
+(@pxref{Customization and Theming}).  On a remote host the same name is resolved by
 probing the profile directories in @code{beads-remote-search-path}
 (@pxref{Finding gc}).
 
@@ -3490,7 +3718,7 @@ probing the profile directories in @code{beads-remote-search-path}
 gascity finds the city by walking up from @code{default-directory} for
 a @file{city.toml}.  Open a view from inside the city tree, bind
 @code{gascity-context-city} to its path, or clear a cached resolution
-with @kbd{M-x gascity-context-clear-cache} (@pxref{Customization}).
+with @kbd{M-x gascity-context-clear-cache} (@pxref{Customization and Theming}).
 A rig that lives outside the city tree is resolved by asking
 @command{gc}, so rig scoping does not need the checkout under point.
 
@@ -3525,7 +3753,7 @@ stalled stream resumes gap-free with the 2/5/15/60-second backoff.
 @cindex terminal backend
 Attaching needs a backend.  gascity auto-detects @code{vterm}, then
 @code{eat}, then the built-in @code{term}; force one with
-@code{gascity-terminal-backend} (@pxref{Customization}).  The @kbd{t}
+@code{gascity-terminal-backend} (@pxref{Customization and Theming}).  The @kbd{t}
 key reaches tmux through a local @code{ssh -t} for a remote city, and
 only for the ssh-family TRAMP methods (@pxref{Remote buffers}).  For
 scrolling and copy-mode, see @ref{Actions}.
@@ -3551,7 +3779,7 @@ Actions never pop a modal error.  The echo area shows the first line of
 @file{*gascity-log:@: CITY*} buffer (@file{*gascity-log:@:
 CITY@@host*} remotely).  Turn on @code{gascity-enable-debug} and raise
 @code{gascity-debug-level} to @code{verbose} to log every
-@command{gc} invocation (@pxref{Customization}).
+@command{gc} invocation (@pxref{Customization and Theming}).
 
 @c ====================================================================
 @node Contributing
@@ -3725,203 +3953,13 @@ under @file{doc/images} are the shipped artifact.
 @file{doc/screenshots/README.md} documents the configuration variables and how
 to reuse the engine.
 
-
-@c ====================================================================
-@node View and Key Reference
-@chapter View and Key Reference
-@cindex view reference
-@cindex key reference
-@cindex verb reference
-
-This chapter is the exhaustive reference for the surface the manual is
-required to cover (REQ-012).  It names every registered view, its mode
-map, and every agent action verb with the Emacs command it runs; the
-universal keys themselves are described once in @ref{Buffers and
-Navigation}.  @code{lisp/test/gascity-manual-test.el} checks that every
-name below still appears here, so a new view or verb cannot ship
-undocumented.
-
-@section Registered views
-
-@cindex views, registered
-Every gascity view is read-only and keyboard-driven.  A @dfn{namespaced}
-view may also hold a bead, so its agent verbs live under the @kbd{a}
-prefix; an @dfn{agent-only} view keeps the bare single-letter aliases,
-and a @dfn{mixed} view shows agents but no beads, so it keeps the bare
-aliases too.
-
-@table @asis
-@item @code{cockpit} --- @code{gascity-dashboard-mode-map}
-@cindex cockpit view
-The city triage buffer: vui sections over one city's state
-(@pxref{The Cockpit}).  Mixed; agent verbs keep their bare keys.
-@item @code{rig-dashboard} --- @code{gascity-rig-dashboard-mode-map}
-@cindex rig dashboard view
-One rig's beads, agents and convoys (@pxref{The Rig Dashboard}).
-Namespaced: agent verbs are under @kbd{a}.
-@item @code{agent-detail} --- @code{gascity-session-detail-mode-map}
-@cindex agent detail view
-One agent's detail (@pxref{Agents}).  Namespaced.
-@item @code{agents-tree} --- @code{gascity-agents-tree-mode-map}
-@cindex agents tree view
-The hierarchical agent tree (@pxref{Agents}).  Mixed.
-@item @code{agents} --- @code{gascity-agents-mode-map}
-@cindex agents view
-The flat agent table (@pxref{Agents}).  Mixed.
-@item @code{session-list} --- @code{gascity-session-list-mode-map}
-@cindex session list view
-The session list (@pxref{Sessions}).  Mixed.
-@item @code{runs} --- @code{gascity-runs-mode-map}
-@cindex runs view
-Workflow runs (@pxref{Runs}).
-@item @code{run-detail} --- @code{gascity-run-mode-map}
-@cindex run detail view
-One run's step ladder (@pxref{Runs}).
-@item @code{health} --- @code{gascity-health-mode-map}
-@cindex health view
-Supervisor, versions, stores and doctor (@pxref{Health}).
-@item @code{cities} --- @code{gascity-cities-mode-map}
-@cindex cities view
-Every city on every host (@pxref{Cities}).
-@item @code{rig-list} --- @code{gascity-rig-list-mode-map}
-@cindex rig list view
-The tabulated rig list (@pxref{Rigs}).
-@item @code{convoy-list} --- @code{gascity-convoy-list-mode-map}
-@cindex convoy list view
-Convoys (@pxref{Convoys}).
-@item @code{order-list} --- @code{gascity-order-list-mode-map}
-@cindex order list view
-Orders (@pxref{Orders}).
-@item @code{dolt-list} --- @code{gascity-dolt-list-mode-map}
-@cindex dolt list view
-The Dolt stores (@pxref{Dolt}).
-@item @code{events} --- @code{gascity-events-mode-map}
-@cindex events view
-The event log (@pxref{Events}).
-@item @code{mail-inbox} --- @code{gascity-mail-inbox-mode-map}
-@cindex mail inbox view
-The mail inbox (@pxref{Mail View}).
-@item @code{mail-thread} --- @code{gascity-mail-thread-mode-map}
-@cindex mail thread view
-One mail thread; a text view, not tabulated or vui
-(@pxref{Mail View}).
-@end table
-
-@section Agent action verbs
-
-@cindex agent verbs
-Each verb below acts on the agent or session at point.  It is reachable
-under @kbd{a} in the namespaced views and on the bare key shown in the
-agent-only views (@pxref{Actions}); the dispatcher also exposes it by
-prompt (@pxref{The ? dispatch}).
-
-@table @asis
-@item Nudge --- @code{gascity-session-nudge-at-point}
-@findex gascity-session-nudge-at-point
-Prompt for a message and send it to the agent: @kbd{a n}, or @kbd{M}
-in the agent-only views.
-@item Suspend --- @code{gascity-dashboard-suspend}
-@findex gascity-dashboard-suspend
-Suspend the session (the namespaced @kbd{a s}), or the equivalent
-@code{gascity-session-suspend-at-point} on the bare @kbd{s} of an
-agent-only view.
-@item Wake --- @code{gascity-session-wake-at-point}
-@findex gascity-session-wake-at-point
-Wake a suspended agent: @kbd{a w} or @kbd{w}.
-@item Kill --- @code{gascity-session-kill-at-point}
-@findex gascity-session-kill-at-point
-Force-kill the agent's runtime: @kbd{a k} or @kbd{K}.  Confirms first.
-@item Drain --- @code{gascity-session-drain-at-point}
-@findex gascity-session-drain-at-point
-Wind the agent down gracefully: @kbd{a D} or @kbd{D}.
-@item Reset --- @code{gascity-dashboard-reset}
-@findex gascity-dashboard-reset
-Restart the agent's session fresh: @kbd{a r}, or @kbd{R} on an
-agent-only view through @code{gascity-session-reset-at-point}.  Confirms
-first.
-@item Undrain --- @code{gascity-session-undrain-at-point}
-@findex gascity-session-undrain-at-point
-Cancel a drain: @kbd{a u} or @kbd{U}.
-@item Attach --- @code{gascity-tmux-at-point}
-@findex gascity-tmux-at-point
-Attach a terminal to the agent's tmux session: @kbd{a t} or @kbd{t}
-(@pxref{Attach to a Terminal}).
-@item Dired --- @code{gascity-dired-at-point}
-@findex gascity-dired-at-point
-Open the agent's working directory in Dired: @kbd{a d} or @kbd{d}.
-@item Detail --- @code{gascity-polecat-detail-at-point}
-@findex gascity-polecat-detail-at-point
-Open the polecat detail view: @kbd{a i} or @kbd{i}.
-@item Peek --- @code{gascity-session-peek-at-point}
-@findex gascity-session-peek-at-point
-Show recent terminal output read-only: @kbd{a v} or @kbd{v}.
-@end table
-
-
-@c ====================================================================
-@node Generated Reference Tables
-@appendix Generated Reference Tables
-@cindex generated reference tables
-
-The two tables below are generated from the running code by
-@file{doc/generate-tables.el} and committed under @file{doc/generated/}.
-They are part of the distribution, so a clean checkout builds the manual
-from them without running Emacs; a normal @command{make} never rewrites
-them.  @command{make regen-doc-tables} refreshes the tracked copies and
-@command{make check-doc-drift} (run by @command{make check}) fails when
-they no longer match the code.
-
-@include generated/keys.texi
-@include generated/commands.texi
-
-
-@c ====================================================================
-@node Capability Gaps
-@appendix Capability Gaps
-@cindex capability gaps
-@cindex missing data
-
-gascity shows only what the @command{gc} CLI exposes; it never calls
-the supervisor's HTTP API@.  The following are not available in gascity
-because @command{gc} does not expose them.  Where a view would need
-one, it leaves the item out rather than printing an apology.
-
-@table @asis
-@item Costs as data
-@command{gc costs} has no @option{--json} and no per-run or daily
-aggregates, so costs are shown as @command{gc}'s text (@pxref{Costs}),
-annotated when runs recorded no usage, and the cockpit shows no usage.
-@item Sessions awaiting input
-There is no @code{gc session pending} listing and no way to answer an
-approval prompt from the CLI, so Needs you cannot list agents waiting
-for you and agent rows have no approve/deny keys.
-@item Context use and model
-@code{gc session list --json} carries no context-window percentage and
-no model, so the agent views show neither.
-@item Run summaries
-There is no @code{gc runs --json}; runs, their phase and their step
-ladder are derived from the beads of the run's graph.
-@item Reading mail as another identity
-@code{gc mail inbox} has no @option{--as}, so the inbox is always the
-operator's.
-@item Supervisor uptime
-@code{gc status} reports the controller's pid but not how long it has
-been up, so Health shows no uptime.
-@item bd and dolt versions
-@code{gc version} reports only @command{gc}; the @command{bd} and
-@command{dolt} versions appear in Health only after a doctor run, whose
-report is the one place that carries them.
-@item Run counts per city
-No single read reports a city's active runs, so the Cities view shows
-them only for cities whose cockpit is open.
-@end table
-
 @c ====================================================================
 @node Key Index
 @unnumbered Key Index
 
 @printindex ky
 
+@c ====================================================================
 @node Command and Variable Index
 @unnumbered Command and Variable Index
 

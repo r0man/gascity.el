@@ -171,6 +171,30 @@ package just to learn the registered surface."
       (should (eq (car form) 'defconst))
       (eval (nth 2 form) t))))
 
+(defun gascity-manual-test--nodes ()
+  "Return every `@node' name in doc/gascity.texi, in order."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@node \\(.+\\)$" text)
+      (push (string-trim (match-string 1 text)) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--menu-targets ()
+  "Return every node named by a menu entry in doc/gascity.texi.
+Handle both the `* Node::  description' form and the
+`* Label: Node.  description' form used when the menu label differs
+from the node name."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) targets)
+    (dolist (line (split-string text "\n"))
+      (when (string-match "\\`\\* \\(.*\\)" line)
+        (let ((entry (match-string 1 line)))
+          (cond
+           ((string-match "\\`\\(.*?\\)::" entry)
+            (push (string-trim (match-string 1 entry)) targets))
+           ((string-match "\\`\\(.*?\\): \\(.*?\\)\\.\\s-*" entry)
+            (push (string-trim (match-string 2 entry)) targets))))))
+    targets))
+
 ;;; Tests
 
 (ert-deftest gascity-test-manual-fixture-parses ()
@@ -357,6 +381,19 @@ never reach the built manual."
         (should (string-match-p (regexp-quote include) makefile))
         (should (string-match-p (regexp-quote (concat "@include " include))
                                 texi))))))
+
+(ert-deftest gascity-test-manual-nodes-reachable ()
+  "Every `@node' is named by some menu entry (REQ-001, REQ-004).
+BR-2 requires a complete `@menu'/`@node' tree with no dead ends, so a
+section that is moved or added without a matching menu entry fails
+here rather than building a manual a reader cannot navigate."
+  (let ((nodes (gascity-manual-test--nodes))
+        (targets (gascity-manual-test--menu-targets)))
+    (should (> (length nodes) 1))
+    (dolist (node nodes)
+      (unless (equal node "Top")
+        (ert-info ((format "node %s" node))
+          (should (member node targets)))))))
 
 (ert-deftest gascity-test-manual-quality-sections ()
   "The manual carries the Guix/PostgreSQL quality elements (REQ-013).
