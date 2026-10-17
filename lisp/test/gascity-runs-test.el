@@ -287,7 +287,7 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
     (should (string-match-p "^  ✕ be-bn2 +build-basic +beads.el" text))
     (should (string-match-p "◆◆◆◆◆◆◆✕◆◆  review +9/10 +control_dispatch_error$" text))
     ;; No history until `H'.
-    (should-not (string-match-p "^Done" text))))
+    (should-not (string-match-p "^Closed" text))))
 
 (ert-deftest gascity-test-runs-card-is-one-thing ()
   "A card's two lines are one thing carrying the run and its live worker."
@@ -378,9 +378,9 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
                     (gascity-runs-lines (gascity-runs-test--ctx beads :view view)))))
          (rows (lambda (text) (cl-count-if (lambda (l) (string-match-p "^  ◆ ga-h" l))
                                            (split-string text "\n")))))
-    (should-not (string-match-p "^Done" (funcall render nil)))
+    (should-not (string-match-p "^Closed" (funcall render nil)))
     (let ((text (funcall render '(:history t :pages 1))))
-      (should (string-match-p "^Done  45$" text))
+      (should (string-match-p "^Closed  45$" text))
       (should (= (funcall rows text) 20))
       (should (string-match-p "^  ◆ ga-h00 " text))
       (should (string-match-p "^  … 25 more +\\+ more$" text)))
@@ -394,9 +394,30 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
     (let ((text (gascity-runs-test--text
                  (gascity-runs-lines (gascity-runs-test--ctx
                                       beads :filters '(:state "done"))))))
-      (should (string-match-p "^Done  45$" text))
+      (should (string-match-p "^Closed  45$" text))
       (should-not (string-match-p "^Active\\|^Failed" text))
       (should (string-match-p "filter  state done" text)))))
+
+(ert-deftest gascity-test-runs-history-is-closed-not-done ()
+  "Old failures count under `Closed', never a `Done' section (ga-x9gys.2).
+The header counts every run all-time, while the Failed section is
+windowed by `gascity-runs-failed-window'.  The history is the archive of
+all closed runs, failed ones included, so it is titled `Closed': a run
+is never simultaneously `failed' in the header and under `Done'."
+  (let* ((beads (gascity-runs-test--fixture-beads))
+         ;; Two days on: be-bn2's failure is outside the 24h Failed window.
+         (now (gascity-ui-parse-time "2026-09-27T20:00:00Z"))
+         (text (gascity-runs-test--text
+                (gascity-runs-lines
+                 (gascity-runs-test--ctx beads :now now :view '(:history t))))))
+    (should (string-match-p
+             "^Runs  emacs-city   0 active · 0 waiting · 2 done · 1 failed" text))
+    (should (string-match-p "^Failed  none · last 24h$" text))
+    ;; The all-time failed run is not lost: it is in the Closed history,
+    ;; whose count reconciles with the header (2 done + 1 failed).
+    (should (string-match-p "^Closed  3$" text))
+    (should (string-match-p "^  ✕ be-bn2\\b" text))
+    (should-not (string-match-p "^Done" text))))
 
 (ert-deftest gascity-test-runs-render-loading-and-error ()
   "Before the read lands every section shows `…'; a failed read with no
@@ -529,7 +550,7 @@ ladder drawer, folds a section; RET opens the run detail with its rig."
       (should (equal opened '("be-52m5" "beads.el"))))
     ;; `H' adds the history; SPC on a header folds it.
     (gascity-runs-history)
-    (should (string-match-p "^Done  2$" (buffer-string)))
+    (should (string-match-p "^Closed  2$" (buffer-string)))
     (goto-char (point-min))
     (re-search-forward "^Failed")
     (beginning-of-line)

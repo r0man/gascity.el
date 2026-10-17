@@ -1880,6 +1880,13 @@ store.  The cockpit's Moving section uses the same ladder, so the two
 always agree.  A drain member run's card nests under its parent's in
 Active (@samp{└}, indented), and the section counts it as a sub-run.
 
+The summary line counts every run all-time.  The Failed section is
+windowed to @code{gascity-runs-failed-window} (24 hours by default) and
+says so; a failure older than the window is not lost, it stays in the
+Closed history, whose count is the summary's done plus failed.  So a
+failed run is always in the Closed archive, even once the Failed window
+has moved past it.
+
 @table @kbd
 @item @key{RET}
 @fnindex gascity-runs-activate
@@ -1891,8 +1898,8 @@ Open the run's root bead in beads.el.
 Open the card's drawer: the full step ladder, one line per step.
 @item H
 @fnindex gascity-runs-history
-Show the history of closed runs, newest first,
-@code{gascity-runs-history-page} (20) per page; @kbd{+}
+Show the Closed section: every closed run (done and failed), newest
+first, @code{gascity-runs-history-page} (20) per page; @kbd{+}
 (@code{gascity-runs-more}) shows the next page.
 @item /
 @fnindex gascity-runs-filter
