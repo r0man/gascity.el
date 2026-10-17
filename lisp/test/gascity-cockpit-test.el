@@ -976,5 +976,33 @@ finding F4)."
       (should (string-match-p "  beads.el +be " text))
       (should (string-match-p "  gascity.el +ga " text)))))
 
+(ert-deftest gascity-test-cockpit-rigs-hq-row-counts-city-agents ()
+  "The HQ row counts city-scope agents and is marked `(HQ)' (ga-4mvlw.2).
+City-level agents (the mayor, pool slots, city dispatchers) carry no
+`:rig', so matching the HQ row by name always read 0/0 even though the
+top line counted them.  The HQ row matches the rig-less agents instead;
+per-rig rows keep counting only their own agents."
+  (let* ((status '((city_name . "emacs-city")
+                   (agents . [((qualified_name . "bd.dog-1") (running . t))
+                              ((qualified_name . "mayor") (running . t))
+                              ((qualified_name . "beads.el/worker") (running . t))])))
+         (ctx (gascity-cockpit-test--ctx :status status)))
+    (plist-put ctx :rigs
+               (list '((name . "emacs-city") (prefix . "ec") (hq . t)
+                       (path . "/home/roman/emacs-city"))
+                     '((name . "beads.el") (prefix . "be")
+                       (path . "/home/roman/workspace/beads.el"))))
+    (let* ((lines (gascity-dashboard--rigs-lines ctx))
+           (hq (seq-find (lambda (l) (string-match-p "emacs-city" l)) lines))
+           (be (seq-find (lambda (l) (string-match-p "beads\\.el" l)) lines)))
+      (should hq)
+      (should be)
+      ;; HQ: the two rig-less agents, marked as the city HQ.
+      (should (string-match-p "2/2 agents" hq))
+      (should (string-match-p "(HQ)" hq))
+      ;; Per-rig rows are untouched: only their own agents, no HQ mark.
+      (should (string-match-p "1/1 agents" be))
+      (should-not (string-match-p "(HQ)" be)))))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here
