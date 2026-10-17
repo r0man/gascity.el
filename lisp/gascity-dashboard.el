@@ -1633,13 +1633,22 @@ The Events window follows the cockpit's (CTX's filters)."
                               (and window (list :window window)))))))
 
 (defun gascity-dashboard--rigs-lines (ctx)
-  "Return the Rigs section lines for CTX."
+  "Return the Rigs section lines for CTX.
+The city HQ row is marked `(HQ)' and counts the city-scope agents (those
+with no rig), not zero: gc reports city-level agents (the mayor, pool
+slots, city dispatchers) without a rig, so matching the HQ row by name
+always read 0/0 while the top line counted them (ga-4mvlw.2).  Per-rig
+rows keep counting only their own agents."
   (let* ((agents (plist-get ctx :all-agents))
          (beads (plist-get ctx :beads))
          (rows (mapcar
                 (lambda (rig)
                   (let* ((name (alist-get 'name rig))
-                         (mine (seq-filter (lambda (a) (equal (plist-get a :rig) name))
+                         (hq (and (alist-get 'hq rig) t))
+                         (mine (seq-filter (lambda (a)
+                                             (if hq
+                                                 (null (plist-get a :rig))
+                                               (equal (plist-get a :rig) name)))
                                            agents))
                          (up (seq-count (lambda (a) (memq (plist-get a :state)
                                                           '(running idle stalled)))
@@ -1648,7 +1657,13 @@ The Events window follows the cockpit's (CTX's filters)."
                                            (and (equal (alist-get 'gascity-rig b) name)
                                                 (equal (alist-get 'status b) "in_progress")
                                                 (not (gascity-event-noise b))))
-                                         beads)))
+                                         beads))
+                         (marks (delq nil
+                                      (list (and hq
+                                                 (propertize "(HQ)" 'face 'gascity-dim))
+                                            (and (alist-get 'suspended rig)
+                                                 (propertize "suspended"
+                                                             'face 'gascity-suspended))))))
                     (gascity-dashboard--object-row
                      (concat "rig:" name)
                      (concat "  " (gascity-ui-fit name 12)
@@ -1658,8 +1673,7 @@ The Events window follows the cockpit's (CTX's filters)."
                                                  26)
                              " " (gascity-ui-fit (format "%d/%d agents" up (length mine)) 12)
                              " " (format "%d in progress" wip))
-                     (and (alist-get 'suspended rig)
-                          (propertize "suspended" 'face 'gascity-suspended))
+                     (and marks (string-join marks " "))
                      (lambda ()
                        (list (concat "path    " (or (alist-get 'path rig) ""))
                              (format "prefix  %s" (or (alist-get 'prefix rig) ""))
