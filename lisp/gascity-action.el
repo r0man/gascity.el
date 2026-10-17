@@ -1826,7 +1826,7 @@ coexist, and the launch keeps hitting the entered-from city.
 
 \\{gascity-sling-preview-mode-map}")
 
-(defun gascity-sling--preview-header (scope recipe)
+(defun gascity-sling--preview-header (scope recipe target)
   "Return the preview buffer's header sentence for the SCOPE dispatch.
 The one-sentence summary, mockup §1–§4 wording: plain (`Sling WORK to
 TARGET'), formula (`Run FORMULA (formula) on TARGET'), targeted
@@ -1834,10 +1834,13 @@ TARGET'), formula (`Run FORMULA (formula) on TARGET'), targeted
 clause consults `gascity-formula--needs-convoy' on RECIPE).  The
 sling redesign's own sentence renderer (WI-1) owns the final
 wording; this stays close to it so the buffer reads as the menu's
-fuller twin.  Missing pieces read as their mockup §2 hints."
+fuller twin.  Missing pieces read as their mockup §2 hints.
+TARGET is the dispatch's resolved Who answer — the target set with
+`T', else the Who default derivation (`gascity-sling--derived-target',
+WI-3) — exactly what `s' would launch (REQ-008), so the sentence
+matches the menu's header."
   (let ((formula (plist-get scope :formula))
-        (work (gascity-sling--work scope))
-        (target (plist-get scope :target)))
+        (work (gascity-sling--work scope)))
     (cond
      ((and formula recipe (gascity-formula--needs-convoy recipe))
       (format "Run %s against bead %s, drained by %s"
@@ -1853,20 +1856,23 @@ fuller twin.  Missing pieces read as their mockup §2 hints."
               (if (gascity-formula--nonblank work) work "(no work — A or point at a bead)")
               (if (gascity-formula--nonblank target) target "(no target — T or default)"))))))
 
-(defun gascity-sling--preview-validation-lines (scope recipe values)
+(defun gascity-sling--preview-validation-lines (scope recipe values target)
   "Return the Validation section's check lines for the SCOPE dispatch.
 RECIPE is the cached recipe (nil on the plain path), VALUES the
-collected formula var values.  One full-text line per check, `✓' when
-it passes and `⚠' when it has something to say: the target every
-dispatch needs, the work a convoy-requiring formula needs, and
-required vars and patterns — the same rules
+collected formula var values, TARGET the dispatch's resolved Who
+answer (the set target, else the `gascity-sling--derived-target'
+default) — the same target `s' would launch (REQ-008), so the
+`target' check judges what the launch will actually use.  One
+full-text line per check, `✓' when it passes and `⚠' when it has
+something to say: the target every dispatch needs, the work a
+convoy-requiring formula needs, and required vars and patterns —
+the same rules
 `gascity-sling-formula--command' enforces at dispatch, spelled out
 before any gc call.  Pure, cached data only, and never a gate
 \(REQ-008): `s' stays available whatever this says.  Further checks
 join through `gascity-sling-preview-validation-functions'."
   (let ((formula (plist-get scope :formula))
         (work (gascity-sling--work scope))
-        (target (plist-get scope :target))
         (lines nil))
     (setq lines
           (list (if (gascity-formula--nonblank target)
@@ -1992,12 +1998,15 @@ answers (D9: first paint never waited for it)."
                  (message "%s" msg)
                  (gascity-sling--preview-fill-plan buf msg)))))
 
-(defun gascity-sling--preview-paint (buf scope recipe values)
+(defun gascity-sling--preview-paint (buf scope recipe values target)
   "Paint BUF's client-side sections for the SCOPE dispatch; return BUF.
-RECIPE is the cached recipe and VALUES the gathered var values.  The
-header sentence, Validation, the recipe's steps → needs DAG and the
-Routing plan heading with its `…' placeholder — everything gascity
-can compute without gc, so the first paint never blocks
+RECIPE is the cached recipe, VALUES the gathered var values and
+TARGET the dispatch's resolved Who answer (the set target, else the
+derived default) — the same target the dry run and the buffer's `s'
+use, so nothing painted disagrees with what would launch (REQ-008).
+The header sentence, Validation, the recipe's steps → needs DAG and
+the Routing plan heading with its `…' placeholder — everything
+gascity can compute without gc, so the first paint never blocks
 \(REQ-008, D9).  The plan marker is left where the dry run's answer
 will replace from."
   (with-current-buffer buf
@@ -2006,9 +2015,10 @@ will replace from."
       (insert (format "Sling preview — %s  (s launch · q quit)\n"
                      (or (gascity-context-city-name) "gc"))
               (make-string 72 ?─) "\n"
-              "  " (gascity-sling--preview-header scope recipe) "\n")
+              "  " (gascity-sling--preview-header scope recipe target) "\n")
       (insert "\nValidation\n")
-      (dolist (line (gascity-sling--preview-validation-lines scope recipe values))
+      (dolist (line (gascity-sling--preview-validation-lines
+                     scope recipe values target))
         (insert "  " line "\n"))
       (insert "\n" (format "Recipe — %s (steps → needs)\n"
                            (or (plist-get scope :formula) "none picked (plain dispatch)")))
@@ -2025,7 +2035,12 @@ will replace from."
 Resolves the same dispatch the menu's `s'/`p' would run — without
 reading or prompting anything — paints every client-side section at
 once, then starts the `--dry-run' whose answer fills the Routing
-plan section.  A dispatch that cannot be built yet (no target, no
+plan section.  The Who answer resolves exactly as
+`gascity-sling--run' does: the target set with `T' wins, else the
+Who default derivation (`gascity-sling--derived-target', WI-3)
+supplies it, so the header, the `target' validation check, the dry
+run and the buffer's `s' all preview and launch the same target
+\(REQ-008).  A dispatch that cannot be built yet (no target, no
 work, a failing validation) still previews: the warning is in
 Validation and the routing plan section keeps its reason — the
 preview is never a gate.  Returns SCOPE, remembered per city (bug
@@ -2034,7 +2049,12 @@ S-2), so a later `S s' slings exactly what was previewed."
          (formula (plist-get scope :formula))
          (recipe (and formula (gascity-formula-recipe-cached formula)))
          (values (and formula (gascity-sling-formula--current-values)))
-         (target (plist-get scope :target))
+         ;; The Who answer (WI-3): a target set with `T' wins; with
+         ;; none, the derivation answers — the same `(or set derived)'
+         ;; `gascity-sling--run' resolves, so `P' previews exactly what
+         ;; the menu's `s' would sling (REQ-008).
+         (target (or (plist-get scope :target)
+                     (plist-get (gascity-sling--derived-target scope) :target)))
          (arg (gascity-sling--work scope))
          ;; The formula shape's carved-out routing flags (F9, then the
          ;; F9-adjacent --title): the preview's launch and dry run carry
@@ -2083,7 +2103,7 @@ S-2), so a later `S s' slings exactly what was previewed."
                                 (oset command json t)
                                 (gascity-command-act-async
                                  command :dir (gascity-sling--city-dir scope)))))))
-      (gascity-sling--preview-paint buf scope recipe values)
+      (gascity-sling--preview-paint buf scope recipe values target)
       (pop-to-buffer buf)
       ;; The dry run: started after first paint, its answer fills in.
       ;; A dispatch that cannot be built keeps its reason here — the

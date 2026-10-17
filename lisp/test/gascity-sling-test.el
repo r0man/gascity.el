@@ -1928,6 +1928,46 @@ without touching the preview itself."
       (with-current-buffer (gascity-sling-test--preview-buffer)
         (should (string-search "✓ no cross-store route" (buffer-string)))))))
 
+(ert-deftest gascity-test-sling-full-preview-uses-derived-target ()
+  "`P' resolves the Who answer exactly like `s' (REQ-008, ga-x9gys.3).
+With no target set but one derivable, the derived default fills the
+header, satisfies the target validation, builds the `--dry-run' on it
+and arms the buffer's `s' to launch it.  Before the fix the full
+preview read only the scope's `:target', so it rendered `(no target — T
+or default)' and asked for no routing plan while the menu's `s' would
+have slung the derived target."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((scope (list :city gascity-sling-test--city :formula nil
+                       :target nil :arg "hw-12")))
+      (cl-letf (((symbol-function 'gascity-sling--derived-target)
+                 (lambda (&optional _)
+                   '(:target "hello-world/gc.implementation-worker"
+                     :source implementation-worker))))
+        (gascity-sling--full-preview scope nil)
+        ;; The dry run is built on the derived target, not refused.
+        (should (= (length actions) 1))
+        (should (equal (car (car actions))
+                       '("sling" "hello-world/gc.implementation-worker"
+                         "hw-12" "--dry-run")))
+        (with-current-buffer (gascity-sling-test--preview-buffer)
+          (let ((text (buffer-string)))
+            (should (string-search
+                     "Sling hw-12 to hello-world/gc.implementation-worker" text))
+            (should (string-search
+                     "✓ target hello-world/gc.implementation-worker" text))
+            (should-not (string-search "⚠ no target" text))))
+        ;; `s' in the buffer launches the derived target, JSON, no dry run.
+        (with-current-buffer (gascity-sling-test--preview-buffer)
+          (cl-letf (((symbol-function 'quit-window) #'ignore))
+            (call-interactively #'gascity-sling-preview-launch)))
+        (should (= (length actions) 2))
+        (let ((args (car (car actions))))
+          (should (equal (seq-take args 3)
+                         '("sling" "hello-world/gc.implementation-worker"
+                           "hw-12")))
+          (should (member "--json" args))
+          (should-not (member "--dry-run" args)))))))
+
 (ert-deftest gascity-test-sling-full-preview-suffix-is-wired ()
   "`P' is the menu's full-preview suffix (REQ-008) and a non-transient
 one: the buffer it opens is the interactive surface, while the
