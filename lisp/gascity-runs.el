@@ -532,7 +532,7 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
       (setq lines
             (append lines (list "")
                     (gascity-dashboard--section-lines
-                     "history" "Done"
+                     "history" "Closed"
                      (and closed
                           (concat (number-to-string (length closed))
                                   (if (plist-get filters :window)
@@ -658,7 +658,7 @@ Never blocks: a cold rig memo is filled through the store first
     (gascity-dashboard--set-state :history on)
     (when on
       (goto-char (point-min))
-      (when (re-search-forward "^Done\\b" nil t)
+      (when (re-search-forward "^Closed\\b" nil t)
         (beginning-of-line)))))
 
 (defun gascity-runs-more ()
@@ -734,7 +734,7 @@ Never blocks: a cold rig memo is filled through the store first
 (gascity-filter-define-choice gascity-runs-filter-state
   :state "state" '("active" "waiting" "failed" "done"))
 (gascity-filter-define-choice gascity-runs-filter-window
-  :window "window" '("1h" "24h" "7d" "30d") "failed 24h, done all")
+  :window "window" '("1h" "24h" "7d" "30d") "failed 24h, closed all")
 
 (beads-define-prefix gascity-runs-filter ()
   "Filter the Runs view; each change applies at once (§5.5)."
