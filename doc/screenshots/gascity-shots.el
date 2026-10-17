@@ -14,7 +14,7 @@
 ;;
 ;;   GASCITY_REPO        repo root (default: derived from this file)
 ;;   BEADS_REPO          beads.el checkout (default: ~/workspace/beads.el)
-;;   GASCITY_SHOT_THEME  theme symbol, e.g. ef-elea-dark
+;;   GASCITY_SHOT_THEME  theme symbol, e.g. ef-deuteranopia-dark
 ;;   GASCITY_SHOT_OUTDIR directory for the raw PNGs
 ;;   GASCITY_SHOT_SUFFIX appended to every shot name, e.g. -dark
 ;;   GASCITY_SHOT_VIEWS  space-separated view names; empty = all
@@ -76,7 +76,7 @@
 (setq screenshot-output-dir
       (gascity-shots-getenv "GASCITY_SHOT_OUTDIR" temporary-file-directory)
       screenshot-theme
-      (intern (gascity-shots-getenv "GASCITY_SHOT_THEME" "ef-elea-dark"))
+      (intern (gascity-shots-getenv "GASCITY_SHOT_THEME" "ef-deuteranopia-dark"))
       screenshot-theme-library "ef-themes"
       screenshot-async-process-regexp "gascity-gc"
       screenshot-log-function #'gascity-shots--progress)
@@ -458,24 +458,57 @@ the cold menu.  Returns nil so the whole frame is captured
    (list "terminal-attach" #'gascity-shots--terminal-attach-buffer :settle 12)
    (list "lighter" #'gascity-shots--lighter-frame :whole-frame t)))
 
+(defun gascity-shots--city-dir ()
+  "Return the fixture shot city directory as a directory file name.
+Every shot resolves its city from `GASCITY_SHOT_DIR', so the lookup
+lives here instead of being repeated at each use site."
+  (file-name-as-directory
+   (gascity-shots-getenv "GASCITY_SHOT_DIR"
+                         (expand-file-name "~/emacs-city"))))
+
 (defun gascity-shots--wrapped ()
-  "Return `gascity-shots-all' with every buffer thunk waiting for its data."
-  (mapcar (lambda (shot)
-            (if (plist-get (cddr shot) :whole-frame)
-                shot
-              (cons (car shot) (cons (gascity-shots--ready (cadr shot)) (cddr shot)))))
-          (gascity-shots-all)))
+  "Return `gascity-shots-all' with every thunk awaited.
+Each thunk is pinned to the fixture city by `gascity-shots-selected', so
+a prior shot cannot leak its own directory into the next one: the Cities
+list belongs to no city and pins its buffer to the local home, and
+without this a following city-scoped view (the rig list, a sling
+preview, ...) would call into the view-open guard, find no city, and
+prompt for one -- hanging the headless capture."
+  (mapcar
+   (lambda (shot)
+     (let* ((name (car shot))
+            (thunk (cadr shot))
+            (props (cddr shot)))
+       (cons name
+             (cons (if (plist-get props :whole-frame)
+                       thunk
+                     (gascity-shots--ready thunk))
+                   props))))
+   (gascity-shots-all)))
 
 (defun gascity-shots-selected ()
-  "Return the shots requested by GASCITY_SHOT_VIEWS (or all), suffixed."
+  "Return the shots requested by GASCITY_SHOT_VIEWS (or all), suffixed.
+Every thunk runs with `default-directory' pinned to the shot city
+\(GASCITY_SHOT_DIR).  A shot that deliberately opens another directory
+— the Cities view pins its buffer to the local home — must not leave
+the next shot with a contextless directory: `beads-prefix-invocation-directory'
+reads the current buffer's `default-directory', so an unpinned shot would
+fall through `gascity-context-city-for-view' to its interactive
+city-root prompt and hang a headless capture (WI-07)."
   (let* ((suffix (gascity-shots-getenv "GASCITY_SHOT_SUFFIX" ""))
          (want (split-string (gascity-shots-getenv "GASCITY_SHOT_VIEWS" "") nil t))
          (all (gascity-shots--wrapped))
          (chosen (if want
                      (cl-remove-if-not (lambda (s) (member (nth 0 s) want)) all)
-                   all)))
+                   all))
+         (dir (gascity-shots--city-dir)))
     (mapcar (lambda (s)
-              (cons (concat (nth 0 s) suffix) (cdr s)))
+              (let ((thunk (nth 1 s)))
+                (cons (concat (nth 0 s) suffix)
+                      (cons (lambda ()
+                              (let ((default-directory dir))
+                                (funcall thunk)))
+                            (cddr s)))))
             chosen)))
 
 ;;; Entry point
@@ -493,9 +526,7 @@ the cold menu.  Returns nil so the whole frame is captured
       (progn
         (screenshot-init)
         (set-frame-size (selected-frame) 200 58)
-        (setq default-directory
-              (file-name-as-directory
-               (gascity-shots-getenv "GASCITY_SHOT_DIR" (expand-file-name "~/emacs-city"))))
+        (setq default-directory (gascity-shots--city-dir))
         (gascity-shots--progress "theme=%s outdir=%s rig=%s dir=%s"
                                  screenshot-theme screenshot-output-dir
                                  gascity-shots-rig default-directory)

@@ -31,7 +31,7 @@ GASCITY_LISP_FILES = $(filter-out %/gascity-autoloads.el, \
 ELCFILES = $(GASCITY_LISP_FILES:.el=.elc)
 AUTOLOADS = $(top_srcdir)/lisp/gascity-autoloads.el
 
-.PHONY: byte-compile lint screenshots check-doc-drift regen-doc-tables
+.PHONY: byte-compile lint screenshots check-doc-drift check-leak regen-doc-tables
 
 ## Byte-compile the whole package in a single Emacs invocation, with
 ## warnings promoted to errors (REQ-002).  The single invocation over
@@ -56,7 +56,7 @@ all-local: byte-compile $(AUTOLOADS)
 ## `make check' runs the whole ERT suite exactly once (REQ-003, REQ-021).
 ## scripts/run-tests.el loads each test file unless its feature is already
 ## present, so a file pulled in through `require' is not evaluated twice.
-check-local: all-local check-doc-drift
+check-local: all-local check-doc-drift check-leak
 	GASCITY_TEST_DIR='$(top_srcdir)/lisp/test' \
 	  EMACSLOADPATH="$(AM_EMACSLOADPATH)" \
 	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' -L '$(top_srcdir)/lisp/test' \
@@ -80,13 +80,28 @@ check-doc-drift:
 	  $(EMACS) --batch -Q -L '$(top_srcdir)/lisp' -L '$(top_srcdir)/lisp/test' \
 	    -l '$(top_srcdir)/doc/generate-tables.el' "$$directory" >/dev/null; \
 	status=0; \
-	for file in keys.texi commands.texi; do \
+	tracked="$(notdir $(wildcard $(top_srcdir)/doc/generated/*.texi))"; \
+	for file in $$tracked; do \
 	  if ! diff -u "$(top_srcdir)/doc/generated/$$file" "$$directory/$$file"; then \
 	    echo "check-doc-drift: doc/generated/$$file is stale; run 'make regen-doc-tables'" >&2; \
 	    status=1; \
 	  fi; \
 	done; \
+	for file in "$$directory"/*.texi; do \
+	  base="$${file##*/}"; \
+	  case " $$tracked " in \
+	    *" $$base "*) ;; \
+	    *) echo "check-doc-drift: doc/generated/$$base is missing; run 'make regen-doc-tables'" >&2; status=1 ;; \
+	  esac; \
+	done; \
 	exit $$status
+
+## `check-leak' keeps the maintainer's private host name out of the
+## manual sources (REQ-009, plan D4).  It is the offline half of the
+## gate; the Pages workflow also runs the same script with `--html'
+## over the generated pages (plan D5).
+check-leak:
+	$(top_srcdir)/scripts/check-no-burningswell.sh
 
 ## `make lint' is the `eldev -p -dtT lint' bar preserved without Eldev
 ## (REQ-008, REQ-021): scripts/lint.el checkdocs every source and runs
@@ -138,4 +153,5 @@ EXTRA_DIST = \
   doc/generate-tables.el \
   doc/generated/keys.texi \
   doc/generated/commands.texi \
+  doc/generated/options.texi \
   doc/screenshots

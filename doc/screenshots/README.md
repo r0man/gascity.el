@@ -165,13 +165,16 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-ef-elea-dark  -dark   cockpit dispatch agents runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus     -light  cockpit agents-tree mail-inbox cities rig-list order-list remote-cities
+ef-deuteranopia-dark  -dark   cockpit dispatch agents agents-tree runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+ef-cyprus             -light  cockpit
 ```
 
-Each line is `THEME  SUFFIX  view view …`. A view named under two themes
-is captured twice (the cockpit is, to show theming). Image geometry
-(widths, palette sizes) is set just below the manifest.
+Each line is `THEME  SUFFIX  view view …`. `ef-deuteranopia-dark` is the
+standard dark theme for every view; `ef-cyprus` is kept for the single
+deliberate light capture, `cockpit-light`, which is captured alongside
+`cockpit-dark` to show theming. A view named under two themes is captured
+twice. Image geometry (widths, palette sizes) is set just below the
+manifest.
 
 ## Provenance (reused engine)
 
@@ -211,6 +214,12 @@ this section) whenever it changes:
   `images/<view>-<theme>.png` plus the `<view>-<theme>-thumb.png`
   preview, under the repo-local image directory (`doc/images/` here,
   `docs/manual/images/` in `beads.el`).
+- **Theme** `ef-deuteranopia-dark` is the standard dark theme in the
+  manifest and the `GASCITY_SHOT_THEME` fallback, with
+  `screenshot-theme-library` kept at `ef-themes`. `ef-cyprus` is used for
+  exactly one deliberate light capture, `cockpit-light`, paired with
+  `cockpit-dark`, to demonstrate theming; every other view is a `-dark`
+  capture of `ef-deuteranopia-dark`.
 
 Regenerate and verify (from the repo root):
 

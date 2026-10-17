@@ -6,11 +6,12 @@
 
 ;;; Commentary:
 
-;; Plan D4 (REQ-014): the manual embeds two generated Texinfo tables,
-;; `doc/generated/keys.texi' and `doc/generated/commands.texi'.  Both are
-;; *committed* artifacts: a clean checkout builds the manual from them,
-;; and a normal `make' never rewrites them.  This script regenerates them
-;; into a caller-supplied directory; the Makefile targets are
+;; Plan D4 (REQ-014): the manual embeds three generated Texinfo tables,
+;; `doc/generated/keys.texi', `doc/generated/commands.texi' and
+;; `doc/generated/options.texi'.  All are *committed* artifacts: a clean
+;; checkout builds the manual from them, and a normal `make' never
+;; rewrites them.  This script regenerates them into a caller-supplied
+;; directory; the Makefile targets are
 ;;
 ;;   make regen-doc-tables   -- rewrite the tracked includes
 ;;   make check-doc-drift    -- regenerate into a temp dir and diff
@@ -29,6 +30,12 @@
 ;; (via `gascity-defcommand') and reads the live `gascity-dispatch'
 ;; transient layout, so a renamed subcommand, a changed docstring or a
 ;; rebound dispatch key all show up as drift.
+;;
+;; The option table enumerates every `gascity-*' user option (`defcustom')
+;; with its standard default and its type.  The minor modes and hooks
+;; `define-minor-mode' also makes customizable are excluded, so the table
+;; is the option surface; a missing or complex `:type' is rendered as a
+;; deterministic fallback string (plan-review O3).
 ;;
 ;; Usage (the Makefile does this):
 ;;
@@ -237,6 +244,76 @@ Sorted by subcommand, then class name."
     (insert "@end multitable\n")
     (buffer-string)))
 
+;;; options.texi
+
+(defun gascity-generate-tables--optionp (symbol)
+  "Return non-nil when SYMBOL is a `gascity-*' user option.
+`define-minor-mode' also installs a customizable variable and a `-hook'
+variable; both are excluded so the table is the `defcustom' surface."
+  (and (string-prefix-p "gascity-" (symbol-name symbol))
+       (get symbol 'standard-value)
+       (not (memq symbol minor-mode-list))
+       (not (eq (get symbol 'custom-type) 'hook))))
+
+(defun gascity-generate-tables--option-default (symbol)
+  "Return SYMBOL's standard default value as a display string."
+  (condition-case nil
+      (format "%S" (eval (car (get symbol 'standard-value)) t))
+    (error "unspecified")))
+
+(defun gascity-generate-tables--option-type (type)
+  "Return a deterministic display string for custom TYPE.
+A missing type is `unspecified'.  A list widget is named by its head
+(for example `choice' or `alist'); `repeat' is spelled `repeat of
+ELEMENT' so the element type stays visible."
+  (cond
+   ((null type) "unspecified")
+   ((symbolp type) (symbol-name type))
+   ((and (consp type) (eq (car type) 'repeat) (symbolp (cadr type)))
+    (format "repeat of %s" (cadr type)))
+   ((and (consp type) (symbolp (car type)))
+    (symbol-name (car type)))
+   (t "unspecified")))
+
+(defun gascity-generate-tables--options ()
+  "Return every `gascity-*' user option as (NAME DEFAULT TYPE).
+Sorted by name; DEFAULT and TYPE are display strings."
+  (let (rows)
+    (mapatoms
+     (lambda (symbol)
+       (when (gascity-generate-tables--optionp symbol)
+         (push (list (symbol-name symbol)
+                     (gascity-generate-tables--option-default symbol)
+                     (gascity-generate-tables--option-type
+                      (get symbol 'custom-type)))
+               rows))))
+    (sort rows (lambda (a b) (string< (car a) (car b))))))
+
+(defun gascity-generate-tables--options-content ()
+  "Return the body of `doc/generated/options.texi' as a string."
+  (with-temp-buffer
+    (insert "@node Generated User Option Reference\n")
+    (insert "@section Generated User Option Reference\n")
+    (insert "@cindex user option reference, generated\n")
+    (insert "@cindex customization, generated\n\n")
+    (insert (concat
+             "Every @code{gascity-*} user option (@code{defcustom}), its "
+             "standard\ndefault and its type, generated from the live "
+             "definitions.  A renamed\noption, a changed default or a changed "
+             "type is drift.  The annotated entries\nare in "
+             "@ref{Customization and Theming}; this table only enumerates "
+             "them.\n\n"))
+    (insert "@multitable @columnfractions .42 .33 .25\n")
+    (insert "@headitem User option @tab Default @tab Type\n")
+    (dolist (row (gascity-generate-tables--options))
+      (insert (format "@item @code{%s}\n" (nth 0 row)))
+      (insert (format "@tab @code{%s}\n"
+                      (gascity-generate-tables--escape (nth 1 row))))
+      (insert (format "@tab @code{%s}\n"
+                      (gascity-generate-tables--escape (nth 2 row)))))
+    (insert "@end multitable\n")
+    (buffer-string)))
+
 ;;; Writer
 
 (defun gascity-generate-tables--write (file kind content)
@@ -251,7 +328,7 @@ Sorted by subcommand, then class name."
     (insert content)))
 
 (defun gascity-generate-tables (outdir)
-  "Generate `keys.texi' and `commands.texi' under OUTDIR."
+  "Generate `keys.texi', `commands.texi' and `options.texi' under OUTDIR."
   (unless (file-directory-p outdir)
     (make-directory outdir t))
   (gascity-generate-tables--write (expand-file-name "keys.texi" outdir)
@@ -259,7 +336,10 @@ Sorted by subcommand, then class name."
                                   (gascity-generate-tables--keys-content))
   (gascity-generate-tables--write (expand-file-name "commands.texi" outdir)
                                   "commands"
-                                  (gascity-generate-tables--commands-content)))
+                                  (gascity-generate-tables--commands-content))
+  (gascity-generate-tables--write (expand-file-name "options.texi" outdir)
+                                  "options"
+                                  (gascity-generate-tables--options-content)))
 
 ;;; Command line
 

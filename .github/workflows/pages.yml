@@ -73,6 +73,12 @@ jobs:
           ./configure --with-beads-dir="$HOME/workspace/beads.el"
           make html
 
+      # The offline leak gate runs over the tracked sources in `make check';
+      # this second pass covers the generated pages so the published artifact
+      # cannot carry the private host even if the sources drift (plan D5).
+      - name: Check the built HTML for the private host name
+        run: make html && scripts/check-no-burningswell.sh --html
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

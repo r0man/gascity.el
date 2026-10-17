@@ -155,6 +155,14 @@ Return a plist with :status, the captured :stdout and the captured
       (and (boundp 'beads-test-isolation-env-vars)
            (symbol-value 'beads-test-isolation-env-vars)))))
 
+(defun gascity-manual-test--unset-location-vars (text)
+  "Return the gc location/identity names TEXT unsets after `unset GC_CITY'.
+The list may continue across lines with a trailing backslash.  Used to
+compare capture.sh's copy against fixture.sh's `unset_gc_location_vars'
+body, which duplicate the same 12 names (RF-2)."
+  (when (string-match "unset GC_CITY\\(\\(?:\\\\\n\\|[^\n]\\)*\\)" text)
+    (split-string (match-string 1 text) "[ \t\n\\\\]+" t)))
+
 (defun gascity-manual-test--key-registry-const (name)
   "Return the value of the key-registry test's NAME `defconst'.
 NAME is a symbol; its literal `(defconst NAME VALUE ...)' form is read
@@ -170,6 +178,135 @@ package just to learn the registered surface."
     (let ((form (read (substring text start))))
       (should (eq (car form) 'defconst))
       (eval (nth 2 form) t))))
+
+(defun gascity-manual-test--deffn-blocks ()
+  "Return the text of every `@deffn @dots{} @end deffn' block in the manual.
+The reference coverage test asserts a definition entry, not a bare
+mention, so it must look inside these blocks."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) blocks)
+    (while (string-match "^@deffn " text)
+      (let ((start (match-beginning 0))
+            (end (string-match "^@end deffn" text (match-end 0))))
+        (if end
+            (progn
+              (push (substring text start end) blocks)
+              (setq text (substring text end)))
+          (setq text (substring text (match-end 0))))))
+    (nreverse blocks)))
+
+(defun gascity-manual-test--deffn-names ()
+  "Return every name defined by a `@deffn @dots{}' line in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@deffn {[^}]*} \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--keymap-defvr-names ()
+  "Return every name defined by `@defvr {Keymap} NAME' in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@defvr {Keymap} \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--index-lines (kind)
+  "Return the entries of the `@KINDindex' index in the manual.
+KIND is \"fn\", \"v\", \"k\" or \"c\"; a key entry keeps any
+`@r{(...)}' qualifier it carries."
+  (let* ((text (gascity-manual-test--read "doc/gascity.texi"))
+         (regexp (concat "^@" kind "index \\(.+\\)$"))
+         names)
+    (while (string-match regexp text)
+      (push (string-trim (match-string 1 text)) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defconst gascity-manual-test--concepts
+  '("bead" "rig" "city" "sling" "convoy" "polecat" "workflow"
+    "store" "live refresh")
+  "The core vocabulary the manual must define and cross-link (REQ-003).")
+
+(defun gascity-manual-test--info-index-node (text node)
+  "Return the region of built Info TEXT for index NODE, or nil."
+  (when (string-match (concat "Node: " (regexp-quote node) "\\b") text)
+    (let ((start (match-beginning 0)))
+      (if (string-match "\nFile: " text (match-end 0))
+          (substring text start (match-beginning 0))
+        (substring text start)))))
+
+(defun gascity-manual-test--generated-commands ()
+  "Return every `gascity-command-*' class in the generated command table."
+  (let ((text (gascity-manual-test--read "doc/generated/commands.texi")) names)
+    (while (string-match "^@item @code{\\(gascity-command-[^}]+\\)}" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--generated-options ()
+  "Return every `gascity-*' user option in the generated option table."
+  (let ((text (gascity-manual-test--read "doc/generated/options.texi")) names)
+    (while (string-match "^@item @code{\\(gascity-[^}\n]+\\)}" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--defopt-names ()
+  "Return every name defined by a `@defopt' line in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@defopt \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--user-option-defvr-names ()
+  "Return every name defined by `@defvr {User Option} NAME' in the manual."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@defvr {User Option} \\([^ \n]+\\)" text)
+      (push (match-string 1 text) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--generated-tables ()
+  "Return the base names of the tracked `doc/generated/*.texi' tables.
+Read from the directory rather than a hard-coded list, so a new generated
+table must be wired into the build, the manual and the drift check."
+  (sort (mapcar #'file-name-nondirectory
+                (directory-files
+                 (expand-file-name "doc/generated" gascity-manual-test--root)
+                 t "\\.texi\\'"))
+        #'string<))
+
+(defconst gascity-manual-test--standard-dark-shots
+  '("agents-tree-dark" "cities-dark" "mail-inbox-dark"
+    "order-list-dark" "remote-cities-dark" "rig-list-dark")
+  "The dark shots added when the screenshot theme standardized (REQ-005).
+Pinned so a rename that drops one from the manifest, the shot list or the
+manual fails the gate instead of silently shrinking the shipped set.")
+
+(defun gascity-manual-test--nodes ()
+  "Return every `@node' name in doc/gascity.texi, in order."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) names)
+    (while (string-match "^@node \\(.+\\)$" text)
+      (push (string-trim (match-string 1 text)) names)
+      (setq text (substring text (match-end 0))))
+    (nreverse names)))
+
+(defun gascity-manual-test--menu-targets ()
+  "Return every node named by a menu entry in doc/gascity.texi.
+Handle both the `* Node::  description' form and the
+`* Label: Node.  description' form used when the menu label differs
+from the node name."
+  (let ((text (gascity-manual-test--read "doc/gascity.texi")) targets)
+    (dolist (line (split-string text "\n"))
+      (when (string-match "\\`\\* \\(.*\\)" line)
+        (let ((entry (match-string 1 line)))
+          (cond
+           ((string-match "\\`\\(.*?\\)::" entry)
+            (push (string-trim (match-string 1 entry)) targets))
+           ((string-match "\\`\\(.*?\\): \\(.*?\\)\\.\\s-*" entry)
+            (push (string-trim (match-string 2 entry)) targets))))))
+    targets))
 
 ;;; Tests
 
@@ -273,7 +410,17 @@ This covers `gascity-fixture.sh', the process that actually runs
       (let ((res (gascity-manual-test--call "bash" script
                                             "print-isolation-vars")))
         (should (equal 0 (plist-get res :status)))
-        (should (equal beads (split-string (plist-get res :stdout) "\n" t)))))))
+        (should (equal beads (split-string (plist-get res :stdout) "\n" t)))))
+    ;; The 12-name gc location/identity list lives in both capture.sh and
+    ;; fixture.sh (`unset_gc_location_vars'); a drift between the copies
+    ;; silently reintroduces the WI-07 non-reproducible capture, so assert
+    ;; the two lists are equal rather than trusting a sync comment (RF-2).
+    (let ((capture (gascity-manual-test--unset-location-vars
+                    (gascity-manual-test--read "doc/screenshots/capture.sh")))
+          (fixture (gascity-manual-test--unset-location-vars
+                    (gascity-manual-test--read "doc/screenshots/fixture.sh"))))
+      (should (> (length capture) 1))
+      (should (equal capture fixture)))))
 
 (ert-deftest gascity-test-manual-view-sources-cover-manifest ()
   "Every manifest view has a VIEW_SOURCES entry (REQ-002).
@@ -308,10 +455,15 @@ resolve a sibling repository's formula."
                   ".beads/formulas/user-manual-screenshots.toml"))))
 
 (ert-deftest gascity-test-manual-key-registry-coverage ()
-  "Every registered view, key and verb appears in the manual (REQ-012, AC-6).
-The key registry is the coverage checklist: a new view, keymap or agent
-command fails this test until it is documented in `doc/gascity.texi'."
+  "Every registered view, key and verb has a reference entry (REQ-002, REQ-003).
+The key registry is the coverage checklist: each view must have a
+`@deffn {Command}' entry naming its view, mode and keymap; every
+universal and vui contract key must carry a `@kindex'; and every agent
+verb must have a `@deffn {Command}' entry with its `@kindex' key(s).  A
+new view, keymap or agent command -- or a removed reference entry --
+fails this test until `doc/gascity.texi' documents it."
   (let* ((texi (gascity-manual-test--read "doc/gascity.texi"))
+         (blocks (gascity-manual-test--deffn-blocks))
          (views (gascity-manual-test--key-registry-const
                  'gascity-key-registry--views))
          (contract (gascity-manual-test--key-registry-const
@@ -321,42 +473,180 @@ command fails this test until it is documented in `doc/gascity.texi'."
          (namespaced (gascity-manual-test--key-registry-const
                       'gascity-key-registry--namespaced-verbs))
          (agent-only (gascity-manual-test--key-registry-const
-                      'gascity-key-registry--agent-only-verbs)))
-    ;; Every view name and its mode map are documented.
+                      'gascity-key-registry--agent-only-verbs))
+         (command-block-p
+          (lambda (regexp)
+            (cl-some (lambda (block)
+                       (and (string-match-p "\\`@deffn {Command} " block)
+                            (string-match-p regexp block)))
+                     blocks))))
+    ;; Every view has a definition entry naming its view, mode and keymap.
     (dolist (view views)
-      (ert-info ((format "view %s" (car view)))
-        (should (string-match-p (regexp-quote (symbol-name (car view))) texi))
-        (should (string-match-p (regexp-quote (symbol-name (nth 1 view)))
-                                texi))))
+      (let* ((name (symbol-name (car view)))
+             (map (symbol-name (nth 1 view)))
+             (mode (string-remove-suffix "-map" map)))
+        (ert-info ((format "view %s" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote name) "}"))))
+        (ert-info ((format "view %s mode" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote mode) "}"))))
+        (ert-info ((format "view %s map" name))
+          (should (funcall command-block-p
+                           (concat "@code{" (regexp-quote map) "}"))))
+        ;; Widen the assertion to functions: the view's own definition
+        ;; block carries the command's `@fnindex' entry (REQ-003, D8).
+        (let ((block (cl-find-if
+                      (lambda (b) (string-match-p (regexp-quote map) b))
+                      blocks)))
+          (ert-info ((format "view %s fnindex" name))
+            (should block)
+            (should (string-match "\\`@deffn {Command} \\([^ \n]+\\)" block))
+            (should (string-match-p
+                     (regexp-quote (concat "@fnindex " (match-string 1 block)))
+                     block))))))
     ;; Every universal and vui contract key is in the key index.
     (dolist (key (append contract vui-contract))
       (ert-info ((format "key %s" key))
         (should (string-match-p (regexp-quote (concat "@kindex " key)) texi))))
-    ;; Every namespaced (`a' prefix) verb names its command.
+    ;; Every namespaced (`a' prefix) verb has an entry and its key index.
     (dolist (entry namespaced)
-      (ert-info ((format "a %s" (car entry)))
-        (should (string-match-p
-                 (regexp-quote (symbol-name (cdr entry))) texi))))
-    ;; Every agent-only bare alias names each command it may mean.
+      (let ((key (car entry))
+            (cmd (symbol-name (cdr entry))))
+        (ert-info ((format "a %s -> %s" key cmd))
+          (should (funcall command-block-p
+                           (concat "@deffn {Command} " (regexp-quote cmd))))
+          (should (string-match-p
+                   (regexp-quote (concat "@kindex a " key)) texi)))))
+    ;; Every agent-only bare alias has its command entry and key index.
     (dolist (entry agent-only)
-      (dolist (cmd (cdr entry))
-        (ert-info ((format "bare %s" (car entry)))
-          (should (string-match-p (regexp-quote (symbol-name cmd)) texi)))))))
+      (let ((key (car entry)))
+        (dolist (cmd (cdr entry))
+          (ert-info ((format "bare %s -> %s" key (symbol-name cmd)))
+            (should (funcall command-block-p
+                             (concat "@deffn {Command} "
+                                     (regexp-quote (symbol-name cmd)))))
+            (should (string-match-p
+                     (regexp-quote (concat "@kindex " key)) texi))))))))
+
+(ert-deftest gascity-test-manual-command-coverage ()
+  "Every generated command class has a reference entry (REQ-002, REQ-003).
+The command registry, as emitted to `doc/generated/commands.texi', is the
+coverage checklist: every concrete `gascity-command-*' class must have a
+`@deffn {Command}' entry and an `@fnindex' entry in the Command and
+Variable Reference chapter.  A new command class -- or a removed
+reference entry -- fails this test until `doc/gascity.texi' documents it."
+  (let ((commands (gascity-manual-test--generated-commands))
+        (blocks (gascity-manual-test--deffn-blocks))
+        (texi (gascity-manual-test--read "doc/gascity.texi")))
+    (should (> (length commands) 40))
+    (dolist (command commands)
+      (ert-info ((format "command %s" command))
+        (should (cl-some (lambda (block)
+                           (string-match-p
+                            (concat "\\`@deffn {Command} "
+                                    (regexp-quote command) "\\b")
+                            block))
+                         blocks))
+        (should (string-match-p
+                 (regexp-quote (concat "@fnindex " command)) texi))))))
+
+(ert-deftest gascity-test-manual-reference-coverage ()
+  "Every generated user option has a reference entry (REQ-002).
+The generated `doc/generated/options.texi' table is the checklist: every
+`gascity-*' user option needs a `@defopt'/`@defvr {User Option}' entry
+and a `@vindex' in the reference chapters, so a new option or a removed
+entry fails here.  Per plan-review O1 the entries are hand-written;
+`options.texi' is only the enumeration.  The view/key/verb surface and
+the printed-index contract have their own single owners,
+`gascity-test-manual-key-registry-coverage' and
+`gascity-test-manual-reference-entry-indexes' (RF-3)."
+  (let ((texi (gascity-manual-test--read "doc/gascity.texi"))
+        (options (gascity-manual-test--generated-options))
+        (defopt (gascity-manual-test--defopt-names))
+        (defvr (gascity-manual-test--user-option-defvr-names)))
+    ;; Every generated user option has a definition and a variable index
+    ;; entry, written once by hand in the reference chapters.
+    (should (> (length options) 30))
+    (dolist (option options)
+      (ert-info ((format "option %s" option))
+        (should (or (member option defopt) (member option defvr)))
+        (should (string-match-p
+                 (regexp-quote (concat "@vindex " option)) texi))))))
 
 (ert-deftest gascity-test-manual-generated-tables-tracked ()
   "The generated reference tables are shipped and included (REQ-014).
 A normal `make' builds the manual from the tracked `doc/generated/*.texi';
-if either file drops out of `gascity_TEXINFOS' it stops shipping, and
+if a table drops out of `gascity_TEXINFOS' it stops shipping, and
 `make check-doc-drift' would have nothing to compare against.  Each file
 must also be `@include'd by `doc/gascity.texi' or the generated tables
-never reach the built manual."
+never reach the built manual, and listed in the top-level `EXTRA_DIST' so
+the drift-checked artifact ships.  The table list is read from the
+directory, so a new `options.texi'-style table cannot bypass the checks."
   (let ((makefile (gascity-manual-test--read "doc/Makefile.am"))
+        (top (gascity-manual-test--read "Makefile.am"))
+        (texi (gascity-manual-test--read "doc/gascity.texi"))
+        (tables (gascity-manual-test--generated-tables)))
+    ;; The new option table is one of the tracked generated tables.
+    (should (member "options.texi" tables))
+    (dolist (base tables)
+      (let ((include (concat "generated/" base)))
+        (ert-info ((format "%s" include))
+          (should (string-match-p (regexp-quote include) makefile))
+          (should (string-match-p (regexp-quote (concat "@include " include))
+                                  texi))
+          (should (string-match-p
+                   (regexp-quote (concat "doc/generated/" base)) top)))))))
+
+(ert-deftest gascity-test-manual-standard-shots-present ()
+  "Every standardized dark shot is committed and embedded (REQ-005, REQ-006).
+The manifest, the shot list and the manual must agree on the names the
+theme standardization added; a rename that drops one from any of the three
+fails here rather than quietly shipping a smaller screenshot set."
+  (let ((outputs (gascity-manual-test--output-names))
+        (shots (gascity-manual-test--shot-names))
+        (embedded (gascity-manual-test--texi-shots)))
+    (dolist (name gascity-manual-test--standard-dark-shots)
+      (ert-info ((format "%s" name))
+        (should (member name outputs))
+        (should (member (string-remove-suffix "-dark" name) shots))
+        (should (member name embedded))))))
+
+(ert-deftest gascity-test-manual-html-presentation-held ()
+  "The built HTML keeps the shipped presentation (REQ-010).
+The manual stays a self-contained HTML tree: the stylesheet is inlined
+through `--css-include', the lightbox script through the `PRE_BODY_CLOSE'
+customization variable, and the screenshot images are mirrored into the
+output directory.  The stylesheet bounds the previews, and Org is not
+reintroduced as a manual source."
+  (let ((makefile (gascity-manual-test--read "doc/Makefile.am"))
+        (css (gascity-manual-test--read "doc/manual.css"))
         (texi (gascity-manual-test--read "doc/gascity.texi")))
-    (dolist (include '("generated/keys.texi" "generated/commands.texi"))
-      (ert-info ((format "%s" include))
-        (should (string-match-p (regexp-quote include) makefile))
-        (should (string-match-p (regexp-quote (concat "@include " include))
-                                texi))))))
+    ;; Inlined stylesheet and lightbox, mirrored images.
+    (should (string-match-p "--css-include=.*manual\\.css" makefile))
+    (should (string-match-p "PRE_BODY_CLOSE" makefile))
+    (should (string-match-p "lightbox\\.js" makefile))
+    (should (string-match-p "html-local" makefile))
+    (should (string-match-p "images" makefile))
+    ;; The stylesheet bounds the inline preview and the lightbox image.
+    (should (string-match-p "div\\.screenshot img" css))
+    (should (string-match-p "max-width" css))
+    ;; A Texinfo source, not Org: no Org keywords or Org major mode.
+    (should-not (string-match-p "\n#\\+" (concat "\n" texi)))
+    (should-not (string-match-p "org-mode" texi))))
+
+(ert-deftest gascity-test-manual-nodes-reachable ()
+  "Every `@node' is named by some menu entry (REQ-001, REQ-004).
+BR-2 requires a complete `@menu'/`@node' tree with no dead ends, so a
+section that is moved or added without a matching menu entry fails
+here rather than building a manual a reader cannot navigate."
+  (let ((nodes (gascity-manual-test--nodes))
+        (targets (gascity-manual-test--menu-targets)))
+    (should (> (length nodes) 1))
+    (dolist (node nodes)
+      (unless (equal node "Top")
+        (ert-info ((format "node %s" node))
+          (should (member node targets)))))))
 
 (ert-deftest gascity-test-manual-quality-sections ()
   "The manual carries the Guix/PostgreSQL quality elements (REQ-013).
@@ -380,7 +670,7 @@ required autotools/lint nodes."
       (ert-info ((format "new node %s" node))
         (should (string-match-p (regexp-quote node) texi))))
     ;; Concept, function and variable index entries all appear.
-    (dolist (index '("@cindex " "@findex " "@vindex "))
+    (dolist (index '("@cindex " "@fnindex " "@vindex " "@kindex "))
       (should (string-match-p (regexp-quote index) texi)))
     ;; Both printed indexes are wired: the variable index is folded into
     ;; the function index (`@syncodeindex vr fn'), and the key index prints.
@@ -389,6 +679,106 @@ required autotools/lint nodes."
     ;; Cross-references are present.
     (should (string-match-p "@xref{" texi))
     (should (string-match-p "@pxref{" texi))))
+
+(ert-deftest gascity-test-manual-reference-entry-indexes ()
+  "Every reference entry has its explicit printed-index entry (REQ-003).
+The manual has four reference entry kinds: `@deffn', `@defopt',
+`@defvr {User Option}' and `@defvr {Keymap}'.  Each `@deffn' name must
+appear on a `@fnindex' line and each option or keymap name on a
+`@vindex' line, so the printed indexes name every entry a reader can
+look up.  A definition added without its index entry fails here."
+  (let ((fnindex (gascity-manual-test--index-lines "fn"))
+        (vindex (gascity-manual-test--index-lines "v"))
+        (deffn (gascity-manual-test--deffn-names))
+        (defopt (gascity-manual-test--defopt-names))
+        (defvr (gascity-manual-test--user-option-defvr-names))
+        (keymaps (gascity-manual-test--keymap-defvr-names)))
+    (should (> (length deffn) 80))
+    (dolist (name deffn)
+      (ert-info ((format "@deffn %s fnindex" name))
+        (should (member name fnindex))))
+    (should (> (length keymaps) 15))
+    (dolist (name (append defopt defvr keymaps))
+      (ert-info ((format "definition %s vindex" name))
+        (should (member name vindex))))))
+
+(ert-deftest gascity-test-manual-concepts-cross-referenced ()
+  "Every core concept is defined once and cross-linked (REQ-003, D8).
+The Terminology section is the single definition point; the task
+chapters must cross-reference it the first time they lean on a concept.
+The Introduction names the chapter, and the body carries at least one
+`@pxref{Terminology}' per concept, so the cross-reference web the
+Concepts chapter promises actually exists."
+  (let ((texi (gascity-manual-test--read "doc/gascity.texi")))
+    (dolist (concept gascity-manual-test--concepts)
+      (ert-info ((format "concept %s cindex" concept))
+        (should (string-match-p
+                 (regexp-quote (concat "@cindex " concept)) texi))))
+    ;; The Introduction names the Concepts chapter...
+    (should (string-match-p (regexp-quote "@ref{Concepts") texi))
+    ;; ...and the task chapters each link back to the Terminology section.
+    (should (>= (length (split-string texi "@pxref{Terminology}" t))
+                (1+ (length gascity-manual-test--concepts))))))
+
+(ert-deftest gascity-test-manual-info-indexes-populated ()
+  "Both printed indexes are populated in the built Info output (REQ-003).
+Building the manual with `makeinfo' and reading the two generated index
+nodes proves the `@printindex' lines are wired to entries, not merely
+that index commands appear in the source.  Skipped when `makeinfo' is
+not installed."
+  (skip-unless (executable-find "makeinfo"))
+  (let* ((info (make-temp-file "gascity-manual" nil ".info"))
+         (res (gascity-manual-test--call "makeinfo" "--no-split"
+                                         "-o" info "doc/gascity.texi")))
+    (unwind-protect
+        (progn
+          (should (equal 0 (plist-get res :status)))
+          (let* ((text (with-temp-buffer
+                         (insert-file-contents info)
+                         (buffer-string)))
+                 (key (gascity-manual-test--info-index-node text "Key Index"))
+                 (fn (gascity-manual-test--info-index-node
+                      text "Command and Variable Index")))
+            (should key)
+            (should (string-match-p "^\\* .*:\\s-+" key))
+            (should fn)
+            (should (string-match-p "^\\* .*:\\s-+" fn))))
+      (delete-file info))))
+
+(ert-deftest gascity-test-manual-no-burningswell ()
+  "The offline leak gate is wired and effective (REQ-009, REQ-011).
+The private `burningswell' host must not reappear in the manual
+sources: the script is executable, `make check' runs it through the
+`check-leak' target, it passes on the tracked tree, and an injected
+token makes it fail with the offending `file:line' rather than
+passing silently."
+  (let ((script (expand-file-name "scripts/check-no-burningswell.sh"
+                                  gascity-manual-test--root))
+        (makefile (gascity-manual-test--read "Makefile.am")))
+    ;; The gate is shipped, executable and wired into `make check'.
+    (should (file-executable-p script))
+    (should (string-match-p (regexp-quote "check-leak") makefile))
+    (should (string-match-p (regexp-quote "check-no-burningswell.sh") makefile))
+    ;; The tracked sources are clean.
+    (should (equal 0 (plist-get (gascity-manual-test--call script) :status)))
+    ;; An injected token fails, naming the file and line.
+    (let ((tmp (make-temp-file "gascity-leak" t)))
+      (unwind-protect
+          (progn
+            (make-directory (expand-file-name "scripts" tmp) t)
+            (make-directory (expand-file-name "doc" tmp) t)
+            (let ((copy (expand-file-name
+                         "scripts/check-no-burningswell.sh" tmp)))
+              (copy-file script copy t)
+              (set-file-modes copy #o755)
+              (with-temp-file (expand-file-name "doc/gascity.texi" tmp)
+                (insert "a leak: burningswell.com\n"))
+              (let ((res (gascity-manual-test--call copy)))
+                (should-not (equal 0 (plist-get res :status)))
+                (should (string-match-p
+                         "doc/gascity\\.texi:[0-9]+:.*burningswell"
+                         (plist-get res :stdout))))))
+        (delete-directory tmp t)))))
 
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here

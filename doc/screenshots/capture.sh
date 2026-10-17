@@ -70,9 +70,12 @@ THUMB_COLORS=128  # a preview needs fewer colours
 # in two themes is captured twice (e.g. the cockpit, to show theming).
 # The suffix is the "-<theme>" half of the committed name, so the output is
 # exactly <view>-<theme>.png and <view>-<theme>-thumb.png.
+# ef-deuteranopia-dark is the standard dark theme for every view; ef-cyprus
+# is kept for the single deliberate light capture, cockpit-light, which
+# pairs with cockpit-dark to demonstrate theming.
 read -r -d '' MANIFEST <<'EOF' || true
-ef-elea-dark  -dark   cockpit dispatch agents runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus     -light  cockpit agents-tree mail-inbox cities rig-list order-list remote-cities
+ef-deuteranopia-dark  -dark   cockpit dispatch agents agents-tree runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+ef-cyprus             -light  cockpit
 EOF
 
 # Owning source file(s) per view, for `--scope changed` (plan-review P2).
@@ -153,6 +156,15 @@ for _var in BEADS_DIR BEADS_DOLT_PORT BEADS_DOLT_SERVER_PORT GC_DOLT_PORT; do
   unset "$_var"
 done
 unset _var
+# gc's location and identity variables reroute `bd'/`gc' at a real store or
+# bind a view to the developer's or agent's live session.  A leaked
+# GC_SESSION_ID made `gc mail inbox' fail with a session-not-found banner that
+# embedded the worker's session id, so the mail-inbox shot was neither honest
+# nor reproducible (WI-07).  fixture.sh unsets this same set for its own gc
+# calls (`unset_gc_location_vars'); keep the two lists in sync.
+unset GC_CITY GC_CITY_PATH GC_CITY_RUNTIME_DIR GC_CITY_NAME \
+      GC_DIR GC_RIG GC_RIG_ROOT GC_BEADS_SCOPE_ROOT \
+      GC_SESSION_ID GC_SESSION_NAME GC_AGENT GC_ALIAS
 # The terminal-attach shot creates and attaches to a fixture tmux session.
 # A leaked TMUX from a developer's own tmux client would split the pre-step
 # and the terminal across two servers (the terminal backend does not forward

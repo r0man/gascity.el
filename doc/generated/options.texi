@@ -1,0 +1,142 @@
+@c options.texi --- generated options tables for gascity.el
+@c
+@c This tracked include is the committed artifact the manual builds
+@c from.  It is produced by doc/generate-tables.el and refreshed with
+@c `make regen-doc-tables'; `make check-doc-drift' fails when it no
+@c longer matches the live options.  Do not edit by hand.
+@c
+@c SPDX-License-Identifier: GPL-3.0-or-later
+
+@node Generated User Option Reference
+@section Generated User Option Reference
+@cindex user option reference, generated
+@cindex customization, generated
+
+Every @code{gascity-*} user option (@code{defcustom}), its standard
+default and its type, generated from the live definitions.  A renamed
+option, a changed default or a changed type is drift.  The annotated entries
+are in @ref{Customization and Theming}; this table only enumerates them.
+
+@multitable @columnfractions .42 .33 .25
+@headitem User option @tab Default @tab Type
+@item @code{gascity-dashboard-agent-idle-threshold}
+@tab @code{3600}
+@tab @code{natnum}
+@item @code{gascity-dashboard-churn-unfold-rows}
+@tab @code{20}
+@tab @code{natnum}
+@item @code{gascity-dashboard-run-idle-threshold}
+@tab @code{1800}
+@tab @code{natnum}
+@item @code{gascity-dashboard-section-batch}
+@tab @code{10}
+@tab @code{natnum}
+@item @code{gascity-dashboard-section-rows}
+@tab @code{5}
+@tab @code{natnum}
+@item @code{gascity-dashboard-window}
+@tab @code{"2h"}
+@tab @code{string}
+@item @code{gascity-debug-level}
+@tab @code{info}
+@tab @code{choice}
+@item @code{gascity-enable-debug}
+@tab @code{nil}
+@tab @code{boolean}
+@item @code{gascity-event-levels}
+@tab @code{(("\\.crashed\\'" . attention) ("\\.cold_start_timeout\\'" . attention) ("\\.failed\\'" . attention) ("quarantine" . attention) ("\\.dead_assignee_reopened\\'" . watch) ("\\.rate_limited\\'" . watch) ("escalat" . watch))}
+@tab @code{alist}
+@item @code{gascity-events-window}
+@tab @code{"2h"}
+@tab @code{string}
+@item @code{gascity-executable}
+@tab @code{"gc"}
+@tab @code{string}
+@item @code{gascity-health-doctor-timeout}
+@tab @code{300}
+@tab @code{natnum}
+@item @code{gascity-live-backoff}
+@tab @code{(2 5 15 60)}
+@tab @code{repeat of number}
+@item @code{gascity-live-confirm-after}
+@tab @code{3}
+@tab @code{number}
+@item @code{gascity-live-debounce}
+@tab @code{2.5}
+@tab @code{number}
+@item @code{gascity-live-enabled}
+@tab @code{t}
+@tab @code{boolean}
+@item @code{gascity-live-events-reconcile}
+@tab @code{600}
+@tab @code{number}
+@item @code{gascity-live-in-batch}
+@tab @code{nil}
+@tab @code{boolean}
+@item @code{gascity-live-poll-bootstrap}
+@tab @code{"60s"}
+@tab @code{string}
+@item @code{gascity-live-poll-interval}
+@tab @code{30}
+@tab @code{number}
+@item @code{gascity-live-poll-watch}
+@tab @code{"2s"}
+@tab @code{string}
+@item @code{gascity-live-stable-after}
+@tab @code{15}
+@tab @code{number}
+@item @code{gascity-pulse-store-samples}
+@tab @code{40}
+@tab @code{natnum}
+@item @code{gascity-remote-async-timeout}
+@tab @code{30}
+@tab @code{choice}
+@item @code{gascity-remote-hosts}
+@tab @code{nil}
+@tab @code{repeat of string}
+@item @code{gascity-remote-max-inflight}
+@tab @code{3}
+@tab @code{choice}
+@item @code{gascity-remote-ssh-options}
+@tab @code{("-o" "ControlMaster=auto" "-o" "ControlPersist=60")}
+@tab @code{repeat of string}
+@item @code{gascity-remote-sync-timeout}
+@tab @code{30}
+@tab @code{choice}
+@item @code{gascity-remote-transport}
+@tab @code{ssh}
+@tab @code{choice}
+@item @code{gascity-runs-failed-window}
+@tab @code{"24h"}
+@tab @code{string}
+@item @code{gascity-runs-history-page}
+@tab @code{20}
+@tab @code{integer}
+@item @code{gascity-sling-var-readers}
+@tab @code{nil}
+@tab @code{alist}
+@item @code{gascity-store-action-followups}
+@tab @code{(5 15 45 90 180)}
+@tab @code{repeat of number}
+@item @code{gascity-store-background-kinds}
+@tab @code{(events bd convoy order)}
+@tab @code{repeat of symbol}
+@item @code{gascity-store-default-ttl}
+@tab @code{5}
+@tab @code{number}
+@item @code{gascity-store-offline-backoff}
+@tab @code{(2 5 15 60)}
+@tab @code{repeat of number}
+@item @code{gascity-store-refetch-hidden}
+@tab @code{nil}
+@tab @code{boolean}
+@item @code{gascity-store-ttl-alist}
+@tab @code{((status . 5) (bd . 15) (doctor . manual))}
+@tab @code{alist}
+@item @code{gascity-timer-watchdog-interval}
+@tab @code{0.5}
+@tab @code{number}
+@item @code{gascity-tmux-socket}
+@tab @code{nil}
+@tab @code{choice}
+@end multitable
