@@ -428,7 +428,7 @@ behind them."
                                      (gascity-ui-truncate (cdr s) 56)))))
                (reverse (append (alist-get 'entries data) nil))))
      (lambda (data) (and (alist-get 'entries data)
-                         (format "last %d · f follow  v peek"
+                         (format "last %d · f follow  a v peek"
                                  (length (alist-get 'entries data))))))))
 
 (defun gascity-session--mail-vnode (load agent)
@@ -750,7 +750,7 @@ the inherited `a' prefix (F1), never on the bare beads.el keys."
                                             (gascity-agent-name gascity-section--agent))
                                        "Agent")
                                    'face 'gascity-header)
-                       nil "f follow  v peek  ? help  j jump  g refresh"))))
+                       nil "f follow  a v peek  ? help  j jump  g refresh"))))
 
 (provide 'gascity-session)
 ;;; gascity-session.el ends here

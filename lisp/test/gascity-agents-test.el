@@ -413,7 +413,7 @@ free entry, the accessor never errors."
                 (should (string-match-p "^Work  1" text))
                 (should (string-match-p "⬣ be-bcb5 .*run be-52m5" text))
                 (should (string-match-p "⬣ be-52m5 +build-basic +[◆⬣·✕]\\{10\\}" text))
-                (should (string-match-p "^Transcript .*f follow  v peek" text))
+                (should (string-match-p "^Transcript .*f follow  a v peek" text))
                 (should (string-match-p "bash: gc mail inbox" text))
                 (should (string-match-p "^Mail with operator  1" text))
                 (should (string-match-p "context cycle" text)))
@@ -641,9 +641,25 @@ The detail also shows bead references, so its agent verbs live under `a'
     (dolist (key '("a k" "a w" "a D" "a u" "a t" "a d"))
       (should (keymap-lookup map key)))
     (should (eq (keymap-lookup map "S") #'gascity-sling-dispatch))
-    ;; The bare beads keys stay free on the detail's bead references.
-    (dolist (key '("d" "s" "w" "i" "t" "D"))
+    ;; The bare beads keys stay free on the detail's bead references; `v'
+    ;; joins them because peek lives under `a' here (F1).
+    (dolist (key '("d" "s" "w" "i" "t" "D" "v"))
       (should-not (keymap-lookup map key)))))
+
+(ert-deftest gascity-test-agent-detail-advertises-peek-key ()
+  "The detail header advertises the namespaced `a v' peek (ga-x9gys.1).
+The header once promised a bare `v' that the mode map never bound, so the
+advertised capability was unreachable; the F1 contract keeps peek under
+the `a' prefix on this bead-holding view."
+  (gascity-test-with-temp-view
+    (gascity-session-detail-mode)
+    ;; `format-mode-line' needs a live frame, so evaluate the `:eval' part
+    ;; by hand (as the audit tests do).
+    (let ((header (format "%s" (eval (cadr header-line-format) t))))
+      (should (string-match-p "a v peek" header))
+      (should-not (string-match-p "  v peek" header))
+      (should (eq (key-binding (kbd "a v"))
+                  #'gascity-session-peek-at-point)))))
 
 (ert-deftest gascity-test-agents-sort-keeps-stalled-pinned ()
   "A header-click sort, either direction, keeps stalled rows first."
