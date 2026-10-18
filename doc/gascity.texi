@@ -1891,6 +1891,10 @@ has moved past it.
 @item @key{RET}
 @fnindex gascity-runs-activate
 Open the run's detail (@pxref{Run Detail}).
+@item F
+@fnindex gascity-runs-follow
+Follow the run --- the persistent twin of the momentary @kbd{F}
+follow offer a formula sling echoes on launch.
 @item b
 @fnindex gascity-runs-root-bead
 Open the run's root bead in beads.el.
@@ -2054,8 +2058,9 @@ Toggle the city's live event stream.
 Waiting and Failed, each with its step ladder and workers, derived from
 the run's bead graph.  @key{RET} opens the run's detail (its steps,
 iterations, nested and drain-member runs, plan files and control nodes),
-@kbd{H} pages the history, @kbd{b} opens the run's root bead and
-@kbd{/} filters by rig, formula, state and window.  @xref{Runs and Live Events},
+@kbd{F} follows a run (the launch offer's momentary @kbd{F} made
+permanent), @kbd{H} pages the history, @kbd{b} opens the run's root bead
+and @kbd{/} filters by rig, formula, state and window.  @xref{Runs and Live Events},
 @xref{Run Detail}.
 
 @kbd{j e} lists the city's events, newest first, folding routine churn
