@@ -641,13 +641,22 @@ Never blocks: a cold rig memo is filled through the store first
     (gascity-runs-call-with-store
      (cdr run) (lambda (store) (gascity-beads--show-in-store (car run) store)))))
 
+(defun gascity-runs-follow ()
+  "Follow the run at point: open its detail (`F').
+The persistent twin of the launch's momentary `F' follow offer
+\(`gascity-sling--follow-offer'): once the echo is dismissed — or a
+launch answered while the user looked elsewhere — `F' here opens the
+same `gascity-run-show' the offer pointed at (ga-40tbg.4)."
+  (interactive)
+  (let ((run (or (gascity-runs--run-at-point)
+                 (user-error "No run at point"))))
+    (gascity-run-show (car run) nil (cdr run))))
+
 (defun gascity-runs-activate ()
   "Open the run at point in the run detail (RET never folds, §5.4)."
   (interactive)
   (cond ((get-text-property (point) 'gascity-runs-more) (gascity-runs-more))
-        ((gascity-runs--run-at-point)
-         (let ((run (gascity-runs--run-at-point)))
-           (gascity-run-show (car run) nil (cdr run))))
+        ((gascity-runs--run-at-point) (gascity-runs-follow))
         ((get-text-property (point) 'gascity-section) nil)
         (t (user-error "Nothing to act on here"))))
 
@@ -759,6 +768,7 @@ The shared `gascity-ui-header-line'.  Pure (§8.3 R2)."
   :parent gascity-section-mode-map
   "g"   #'gascity-runs-refresh
   "RET" #'gascity-runs-activate
+  "F"   #'gascity-runs-follow
   "b"   #'gascity-runs-root-bead
   "H"   #'gascity-runs-history
   "+"   #'gascity-runs-more
@@ -772,7 +782,8 @@ The shared `gascity-ui-header-line'.  Pure (§8.3 R2)."
   "Major mode for the Runs view (dashboard-v3 §7.6).
 
 TAB/S-TAB move between runs, SPC opens a run's step ladder, RET
-opens its detail, `b' its root bead, `H' the history, `/' filters.
+opens its detail, `F' follows a run (the launch offer's persistent
+twin), `b' its root bead, `H' the history, `/' filters.
 
 \\{gascity-runs-mode-map}"
   :interactive nil

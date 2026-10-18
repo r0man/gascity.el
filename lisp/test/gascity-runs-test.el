@@ -438,6 +438,7 @@ data shows the error line; the view never blanks."
 (ert-deftest gascity-test-runs-keys ()
   "The Runs and run detail maps carry the §5/§7.6/§7.7 keys."
   (dolist (pair '(("g" . gascity-runs-refresh) ("RET" . gascity-runs-activate)
+                  ("F" . gascity-runs-follow)
                   ("b" . gascity-runs-root-bead) ("H" . gascity-runs-history)
                   ("+" . gascity-runs-more) ("/" . gascity-runs-filter)
                   ("i" . gascity-runs-agent-detail) ("v" . gascity-runs-agent-peek)
@@ -548,6 +549,15 @@ ladder drawer, folds a section; RET opens the run detail with its rig."
                  (lambda (run &optional _convoy rig) (setq opened (list run rig)))))
         (gascity-runs-activate))
       (should (equal opened '("be-52m5" "beads.el"))))
+    ;; `F' follows the same run the momentary launch offer pointed at
+    ;; (ga-40tbg.4), and refuses when point holds no run.
+    (let (opened)
+      (cl-letf (((symbol-function 'gascity-run-show)
+                 (lambda (run &optional _convoy rig) (setq opened (list run rig)))))
+        (gascity-runs-follow))
+      (should (equal opened '("be-52m5" "beads.el"))))
+    (goto-char (point-min))
+    (should-error (gascity-runs-follow) :type 'user-error)
     ;; `H' adds the history; SPC on a header folds it.
     (gascity-runs-history)
     (should (string-match-p "^Closed  2$" (buffer-string)))

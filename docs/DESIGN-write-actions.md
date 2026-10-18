@@ -422,6 +422,7 @@ don’t collide with view keys):
 | rig dashboard | `c` → bead-dispatch (ready/in-progress refs) · `R` reset · `U` undrain |
 | session detail | `c` → bead-dispatch (hook/history refs) · `R` reset · `U` undrain |
 | session list | `R` reset · `U` undrain |
+| runs | `F` follow → `gascity-run-show` on the run at point (the launch offer's persistent twin; ga-40tbg.4) |
 | mail inbox | `r` read · `R` reply · `a` archive · `u` mark-unread · `c`→ `gascity-mail-dispatch` (adds send) |
 | (bead refs everywhere) | `S` sling/route shortcut (→ `gascity-sling-dispatch`) |
 
