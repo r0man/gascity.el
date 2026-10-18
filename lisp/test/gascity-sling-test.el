@@ -1336,6 +1336,44 @@ RET keeps it, so a derivable target costs no typing."
                 ((symbol-function 'transient-setup) (lambda (&rest _))))
         (call-interactively #'gascity-sling-dispatch-target)
         (should (equal seeded "hello-world/gc.implementation-worker"))))))
+
+(ert-deftest gascity-test-sling-target-read-offers-derived-role ()
+  "A derived role default the roster's live-agent rows do not carry is
+offered as a `role' candidate, so Tab lists the seed instead of
+reporting `[No match]' for it (dogfood ga-40tbg.7)."
+  (let (offered)
+    ;; The real bright-lights roster lists live agents, never the
+    ;; `hello-world/gc.implementation-worker' role the derivation names.
+    (cl-letf (((symbol-function 'gascity-agents-roster)
+               (lambda (&optional _) '((:name "mayor" :state active))))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _)
+                 (setq offered collection)
+                 "hello-world/gc.implementation-worker")))
+      (should (equal (gascity-sling--read-agent
+                      "Target agent: "
+                      "hello-world/gc.implementation-worker")
+                     "hello-world/gc.implementation-worker")))
+    (should (equal (cdr (assoc "hello-world/gc.implementation-worker" offered))
+                   "role"))
+    (should (equal (cdr (assoc "mayor" offered)) "city · active"))
+    ;; A role the roster DOES carry is not offered twice.
+    (cl-letf (((symbol-function 'gascity-agents-roster)
+               (lambda (&optional _)
+                 '((:name "hello-world/gc.implementation-worker"
+                    :rig "hello-world" :state idle))))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _)
+                 (setq offered collection)
+                 "hello-world/gc.implementation-worker")))
+      (gascity-sling--read-agent "Target agent: "
+                                 "hello-world/gc.implementation-worker"))
+    (should (= (length (seq-filter
+                        (lambda (c)
+                          (equal (car c) "hello-world/gc.implementation-worker"))
+                        offered))
+               1))))
+
 ;;; WI-6: the live footer (REQ-007/REQ-010, mockup §1–§5)
 
 ;; The footer composes the WI-2 validators (gascity-formula) and the
