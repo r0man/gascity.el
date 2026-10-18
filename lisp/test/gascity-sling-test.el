@@ -2084,7 +2084,7 @@ footer redraws, so `S' re-entry restores it (WI-11 finding F2)."
         (scope (list :city gascity-sling-test--city :formula "do-work"
                      :target "mayor" :work "bl-1"))
         (value '("--var artifact_root=plans/late/")))
-    (cl-letf (((symbol-function 'gascity-sling-formula--transient-values)
+    (cl-letf (((symbol-function 'gascity-sling--carried-args)
                (lambda () value))
               ((symbol-function 'gascity-sling--footer)
                (lambda (&rest _) "✓ Ready"))
@@ -2224,6 +2224,70 @@ never a gc call (F6)."
     (should (equal (plist-get (plist-get captured :scope) :work) "hw-aij"))
     (should (equal (plist-get (plist-get captured :scope) :work-title)
                    "Fix the thing"))))
+
+(ert-deftest gascity-test-sling-carried-args-drops-convention-seeds ()
+  "A var still holding its convention seed is not carried across a
+re-setup, so the new scope re-derives it; an edited var and the
+non-var routing flags are carried (ga-40tbg.6)."
+  (let ((transient-current-command 'gascity-sling-dispatch)
+        (opt (gascity-sling-formula--directory-option
+              :var-name "artifact_root" :var-seed "plans/build-basic/"))
+        (target-opt (gascity-sling-formula--agent-option
+                     :var-name "implementation_target" :var-seed nil)))
+    (let ((transient--suffixes (list opt target-opt)))
+      ;; The unedited seed is dropped; the flag stays.
+      (cl-letf (((symbol-function 'transient-get-value)
+                 (lambda () '("--var artifact_root=plans/build-basic/"
+                              "--nudge"))))
+        (should (equal (gascity-sling--carried-args) '("--nudge"))))
+      ;; An edited var and a var without a seed are kept.
+      (cl-letf (((symbol-function 'transient-get-value)
+                 (lambda () '("--var artifact_root=plans/custom/"
+                              "--var implementation_target=mayor"
+                              "--title=keep-me"))))
+        (should (equal (gascity-sling--carried-args)
+                       '("--var artifact_root=plans/custom/"
+                         "--var implementation_target=mayor"
+                         "--title=keep-me")))))
+    ;; With no live menu state nothing is dropped (hermetic callers).
+    (let ((transient-current-command nil)
+          (transient--suffixes nil))
+      (cl-letf (((symbol-function 'transient-args)
+                 (lambda (_) '("--var artifact_root=plans/build-basic/"))))
+        (should (equal (gascity-sling--carried-args)
+                       '("--var artifact_root=plans/build-basic/")))))))
+
+(ert-deftest gascity-test-sling-work-pick-reseeds-convention-default ()
+  "Picking a work bead after a formula drops the frozen formula-name
+`artifact_root' seed so the new setup re-derives it from the bead's
+title (ga-40tbg.6)."
+  (let ((captured nil)
+        (transient-current-command 'gascity-sling-dispatch)
+        (transient--suffixes
+         (list (gascity-sling-formula--directory-option
+                :var-name "artifact_root" :var-seed "plans/build-basic/")))
+        (scope (list :city gascity-sling-test--city :formula "build-basic"
+                     :target nil :work nil)))
+    (cl-letf (((symbol-function 'gascity-sling--work-choices-wait)
+               (lambda ()
+                 '(("bl-ha1r" . "dogfood 2026-10-17 sling target · open · bl"))))
+              ((symbol-function 'completing-read) (lambda (&rest _) "bl-ha1r"))
+              ((symbol-function 'gascity-sling--work-title)
+               (lambda (_) "dogfood 2026-10-17 sling target"))
+              ((symbol-function 'transient-scope) (lambda () scope))
+              ((symbol-function 'transient-get-value)
+               (lambda () '("--var artifact_root=plans/build-basic/")))
+              ((symbol-function 'gascity-sling--remember) #'ignore)
+              ((symbol-function 'transient-setup)
+               (lambda (_n _l _s &rest args) (setq captured args))))
+      (call-interactively #'gascity-sling-dispatch-work))
+    (should (equal (plist-get (plist-get captured :scope) :work) "bl-ha1r"))
+    (should (equal (plist-get (plist-get captured :scope) :work-title)
+                   "dogfood 2026-10-17 sling target"))
+    ;; The formula-name fallback seed is gone from the carried args, so
+    ;; the new setup's artifact_root re-derives as plans/dogfood-.../.
+    (should-not (member "--var artifact_root=plans/build-basic/"
+                        (plist-get captured :value)))))
 
 ;;; F9: the formula shape's opt-in `--nudge' and `--title' routing flags
 
