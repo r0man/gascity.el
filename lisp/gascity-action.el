@@ -2600,17 +2600,25 @@ user-initiated — it runs only on this binding press (OQ-1, F-4)."
 (defun gascity-sling--read-agent (prompt &optional initial roster)
   "Read the Who answer with PROMPT over the agent roster (mockup §6c).
 The candidates annotate scope and live state
-\(`gascity-agents-roster-candidates'); INITIAL — the derived Who
-default, when one derives — seeds the read and RET keeps it; free
-entry (require-match nil) uses a typed name verbatim, and a cold
-roster (ROSTER nil) completes over nothing, never a dead end.
-When ROSTER is nil the blocking accessor answers (input collection,
-D9)."
-  (completing-read
-   prompt
-   (gascity-agents-roster-candidates
-    (or roster (gascity-agents-roster 'cached)))
-   nil nil initial))
+\(`gascity-agents-roster-candidates').  INITIAL — the derived Who
+default, when one derives — seeds the read and RET keeps it.  A
+derived default names a ROLE (for example
+`hello-world/gc.implementation-worker') that the city's live-agent
+rows do not carry, so it is offered as an extra candidate annotated
+`role': Tab lists the seed instead of reporting `[No match]' for it
+\(dogfood ga-40tbg.7).  Free entry (require-match nil) uses a typed
+name verbatim, and a cold roster (ROSTER nil) completes over the seed
+or nothing, never a dead end.  When ROSTER is nil the blocking
+accessor answers (input collection, D9)."
+  (let* ((roster (or roster (gascity-agents-roster 'cached)))
+         (candidates (gascity-agents-roster-candidates roster)))
+    ;; The derived role default is not a live agent row, so the roster
+    ;; does not name it; offer it so completion does not read the seed
+    ;; as invalid (the sling's `T' Tab, dogfood ga-40tbg.7).
+    (when (and (gascity-formula--nonblank initial)
+               (not (assoc initial candidates)))
+      (setq candidates (cons (cons initial "role") candidates)))
+    (completing-read prompt candidates nil nil initial)))
 
 (transient-define-suffix gascity-sling-dispatch-recipe ()
   "Preview the picked formula's recipe with the current var values.
