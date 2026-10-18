@@ -2046,8 +2046,8 @@ footer redraws, so `S' re-entry restores it (WI-11 finding F2)."
         (scope (list :city gascity-sling-test--city :formula "do-work"
                      :target "mayor" :work "bl-1"))
         (value '("--var artifact_root=plans/late/")))
-    (cl-letf (((symbol-function 'transient-args)
-               (lambda (_p) value))
+    (cl-letf (((symbol-function 'gascity-sling-formula--transient-values)
+               (lambda () value))
               ((symbol-function 'gascity-sling--footer)
                (lambda (&rest _) "✓ Ready"))
               ((symbol-function 'gascity-sling--roster-cached)
@@ -2055,6 +2055,36 @@ footer redraws, so `S' re-entry restores it (WI-11 finding F2)."
       (funcall (plist-get (gascity-sling--footer-info scope nil) :info)))
     (should (equal (cdr (assoc gascity-sling-test--city gascity-sling--remembered))
                    (cons scope value)))))
+
+(ert-deftest gascity-test-sling-current-values-reads-live-menu-at-setup ()
+  "The formula var values come from the live suffix objects of the menu
+being set up or redrawn, not the previously EXPORTED ones (dogfood
+ga-40tbg.3).  During a re-setup `transient-current-suffixes' still
+holds the OLD menu, so `transient-args' misses a var the new setup
+seeded from its scope; `transient-get-value' reads `transient--suffixes'
+and sees it.  With no live menu, fall back to `transient-args'."
+  (let* ((recipe (gascity-sling-test--vars-recipe
+                  (vector '((name . "artifact_root"))))))
+    (cl-letf (((symbol-function 'gascity-sling-formula--scope-recipe)
+               (lambda () recipe)))
+      ;; A live menu (setup, redraw or dispatch): the live reader wins.
+      (let ((transient--suffixes '(live)))
+        (cl-letf (((symbol-function 'transient-get-value)
+                   (lambda () '("--var artifact_root=plans/seeded/")))
+                  ((symbol-function 'transient-args)
+                   (lambda (_p)
+                     (ert-fail "a live menu must be read, not the exported set"))))
+          (should (equal (gascity-sling-formula--current-values)
+                         '(("artifact_root" . "plans/seeded/"))))))
+      ;; No live menu (a suffix invoked programmatically): exported set.
+      (let ((transient--suffixes nil))
+        (cl-letf (((symbol-function 'transient-args)
+                   (lambda (_p) '("--var artifact_root=plans/seeded/")))
+                  ((symbol-function 'transient-get-value)
+                   (lambda ()
+                     (ert-fail "no live menu: use the exported set"))))
+          (should (equal (gascity-sling-formula--current-values)
+                         '(("artifact_root" . "plans/seeded/")))))))))
 
 (ert-deftest gascity-test-sling-file-dir-reads-host-localize ()
   "A typed path var read over a remote workdir is reduced to its
