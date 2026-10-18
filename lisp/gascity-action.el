@@ -68,6 +68,7 @@
 (declare-function gascity-sling--header-sentence "gascity-formula")
 (declare-function gascity-sling-formula--read-formula "gascity-formula")
 (declare-function gascity-sling-formula--current-values "gascity-formula")
+(declare-function gascity-sling-formula--transient-values "gascity-formula")
 (declare-function gascity-sling-formula--dispatch "gascity-formula")
 (declare-function gascity-sling-formula--command "gascity-formula")
 (declare-function gascity-sling-formula--show-recipe "gascity-formula")
@@ -2362,7 +2363,7 @@ argument and breaks setup)."
         (lambda ()
           (when (plist-get scope :city)
             (gascity-sling--remember
-             scope (transient-args 'gascity-sling-dispatch)))
+             scope (gascity-sling-formula--transient-values)))
           (gascity-sling--footer
            scope
            (gascity-sling--roster-cached (plist-get scope :city))

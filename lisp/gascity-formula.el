@@ -1446,9 +1446,28 @@ reads fresh instead."
   (when-let* ((name (plist-get (transient-scope) :formula)))
     (gascity-formula-recipe-cached name)))
 
+(defun gascity-sling-formula--transient-values ()
+  "Return the sling menu's live infix values (REQ-007).
+`transient-get-value' reads the live suffix objects
+\(`transient--suffixes'), which is what a menu being set up or redrawn
+holds — the format-time pass the footer's `:info' runs in.
+`transient-args' reads the EXPORTED suffix set
+\(`transient-current-suffixes'), which during a re-setup is still the
+previous menu: a var the new setup seeded from its scope then read as
+missing to the footer while the dispatch suffix validated the seeded
+value, the contradiction dogfood ga-40tbg.3 reported.  A dispatched
+suffix reads the same live objects through either reader, so the live
+one is always right when a menu exists; `transient-args' is the
+fallback for a suffix invoked with no menu (programmatically)."
+  (if transient--suffixes
+      (transient-get-value)
+    (transient-args 'gascity-sling-dispatch)))
+
 (defun gascity-sling-formula--current-values ()
   "Return the currently set formula var values as a (NAME . VALUE) alist.
-Parses the transient's `--var name=value' args, keeping only values of
+Parses the live menu's `--var name=value' args
+\(`gascity-sling-formula--transient-values': the setup/redraw or the
+dispatch reader, whichever is authoritative), keeping only values of
 the infixes generated from the scoped formula — a value set for a
 formula the user has since re-picked never leaks into the next
 dispatch.  An empty entered value counts as unset, which is dispatch's
@@ -1467,7 +1486,7 @@ required-var business (REQ-008)."
                          (let ((value (substring kv (1+ split))))
                            (and (gascity-formula--nonblank value)
                                 (cons (substring kv 0 split) value)))))))
-           (transient-args 'gascity-sling-dispatch)))))
+           (gascity-sling-formula--transient-values)))))
 
 ;;; ---- Picker, dispatch, preview -------------------------------
 

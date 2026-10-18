@@ -1997,8 +1997,8 @@ and dropping blank values (REQ-008)."
                (lambda () (list :formula "do-work")))
               ((symbol-function 'gascity-formula-recipe-cached)
                (lambda (_name) recipe))
-              ((symbol-function 'transient-args)
-               (lambda (_prefix)
+              ((symbol-function 'gascity-sling-formula--transient-values)
+               (lambda ()
                  '("--var summary_path=plans/build.md"
                    "--var stale=x"
                    "--var drain_policy="
