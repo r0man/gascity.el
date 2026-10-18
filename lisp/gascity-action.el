@@ -49,6 +49,7 @@
 (require 'gascity-types)
 (require 'gascity-compose)   ; multi-line body buffer (mail send/reply)
 (require 'gascity-domain)    ; typed at-point objects (agent/rig/order)
+(require 'gascity-formula)   ; the sling transient's var infix classes
 (require 'gascity-section)   ; gascity-agent-at-point
 (require 'gascity-tabulated) ; list refresh commands + command runners
 
@@ -1365,9 +1366,53 @@ gc read (D9): the header and footer render through this."
       (gascity-sling--derive-target
        scope (gascity-sling--roster (gascity-sling--city-dir scope))
        gascity-sling--target-memory))))
+(defun gascity-sling--carried-args ()
+  "Return the sling menu's current args minus unedited convention seeds.
+`transient-args' includes every infix that has a value, and a
+convention-seeded var (`gascity-sling-formula--var-seed') keeps its
+seed in the value slot just like a typed answer — so a re-setup would
+carry it as an explicit `--var NAME=VALUE' and the next scope's seed
+could never replace it.  The live menu proved it (ga-40tbg.6): after
+`A' picked a work bead whose title should re-seed `artifact_root'
+\(`plans/<slug>/'), the seed stayed the formula-name fallback
+`plans/<formula>/' frozen from the formula-pick setup.  A var still
+equal to the seed it was built with is therefore dropped here and the
+new setup re-derives it from the new scope; a var the user edited —
+and every non-var routing flag — is kept.  Pure over live menu state."
+  (let ((suffixes (and (eq transient-current-command 'gascity-sling-dispatch)
+                       transient--suffixes)))
+    (if (null suffixes)
+        ;; No live menu to compare against (a programmatic call, a unit
+        ;; test): nothing can be shown to be an unedited seed.
+        (transient-args 'gascity-sling-dispatch)
+      ;; Read the live suffix objects, not `transient-args'' exported set:
+      ;; at the footer's format time during a re-setup the exported set is
+      ;; still the previous menu (dogfood ga-40tbg.3), which would make the
+      ;; snapshot pair the new scope with the old seeds.
+      (let ((args (transient-get-value))
+            (seeds (delq nil
+                         (mapcar
+                          (lambda (obj)
+                            (and (cl-typep obj 'gascity-sling-formula--var-option)
+                                 (cons (oref obj var-name) (oref obj var-seed))))
+                          suffixes))))
+        (cl-remove-if
+         (lambda (arg)
+           (when (and (stringp arg) (string-prefix-p "--var " arg))
+             (let* ((kv (substring arg (length "--var ")))
+                    (split (string-search "=" kv)))
+               (and split
+                    (member (cons (substring kv 0 split)
+                                  (substring kv (1+ split)))
+                            seeds)))))
+         args)))))
+
 (defun gascity-sling--resetup (scope)
-  "Set the sling menu up again with SCOPE and the current values; remember both."
-  (let ((value (transient-args 'gascity-sling-dispatch)))
+  "Set the sling menu up again with SCOPE and the current values; remember both.
+The values are `gascity-sling--carried-args': a var left at its
+convention seed is not carried, so the new scope's seed re-derives
+\(ga-40tbg.6), while an edited value survives the re-setup."
+  (let ((value (gascity-sling--carried-args)))
     (gascity-sling--remember scope value)
     (transient-setup 'gascity-sling-dispatch nil nil :scope scope :value value)))
 
@@ -2131,8 +2176,10 @@ S-2), so a later `S s' slings exactly what was previewed."
           (gascity-sling--preview-fill-plan
            buf (or reason "(no routing plan — see Validation above)")))))
     ;; What the menu held is remembered for the city (bug S-2): a
-    ;; later `S s' slings exactly what was previewed.
-    (gascity-sling--remember scope args)
+    ;; later `S s' slings exactly what was previewed.  A var left at its
+    ;; convention seed is not remembered, so `S' re-entry re-derives it
+    ;; from the scope instead of restoring a frozen seed (ga-40tbg.6).
+    (gascity-sling--remember scope (gascity-sling--carried-args))
     scope))
 
 (transient-define-suffix gascity-sling-dispatch-full-preview (args)
@@ -2364,7 +2411,7 @@ argument and breaks setup)."
         (lambda ()
           (when (plist-get scope :city)
             (gascity-sling--remember
-             scope (gascity-sling-formula--transient-values)))
+             scope (gascity-sling--carried-args)))
           (gascity-sling--footer
            scope
            (gascity-sling--roster-cached (plist-get scope :city))
@@ -2519,7 +2566,7 @@ meanwhile."
             (condition-case nil
                 (transient-setup 'gascity-sling-dispatch nil nil
                                  :scope (oref prefix scope)
-                                 :value (transient-args 'gascity-sling-dispatch))
+                                 :value (gascity-sling--carried-args))
               (error nil)))
           (message "Formulas refreshed")))))))
 
