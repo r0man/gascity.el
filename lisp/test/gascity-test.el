@@ -1426,6 +1426,112 @@ string option.  A formula without vars renders no How section.
                (gascity-test--formula-with-steps nil)
                gascity-sling--reserved-keys)))
 
+(ert-deftest gascity-test-formula-sling-var-children-caps-inline-overflow ()
+  "A formula whose vars outnumber `gascity-sling--max-inline-vars'
+keeps only the cap inline (plus a `…  (N more vars)' hint) and puts
+the rest in a top-level, `:hide'-able overflow group.  Every var
+keeps its deterministic key and stays in the menu, so a many-var
+formula cannot push the Actions group off a short terminal
+(ga-40tbg.5)."
+  (let* ((names '("alpha" "bravo" "charlie" "delta" "echo" "foxtrot"
+                  "golf" "hotel" "india" "juliet"))
+         (formula (gascity-test--formula-with-vars
+                   (vconcat (mapcar (lambda (name) (list (cons 'name name)))
+                                    names))))
+         (children (gascity-sling-formula--var-children
+                    formula gascity-sling--reserved-keys))
+         (overflow (gascity-sling-formula--var-overflow-children
+                    formula gascity-sling--reserved-keys))
+         (extra (- (length names) gascity-sling--max-inline-vars)))
+    (should (vectorp children))
+    (should (equal (aref children 0) "How — do-work vars"))
+    ;; The inline group holds the cap in declared order, then the hint.
+    (should (= (length children) (+ gascity-sling--max-inline-vars 2)))
+    (let ((info (aref children (1- (length children)))))
+      (should (eq (car-safe info) :info))
+      (should (string-match-p
+               (format "%d more vars" extra)
+               (cadr info))))
+    ;; The overflow is the custom collapsed group with the remainder.
+    (should (vectorp overflow))
+    (should (equal (aref overflow 0) (format "…  (%d more vars)" extra)))
+    (should (= (length overflow) (+ extra 3)))
+    (should (eq (aref overflow 2) 'gascity-sling--var-overflow-group))
+    ;; Keys are unique across inline and overflow, and avoid reserved.
+    (let ((keys (mapcar #'car (seq-concatenate 'list (seq-subseq children 1 -1)
+                                               (seq-drop overflow 3)))))
+      (should (= (length keys) (length names)))
+      (should (equal keys (delete-dups (copy-sequence keys))))
+      (dolist (key keys)
+        (should-not (member key gascity-sling--reserved-keys))))))
+
+(ert-deftest gascity-test-sling-overflow-group-collapses-by-default ()
+  "The How overflow renders as one `…  (N more vars)' row by default,
+draws its live infixes under transient's all-levels toggle, and never
+drops their `--var' values from the dispatch (ga-40tbg.5)."
+  (let* ((names '("artifact_root" "context_path" "requirements_path"
+                  "plan_path" "decomposition_path" "drain_policy"
+                  "interaction_mode" "review_mode" "implementation_target"
+                  "planning_formula" "decomposition_formula"
+                  "implementation_formula" "implementation_item_formula"
+                  "code_review_formula" "review_fix_formula"
+                  "max_iterations" "push" "open_pr"))
+         (formula (gascity-test--formula-with-vars
+                   (vconcat (mapcar (lambda (name) (list (cons 'name name)))
+                                    names))))
+         (scope (list :city "/city/" :formula "do-work"
+                      :work "bl-5ja" :target "mayor"))
+         (saved (list transient--layout transient--prefix transient--suffixes
+                      transient-current-prefix transient-current-command
+                      transient-current-suffixes transient--all-levels-p
+                      overriding-terminal-local-map
+                      pre-command-hook post-command-hook)))
+    (unwind-protect
+        (gascity-test-with-store-stubs _reads _actions
+          (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                     (lambda (_name) formula))
+                    ((symbol-function 'gascity-context-city-name)
+                     (lambda (&optional _dir) "testcity"))
+                    ((symbol-function 'transient--show) #'ignore))
+            (let ((render (lambda ()
+                            (transient-setup 'gascity-sling-dispatch
+                                             nil nil :scope scope)
+                            (with-temp-buffer
+                              (transient--insert-groups)
+                              (buffer-string)))))
+              ;; Collapsed: one `…' row, but every var infix is live.
+              (let ((transient--all-levels-p nil))
+                (let ((collapsed (funcall render)))
+                  (should (string-match-p "more vars" collapsed))
+                  (should-not (string-match-p "review_fix_formula" collapsed)))
+                (let ((vars (seq-filter
+                             (lambda (suffix)
+                               (eq (oref suffix command)
+                                   'gascity-sling-formula--set-var))
+                             transient--suffixes)))
+                  (should (= (length vars) (length names)))
+                  (should-not (seq-some (lambda (suffix) (oref suffix inactive))
+                                        vars))))
+              ;; All levels: the hidden rows come back.
+              (let ((transient--all-levels-p t))
+                (should (string-match-p "review_fix_formula"
+                                        (funcall render)))))))
+      (setq transient--layout (nth 0 saved)
+            transient--prefix (nth 1 saved)
+            transient--suffixes (nth 2 saved)
+            transient-current-prefix (nth 3 saved)
+            transient-current-command (nth 4 saved)
+            transient-current-suffixes (nth 5 saved)
+            transient--all-levels-p (nth 6 saved)
+            ;; `transient-setup' pushes its keymap onto
+            ;; `overriding-terminal-local-map' even with `transient--show'
+            ;; stubbed; a later test's `key-binding' would otherwise see
+            ;; the sling keys (`q' → `transient-quit-one', ga-40tbg.5).
+            overriding-terminal-local-map (nth 7 saved)
+            pre-command-hook (nth 8 saved)
+            post-command-hook (nth 9 saved))
+      (advice-remove 'recursive-edit #'transient--recursive-edit))))
+
 (ert-deftest gascity-test-formula-sling-var-children-nil-formula-degrades ()
   "The transient's initial setup (no formula picked yet) degrades to no
 Variables section instead of crashing on the nil recipe (REQ-016;

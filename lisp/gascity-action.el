@@ -72,6 +72,7 @@
 (declare-function gascity-sling-formula--command "gascity-formula")
 (declare-function gascity-sling-formula--show-recipe "gascity-formula")
 (declare-function gascity-sling-formula--var-children "gascity-formula")
+(declare-function gascity-sling-formula--var-overflow-children "gascity-formula")
 (declare-function gascity-formula--nonblank "gascity-formula")
 (declare-function gascity-sling-formula--work-title-at-point "gascity-formula")
 (declare-function gascity-formula-recipe-cached "gascity-formula")
@@ -2418,6 +2419,13 @@ the header (ga-4ia4)."
      ;; What and Who; absent until a formula with vars is picked
      ;; (REQ-A/REQ-B).
      (when-let* ((group (gascity-sling-formula--var-children
+                         recipe gascity-sling--reserved-keys seed-scope)))
+       (list group))
+     ;; The overflow vars, a top-level group so transient honors its
+     ;; `:hide' (the How group is a plain subgroup container): a
+     ;; many-var formula collapses here instead of pushing the
+     ;; Actions group off a short terminal (ga-40tbg.5).
+     (when-let* ((group (gascity-sling-formula--var-overflow-children
                          recipe gascity-sling--reserved-keys seed-scope)))
        (list group))
      (list
