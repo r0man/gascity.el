@@ -1256,8 +1256,43 @@ degrades to no Variables section (REQ-016)."
                formula reserved scope)))
     (mapcar (lambda (a) (nth 1 a)) assignments)))
 
+(defconst gascity-sling--max-inline-vars 6
+  "Number of How-group vars rendered before the overflow group.
+A full-lifecycle formula (build-basic and friends) declares close to
+twenty vars; one transient row each pushed the Actions group (`s P
+r g x q') off the common 80x23 terminal, so the How group shows only
+the first `gascity-sling--max-inline-vars' of them and hands the
+rest to `gascity-sling-formula--var-overflow-children'.  The
+collapsed vars stay live infixes, so their keys and seeded/default
+values still dispatch; transient's `C-x a' (show all suffix levels)
+expands the overflow group in place (ga-40tbg.5).")
+
+(defun gascity-sling-formula--var-infix-split (formula reserved &optional scope)
+  "Split FORMULA's variable infixes into (MAIN . OVERFLOW).
+RESERVED and SCOPE are passed through to the deterministic key
+assignment.  MAIN keeps, in declared order, the natural-key vars up
+to `gascity-sling--max-inline-vars'; OVERFLOW takes the rest —
+later natural-key vars and every var whose key fell to the
+positional `<char><digit>' stage.  Every spec keeps the key the
+shared assignment gave it.  Nil when FORMULA declares no vars."
+  (when-let* ((assignments
+               (gascity-sling-formula--var-infix-assignments
+                formula reserved scope)))
+    (let ((main nil)
+          (overflow nil)
+          (inline 0))
+      (dolist (assignment assignments)
+        (when-let* ((spec (nth 1 assignment)))
+          (if (and (nth 2 assignment)
+                   (< inline gascity-sling--max-inline-vars))
+              (progn
+                (push spec main)
+                (setq inline (1+ inline)))
+            (push spec overflow))))
+      (cons (nreverse main) (nreverse overflow)))))
+
 (defun gascity-sling-formula--var-children (formula reserved &optional scope)
-  "Return the raw \"Variables\" group spec for FORMULA, or nil.
+  "Return the raw inline \"Variables\" group spec for FORMULA, or nil.
 RESERVED is inherited by the per-var key assignment; SCOPE (optional)
 grows the per-var seeds (REQ-006: the `plans/<slug>/' artifact_root
 seed from the work bead's title, the chosen target's rig for
@@ -1265,33 +1300,68 @@ seed from the work bead's title, the chosen target's rig for
 titled `How — <formula> vars' (mockup §4) so a re-pick is
 visible in the section heading.  A formula without vars renders no
 How section (REQ-004).
-A var set that exhausts the natural key candidates — the deterministic
-assignment falls to its positional `<char><digit>' stage — renders
-those vars grouped under a `…  (N more vars)' subgroup instead of
-inline rows: the mockups' grouped-overflow fallback (REQ-006).  Every
-var keeps its deterministic key and stays settable; only the placement
-groups."
-  (when-let* ((assignments
-              (gascity-sling-formula--var-infix-assignments
-               formula reserved scope)))
-    (let ((main (delq nil (mapcar (lambda (a) (and (nth 2 a) (nth 1 a)))
-                                  assignments)))
-          (overflow (delq nil (mapcar (lambda (a) (and (null (nth 2 a))
-                                                       (nth 1 a)))
-                                      assignments))))
-      (if (null overflow)
-          (apply #'vector
-                 (format "How — %s vars"
-                         (or (gascity-formula-name formula) "formula"))
-                 main)
-        (apply #'vector
-               (format "How — %s vars"
-                       (or (gascity-formula-name formula) "formula"))
-               :class 'transient-subgroups
-               (list (apply #'vector main)
-                     (apply #'vector
-                            (format "…  (%d more vars)" (length overflow))
-                            overflow)))))))
+The group renders at most `gascity-sling--max-inline-vars' variable
+rows and carries a `…  (N more vars)' hint when the rest moved to
+`gascity-sling-formula--var-overflow-children' — either because the
+formula declares more vars than the cap or because the deterministic
+assignment fell to its positional `<char><digit>' stage (REQ-006).
+Every var keeps its deterministic key and stays settable; only the
+placement groups (ga-40tbg.5)."
+  (when-let* ((split (gascity-sling-formula--var-infix-split
+                      formula reserved scope)))
+    (let ((main (car split))
+          (overflow (cdr split)))
+      (apply #'vector
+             (format "How — %s vars"
+                     (or (gascity-formula-name formula) "formula"))
+             (append main
+                     (when overflow
+                       (list
+                        (list :info
+                              (format "…  (%d more vars — C-x a)"
+                                      (length overflow))))))))))
+
+(defclass gascity-sling--var-overflow-group (transient-column) ()
+  "Collapsed overflow group for a formula's How vars.
+A `transient-column' whose child infixes stay initialized and
+active, so their keys and the seeded/default `--var' values they
+carry still reach the dispatch; by default the group draws only its
+`…  (N more vars)' description.  Transient's `C-x a' (show all
+suffix levels) draws the infixes in place (ga-40tbg.5).
+The render is customized because the menu's whole layout is one
+top-level `transient-subgroups' (the sling prefix vector), whose
+insert method recurses into its subgroups directly — a child's
+`:hide' slot is never consulted, and a `:level' would drop the
+infixes from `transient-args' instead of only drawing less.")
+
+(cl-defmethod transient--insert-group ((group gascity-sling--var-overflow-group))
+  "Draw GROUP's live infixes only when all transient levels are shown.
+The `:around' method on `transient-group' already inserted GROUP's
+description; the default render inserts nothing, so the collapsed
+group is just that one `…  (N more vars)' row."
+  (when transient--all-levels-p
+    (cl-call-next-method group)))
+
+(defun gascity-sling-formula--var-overflow-children (formula reserved &optional scope)
+  "Return the collapsible overflow group for FORMULA's variables, or nil.
+RESERVED and SCOPE are passed through to the deterministic key
+assignment (their roles match `gascity-sling-formula--var-children').
+A sibling group of `gascity-sling-formula--var-children': the How
+group keeps a short `…' hint and this group holds the vars it
+pushed out, so a many-var formula cannot push the Actions group off
+a short terminal (ga-40tbg.5).  The group is a
+`gascity-sling--var-overflow-group', which keeps every overflow
+infix live — only its default render is suppressed — so the keys
+and the seeded/default `--var' values still reach the dispatch;
+transient's `C-x a' (show all suffix levels) reveals the rows in
+place."
+  (when-let* ((split (gascity-sling-formula--var-infix-split
+                      formula reserved scope))
+              (overflow (cdr split)))
+    (apply #'vector
+           (format "…  (%d more vars)" (length overflow))
+           :class 'gascity-sling--var-overflow-group
+           overflow)))
 
 ;;; ---- Scope seeds and the completion workdir (REQ-006) --------
 

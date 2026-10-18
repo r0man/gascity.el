@@ -503,7 +503,14 @@ relative to the target rig’s workdir, directory completion for
 `*_target`, digit validation for numerics, restricted choices for
 enum/methodology/pattern vars, bool toggles — heuristics overridable
 per var via `gascity-sling-var-readers`, anything unrecognized fails
-soft to string) · **Actions** (`s P r g x q`). Routing flags
+soft to string). A formula with more vars than
+`gascity-sling--max-inline-vars` renders only that many rows plus a
+`…  (N more vars — C-x a)` hint; the remainder rides a collapsed
+sibling group that keeps every infix live (so its key and seeded
+value still dispatch) and is revealed by transient’s `C-x a` (show
+all suffix levels) — a many-var formula must not push the Actions
+group off a 23-line terminal (ga-40tbg.5) · **Actions**
+(`s P r g x q`). Routing flags
 (`-c -a -n -m -t`) render **only on the plain shape** and are consumed
 only by the plain path, as before.
 

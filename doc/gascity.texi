@@ -2538,7 +2538,12 @@ header says so, and @kbd{s} prompts for a target instead of guessing.
 @cindex variables, formula
 
 The How group appears full width once a formula is picked: one infix
-per declared variable, titled @samp{How — @var{formula} vars}.  Each
+per declared variable, titled @samp{How — @var{formula} vars}.  A
+formula that declares more variables than
+@code{gascity-sling--max-inline-vars} renders only that many rows and
+folds the rest under a @samp{…  (@var{N} more vars)} hint; the folded
+variables stay live (their keys and seeded values still dispatch) and
+@kbd{C-x a} expands the rows in place.  Each
 variable reads with the reader it calls for, so an illegal value is
 unrepresentable at entry:
 
@@ -2754,7 +2759,9 @@ A   Work (open beads + convoys; C-u for freeform text; point pre-seeds)
 f   Formula (with work the run is targeted; without it targetless)
 T   Target (agents grouped by rig; the derived default heads the header)
 --  one typed infix per declared formula var (file, directory, agent,
-    numeric, choice, bool; keys deterministic, outside the reserved set)
+    numeric, choice, bool; keys deterministic, outside the reserved set;
+    vars beyond the inline cap fold under an ellipsis row, live but
+    hidden until C-x a)
 s   Launch (anytime — the preview is never a gate)
 P   Full preview buffer (validation, recipe DAG, routing plan)
 r   Recipe preview (server-side substituted, as today)
