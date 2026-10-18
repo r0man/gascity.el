@@ -2271,7 +2271,10 @@ cold memo fills in for the next prompt; \"city\" opens the cockpit."
 (defun gascity-jump-beads ()
   "Open beads.el for the rig at point, else chosen: a rig or the city (`j b').
 Candidates come from the rig memo only (§8.5), refreshed in the
-background for the next prompt."
+background for the next prompt.  A blank answer (RET on an empty prompt)
+selects the city: an empty string is truthy in Elisp, so a rig named \"\"
+would otherwise reach `gascity-rig-beads' and report a bogus unresolved
+store (ga-40tbg.2)."
   (interactive)
   (gascity-jump--scoped
    (lambda ()
@@ -2284,7 +2287,9 @@ background for the next prompt."
                                                   (gascity-dashboard--rig-store-names
                                                    (gascity-rigs-cached))))
                                    nil t)))
-                      (and (not (equal choice "city")) choice)))))
+                      (and (not (equal choice "city"))
+                           (not (equal choice ""))
+                           choice)))))
        (if rig
            (gascity-rig-beads rig)
          (let ((store (gascity-beads--city-store)))

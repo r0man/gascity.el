@@ -322,6 +322,44 @@ directory, whatever buffer is current when the callback fires (QA F5)."
       (call-interactively #'gascity-jump-beads)
       (should (equal offered '("city" "beads.el"))))))
 
+(ert-deftest gascity-test-jump-beads-empty-choice-is-city ()
+  "RET on an empty `j b' prompt opens the city beads, never a rig named "".
+An empty completion is truthy in Elisp, so it must be normalized to the
+city before it reaches `gascity-rig-beads' (ga-40tbg.2)."
+  (let (rig-arg city-args)
+    (cl-letf (((symbol-function 'gascity-rig-at-point) (lambda () nil))
+              ((symbol-function 'gascity-rig-names-for-prompt) (lambda () nil))
+              ((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+              ((symbol-function 'gascity-dashboard--rig-store-names)
+               (lambda (_rigs) nil))
+              ((symbol-function 'completing-read) (lambda (&rest _) ""))
+              ((symbol-function 'gascity-rig-beads)
+               (lambda (rig) (setq rig-arg rig)))
+              ((symbol-function 'gascity-beads--city-store)
+               (lambda (&optional _dir) "/city/.beads/"))
+              ((symbol-function 'beads-dashboard)
+               (lambda (&rest args) (setq city-args args))))
+      (call-interactively #'gascity-jump-beads))
+    (should-not rig-arg)
+    (should (equal (plist-get city-args :directory) "/city/.beads/"))))
+
+(ert-deftest gascity-test-jump-beads-choice-routes-to-rig ()
+  "A real `j b' choice still opens that rig's board, not the city (ga-40tbg.2)."
+  (let (rig-arg city-called)
+    (cl-letf (((symbol-function 'gascity-rig-at-point) (lambda () nil))
+              ((symbol-function 'gascity-rig-names-for-prompt) (lambda () '("beads.el")))
+              ((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+              ((symbol-function 'gascity-dashboard--rig-store-names)
+               (lambda (_rigs) '("beads.el")))
+              ((symbol-function 'completing-read) (lambda (&rest _) "beads.el"))
+              ((symbol-function 'gascity-rig-beads)
+               (lambda (rig) (setq rig-arg rig)))
+              ((symbol-function 'gascity-beads--city-store)
+               (lambda (&optional _dir) (setq city-called t))))
+      (call-interactively #'gascity-jump-beads))
+    (should (equal rig-arg "beads.el"))
+    (should-not city-called)))
+
 (ert-deftest gascity-test-context-rig-name-from-memo ()
   "The contextual rig comes from the rig memo by path prefix, never gc
 \(QA F7: `gc rig status' without a name is rejected)."
