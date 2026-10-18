@@ -2421,10 +2421,10 @@ the header (ga-4ia4)."
      (when-let* ((group (gascity-sling-formula--var-children
                          recipe gascity-sling--reserved-keys seed-scope)))
        (list group))
-     ;; The overflow vars, a top-level group so transient honors its
-     ;; `:hide' (the How group is a plain subgroup container): a
-     ;; many-var formula collapses here instead of pushing the
-     ;; Actions group off a short terminal (ga-40tbg.5).
+     ;; The overflow vars, a collapsed sibling group: the How group is
+     ;; a plain subgroup container whose whole menu is one top-level
+     ;; `transient-subgroups', so the overflow hides through its own
+     ;; group class instead of a `:hide' slot (ga-40tbg.5).
      (when-let* ((group (gascity-sling-formula--var-overflow-children
                          recipe gascity-sling--reserved-keys seed-scope)))
        (list group))

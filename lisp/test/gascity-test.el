@@ -1429,10 +1429,9 @@ string option.  A formula without vars renders no How section.
 (ert-deftest gascity-test-formula-sling-var-children-caps-inline-overflow ()
   "A formula whose vars outnumber `gascity-sling--max-inline-vars'
 keeps only the cap inline (plus a `…  (N more vars)' hint) and puts
-the rest in a top-level, `:hide'-able overflow group.  Every var
-keeps its deterministic key and stays in the menu, so a many-var
-formula cannot push the Actions group off a short terminal
-(ga-40tbg.5)."
+the rest in a collapsed overflow group.  Every var keeps its
+deterministic key and stays in the menu, so a many-var formula
+cannot push the Actions group off a short terminal (ga-40tbg.5)."
   (let* ((names '("alpha" "bravo" "charlie" "delta" "echo" "foxtrot"
                   "golf" "hotel" "india" "juliet"))
          (formula (gascity-test--formula-with-vars
