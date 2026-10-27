@@ -2820,7 +2820,8 @@ authority.
 gascity: @kbd{E} opens the cockpit, @kbd{J} the rig dashboard at point,
 @kbd{K} a chosen rig dashboard, @kbd{A} the agents table and @kbd{Q}
 the gascity sling menu.  Bead action bars gain an additive @kbd{V}
-cockpit entry; gascity does not shadow a beads.el key.  A beads mutation
+cockpit entry, bound in both bead maps; gascity does not shadow a
+beads.el key.  A beads mutation
 (closing, claiming or updating a bead) refreshes gascity's cached
 bead-derived views once.
 

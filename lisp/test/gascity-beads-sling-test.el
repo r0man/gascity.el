@@ -32,6 +32,7 @@
 (require 'gascity-test-helpers)
 (require 'beads-menu)
 (require 'beads-actions)
+(require 'transient)
 
 (declare-function gascity-beads-sling-register "gascity-beads-sling" ())
 (declare-function gascity-beads-sling-targets "gascity-beads-sling" ())
@@ -522,11 +523,12 @@ The launch itself is captured by the enclosing
         (should-not messages)
         (gascity-beads-sling-test--succeed
          launched gascity-beads-sling-test--result))
+      ;; Literal, not the helper: asserting the helper against itself
+      ;; hid the missing `sling' entry in `gascity-action--done-verbs'
+      ;; (review F1, AC-B3).
       (should (equal messages
-                     (list (gascity-action--success-text
-                            (plist-get launched :command)
-                            gascity-beads-sling-test--target-name
-                            gascity-beads-sling-test--result)))))))
+                     (list (format "Slung %s"
+                                   gascity-beads-sling-test--target-name)))))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-echo-formula ()
   "The `on' and formula shapes echo through the launch handler."
@@ -791,11 +793,93 @@ beads.el's `S', `RET' or `TAB'."
                  '(("V" . gascity-dashboard))))
   (should (equal (beads-actions-provider-actions :show)
                  '(("V" . gascity-dashboard))))
+  ;; The advertised provider key is bound in both bead maps: beads.el
+  ;; only prints provider entries, so an unbound `V' would say
+  ;; "undefined" (R4).
+  (should (eq (lookup-key beads-show-mode-map (kbd "V"))
+              #'gascity-dashboard))
+  (should (eq (lookup-key beads-list-mode-map (kbd "V"))
+              #'gascity-dashboard))
   (should-not (beads-actions-provider-actions :status))
   (should-not (beads-actions-provider-actions :dashboard))
   (should-not (assoc "S" (beads-actions-provider-actions :list)))
   (should-not (assoc "RET" (beads-actions-provider-actions :list)))
   (should-not (assoc "TAB" (beads-actions-provider-actions :list))))
+
+(defun gascity-beads-sling-test--clear-transient-state ()
+  "Clear the transient state `transient-setup' leaves behind in batch.
+Without this the transient's overriding keymap outlives the test and
+hijacks later `key-binding' assertions (beads.el has the same helper)."
+  (when (boundp 'transient--prefix)
+    (setq transient--prefix nil))
+  (when (boundp 'transient--suffixes)
+    (setq transient--suffixes nil))
+  (when (boundp 'transient-current-prefix)
+    (setq transient-current-prefix nil))
+  (when (boundp 'transient-current-suffixes)
+    (setq transient-current-suffixes nil))
+  (when (boundp 'transient-current-command)
+    (setq transient-current-command nil))
+  (when (boundp 'transient--exitp)
+    (setq transient--exitp nil))
+  (when (boundp 'transient--stack)
+    (setq transient--stack nil))
+  (when (boundp 'transient--window)
+    (setq transient--window nil))
+  (when (boundp 'transient--showp)
+    (setq transient--showp nil))
+  (when (boundp 'overriding-terminal-local-map)
+    (setq overriding-terminal-local-map nil)))
+
+(defun gascity-beads-sling-test--rendered-groups (objs)
+  "Return every transient group object reachable from OBJS, depth first."
+  (seq-mapcat (lambda (obj)
+                (if (cl-typep obj 'transient-group)
+                    (cons obj (gascity-beads-sling-test--rendered-groups
+                               (oref obj suffixes)))
+                  nil))
+              objs))
+
+(ert-deftest gascity-test-beads-sling-city-group-renders ()
+  "The `[City]' group renders inside the real `beads-dispatch' menu.
+The provider only inspected by `beads-menu-provider-groups' cannot
+catch a menu that fails to open, so parse the actual prefix and read
+the rendered layout (R4).  AC-B10's rendered half is blocked on the
+beads.el fix that parses provider groups (be-cnn7f): until it lands,
+`transient-setup' raises and this test skips rather than fails."
+  (gascity-beads-sling-register)
+  (unwind-protect
+      (progn
+        (condition-case err
+            (transient-setup 'beads-dispatch)
+          (error (ert-skip
+                  (format "beads-dispatch cannot parse provider groups (be-cnn7f): %S"
+                          err))))
+        (with-current-buffer " *transient*"
+          (should (string-match-p "City" (buffer-string))))
+        (let ((city (seq-find (lambda (group)
+                                (equal (ignore-errors
+                                         (oref group description))
+                                       "City"))
+                              (gascity-beads-sling-test--rendered-groups
+                               transient--layout))))
+          (should city)
+          (should (equal (mapcar (lambda (suffix)
+                                   (and (cl-typep suffix 'transient-suffix)
+                                        (oref suffix key)))
+                                 (oref city suffixes))
+                         '("E" "J" "K" "A" "Q")))
+          (should (equal (mapcar (lambda (suffix)
+                                   (and (cl-typep suffix 'transient-suffix)
+                                        (oref suffix command)))
+                                 (oref city suffixes))
+                         '(gascity-dashboard
+                           gascity-rig-dashboard-at-point
+                           gascity-rig-dashboard
+                           gascity-agents
+                           gascity-sling-dispatch)))))
+    (ignore-errors (transient-quit-all))
+    (gascity-beads-sling-test--clear-transient-state)))
 
 ;;; Post-mutation refresh (plan §B5b, REQ-008)
 

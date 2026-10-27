@@ -95,6 +95,8 @@
 (defvar beads-action-providers nil)
 (defvar beads-after-action-functions nil)
 (defvar beads-menu-providers nil)
+(defvar beads-list-mode-map)
+(defvar beads-show-mode-map)
 (defvar beads-sling-target-functions)
 (defvar beads-sling-validators)
 
@@ -316,6 +318,18 @@ cockpit and never shadows a beads.el key (notably not its `S')."
   (pcase context
     ((or :list :show) '(("V" . gascity-dashboard)))
     (_ nil)))
+
+(defun gascity-beads-sling--bind-actions ()
+  "Bind the advertised `V' cockpit action in beads.el's bead maps.
+`beads-action-providers' only advertises provider keys; beads.el
+prints them in the action bar but binds none of them, so the advertised
+`V' would otherwise say undefined.  `V' is free in both maps, so the
+binding is additive and shadows nothing (in particular not `S', `RET'
+or `TAB')."
+  (when (boundp 'beads-show-mode-map)
+    (define-key beads-show-mode-map (kbd "V") #'gascity-dashboard))
+  (when (boundp 'beads-list-mode-map)
+    (define-key beads-list-mode-map (kbd "V") #'gascity-dashboard)))
 
 ;;; Post-mutation refresh (plan §B5b, REQ-008)
 
@@ -642,6 +656,7 @@ or process spawn; only the registration data structures change."
   (add-hook 'beads-sling-validators #'gascity-beads-sling-validate)
   (add-to-list 'beads-menu-providers #'gascity-beads-sling--menu-group)
   (add-hook 'beads-action-providers #'gascity-beads-sling-actions)
+  (gascity-beads-sling--bind-actions)
   (add-hook 'beads-after-action-functions #'gascity-beads-sling--after-action)
   (setq gascity-beads-sling--registered t))
 
