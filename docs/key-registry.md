@@ -54,6 +54,36 @@ everywhere:
 verbs** in any view that can also show a bead. gascity never rebinds one
 of them to a non-bead verb there.
 
+In **beads.el's own view buffers** `S` is beads.el's `S`:
+`beads-sling-for-issue` opens the `beads-sling` transient seeded with the
+issue at point.  gascity contributes no competing binding there; its
+registration module adds only the `[City]` group to `beads-dispatch` and
+the additive `V` cockpit entry to the bead action bars.  The `gc`
+targets, the `gc` backend and the formula/vars passthrough appear
+because gascity is loaded, not because gascity binds a key in a beads
+buffer.  gascity's own views keep binding `S` to
+`gascity-sling-dispatch`; both menus dispatch the same `gc sling`
+command.
+
+## The `[City]` group (delegated `beads-dispatch`)
+
+gascity appends exactly one group to beads.el's `beads-dispatch` menu.
+Its keys are gascity's, not beads.el's:
+
+| Key | Meaning |
+|---|---|
+| `E` | cockpit (`gascity-dashboard`) |
+| `J` | rig dashboard at point (`gascity-rig-dashboard-at-point`) |
+| `K` | rig dashboard, chosen (`gascity-rig-dashboard`) |
+| `A` | agents table (`gascity-agents`) |
+| `Q` | the gascity sling menu (`gascity-sling-dispatch`) |
+
+Conflict audit (P4): beads.el's own `beads-dispatch` keys are
+`l c / i u x o e r b d # C s m G w S T a F v D H R Y t X L k . W ! * g q`,
+so none of `E J K A Q` collides.  The bead action bars get one additive
+`V` cockpit entry on `:list` and `:show`; it shadows nothing, and in
+particular never `S`, `RET` or `TAB`.
+
 ## The `a` agent/rig prefix (F1)
 
 In any gascity view that can also show beads — the rig dashboard and the
