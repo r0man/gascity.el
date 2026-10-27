@@ -844,17 +844,13 @@ hijacks later `key-binding' assertions (beads.el has the same helper)."
   "The `[City]' group renders inside the real `beads-dispatch' menu.
 The provider only inspected by `beads-menu-provider-groups' cannot
 catch a menu that fails to open, so parse the actual prefix and read
-the rendered layout (R4).  AC-B10's rendered half is blocked on the
-beads.el fix that parses provider groups (be-cnn7f): until it lands,
-`transient-setup' raises and this test skips rather than fails."
+the rendered layout (R4).  This needs the beads.el fix that parses
+provider groups (be-cnn7f): without it `transient-setup' signals and
+this test fails rather than hiding the defect."
   (gascity-beads-sling-register)
   (unwind-protect
       (progn
-        (condition-case err
-            (transient-setup 'beads-dispatch)
-          (error (ert-skip
-                  (format "beads-dispatch cannot parse provider groups (be-cnn7f): %S"
-                          err))))
+        (transient-setup 'beads-dispatch)
         (with-current-buffer " *transient*"
           (should (string-match-p "City" (buffer-string))))
         (let ((city (seq-find (lambda (group)
