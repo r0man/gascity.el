@@ -17,6 +17,8 @@
 (require 'cl-lib)
 (require 'gascity)
 (require 'gascity-test-helpers)
+(require 'beads-menu)
+(require 'beads-actions)
 
 (declare-function gascity-beads-sling-register "gascity-beads-sling" ())
 (declare-function gascity-beads-sling-targets "gascity-beads-sling" ())
@@ -24,6 +26,8 @@
 (declare-function gascity-beads-sling-actions "gascity-beads-sling" (context))
 (declare-function gascity-beads-sling--menu-group "gascity-beads-sling" ())
 (declare-function beads-sling-backend-get "beads-sling" (name))
+(declare-function beads-menu-provider-groups "beads-menu" ())
+(declare-function beads-actions-provider-actions "beads-actions" (context))
 
 (defvar gascity-beads-sling--registered)
 
@@ -745,3 +749,37 @@ from the fixture, and the recipe cache starts empty."
                      (list gascity-beads-sling-test--cross-store-warning
                            gascity-beads-sling-test--missing-vars-warning)))
       (should (= 2 (length (split-string warning "; " t)))))))
+
+(ert-deftest gascity-test-beads-sling-menu-and-actions ()
+  "The `[City]' group is registered once and the actions are additive.
+The five group keys are the reviewed free set from the plan (P4); the
+beads.el `beads-dispatch' keys in the same menu are
+l c / i u x o e r b d # C s m G w S T a F v D H R Y t X L k . W ! * g q,
+so none of E J K A Q collides.  `V' is additive and never redefines
+beads.el's `S', `RET' or `TAB'."
+  (gascity-beads-sling-register)
+  (gascity-beads-sling-register)
+  (let* ((groups (beads-menu-provider-groups))
+         (city (seq-filter (lambda (group)
+                             (and (vectorp group)
+                                  (equal (aref group 0) "City")))
+                           groups)))
+    (should (= 1 (length city)))
+    (let* ((group (car city))
+           (suffixes (seq-drop group 1)))
+      (should (equal (mapcar #'car suffixes) '("E" "J" "K" "A" "Q")))
+      (should (equal (mapcar (lambda (suffix) (nth 2 suffix)) suffixes)
+                     '(gascity-dashboard
+                       gascity-rig-dashboard-at-point
+                       gascity-rig-dashboard
+                       gascity-agents
+                       gascity-sling-dispatch)))))
+  (should (equal (beads-actions-provider-actions :list)
+                 '(("V" . gascity-dashboard))))
+  (should (equal (beads-actions-provider-actions :show)
+                 '(("V" . gascity-dashboard))))
+  (should-not (beads-actions-provider-actions :status))
+  (should-not (beads-actions-provider-actions :dashboard))
+  (should-not (assoc "S" (beads-actions-provider-actions :list)))
+  (should-not (assoc "RET" (beads-actions-provider-actions :list)))
+  (should-not (assoc "TAB" (beads-actions-provider-actions :list))))

@@ -53,6 +53,7 @@
                   (backend))
 (declare-function gascity-agents "gascity-agents" ())
 (declare-function gascity-dashboard "gascity-dashboard" ())
+(declare-function gascity-rig-dashboard "gascity-rig" (rig-name))
 (declare-function gascity-rig-dashboard-at-point "gascity-rig" ())
 (declare-function gascity-rig-path "gascity-domain" (rig))
 (declare-function gascity-remote-canonical-dir "gascity-remote" (dir))
@@ -84,6 +85,7 @@
 (defvar gascity-sling--missing-target-warning)
 (defvar gascity-context-city)
 (defvar gascity-formula-recipe-cache)
+(declare-function gascity-sling-dispatch "gascity-action" ())
 
 ;; `beads-menu' and `beads-actions' are not runtime dependencies of this
 ;; module: their variables are declared here with their documented empty
@@ -296,18 +298,23 @@ function."
   "Return the `[City]' group for beads.el's dispatch menu.
 Pure: beads.el calls providers on every menu render, so building the
 group must not read the store, spawn `gc' or depend on the current
-buffer."
-  ["[City]"
-   ("C" "Cockpit" gascity-dashboard)
-   ("R" "Rig dashboard" gascity-rig-dashboard-at-point)
-   ("A" "Agents" gascity-agents)])
+buffer.  The group is a one-element list because
+`beads-menu-provider-groups' appends provider lists."
+  (list ["City"
+         ("E" "Cockpit" gascity-dashboard)
+         ("J" "Rig dashboard" gascity-rig-dashboard-at-point)
+         ("K" "Rig dashboard…" gascity-rig-dashboard)
+         ("A" "Agents" gascity-agents)
+         ("Q" "Sling (gascity menu)" gascity-sling-dispatch)]))
 
 (defun gascity-beads-sling-actions (context)
   "Return Gas City actions to append for beads CONTEXT.
 CONTEXT is `:list' or `:show'.  The contributions are additive conses
-of the form (KEY . COMMAND); nil until a city-backed action applies."
-  (ignore context)
-  nil)
+of the form (KEY . COMMAND); nil elsewhere.  `V' opens the city
+cockpit and never shadows a beads.el key (notably not its `S')."
+  (pcase context
+    ((or :list :show) '(("V" . gascity-dashboard)))
+    (_ nil)))
 
 (defun gascity-beads-sling--after-action (action issues)
   "Refresh Gas City store entries affected by a beads mutation.
