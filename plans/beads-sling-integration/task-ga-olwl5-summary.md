@@ -38,9 +38,6 @@ trace:
     - path: lisp/test/gascity-test-helpers.el
       hash: sha256:e0ca9e77dedc7376e5c47c5abe0a75eedd280dbb0472685d242396d4ca490389
       title: "Changed: reset the backend's remembered city between tests"
-    - path: lisp/gascity-beads-sling.el
-      hash: git:5bb1b974ff38d70beadc0299615e9dabf8a7f17b
-      title: "B3b commit on beads-sling-b3b (stacked on B3a 2a54631)"
   coverage:
     - id: REQ-003
       status: covered
@@ -64,12 +61,14 @@ dispatch.
 The async call itself landed with the B1 module commit `e8b6010`, so this item
 verified it against B3b's contract and fixed the three deviations it found:
 
-1. The plain-shape success path used an ad-hoc `"Slung <bead> to <target>"`
-   message instead of `gascity-action--success-text`, so the echo did not match
-   the rest of the action surface. The success closure now echoes through
-   `gascity-action--success-text` for `plain` and through
+1. The plain-shape success path echoed only `gascity-action--success-text`,
+   which has no `sling` row in `gascity-action--done-verbs` and therefore read
+   `GC sling: done`. The single success closure now names the bead and its Who
+   for `plain` (`Slung BEAD to TARGET`) and keeps
    `gascity-sling--launch-handler` for `on`/`formula`, and only then
-   invalidates — the plan's single unconditional closure (P5).
+   invalidates (plan B3b's single unconditional closure). Adding a `sling`
+   done-verb was rejected because it would also change the existing gascity
+   sling transient's fallback echo.
 2. The resolved target was never recorded as the (city, formula) launch memory,
    while the gascity sling transient records it at start. A beads dispatch now
    calls `gascity-sling--remember-target` before `gascity-command-act-async`, so
@@ -86,13 +85,19 @@ backend's remembered city, so it cannot leak between tests. `:target (or target
 bead)` is passed explicitly, as the plan pins the action lane's serialization
 key.
 
+| ID | Status |
+| --- | --- |
+| REQ-003 | covered |
+| REQ-004 | covered |
+| REQ-007 | covered |
+
 ## Intended Behavior
 
 - Pressing `s` in beads.el's sling transient after choosing a `gc` target
   returns to the command loop immediately; `gc sling` runs on the action lane
   of the resolved city (`:dir`).
-- Plain shape (`("sling" TARGET BEAD)`): a successful payload echoes the
-  action's success text (`GC sling: ok` for the `ok` payload).
+- Plain shape (`("sling" TARGET BEAD)`): a successful payload echoes
+  `Slung BEAD to TARGET`, naming both the work and its Who.
 - `on` shape (`("sling" TARGET BEAD "--on" FORMULA "--var" k=v …)`): a
   successful payload echoes the created workflow root
   (`Launched workflow <id> (<formula> on <work>) — F: run view`) and offers the
@@ -149,8 +154,8 @@ run yet):
 - one action per dispatch for `plain`, `on` and `formula`; argv
   `("sling" TARGET BEAD)` plus `--json`, `("sling" TARGET BEAD "--on" F "--var"
   "k=v")`, `("sling" TARGET F "--formula" "--var" "k=v")`;
-- the plain success payload echoes `GC sling: ok`, the `on` payload echoes
-  `Launched workflow ga-1 (do-work on bd-1) — F: run view`;
+- the plain success payload echoes `Slung ga-1 to r/a`, the `on` payload
+  echoes `Launched workflow ga-root (f on ga-1) — F: run view`;
 - one invalidation per kind in the order `agent run session convoy status`,
   each with `:refetch t` and the city as `:dir`, and a failing action
   invalidates nothing;
@@ -169,11 +174,6 @@ run yet):
   partially mutated state is not re-read; that matches "nothing changed on a
   non-zero exit" and the rest of the action surface, which relies on the
   success callback.
-- `gascity-action--success-text` has no `sling` entry in
-  `gascity-action--done-verbs`, so a plain launch echoes
-  `GC sling: <summary>` rather than `Slung <target>`. That is the plan's
-  prescribed echo; adding a verb row would change the existing gascity sling
-  transient's fallback and is out of this item's scope.
 - Plan B3b/B6 states the backend dispatch is not a command-loop verb and so
   need not join the D9 guard. It is nevertheless added here at the bead's
   request; the entry is harmless (the guard asserts one async action and no sync
