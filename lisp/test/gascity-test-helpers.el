@@ -46,6 +46,7 @@
 
 (defvar gascity-sling--remembered)
 (defvar gascity-sling--target-memory)
+(defvar gascity-beads-sling--remembered-city)
 
 (defun gascity-test--reset-store (&rest _)
   "Clear the payload store, its scheduler and pending deferred calls
@@ -57,7 +58,8 @@ leak into the next."
   (gascity-store-clear)
   (mapc #'gascity-timer-cancel gascity-timer--items)
   (setq gascity-sling--remembered nil
-        gascity-sling--target-memory nil))
+        gascity-sling--target-memory nil
+        gascity-beads-sling--remembered-city nil))
 
 (advice-add 'ert-run-test :before #'gascity-test--reset-store)
 

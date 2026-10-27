@@ -257,17 +257,20 @@ refusal to gc, exactly as `gascity-sling-formula--command' does."
         (user-error "Formula %s requires a target convoy -- pick work with A"
                     (plist-get context :formula))))))
 
-(defconst gascity-beads-sling--invalidate-prefixes
-  '(("agent" "list") ("run" "list") ("session" "list")
-    ("convoy" "list") ("status"))
-  "The store read prefixes a sling in one city changes.")
+(defconst gascity-beads-sling--invalidate-kinds
+  '(agent run session convoy status)
+  "The store kinds a completed sling in one city changes.
+Each kind stands for one store key the launch writes: `agent' for
+`(\"agent\" \"list\")', `run' for `(\"run\" \"list\")', `session' for
+`(\"session\" \"list\")', `convoy' for `(\"convoy\" \"list\")' and `status'
+for `(\"status\")'.")
 
 (defun gascity-beads-sling--invalidate (city)
   "Invalidate the cached `gc' views a sling in CITY changes.
-One call per read prefix; `gascity-store-invalidate' dedupes in-flight
+One call per kind; `gascity-store-invalidate' dedupes in-flight
 refetches, so each entry is re-read at most once."
-  (dolist (prefix gascity-beads-sling--invalidate-prefixes)
-    (gascity-store-invalidate :dir city :prefix prefix)))
+  (dolist (kind gascity-beads-sling--invalidate-kinds)
+    (gascity-store-invalidate :dir city :kind kind :refetch t)))
 
 (defun gascity-beads-sling--dispatch (_target bead prompt context)
   "Launch BEAD to the context's target through `gc sling' with CONTEXT.
@@ -275,9 +278,13 @@ The registered `\"gc\"' backend (`beads-sling-dispatch' calls it as
 `(_TARGET BEAD PROMPT CONTEXT)').  Builds the command with
 `gascity-command-sling', refuses a missing work/target or a missing
 required formula var with a `user-error' before any process starts,
-drops PROMPT with a message (`gc sling' has no prompt flag), then starts
-`gc' on the action lane and returns nil; the created workflow root is
-echoed for the formula shapes."
+drops PROMPT with a message (`gc sling' has no prompt flag), records the
+resolved target as the launch memory, then starts `gc' on the action
+lane and returns nil.  On success a formula shape echoes the created
+workflow root with the `F' follow offer while a plain shape names the
+slung bead and its target (`Slung BEAD to TARGET'), and one invalidation
+per store kind refreshes the launcher's cached views; a failure keeps
+the inherited first-stderr-line echo and city log."
   (let* ((dir (or (gascity-beads-sling--city-for-directory)
                   (file-name-as-directory (expand-file-name default-directory))))
          (shape (plist-get context :shape))
@@ -291,20 +298,31 @@ echoed for the formula shapes."
     (let ((command (gascity-beads-sling--command target bead context))
           (default-directory dir))
       (oset command json t)
+      ;; The launch itself is the (city, formula) memory's next default
+      ;; (`gascity-sling--derived-target' rule 2), recorded when the
+      ;; action starts, exactly as the gascity transient records it.
+      (gascity-sling--remember-target dir formula target)
       (gascity-command-act-async
        command
+       :target (or target bead)
        :dir dir
+       ;; One explicit invalidation per dispatch, in the single success
+       ;; closure below: the built-in sling route would invalidate a
+       ;; different, narrower set and double up.
        :invalidate nil
        :on-success
-       (if (memq shape '(on formula))
-           (let ((handler (gascity-sling--launch-handler
-                           command formula bead)))
-             (lambda (result)
-               (gascity-beads-sling--invalidate dir)
-               (funcall handler result)))
-         (lambda (_result)
-           (gascity-beads-sling--invalidate dir)
-           (message "Slung %s to %s" bead target))))
+       (let ((handler (and (memq shape '(on formula))
+                           (gascity-sling--launch-handler
+                            command formula bead))))
+         (lambda (result)
+           ;; A formula shape echoes the created workflow root with the
+           ;; momentary `F' follow offer; a plain shape names the bead
+           ;; and its Who (a non-nil `:on-success' replaces the
+           ;; inherited echo).
+           (if handler
+               (funcall handler result)
+             (message "Slung %s to %s" bead (or target bead)))
+           (gascity-beads-sling--invalidate dir))))
       nil)))
 
 ;;; Validators (advisory only)
