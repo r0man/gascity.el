@@ -10,12 +10,20 @@
 ;; B5a covers the `[City]' dispatch menu group and the additive bead
 ;; action provider: one group after repeated registration, the reviewed
 ;; free keys E/J/K/A/Q, and a `V' cockpit action that never shadows a
-;; beads.el binding.  Everything stubs the gc boundary, so the suite is
+;; beads.el binding.
+;;
+;; B5b covers the after-action refresh: a beads mutation invalidates the
+;; bead-derived store kinds exactly once, for the mutation's store root,
+;; without reading beads or running from a timer.
+;;
+;; The provider/backend/validator/idempotence coverage lands with B6
+;; (`ga-hbeuz').  Everything stubs the gc boundary, so the suite is
 ;; offline and asserts that menu rendering spawns nothing.
 
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'seq)
 (require 'gascity)
 (require 'gascity-test-helpers)
@@ -64,6 +72,69 @@
       (should-not (assoc "S" contributed))
       (should-not (assoc "RET" contributed))
       (should-not (assoc "TAB" contributed)))))
+
+(ert-deftest gascity-beads-sling-test-after-action-invalidates-once ()
+  "Every beads mutation invalidates the bead-derived kinds exactly once."
+  (dolist (action '(close claim reopen set-status set-priority create update))
+    (let (calls)
+      (cl-letf (((symbol-function 'gascity-store-invalidate)
+                 (lambda (&rest args) (push args calls)))
+                ((symbol-function 'gascity-beads-sling--after-action-root)
+                 (lambda (&optional _dir) "/city/")))
+        (gascity-beads-sling--after-action action '("ga-1")))
+      (should (= 1 (length calls)))
+      (let ((args (car calls)))
+        (should (equal "/city/" (plist-get args :dir)))
+        (should (equal '(bd convoy) (plist-get args :kind)))
+        (should (eq t (plist-get args :refetch)))))))
+
+(ert-deftest gascity-beads-sling-test-after-action-kind-route ()
+  "The invalidated kinds are the ones gc routes its `bead.*' events to."
+  (should (equal (alist-get "bead." gascity-store-event-routes nil nil #'equal)
+                 gascity-beads-sling--after-action-kinds)))
+
+(ert-deftest gascity-beads-sling-test-after-action-root-from-rig-memo ()
+  "A rig-repo directory resolves to the city root that owns it.
+The beads delegation contract pins the mutating buffer to the rig's
+repository, outside the city tree; the memoized rigs bridge the two."
+  (cl-letf (((symbol-function 'gascity-context-city-root-cached)
+             (lambda (&optional _dir) nil))
+            ((symbol-function 'gascity-context-known-city-roots)
+             (lambda () '("/city/")))
+            ((symbol-function 'gascity-context-remember-city-root)
+             (lambda (root) root))
+            ((symbol-function 'gascity-rigs-cached)
+             (lambda (&optional _root) '(fake-rig)))
+            ((symbol-function 'gascity-rig-path)
+             (lambda (_rig) "/city/rigs/gastown.el")))
+    (should (equal "/city/"
+                   (gascity-beads-sling--after-action-root
+                    "/city/rigs/gastown.el/worktrees/ga-1/")))))
+
+(ert-deftest gascity-beads-sling-test-after-action-root-inside-city ()
+  "A directory inside a known city tree resolves to that city root."
+  (cl-letf (((symbol-function 'gascity-context-city-root-cached)
+             (lambda (&optional _dir) nil))
+            ((symbol-function 'gascity-context-known-city-roots)
+             (lambda () '("/city/")))
+            ((symbol-function 'gascity-rigs-cached)
+             (lambda (&optional _root) nil)))
+    (should (equal "/city/"
+                   (gascity-beads-sling--after-action-root
+                    "/city/rigs/gastown.el/")))))
+
+(ert-deftest gascity-beads-sling-test-after-action-root-cold ()
+  "With no known city the mutation's own directory is the store root.
+Cache-only: no file walk and no gc spawn, so a beads-only session is
+harmless."
+  (cl-letf (((symbol-function 'gascity-context-city-root-cached)
+             (lambda (&optional _dir) nil))
+            ((symbol-function 'gascity-context-known-city-roots)
+             (lambda () nil))
+            ((symbol-function 'gascity-rigs-cached)
+             (lambda (&optional _root) (error "no read expected"))))
+    (should (equal (file-name-as-directory (expand-file-name "/rig/"))
+                   (gascity-beads-sling--after-action-root "/rig/")))))
 
 (provide 'gascity-beads-sling-test)
 ;;; gascity-beads-sling-test.el ends here

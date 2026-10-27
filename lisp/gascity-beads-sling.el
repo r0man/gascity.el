@@ -404,16 +404,65 @@ sling, so no contributed key shadows a beads.el binding."
     ((or :list :show) '(("V" . gascity-dashboard)))
     (_ nil)))
 
+(defconst gascity-beads-sling--after-action-kinds '(bd convoy)
+  "Store read kinds a beads mutation invalidates.
+`gc' routes its own `bead.*' events to exactly these kinds
+\(`gascity-store-event-routes'): every bead-derived payload (`bd':
+lists, ready work, runs, session work lists, dashboard work) and convoy
+progress (`convoy').  Agent, session and status payloads are not
+derived from beads; the views read their beads through `bd' keys.")
+
+(defun gascity-beads-sling--root-contains-directory-p (root dir)
+  "Non-nil when directory DIR is ROOT or below it.
+Both names are compared host-local, so a memoized city root reported
+without the TRAMP prefix still matches a remote DIR.  Pure: no file
+access (a TRAMP name is only dissected, never expanded on its host)."
+  (let ((root (file-name-as-directory
+               (file-local-name (expand-file-name root))))
+        (dir (file-name-as-directory
+              (file-local-name (expand-file-name dir)))))
+    (string-prefix-p root dir)))
+
+(defun gascity-beads-sling--after-action-root (&optional dir)
+  "Return the store root whose entries a beads mutation in DIR changes.
+DIR defaults to `default-directory', the directory beads.el pinned the
+mutating buffer to: the owning rig's repository (beads delegation
+contract, DESIGN.md §4.3), which lives outside the city tree.  The
+resolver is cache-only, in order: the memoized city root governing DIR,
+a known city root that contains DIR or one of its memoized rigs, the
+city a sling lookup remembered when it also governs DIR, then DIR
+itself.  Never walks the file system and never spawns `gc', so the hook
+stays harmless in a beads-only session with no city."
+  (let ((dir (file-name-as-directory
+              (expand-file-name (or dir default-directory)))))
+    (or (gascity-context-city-root-cached dir)
+        (seq-find (lambda (root)
+                    (or (gascity-beads-sling--root-contains-directory-p
+                         root dir)
+                        (gascity-beads-sling--root-owns-directory-p root dir)))
+                  (gascity-context-known-city-roots))
+        (when (and gascity-beads-sling--remembered-city
+                   (gascity-beads-sling--root-owns-directory-p
+                    gascity-beads-sling--remembered-city dir))
+          gascity-beads-sling--remembered-city)
+        dir)))
+
 (defun gascity-beads-sling--after-action (action issues)
   "Invalidate the cached `gc' views after beads ACTION on ISSUES.
 ACTION is the mutation symbol (close, claim, reopen, status and priority
-updates all run it); ISSUES are the affected bead ids.  The current
-beads buffer is pinned to the owning rig's repository, so its directory
-is the store root the views read.  One invalidation call; the hook
-neither mutates beads nor asks for a beads read, so it cannot loop."
+updates all run it) and ISSUES the affected bead ids; every run of the
+hook follows a successful mutation, so neither steers the invalidation.
+One `gascity-store-invalidate' call names the mutation's store root
+\(`gascity-beads-sling--after-action-root'), the bead-derived kinds and
+`:refetch t'.  The store joins a read already in flight and re-reads a
+matching entry at most once, so duplicates collapse there.  The hook
+neither mutates beads nor asks beads.el for a read and never runs from a
+timer, so it cannot loop."
   (ignore action issues)
-  (when-let* ((city (gascity-beads-sling--city-for-directory)))
-    (gascity-store-invalidate :dir city :kind '(bd agent session status))))
+  (gascity-store-invalidate
+   :dir (gascity-beads-sling--after-action-root)
+   :kind gascity-beads-sling--after-action-kinds
+   :refetch t))
 
 ;;; Registration
 
