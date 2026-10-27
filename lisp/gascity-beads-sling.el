@@ -59,6 +59,31 @@
 (declare-function gascity-remote-localize-path "gascity-remote"
                   (path &optional dir))
 (declare-function gascity-sling--roster "gascity-action" (&optional city))
+(declare-function gascity-context-city-root-cached "gascity-context"
+                  (&optional dir))
+(declare-function gascity-context--known-city-roots "gascity-context" ())
+(declare-function gascity-context-scope-key "gascity-context"
+                  (&optional dir))
+(declare-function gascity-rigs-cached "gascity-context" (&optional dir))
+(declare-function gascity-rig-hq "gascity-domain" (rig))
+(declare-function gascity-formula--nonblank "gascity-formula" (value))
+(declare-function gascity-sling--cross-store-p "gascity-formula"
+                  (work scope rigs))
+(declare-function gascity-sling--cross-store-warning "gascity-formula"
+                  (work scope rigs))
+(declare-function gascity-sling--v2-trap-p "gascity-formula"
+                  (recipe scope))
+(declare-function gascity-sling--v2-trap-warning "gascity-formula"
+                  (&optional rig))
+(declare-function gascity-sling--missing-target-p "gascity-formula"
+                  (target))
+(declare-function gascity-sling--missing-required-vars "gascity-formula"
+                  (recipe values))
+(declare-function gascity-sling--missing-vars-warning "gascity-formula"
+                  (names))
+(defvar gascity-sling--missing-target-warning)
+(defvar gascity-context-city)
+(defvar gascity-formula-recipe-cache)
 
 ;; `beads-menu' and `beads-actions' are not runtime dependencies of this
 ;; module: their variables are declared here with their documented empty
@@ -180,13 +205,92 @@ the work bead, and contributes no `default_sling_target' row (plan F3)."
                                  :source 'roster))))
             (gascity-sling--roster city))))
 
+(defun gascity-beads-sling--validate-target-scope (target)
+  "Return TARGET's scope: its slash prefix, or \"city\" for a bare name.
+TARGET is the resolved target name from the launch context.  The
+scope string is what the §5a trap and §5b cross-store validators
+take, so a rig-qualified `rig/agent' classifies as its rig and a
+bare city agent as \"city\".  A blank target classifies as nil."
+  (when (gascity-formula--nonblank target)
+    (if-let* ((slash (string-search "/" target)))
+        (substring target 0 slash)
+      "city")))
+
+(defun gascity-beads-sling--validate-city (&optional dir)
+  "Return a known city root for DIR (default `default-directory').
+Cache-only: it consults `gascity-context-city-root-cached' and then
+the known city roots crossed with the rig memo, matching a rig path
+lexically against DIR's host-local name.  It never walks the file
+system, never spawns `gc' and never reads the store; an unknown city
+answers nil."
+  (or (gascity-context-city-root-cached dir)
+      (let* ((dir (file-name-as-directory
+                   (expand-file-name (or dir default-directory))))
+             (local (file-local-name dir)))
+        (seq-find
+         (lambda (root)
+           (seq-some
+            (lambda (rig)
+              (let ((path (gascity-rig-path rig)))
+                (and (stringp path)
+                     (not (string-empty-p path))
+                     (string-prefix-p
+                      (file-name-as-directory
+                       (file-local-name (expand-file-name path)))
+                      local))))
+            (gascity-rigs-cached root)))
+         (gascity-context--known-city-roots)))))
+
+(defun gascity-beads-sling--validate-recipe (city formula)
+  "Return the warm `gascity-formula' recipe for CITY and FORMULA, or nil.
+`gascity-formula-recipe-cache' is keyed
+\((SCOPE-KEY . FORMULA) . RECIPE): the lookup is scope-keyed, never
+by name alone (P8).  A cold recipe answers nil without a read."
+  (when (and city formula)
+    (cdr (assoc (cons (gascity-context-scope-key city) formula)
+                gascity-formula-recipe-cache))))
+
+(defun gascity-beads-sling--validate-rig (rigs)
+  "Return the first rig-scoped rig in RIGS, or nil.
+The bl-bdj warning's suggestion names a rig the city actually has;
+an all-city memo answers nil and the wording stays generic."
+  (seq-find (lambda (rig) (not (gascity-rig-hq rig))) rigs))
+
 (defun gascity-beads-sling-validate (context)
   "Return advisory warnings for sling CONTEXT, or nil.
 Part of `beads-sling-validators': warnings never refuse a dispatch,
 because `gc' remains the authority.  Every input is cached data; an
-input that is not available yields no warning."
-  (ignore context)
-  nil)
+input that is not available yields no warning.  The checks are the
+§5a city-scoped/pool v2 trap, the §5b cross-store route, the §5c
+missing target (every shape, formula included) and the §5c missing
+required vars.  Multiple warnings are joined into one string with
+\"; \", because `beads-sling-validate' maps one value per hook
+function."
+  (let* ((work (plist-get context :work))
+         (formula (plist-get context :formula))
+         (target (plist-get context :target))
+         (target-scope (gascity-beads-sling--validate-target-scope target))
+         (city (gascity-beads-sling--validate-city))
+         (rigs (and city (gascity-rigs-cached city)))
+         (recipe (gascity-beads-sling--validate-recipe city formula))
+         (warnings
+          (delq nil
+                (list
+                 (when (and rigs
+                            (gascity-sling--cross-store-p
+                             work target-scope rigs))
+                   (gascity-sling--cross-store-warning
+                    work target-scope rigs))
+                 (when (gascity-sling--v2-trap-p recipe target-scope)
+                   (gascity-sling--v2-trap-warning
+                    (gascity-beads-sling--validate-rig rigs)))
+                 (when (gascity-sling--missing-target-p target)
+                   gascity-sling--missing-target-warning)
+                 (gascity-sling--missing-vars-warning
+                  (gascity-sling--missing-required-vars
+                   (plist-get context :recipe)
+                   (plist-get context :values)))))))
+    (and warnings (mapconcat #'identity warnings "; "))))
 
 (defun gascity-beads-sling--menu-group ()
   "Return the `[City]' group for beads.el's dispatch menu.

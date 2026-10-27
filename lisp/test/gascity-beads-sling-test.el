@@ -593,3 +593,155 @@ The launch itself is captured by the enclosing
                             :formula nil)
                       gascity-sling--target-memory)
                      gascity-beads-sling-test--target-name)))))
+
+;;; B4 — advisory validators
+
+(defconst gascity-beads-sling-test--validator-city "/tmp/gascity-beads-sling-city/"
+  "The city root the validator fixtures run in.")
+
+(defconst gascity-beads-sling-test--cross-store-warning
+  "cross-store route:"
+  "Substring unique to `gascity-sling--cross-store-warning'.")
+
+(defconst gascity-beads-sling-test--v2-warning
+  "formulas v2 target:"
+  "Substring unique to `gascity-sling--v2-trap-warning'.")
+
+(defconst gascity-beads-sling-test--missing-vars-warning
+  "Missing required vars:"
+  "Substring unique to `gascity-sling--missing-vars-warning'.")
+
+(defconst gascity-beads-sling-test--missing-target-warning
+  "No target"
+  "Substring unique to `gascity-sling--missing-target-warning'.")
+
+(defun gascity-beads-sling-test--validator-rigs ()
+  "Return a rig memo with the city HQ and three rig stores."
+  (list (gascity-domain-decode
+         'gascity-rig '((name . "bright-lights") (prefix . "bl") (hq . t)))
+        (gascity-domain-decode
+         'gascity-rig '((name . "hello-world") (prefix . "hw")))
+        (gascity-domain-decode
+         'gascity-rig '((name . "gascity.el") (prefix . "gce")))))
+
+(defun gascity-beads-sling-test--recipe (name steps &optional vars)
+  "Decode a `gascity-formula' NAME with raw STEPS and VARS."
+  (gascity-domain-decode
+   'gascity-formula `((name . ,name) (steps . ,steps)
+                      ,@(and vars `((vars . ,vars))))))
+
+(defun gascity-beads-sling-test--v2-recipe ()
+  "Return a formula whose steps name a binding-qualified run target."
+  (gascity-beads-sling-test--recipe
+   "build-basic"
+   (vector '((id . "run") (title . "Run")
+             (metadata . ((gc.run_target . "gc.run-operator")))))
+   (vector '((name . "artifact_root") (required . t)))))
+
+(defmacro gascity-beads-sling-test--with-cache (&rest body)
+  "Run BODY with the validator's cached city, rigs and recipes stubbed.
+No read may escape: `gascity-rigs-cached' and the scope key answer
+from the fixture, and the recipe cache starts empty."
+  (declare (indent 0) (debug t))
+  `(let ((gascity-context-city gascity-beads-sling-test--validator-city)
+         (default-directory gascity-beads-sling-test--validator-city)
+         (gascity-formula-recipe-cache nil))
+     (cl-letf (((symbol-function 'gascity-rigs-cached)
+                (lambda (&optional _dir) (gascity-beads-sling-test--validator-rigs)))
+               ((symbol-function 'gascity-context-scope-key)
+                (lambda (&optional _dir) gascity-beads-sling-test--validator-city)))
+       ,@body)))
+
+(defun gascity-beads-sling-test--warnings (string)
+  "Return the warning substrings present in STRING."
+  (seq-filter (lambda (needle) (string-search needle string))
+              (list gascity-beads-sling-test--cross-store-warning
+                    gascity-beads-sling-test--v2-warning
+                    gascity-beads-sling-test--missing-vars-warning
+                    gascity-beads-sling-test--missing-target-warning)))
+
+(ert-deftest gascity-test-beads-sling-validate-clean ()
+  "A routable bead with a same-store target produces no warning."
+  (gascity-beads-sling-test--with-cache
+    (should-not (gascity-beads-sling-validate
+                 '(:work "hw-ab12" :target "hello-world/polecat"
+                   :shape plain)))))
+
+(ert-deftest gascity-test-beads-sling-validate-cross-store ()
+  "A bead and a rig-scoped target in different stores warn once."
+  (gascity-beads-sling-test--with-cache
+    (let ((warning (gascity-beads-sling-validate
+                    '(:work "hw-ab12"
+                      :target "gascity.el/gc.implementation-worker"
+                      :shape plain))))
+      (should warning)
+      (should (equal (gascity-beads-sling-test--warnings warning)
+                     (list gascity-beads-sling-test--cross-store-warning))))))
+
+(ert-deftest gascity-test-beads-sling-validate-missing-vars ()
+  "A formula context missing a required var warns once."
+  (gascity-beads-sling-test--with-cache
+    (let ((warning (gascity-beads-sling-validate
+                    (list :work "hw-ab12" :target "mayor" :shape 'formula
+                          :recipe (gascity-beads-sling-test--v2-recipe)
+                          :values nil))))
+      (should warning)
+      (should (equal (gascity-beads-sling-test--warnings warning)
+                     (list gascity-beads-sling-test--missing-vars-warning))))))
+
+(ert-deftest gascity-test-beads-sling-validate-missing-target ()
+  "Every shape, formula included, warns when no target is resolved."
+  (gascity-beads-sling-test--with-cache
+    (dolist (shape '(plain on formula))
+      (let ((warning (gascity-beads-sling-validate
+                      (list :work "hw-ab12" :target nil :shape shape))))
+        (should warning)
+        (should (equal (gascity-beads-sling-test--warnings warning)
+                       (list gascity-beads-sling-test--missing-target-warning)))))))
+
+(ert-deftest gascity-test-beads-sling-validate-cold-recipe ()
+  "No warm gascity recipe means no v2-trap warning and no read."
+  (gascity-beads-sling-test--with-cache
+    (let ((warning (gascity-beads-sling-validate
+                    (list :work "hw-ab12" :target "mayor" :shape 'formula
+                          :formula "build-basic" :recipe nil :values nil))))
+      (should-not warning))))
+
+(ert-deftest gascity-test-beads-sling-validate-warm-recipe-trap ()
+  "A warm scope-keyed recipe with a city target warns exactly once."
+  (gascity-beads-sling-test--with-cache
+    (let ((gascity-formula-recipe-cache
+           (list (cons (cons gascity-beads-sling-test--validator-city "build-basic")
+                       (gascity-beads-sling-test--v2-recipe)))))
+      (let ((warning (gascity-beads-sling-validate
+                      (list :work "hw-ab12" :target "mayor" :shape 'formula
+                            :formula "build-basic" :recipe nil :values nil))))
+        (should warning)
+        (should (equal (gascity-beads-sling-test--warnings warning)
+                       (list gascity-beads-sling-test--v2-warning)))))))
+
+(ert-deftest gascity-test-beads-sling-validate-warm-recipe-rig-target ()
+  "A warm recipe with a rig-scoped target does not trap."
+  (gascity-beads-sling-test--with-cache
+    (let ((gascity-formula-recipe-cache
+           (list (cons (cons gascity-beads-sling-test--validator-city "build-basic")
+                       (gascity-beads-sling-test--v2-recipe)))))
+      (should-not (gascity-beads-sling-validate
+                   (list :work "hw-ab12" :target "hello-world/polecat"
+                         :shape 'formula :formula "build-basic"
+                         :recipe nil :values nil))))))
+
+(ert-deftest gascity-test-beads-sling-validate-joins-warnings ()
+  "Independent warnings are joined into one string with \"; \"."
+  (gascity-beads-sling-test--with-cache
+    (let ((warning (gascity-beads-sling-validate
+                    (list :work "hw-ab12"
+                          :target "gascity.el/gc.implementation-worker"
+                          :shape 'formula
+                          :recipe (gascity-beads-sling-test--v2-recipe)
+                          :values nil))))
+      (should warning)
+      (should (equal (gascity-beads-sling-test--warnings warning)
+                     (list gascity-beads-sling-test--cross-store-warning
+                           gascity-beads-sling-test--missing-vars-warning)))
+      (should (= 2 (length (split-string warning "; " t)))))))
