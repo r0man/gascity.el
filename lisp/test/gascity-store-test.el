@@ -1173,13 +1173,6 @@ City start/stop keep their streaming `async-shell-command' buffer.")
       (gascity-order-run-at-point . gascity-order-run-at-point)
       (gascity-reload . ,(lambda () (gascity-reload)))
       (gascity-sling . ,(lambda () (gascity-sling "r/a" "task text")))
-      ;; The `"gc"' beads.el sling backend: the beads transient hands it a
-      ;; resolved context, and it must only start the `gc sling' action.
-      (gascity-beads-sling--dispatch
-       . ,(lambda ()
-            (gascity-beads-sling--dispatch
-             nil "ga-1" nil
-             (list :work "ga-1" :shape 'plain :target "r/a"))))
       (gascity-costs-refresh
        . ,(lambda () (with-temp-buffer (gascity-costs-mode) (gascity-costs-refresh))))
       (gascity-runs-agent-peek

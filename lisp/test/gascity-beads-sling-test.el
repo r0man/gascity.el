@@ -13,6 +13,16 @@
 ;; and target provider (B2), and the post-mutation refresh hook (B5b):
 ;; one invalidation per city kind and per affected rig root, for every
 ;; delivered action, with no beads read, mutation or timer.
+;;
+;; Non-blocking guard decision (B6): `gascity-beads-sling--dispatch' is
+;; deliberately absent from `gascity-test-store--verbs'.  It is not an
+;; interactive, input-free verb: beads.el's sling transient gathers the
+;; shape, target, formula and vars before calling the registered backend,
+;; so there is no prompt to answer and nothing for the guard to pin.  Its
+;; non-blocking launch is covered here by
+;; `gascity-test-beads-sling-dispatch-async-launch' instead.  Do not read
+;; this omission as an oversight; add guard entries only for new
+;; interactive input-free verbs.
 
 ;;; Code:
 
@@ -952,3 +962,73 @@ call order."
                  (lambda (&rest _) (error "The hook started a timer"))))
         (gascity-beads-sling--after-action 'claim '("gce-1")))
       (should (= 2 (length calls))))))
+
+;;; B6 — remaining plan-table coverage (REQ-003/REQ-007/REQ-009)
+
+(ert-deftest gascity-test-beads-sling-dispatch-formula-argv-with-target ()
+  "The formula shape always carries a real target and never the targetless
+\(`sling' `--formula') shape gc refuses."
+  (gascity-beads-sling-test--with-launch
+    (gascity-beads-sling--dispatch
+     (gascity-beads-sling-test--target) nil nil
+     (list :formula "mol-x" :shape 'formula))
+    (should (= 1 launch-count))
+    (let ((argv (plist-get launched :argv)))
+      (should (equal (seq-take argv 3)
+                     (list "sling" gascity-beads-sling-test--target-name
+                           "mol-x")))
+      (should (equal (nth 3 argv) "--json"))
+      (should (equal (nth 4 argv) "--formula"))
+      ;; No positional slot is empty, and `--formula' is never the
+      ;; subcommand's first argument (P1).
+      (should-not (seq-some #'gascity-beads-sling--blank-p argv))
+      (should-not (equal (seq-take argv 2) '("sling" "--formula"))))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-formula-uses-resolved-target ()
+  "A formula dispatch with no explicit target uses the Who derivation."
+  (gascity-beads-sling-test--with-launch
+    (cl-letf (((symbol-function 'gascity-sling--derive-target)
+               (lambda (_scope _roster _memory)
+                 (list :target "derived/agent" :source 'implementation-worker))))
+      (gascity-beads-sling--dispatch nil nil nil
+                                     (list :formula "mol-x" :shape 'formula)))
+    (should (= 1 launch-count))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" "derived/agent" "mol-x" "--json"
+                         "--formula")))
+    (should (equal (plist-get launched :target) "derived/agent"))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-invalid ()
+  "An unknown shape is refused before any launch."
+  (gascity-beads-sling-test--with-launch
+    (should-error (gascity-beads-sling--dispatch
+                   (gascity-beads-sling-test--target) "ga-1" nil
+                   (list :work "ga-1" :shape 'bogus))
+                  :type 'user-error)
+    (should (= 0 launch-count))))
+
+(ert-deftest gascity-test-beads-sling-delegation-s-then-dispatch ()
+  "beads' `S' seeds the transient, then a gc target dispatch runs the
+expected argv: the delegation contract end to end with a stubbed gc."
+  (let ((scope nil))
+    (cl-letf (((symbol-function 'beads-sling--bead-at-point)
+               (lambda () "ga-1"))
+              ((symbol-function 'transient-setup)
+               (lambda (_name _levels _suffixes &rest args)
+                 (setq scope (plist-get args :scope)))))
+      ;; `S' opens the sling transient with the bead at point.
+      (beads-sling-for-issue)
+      (should (equal (plist-get scope :work) "ga-1"))))
+  ;; The Who picker's gc target, dispatched exactly as the beads
+  ;; transient's `s' does: through the registered backend.
+  (gascity-beads-sling-test--with-launch
+    (let* ((target (gascity-beads-sling-test--target
+                    "gascity.el/gc.implementation-worker"))
+           (context (list :work "ga-1" :shape 'plain
+                          :target (oref target name))))
+      (should (equal (oref target backend) "gc"))
+      (beads-sling-dispatch target "ga-1" nil context)
+      (should (= 1 launch-count))
+      (should (equal (plist-get launched :argv)
+                     (list "sling" "gascity.el/gc.implementation-worker"
+                           "ga-1" "--json"))))))
