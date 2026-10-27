@@ -8,8 +8,11 @@
 
 ;; Tests for the downstream registration module
 ;; (`gascity-beads-sling'): load order, the idempotent registration of
-;; beads.el's six sling seams, and the load-time inertness requirement
-;; (no gc spawn or store read while registering).
+;; beads.el's six sling seams, the load-time inertness requirement (no gc
+;; spawn or store read while registering), the cache-only city resolution
+;; and target provider (B2), and the post-mutation refresh hook (B5b):
+;; one invalidation per city kind and per affected rig root, for every
+;; delivered action, with no beads read, mutation or timer.
 
 ;;; Code:
 
@@ -783,3 +786,169 @@ beads.el's `S', `RET' or `TAB'."
   (should-not (assoc "S" (beads-actions-provider-actions :list)))
   (should-not (assoc "RET" (beads-actions-provider-actions :list)))
   (should-not (assoc "TAB" (beads-actions-provider-actions :list))))
+
+;;; Post-mutation refresh (plan §B5b, REQ-008)
+
+(defconst gascity-beads-sling-test--rig-two "/tmp/beads-sling-rig-two/"
+  "A second rig repository, owning another bead-id prefix.")
+
+(defun gascity-beads-sling-test--two-rigs (city)
+  "Return CITY's memoized rigs: a `gce' and a `bs' repository."
+  (when (equal city gascity-beads-sling-test--city)
+    (append (gascity-beads-sling-test--rigs city)
+            (list (gascity-rig
+                   :name "beads.el"
+                   :prefix "bs"
+                   :path (directory-file-name
+                          gascity-beads-sling-test--rig-two))))))
+
+(defun gascity-beads-sling-test--with-after-action-stubs (rigs body)
+  "Call BODY with the rig memo stubbed to RIGS and return the invalidations.
+Each `gascity-store-invalidate' call is recorded as its ARGS plist, in
+call order."
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'gascity-store-invalidate)
+               (lambda (&rest args) (push args calls)))
+              ((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional city) (funcall rigs city))))
+      (funcall body))
+    (nreverse calls)))
+
+(ert-deftest gascity-test-beads-sling-after-action-refreshes-both-roots ()
+  "One city invalidation and one per affected rig root, with gc's kinds."
+  (let ((gascity-beads-sling--city gascity-beads-sling-test--city)
+        (default-directory gascity-beads-sling-test--rig))
+    (let ((calls (gascity-beads-sling-test--with-after-action-stubs
+                  #'gascity-beads-sling-test--two-rigs
+                  (lambda ()
+                    (gascity-beads-sling--after-action
+                     'close '("gce-1" "bs-2" "gce-3"))))))
+      (should (equal
+               calls
+               (list (list :dir gascity-beads-sling-test--city
+                           :kind '(status run session convoy agent)
+                           :refetch t)
+                     (list :dir gascity-beads-sling-test--rig
+                           :kind '(bd) :refetch t)
+                     (list :dir gascity-beads-sling-test--rig-two
+                           :kind '(bd) :refetch t)))))))
+
+(ert-deftest gascity-test-beads-sling-after-action-no-allow-list ()
+  "Every delivered mutation refreshes; there is no action allow-list."
+  (let ((gascity-beads-sling--city gascity-beads-sling-test--city)
+        (default-directory gascity-beads-sling-test--rig))
+    (dolist (action '(close claim reopen set-status set-priority
+                      create update force-close))
+      (let ((calls (gascity-beads-sling-test--with-after-action-stubs
+                    #'gascity-beads-sling-test--rigs
+                    (lambda ()
+                      (gascity-beads-sling--after-action action '("gce-1"))))))
+        (should (= 2 (length calls)))
+        (should (equal gascity-beads-sling-test--city
+                       (plist-get (car calls) :dir)))
+        (should (equal gascity-beads-sling-test--rig
+                       (plist-get (cadr calls) :dir)))))))
+
+(ert-deftest gascity-test-beads-sling-after-action-empty-issues ()
+  "An empty ISSUES list invalidates nothing and resolves no city."
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'gascity-store-invalidate)
+               (lambda (&rest args) (push args calls)))
+              ((symbol-function 'gascity-context-known-city-roots)
+               (lambda () (error "An empty mutation resolved a city")))
+              ((symbol-function 'gascity-rigs-cached)
+               (lambda (&rest _) (error "An empty mutation read the rig memo"))))
+      (gascity-beads-sling--after-action 'close nil)
+      (gascity-beads-sling--after-action 'close '()))
+    (should-not calls)))
+
+(ert-deftest gascity-test-beads-sling-after-action-unresolved-city ()
+  "No resolvable city means no invalidation at all, never a broad one."
+  (let ((gascity-beads-sling--city nil)
+        (gascity-context-city nil)
+        (default-directory gascity-beads-sling-test--rig)
+        (calls nil))
+    (cl-letf (((symbol-function 'gascity-store-invalidate)
+               (lambda (&rest args) (push args calls)))
+              ((symbol-function 'gascity-context-known-city-roots) #'ignore)
+              ((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _city) nil)))
+      (gascity-beads-sling--after-action 'close '("gce-1")))
+    (should-not calls)))
+
+(ert-deftest gascity-test-beads-sling-after-action-unknown-prefix ()
+  "An id whose prefix is not in the rig memo contributes no rig root."
+  (let ((gascity-beads-sling--city gascity-beads-sling-test--city)
+        (default-directory gascity-beads-sling-test--rig))
+    (let ((calls (gascity-beads-sling-test--with-after-action-stubs
+                  #'gascity-beads-sling-test--rigs
+                  (lambda ()
+                    (gascity-beads-sling--after-action
+                     'close '("zz-1" "ga-2" "nohyphen"))))))
+      (should (= 1 (length calls)))
+      (should (equal gascity-beads-sling-test--city
+                     (plist-get (car calls) :dir))))))
+
+(ert-deftest gascity-test-beads-sling-after-action-city-root-order ()
+  "A remembered city governs DIR or is skipped; containment also matches."
+  ;; A remembered city that does not govern DIR is skipped.
+  (let ((default-directory gascity-beads-sling-test--rig)
+        (gascity-beads-sling--city gascity-beads-sling-test--other-city))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional city) (gascity-beads-sling-test--rigs city)))
+              ((symbol-function 'gascity-context-known-city-roots)
+               (lambda () (list gascity-beads-sling-test--city))))
+      (should (equal (gascity-beads-sling--after-action-city-root)
+                     gascity-beads-sling-test--city))))
+  ;; A remembered city that governs DIR answers before a known root.
+  (let ((default-directory gascity-beads-sling-test--rig)
+        (gascity-beads-sling--city gascity-beads-sling-test--city))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional city) (gascity-beads-sling-test--rigs city)))
+              ((symbol-function 'gascity-context-known-city-roots)
+               (lambda () (list gascity-beads-sling-test--other-city))))
+      (should (equal (gascity-beads-sling--after-action-city-root)
+                     gascity-beads-sling-test--city))))
+  ;; A city-store bead buffer (inside the city tree) resolves its city.
+  (let ((default-directory (concat gascity-beads-sling-test--city "beads/"))
+        (gascity-beads-sling--city nil))
+    (cl-letf (((symbol-function 'gascity-context-known-city-roots)
+               (lambda () (list gascity-beads-sling-test--city))))
+      (should (equal (gascity-beads-sling--after-action-city-root)
+                     gascity-beads-sling-test--city)))))
+
+(ert-deftest gascity-test-beads-sling-after-action-kind-routes ()
+  "The city kinds are the aggregate payloads; the rig kind is the `bd' argv."
+  (should (equal gascity-beads-sling--city-refresh-kinds
+                 '(status run session convoy agent)))
+  (should (equal gascity-beads-sling--rig-refresh-kinds '(bd)))
+  (should (eq 'bd (gascity-store-kind '("bd" "list"))))
+  (should-not (eq 'bead (gascity-store-kind '("bd" "list")))))
+
+(ert-deftest gascity-test-beads-sling-after-action-is-cache-only ()
+  "The hook never reads or mutates beads, spawns gc, or starts a timer."
+  (let ((gascity-beads-sling--city gascity-beads-sling-test--city)
+        (default-directory gascity-beads-sling-test--rig))
+    (let ((calls nil))
+      (cl-letf (((symbol-function 'gascity-store-invalidate)
+                 (lambda (&rest args) (push args calls)))
+                ((symbol-function 'gascity-rigs-cached)
+                 (lambda (&optional city) (gascity-beads-sling-test--rigs city)))
+                ((symbol-function 'gascity-store-get)
+                 (lambda (&rest _) (error "The hook read the store")))
+                ((symbol-function 'gascity-store-peek)
+                 (lambda (&rest _) (error "The hook peeked at the store")))
+                ((symbol-function 'gascity-reader-read)
+                 (lambda (&rest _) (error "The hook spawned a sync read")))
+                ((symbol-function 'gascity-reader-read-async)
+                 (lambda (&rest _) (error "The hook spawned an async read")))
+                ((symbol-function 'gascity-reader-run-async)
+                 (lambda (&rest _) (error "The hook ran an action")))
+                ((symbol-function 'beads-execute)
+                 (lambda (&rest _) (error "The hook mutated beads")))
+                ((symbol-function 'beads-refresh-show)
+                 (lambda (&rest _) (error "The hook refreshed a beads buffer")))
+                ((symbol-function 'run-at-time)
+                 (lambda (&rest _) (error "The hook started a timer"))))
+        (gascity-beads-sling--after-action 'claim '("gce-1")))
+      (should (= 2 (length calls))))))

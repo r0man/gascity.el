@@ -56,6 +56,7 @@
 (declare-function gascity-rig-dashboard "gascity-rig" (rig-name))
 (declare-function gascity-rig-dashboard-at-point "gascity-rig" ())
 (declare-function gascity-rig-path "gascity-domain" (rig))
+(declare-function gascity-rig-prefix "gascity-domain" (rig))
 (declare-function gascity-remote-canonical-dir "gascity-remote" (dir))
 (declare-function gascity-remote-localize-path "gascity-remote"
                   (path &optional dir))
@@ -316,13 +317,125 @@ cockpit and never shadows a beads.el key (notably not its `S')."
     ((or :list :show) '(("V" . gascity-dashboard)))
     (_ nil)))
 
+;;; Post-mutation refresh (plan §B5b, REQ-008)
+
+(defconst gascity-beads-sling--city-refresh-kinds
+  '(status run session convoy agent)
+  "Store kinds a beads mutation re-reads under the city root.
+The city's aggregate payloads embed bead data, so a mutation anywhere
+changes them; `gascity-beads-sling--rig-refresh-kinds' covers the reads
+that run inside the owning rig instead.")
+
+(defconst gascity-beads-sling--rig-refresh-kinds '(bd)
+  "Store kind a beads mutation re-reads under each affected rig root.
+The store kind is the argv's first token, so bead reads are `bd' -- never
+`bead', which no route and no read produces.")
+
+(defun gascity-beads-sling--city-governs-p (root dir)
+  "Non-nil when DIR belongs to the city rooted at ROOT.
+DIR belongs when it is ROOT or below it, or below one of ROOT's memoized
+rigs: the bead delegation contract pins a mutating buffer to its rig
+repository, which lives outside the city tree.  `gascity-rigs-cached' is
+the only rig source, so a cold memo contributes nothing.  Pure: gc
+reports rig paths host-local, and `gascity-remote-localize-path' only
+re-prefixes by string, without a TRAMP round trip."
+  (and root
+       (or (gascity-beads-sling--below-p root dir)
+           (seq-some (lambda (rig)
+                       (when-let* ((path (ignore-errors
+                                          (gascity-rig-path rig))))
+                         (gascity-beads-sling--below-p
+                          (gascity-remote-localize-path path dir) dir)))
+                     (gascity-rigs-cached root)))))
+
+(defun gascity-beads-sling--after-action-city-root (&optional dir)
+  "Return the city store root a beads mutation in DIR must refresh, or nil.
+Cache-only, in the order the source anchor names: the city the last sling
+lookup or dispatch resolved (`gascity-beads-sling--city') when it governs
+DIR, then a root of `gascity-context-known-city-roots' that governs DIR
+through its tree or one of its memoized rigs.  A remembered city that
+does not govern DIR is skipped, so a mutation in another city's rig never
+refreshes the wrong store.  Never walks the file system, never probes
+with `file-exists-p' and never spawns `gc': an unresolved root answers
+nil and the hook contributes nothing rather than invalidating broadly."
+  (let ((dir (gascity-beads-sling--directory (or dir default-directory)))
+        (remembered (gascity-beads-sling--directory
+                     gascity-beads-sling--city)))
+    (when dir
+      (or (when (gascity-beads-sling--city-governs-p remembered dir)
+            remembered)
+          (seq-find (lambda (root)
+                      (gascity-beads-sling--city-governs-p root dir))
+                    (gascity-context-known-city-roots))))))
+
+(defun gascity-beads-sling--issue-prefix (issue)
+  "Return the bead-store prefix of ISSUE, or nil.
+A beads id is `PREFIX-IDENTITY' and the prefix is the value of a rig's
+`prefix' slot (`ga', `ec'), without the hyphen.  An id with no hyphen
+contributes nil."
+  (when (and (stringp issue)
+             (string-match "\\`\\([^-]+\\)-" issue))
+    (match-string 1 issue)))
+
+(defun gascity-beads-sling--after-action-rig-roots (issues city)
+  "Return the distinct rig repo roots owning ISSUES in CITY.
+Each id's prefix is matched against CITY's memoized rig prefixes and the
+rig's repository path becomes the store root, because beads reads run in
+the rig, not in the city (DESIGN.md §4.3).  Cache-only: the rig list
+comes from `gascity-rigs-cached', so a cold memo or an unknown prefix
+contributes nothing.  Paths are re-prefixed for the city's host and
+repeated rigs collapse to one root."
+  (when city
+    (let ((rigs (gascity-rigs-cached city))
+          (roots nil))
+      (dolist (issue issues)
+        (when-let* ((prefix (gascity-beads-sling--issue-prefix issue))
+                    (rig (seq-find
+                          (lambda (rig)
+                            (equal prefix (ignore-errors
+                                            (gascity-rig-prefix rig))))
+                          rigs))
+                    (path (ignore-errors (gascity-rig-path rig)))
+                    (root (gascity-beads-sling--directory
+                           (gascity-remote-localize-path path city))))
+          (push root roots)))
+      (delete-dups (nreverse roots)))))
+
 (defun gascity-beads-sling--after-action (action issues)
-  "Refresh Gas City store entries affected by a beads mutation.
-ACTION is the mutation symbol and ISSUES the affected bead ids.  Part
-of `beads-after-action-functions'; it only invalidates cached entries
-and never reads or mutates beads, so it cannot loop."
-  (ignore action issues)
-  nil)
+  "Invalidate the cached `gc' views a successful beads mutation changed.
+ACTION is the mutation symbol beads.el ran and ISSUES the affected bead
+ids.  The hook runs only after a successful mutation, so every delivered
+action invalidates: there is no allow-list, and a guard -- if one is ever
+wanted -- must key on the emitted symbol, never on an aspirational list.
+
+Two store roots are refreshed, because rigs live outside the city tree
+and one root cannot cover both:
+
+- the city root (`gascity-beads-sling--after-action-city-root') re-reads
+  `gascity-beads-sling--city-refresh-kinds';
+- each affected issue's rig repository
+  (`gascity-beads-sling--after-action-rig-roots') re-reads
+  `gascity-beads-sling--rig-refresh-kinds'.
+
+Both roots resolve cache-only; an unresolved root contributes nothing
+rather than a broad invalidation, and an empty ISSUES list does nothing
+at all, not even a city lookup.  The store joins a read already in
+flight and re-reads an entry at most once, so repeated ids collapse
+there.  The hook never calls a beads function, never mutates beads and
+runs no timer, so it cannot loop."
+  (ignore action)
+  (when issues
+    (let ((city (gascity-beads-sling--after-action-city-root)))
+      (when city
+        (gascity-store-invalidate
+         :dir city
+         :kind gascity-beads-sling--city-refresh-kinds
+         :refetch t))
+      (dolist (root (gascity-beads-sling--after-action-rig-roots issues city))
+        (gascity-store-invalidate
+         :dir root
+         :kind gascity-beads-sling--rig-refresh-kinds
+         :refetch t)))))
 
 ;;; Backend dispatch and argv (plan §B3a, REQ-003/REQ-004/REQ-007)
 
