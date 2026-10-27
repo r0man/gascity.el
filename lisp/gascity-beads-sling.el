@@ -352,22 +352,28 @@ nil -- never a read."
   "Warn about CONTEXT's target routing: missing, or the formulas-v2 trap.
 The trap needs a `gascity-formula' recipe, so it fires only when one is
 already cached for the city; the beads recipe is never passed to the
-gascity accessors."
+gascity accessors.  The scope comes from the cached roster
+\(`gascity-agents-roster-scope' over `gascity-sling--roster', cache-only),
+not from the target string alone: the trap is precisely a city-scoped
+target on a formula whose steps need a rig-scoped one, and a free-entry
+name no roster row carries stays unclassified (no false positive).  The
+suggested rig reuses `gascity-sling--footer-rig', so the advisory words
+the same remedy the gascity sling footer shows."
   (let* ((shape (plist-get context :shape))
          (target (plist-get context :target))
-         (scope (gascity-beads-sling--target-scope target))
          (city (gascity-beads-sling--city-for-directory))
+         (roster (and city (gascity-sling--roster city)))
+         (scope (and (stringp target)
+                     (gascity-agents-roster-scope target roster)))
          (recipe (gascity-beads-sling--cached-gascity-recipe
                   (plist-get context :formula) city)))
     (cond
      ((and (memq shape '(plain on))
            (gascity-sling--missing-target-p target))
       gascity-sling--missing-target-warning)
-     ((and (gascity-sling--v2-trap-p recipe scope)
-           (stringp target)
-           (string-search "/" target))
+     ((gascity-sling--v2-trap-p recipe scope)
       (gascity-sling--v2-trap-warning
-       (substring target 0 (string-search "/" target)))))))
+       (gascity-sling--footer-rig roster))))))
 
 (defun gascity-beads-sling--validate-vars (context)
   "Warn about CONTEXT's missing required formula vars."
