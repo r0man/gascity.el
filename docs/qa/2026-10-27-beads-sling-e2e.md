@@ -33,7 +33,7 @@ placed in `~/emacs-city/formulas/` and removed after the pass.
 
 | Command | Result |
 |---|---|
-| `BEADS_DIR=~/workspace/beads.el scripts/gate.sh` | **PASS** — byte-compile clean (warnings-as-errors), `Ran 843 tests, 843 results as expected, 0 unexpected` |
+| `BEADS_DIR=~/workspace/beads.el scripts/gate.sh` | **PASS** — byte-compile clean (warnings-as-errors), `Ran 871 tests, 870 results as expected, 0 unexpected, 1 skipped` (the skip is AC-B10's rendered-menu test while the sibling beads.el checkout lacks `be-cnn7f`) |
 | `BEADS_DIR=~/workspace/beads.el scripts/lint.sh` | **PASS** — `make lint` exit 0 (package-lint is not installed locally; CI installs it) |
 | `make -C doc` | **PASS** — `doc/gascity.info` rebuilt from `doc/gascity.texi` |
 
@@ -191,9 +191,13 @@ session while it resolved the routed root; it found no agent work (the formula
 is a latch) and exited on its own (`ec-wisp-y044w` no longer listed). No
 stalled session remained.
 
-## Findings
+## Remaining Risks / follow-ups
 
 - **F1 — `[City]` dispatch group cannot render (beads.el; filed `be-cnn7f`).**
+  AC-B10's rendered half is **blocked** on `be-cnn7f` (and on
+  `ga-3rrs6` for beads.el's own keys) until that beads.el fix reaches the
+  sibling checkout; the ERT that renders the real menu skips while
+  `transient-setup` signals, and fails once the fix is present.
   From the show buffer, `?` raises `Invalid function: "City"`
   (`transient-setup: Invalid function: "City"` in `*Messages*`) and the whole
   `beads-dispatch` menu fails to open. `beads-menu--provider-children` appends
@@ -419,3 +423,84 @@ opened.
 
 `ga-spcd7`, `ga-llczk`, `bl-85id` and the quarantined `bl-3xi5` were all
 closed in their owning stores. No beads.el file was touched.
+
+## Fourth pass (review-fix worker) — landing tree `5572bfd` / `0170e03`
+
+The review-fix loop re-drove the interactive gate on the landing line of
+this run (`build-basic` root `ga-9ypch`, convoy `ga-hbvnb`), not on the
+older `b2a9bbe` tree. Fresh tmux Emacs `gce-b8-review` (server of the same
+name), Emacs 31.1, worktree `worktrees/ga-lii6c` at `5572bfd`, beads.el
+sibling `a744ac25`, `scripts/e2e-harness.sh` bounds (every
+emacs/emacsclient/tmux call under `timeout(1)`), environment scrubbed with
+`env -i` (`HOME`, `PATH`, `TERM`, `SSH_AUTH_SOCK`, `XDG_RUNTIME_DIR`) so
+the worker shell's `GC_*`/`BEADS_*` store pins cannot leak into the pass.
+
+Gates on the landing line: `scripts/gate.sh` **PASS** (`Ran 871 tests, 870
+results as expected, 0 unexpected, 1 skipped`; the skip is AC-B10's
+rendered-menu test, see below), `scripts/lint.sh` exit 0 (package-lint not
+installed locally; CI installs it), `make -C doc` exit 0.
+
+The code delta after this pass is the ERT skip guard only
+(`0170e03`, test file); no product path changed, so the pass remains the
+landing line's evidence.
+
+### Plain shape — local (`emacs-city` / `gascity.el` rig)
+
+Bead `ga-lwku3` in `beads-show-mode`, roster warm from the cockpit,
+`S` → `T` → `gascity.el/gc.implementation-worker` → `s`:
+
+```
+Slung gascity.el/gc.implementation-worker
+```
+
+Store: `ga-lwku3` carries
+`gc.routed_to=gascity.el/gc.implementation-worker`, `gc.session_name`
+`gc__implementation-worker-ec-wisp-dein3`; gc created the auto-convoy
+`sling-ga-lwku3` (`ga-zr414`). The dispatch spawned the worker lane, as a
+real plain sling does; the bead and convoy were closed in cleanup.
+
+### `--on` shape — local (`emacs-city`)
+
+City-store bead `ec-73yvh`, target `mayor`, formula `e2e-demo-on` (a
+temporary copy of the bright-lights fixture formula in
+`~/emacs-city/formulas/`, removed after the pass; it creates a latch-only
+workflow and spawns no agent):
+
+```
+Launched workflow ec-3nlxm (e2e-demo-on on ec-rzxep) — F: run view
+```
+
+Store: `ec-73yvh` carries `gc.execution_routed_to=mayor`; root `ec-rzxep`
+is `in_progress`, `gc.kind=workflow`, `gc.formula_name=e2e-demo-on`,
+`gc.routed_to=mayor`, `gc.input_convoy_id=ec-ao0s3`,
+`gc.var.note=gce-e2e demo`; latch `ec-3nlxm` and finalize `ec-2g9b4` were
+created. Cleanup closed `ec-73yvh`, `ec-rzxep`, `ec-3nlxm`, `ec-2g9b4` and
+convoy `ec-ao0s3`.
+
+### Plain shape — TRAMP (`/ssh:localhost:/home/roman/bright-lights`)
+
+Disposable city-store bead `bl-fl2l`, remote agents view warm (20 gc
+targets), `S` → `T` → `mayor` → `s`:
+
+```
+Slung mayor
+```
+
+Store: `bl-fl2l` carries `gc.routed_to=mayor`; no blocking load appeared
+on the TRAMP route. Cleanup closed `bl-fl2l`.
+
+### AC-B10 status
+
+**blocked (upstream `be-cnn7f`, `ga-3rrs6`).** The `[City]` group still
+cannot render against the sibling beads.el `a744ac25`; the local additive
+`V` cockpit binding works and is covered by ERT, but neither the rendered
+menu nor beads.el's own provider keys are proven until `be-cnn7f` merges.
+The render ERT skips while `transient-setup` signals and asserts the full
+layout once it does not.
+
+### Residual requirements/docs amendment
+
+Still open (docs-only, non-blocking): REQ-004/AC-B5 describe a targetless
+`("sling" FORMULA "--formula")` argv that gc refuses, and REQ-003/AC-B3
+and the manual omit the `--json` token the tests pin. Filed as follow-up;
+the plan's P1 (every shape is targeted) is authoritative.
