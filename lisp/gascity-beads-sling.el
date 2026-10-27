@@ -53,6 +53,11 @@
 (declare-function gascity-agents "gascity-agents" ())
 (declare-function gascity-dashboard "gascity-dashboard" ())
 (declare-function gascity-rig-dashboard-at-point "gascity-rig" ())
+(declare-function gascity-rig-path "gascity-domain" (rig))
+(declare-function gascity-remote-canonical-dir "gascity-remote" (dir))
+(declare-function gascity-remote-localize-path "gascity-remote"
+                  (path &optional dir))
+(declare-function gascity-sling--roster "gascity-action" (&optional city))
 
 ;; `beads-menu' and `beads-actions' are not runtime dependencies of this
 ;; module: their variables are declared here with their documented empty
@@ -70,13 +75,109 @@ The flag records that this module installed its contributions; the
 registration function remains safe to call again, because every seam
 replaces or dedupes by identity.")
 
+;;; City resolution
+
+;; The remembered city is declared in `gascity-context' (a bare defvar, for
+;; its `gascity-context-clear-cache' reset); this module owns its value and
+;; documentation.
+
+(defvar gascity-beads-sling--city nil
+  "The city directory the last successful sling dispatch resolved, or nil.
+Module-scoped, process-local memory (plan §B2, Open Question 3).  The
+resolver `gascity-beads-sling--city' consults it only after
+`gascity-context-city' and the known-city-root match fail, and it never
+justifies a file-system read or a `gc' spawn.  Reset by
+`gascity-context-clear-cache'.")
+
+(defun gascity-beads-sling--directory (dir)
+  "Return DIR as an expanded, slash-terminated directory name, or nil.
+A DIR that is not a non-empty string yields nil.  Pure: `expand-file-name'
+dissects a TRAMP name without asking its host."
+  (when (and (stringp dir) (not (string-empty-p dir)))
+    (file-name-as-directory (expand-file-name dir))))
+
+(defun gascity-beads-sling--below-p (root dir)
+  "Non-nil when directory DIR is ROOT or below it.
+The test is lexical: both names are expanded and slash-terminated, then
+compared with `string-prefix-p'.  Never `file-in-directory-p' — it falls
+back to a truename plus `file-exists-p' comparison, a TRAMP round trip on
+the Who picker's render path (plan P10)."
+  (let ((root (gascity-beads-sling--directory root))
+        (dir (gascity-beads-sling--directory dir)))
+    (and root dir (string-prefix-p root dir))))
+
+(defun gascity-beads-sling--city-owns-p (root dir)
+  "Non-nil when DIR belongs to the city at ROOT.
+DIR belongs when it is inside ROOT itself — a city-store bead buffer's
+`default-directory' is the city root — or inside one of ROOT's memoized
+rigs.  gc reports rig paths host-local, so they are re-prefixed for DIR's
+host first (`gascity-remote-localize-path', a pure string operation).
+Reads `gascity-rigs-cached' only: a cold rig memo contributes nothing."
+  (and (or (gascity-beads-sling--below-p root dir)
+           (seq-some (lambda (rig)
+                       (when-let* ((path (gascity-rig-path rig)))
+                         (gascity-beads-sling--below-p
+                          (gascity-remote-localize-path path dir) dir)))
+                     (gascity-rigs-cached root)))
+       root))
+
+(defun gascity-beads-sling--city (&optional dir)
+  "Return the Gas City directory governing DIR, cache-only, or nil.
+DIR defaults to `default-directory' and is expanded once, so a TRAMP name
+stays a TRAMP name.  Resolution order, first hit wins:
+
+1. `gascity-context-city', the user's override;
+2. a root of `gascity-context-known-city-roots' that governs DIR — DIR is
+   inside that city's tree or inside one of its memoized rigs;
+3. `gascity-beads-sling--city', the city the last dispatch resolved.
+
+A bead buffer's `default-directory' is its rig repository, outside the
+city tree (plan F4), so step 2 is what makes the Who picker work from a
+bead view; step 3 keeps it working once this session has dispatched.
+
+Probe-free: no file walk, no `file-exists-p'/`file-truename' and no `gc'
+spawn — the Who picker calls this on every render (D9, plan P10).  The
+answer is canonicalized like the store's entry keys and ends in a slash.
+Never walks DIR's parent chain."
+  (let ((dir (gascity-beads-sling--directory (or dir default-directory)))
+        (known (gascity-context-known-city-roots)))
+    (when-let* ((city (or (gascity-beads-sling--directory gascity-context-city)
+                          (seq-some (lambda (root)
+                                      (gascity-beads-sling--city-owns-p
+                                       root dir))
+                                    known)
+                          (gascity-beads-sling--directory
+                           gascity-beads-sling--city))))
+      (gascity-remote-canonical-dir city))))
+
 (defun gascity-beads-sling-targets ()
-  "Return Gas City sling targets from cached data.
-The `beads-sling-target-functions' provider contract takes no
-arguments and must never block, so this answers from the store's last
-good payload only.  Until the city roster is resolved this returns
-nil and beads.el's local targets remain the only Who choices."
-  nil)
+  "Return the city's qualified Gas City sling targets from cached data.
+One `beads-sling-target' per configured agent of the cached
+\(\"agent\" \"list\") payload (`gascity-sling--roster'), so the Who
+picker offers exactly the names `gc sling' accepts: `rig/agent' for a
+rig-scoped agent, the bare name for a city-scoped one.
+
+The `beads-sling-target-functions' contract takes no arguments and must
+never block, so this answers from the store's last good payload and the
+city `gascity-beads-sling--city' resolves from memory.  A cold store or
+an unresolved city returns nil in the same call, leaving beads.el's
+local targets as the only Who choices.  Never spawns `gc', never reads
+the work bead, and contributes no `default_sling_target' row (plan F3)."
+  (when-let* ((city (gascity-beads-sling--city)))
+    (mapcar (lambda (agent)
+              (let ((name (plist-get agent :name))
+                    (rig (plist-get agent :rig)))
+                (beads-sling-target
+                 :name name
+                 :kind 'agent
+                 :scope rig
+                 :backend "gc"
+                 :description name
+                 :metadata (list :rig rig
+                                 :city city
+                                 :qualified-name name
+                                 :source 'roster))))
+            (gascity-sling--roster city))))
 
 (defun gascity-beads-sling-validate (context)
   "Return advisory warnings for sling CONTEXT, or nil.
