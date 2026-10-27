@@ -67,6 +67,7 @@
 (require 'gascity-tabulated)
 (require 'gascity-status)
 (require 'gascity-action)
+(require 'gascity-beads-sling)
 (require 'gascity-rig)
 (require 'gascity-pulse)
 (require 'gascity-dashboard)
