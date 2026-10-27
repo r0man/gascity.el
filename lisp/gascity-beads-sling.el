@@ -386,19 +386,23 @@ the same remedy the gascity sling footer shows."
 
 (defun gascity-beads-sling--menu-group ()
   "Return the `[City]' dispatch group in the beads menu.
-A provider returns a list of transient group vectors."
+A provider returns a list of transient group vectors.  The keys
+E/J/K/A/Q are free in `beads-dispatch' (audited against its taken set
+in `docs/key-registry.md'); `add-to-list' keeps a single group."
   (list ["City"
-         ("V" "City cockpit" gascity-dashboard)
-         ("K" "Rig dashboard at point" gascity-rig-dashboard-at-point)
+         ("E" "Cockpit" gascity-dashboard)
+         ("J" "Rig dashboard" gascity-rig-dashboard-at-point)
+         ("K" "Rig dashboard…" gascity-rig-dashboard)
          ("A" "Agents" gascity-agents)
-         ("P" "Sling from here" gascity-sling-dispatch)]))
+         ("Q" "Sling (gascity menu)" gascity-sling-dispatch)]))
 
 (defun gascity-beads-sling--actions (context)
   "Return the additive action-bar entries for beads CONTEXT.
 The city cockpit on the list and show bars; `S' stays beads.el's
 sling, so no contributed key shadows a beads.el binding."
-  (when (memq context '(:list :show))
-    '(("V" . gascity-dashboard))))
+  (pcase context
+    ((or :list :show) '(("V" . gascity-dashboard)))
+    (_ nil)))
 
 (defun gascity-beads-sling--after-action (action issues)
   "Invalidate the cached `gc' views after beads ACTION on ISSUES.
