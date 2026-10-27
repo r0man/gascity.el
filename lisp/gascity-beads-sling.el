@@ -224,12 +224,17 @@ is `(\"sling\" TARGET BEAD)', `on' is
               ('formula (list :formula t)))
             (when varlist (list :var varlist))))))
 
-(defun gascity-beads-sling--validate-launch (shape target bead context)
+(defun gascity-beads-sling--validate-launch (shape target bead context &optional city)
   "Refuse SHAPE with TARGET, BEAD and CONTEXT before any process starts.
 Signals `user-error' for missing work or target (plain and `on' need
 both; the formula-only shape may be targetless) and runs beads.el's
 `beads-formula-validate-vars' over the context recipe and resolved
-values, the same seam the formula launch uses."
+values, the same seam the formula launch uses.  When CITY names a
+warm `gascity-formula' recipe for the context formula, apply gc's
+convoy rule to the formula-only shape: a formula that needs a target
+convoy cannot run targetless (`--formula'), so refuse before the
+process starts.  A cold recipe cache skips the check and leaves the
+refusal to gc, exactly as `gascity-sling-formula--command' does."
   (when (memq shape '(plain on))
     (when (or (not (stringp bead)) (string-empty-p (string-trim bead)))
       (user-error "No work to sling"))
@@ -242,7 +247,15 @@ values, the same seam the formula launch uses."
              (gascity-formula--blank (plist-get context :formula)))
     (user-error "No formula selected"))
   (when-let* ((recipe (plist-get context :recipe)))
-    (beads-formula-validate-vars recipe (plist-get context :values))))
+    (beads-formula-validate-vars recipe (plist-get context :values)))
+  (when (and (eq shape 'formula)
+             city
+             (not (gascity-formula--blank (plist-get context :formula))))
+    (when-let* ((recipe (gascity-beads-sling--cached-gascity-recipe
+                         (plist-get context :formula) city)))
+      (when (gascity-formula--needs-convoy recipe)
+        (user-error "Formula %s requires a target convoy -- pick work with A"
+                    (plist-get context :formula))))))
 
 (defconst gascity-beads-sling--invalidate-prefixes
   '(("agent" "list") ("run" "list") ("session" "list")
@@ -271,7 +284,7 @@ echoed for the formula shapes."
          (formula (plist-get context :formula))
          (target (gascity-beads-sling--resolve-target context bead dir)))
     (gascity-beads-sling--remember-city dir)
-    (gascity-beads-sling--validate-launch shape target bead context)
+    (gascity-beads-sling--validate-launch shape target bead context dir)
     (when (and (stringp prompt) (not (string-empty-p (string-trim prompt))))
       (message "gc sling has no prompt flag -- dropping the prompt for %s"
                bead))
