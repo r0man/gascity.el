@@ -219,6 +219,14 @@ Pure: no file access, so it is safe on the view-open path."
                      gascity-context--root-cache)
             roots)))))
 
+(defun gascity-context-known-city-roots ()
+  "Return the distinct city roots this session already knows.
+The public, cache-only accessor over
+`gascity-context--known-city-roots' for downstream callers (the beads
+sling target provider) that must resolve a city without walking the
+file system or spawning `gc'."
+  (gascity-context--known-city-roots))
+
 (defun gascity-context--read-city-root (dir)
   "Read a Gas City root from the user to scope a view opened from DIR.
 DIR, a directory outside every city, is only the prompt's default.

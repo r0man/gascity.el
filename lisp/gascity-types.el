@@ -578,8 +578,13 @@ buffer (`gascity-compose').")
   (and (gascity-command--blank-p command 'target) "a session target is required"))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-sling))
-  "Validate COMMAND: require both a target and a bead/text argument."
-  (cond ((gascity-command--blank-p command 'target) "a sling target is required")
+  "Validate COMMAND: require a bead/text argument and a target.
+The targetless `--formula' shape (`:formula' non-nil, ARG holding the
+formula name) is the one documented exception: gc runs the formula
+with no Who, so a blank target is valid there."
+  (cond ((and (gascity-command--blank-p command 'target)
+              (not (slot-value command 'formula)))
+         "a sling target is required")
         ((gascity-command--blank-p command 'arg) "a bead id or task text is required")))
 
 (cl-defmethod gascity-command-validate ((command gascity-command-order-run))
