@@ -40,6 +40,7 @@
 ;;; Code:
 
 (require 'beads-sling)
+(require 'beads-formula)
 (require 'gascity-action)
 (require 'gascity-formula)
 (require 'gascity-store)
@@ -212,18 +213,130 @@ and never reads or mutates beads, so it cannot loop."
   (ignore action issues)
   nil)
 
+;;; Backend dispatch and argv (plan §B3a, REQ-003/REQ-004/REQ-007)
+
+(declare-function beads-formula-validate-vars "beads-formula"
+                  (formula vars))
+(declare-function beads-sling-shape "beads-sling" (work formula))
 (declare-function gascity-command-act-async "gascity-action"
                   (command &rest args))
+
+(defun gascity-beads-sling--blank-p (value)
+  "Non-nil when VALUE is nil or a whitespace-only string."
+  (or (null value)
+      (and (stringp value) (string-empty-p (string-trim value)))))
+
+(defun gascity-beads-sling--first-name (&rest names)
+  "Return the first non-blank string among NAMES, or nil."
+  (seq-find (lambda (name)
+              (and (stringp name)
+                   (not (gascity-beads-sling--blank-p name))))
+            names))
+
+(defun gascity-beads-sling--var-args (values)
+  "Return VALUES as `--var' arguments, in order, skipping blanks.
+VALUES is the context's `:values' — a (NAME . VALUE) alist.  Only a
+non-blank value is emitted, formatted as \"name=value\" (plan §B3a
+step 4); a value containing a comma is split by the shared list
+formatter, a pre-existing limit of the beads command builder."
+  (delq nil
+        (mapcar (lambda (pair)
+                  (let ((name (car pair))
+                        (value (cdr pair)))
+                    (unless (gascity-beads-sling--blank-p value)
+                      (format "%s=%s" name value))))
+                values)))
+
+(defun gascity-beads-sling--command (shape target work formula values)
+  "Build the `gascity-command-sling' for SHAPE on TARGET.
+WORK is the work bead (or freeform text), FORMULA the formula name,
+VALUES the raw (NAME . VALUE) alist.  The single argv builder (plan
+§B3a step 6): every row carries a non-empty TARGET — `gc' refuses
+`--formula' without an explicit target — and the formula shape puts
+the formula name in the bead slot:
+
+  plain    (\"sling\" TARGET WORK)
+  on       (\"sling\" TARGET WORK \"--on\" FORMULA \"--var\" \"k=v\" …)
+  formula  (\"sling\" TARGET FORMULA \"--formula\" \"--var\" \"k=v\" …)
+
+Never the targetless (\"sling\" \"--formula\" …) shape."
+  (let ((vars (gascity-beads-sling--var-args values)))
+    (pcase shape
+      ('plain (gascity-command-sling :target target :arg work))
+      ('on (gascity-command-sling :target target :arg work
+                                  :on formula :var vars))
+      ('formula (gascity-command-sling :target target :arg formula
+                                       :formula t :var vars))
+      (_ (user-error "No sling work or formula selected")))))
 
 (defun gascity-beads-sling--dispatch (target bead prompt context)
   "Dispatch BEAD to TARGET through the `gc' backend.
 TARGET is a `beads-sling-target' whose `backend' is \"gc\", BEAD the
 work, PROMPT the freeform instruction and CONTEXT the
-`beads-sling--scope-context' plist.  The registration skeleton does
-not start a process; the command construction and asynchronous launch
-land with the backend work item."
-  (ignore target bead prompt context)
-  (user-error "Gas City sling dispatch is not wired in this build; use M-x gascity-sling-dispatch"))
+`beads-sling--scope-context' plist.  Everything is rebuilt from
+CONTEXT — this never reads transient state (plan F1) — in the §B3a
+order: work, shape, target, vars, prompt, command, then one
+asynchronous launch.
+
+WORK is `(or (plist-get context :work) BEAD)'; it is required for the
+`plain' and `on' shapes and ignored by `formula', whose bead slot
+carries the formula name.  SHAPE comes from the context's `:shape'
+and only defensively falls back to `beads-sling-shape' — never to
+gascity's formula cache or `gascity-formula--needs-convoy' (F5).
+
+TARGET resolves in order: the dispatch argument's name (authoritative
+— `beads-sling--launch' resolves the target but forwards the context
+unchanged, P3), the context's `:target', then
+`gascity-sling--derive-target' over the work, formula, resolved city,
+cached roster and target memory.  A blank answer is a `user-error'
+before any spawn, for every shape, because `gc' refuses `--formula'
+without an explicit target (P1).
+
+Vars are validated client-side before the launch when the context
+carries a recipe: `beads-formula-validate-vars' is fail-fast and
+signals `user-error' itself, so its return value is never tested —
+plan P2.  A non-blank PROMPT is dropped with a message — `gc sling' has
+no prompt flag — never refused and never put in argv.  The launch is
+`gascity-command-act-async' on the resolved city, and this function
+returns nil without blocking."
+  (let* ((work (or (plist-get context :work) bead))
+         (formula (plist-get context :formula))
+         (values (plist-get context :values))
+         (recipe (plist-get context :recipe))
+         (shape (or (plist-get context :shape)
+                    (beads-sling-shape work formula))))
+    (cond
+     ((and (memq shape '(plain on))
+           (gascity-beads-sling--blank-p work))
+      (user-error "No sling work selected"))
+     ((and (memq shape '(on formula))
+           (gascity-beads-sling--blank-p formula))
+      (user-error "No sling formula selected"))
+     ((not (memq shape '(plain on formula)))
+      (user-error "No sling work or formula selected")))
+    (let* ((city (gascity-beads-sling--city))
+           (target-name
+            (or (gascity-beads-sling--first-name
+                 (and (beads-sling-target-p target) (oref target name))
+                 (plist-get context :target))
+                (gascity-beads-sling--first-name
+                 (plist-get (gascity-sling--derive-target
+                             (list :work work :formula formula :city city)
+                             (gascity-sling--roster city)
+                             gascity-sling--target-memory)
+                            :target)))))
+      (unless target-name
+        (user-error "No sling target selected"))
+      ;; Fail fast, client-side, before any process exists (P2).
+      (when recipe
+        (beads-formula-validate-vars recipe values))
+      (unless (gascity-beads-sling--blank-p prompt)
+        (message "gc sling has no prompt flag; the instruction is dropped"))
+      (gascity-command-act-async
+       (gascity-beads-sling--command shape target-name work formula values)
+       :target target-name
+       :dir city)
+      nil)))
 
 (defun gascity-beads-sling-register ()
   "Register Gas City's contributions with beads.el's sling seams.
@@ -234,7 +347,7 @@ or process spawn; only the registration data structures change."
    (beads-sling-backend
     :name "gc"
     :dispatch #'gascity-beads-sling--dispatch
-    :description "Route the work to a Gas City agent (gc sling)."))
+    :description "Gas City (gc sling)"))
   (add-hook 'beads-sling-target-functions #'gascity-beads-sling-targets)
   (add-hook 'beads-sling-validators #'gascity-beads-sling-validate)
   (add-to-list 'beads-menu-providers #'gascity-beads-sling--menu-group)

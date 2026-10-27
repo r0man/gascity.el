@@ -40,7 +40,11 @@
   "Registering twice leaves one backend, one menu group and one hook entry."
   (gascity-beads-sling-register)
   (gascity-beads-sling-register)
-  (should (beads-sling-backend-get "gc"))
+  (let ((backend (beads-sling-backend-get "gc")))
+    (should backend)
+    (should (eq (oref backend dispatch) #'gascity-beads-sling--dispatch))
+    (should (equal (oref backend name) "gc"))
+    (should (equal (oref backend description) "Gas City (gc sling)")))
   (should (= 1 (gascity-beads-sling-test--count
                 #'gascity-beads-sling--menu-group beads-menu-providers)))
   (should (= 1 (gascity-beads-sling-test--count
@@ -222,3 +226,215 @@
         (cl-letf (((symbol-function 'gascity-context-known-city-roots) #'ignore))
           (should (equal (gascity-beads-sling--city dir)
                          gascity-beads-sling-test--other-city)))))))
+
+;;; Backend dispatch and argv (plan §B3a, REQ-003/REQ-004/REQ-007)
+
+(defconst gascity-beads-sling-test--target-name
+  "gascity.el/gc.implementation-worker"
+  "The gc sling target the dispatch tests pick.")
+
+(defun gascity-beads-sling-test--target (&optional name)
+  "Return a gc `beads-sling-target' named NAME, or the default one."
+  (beads-sling-target
+   :name (or name gascity-beads-sling-test--target-name)
+   :kind 'agent
+   :scope "gascity.el"
+   :backend "gc"
+   :description (or name gascity-beads-sling-test--target-name)))
+
+(defmacro gascity-beads-sling-test--with-launch (&rest body)
+  "Run BODY with the dispatch's launch seam captured in `launched'.
+`launched' is a plist of the last `gascity-command-act-async' call —
+`:command', its `:argv' (`gascity-command-arguments'), `:target' and
+`:dir' — and `launch-count' counts the calls, so a test can prove a
+dispatch started exactly nothing.  The city resolver and the Who
+derivation are stubbed to the test fixtures, so no store or file is
+read."
+  (declare (indent 0) (debug t))
+  `(let ((launched nil)
+         (launch-count 0))
+     (cl-letf (((symbol-function 'gascity-command-act-async)
+                (lambda (command &rest args)
+                  (setq launch-count (1+ launch-count))
+                  (setq launched
+                        (list :command command
+                              :argv (gascity-command-arguments command)
+                              :target (plist-get args :target)
+                              :dir (plist-get args :dir)))
+                  nil))
+               ((symbol-function 'gascity-beads-sling--city)
+                (lambda (&rest _) gascity-beads-sling-test--city))
+               ((symbol-function 'gascity-sling--roster) #'ignore)
+               ((symbol-function 'gascity-sling--derive-target)
+                (lambda (&rest _) nil)))
+       ,@body)))
+
+(ert-deftest gascity-test-beads-sling-dispatch-plain-argv ()
+  "A plain dispatch slings the bare bead to the chosen target."
+  (gascity-beads-sling-test--with-launch
+    (should-not (gascity-beads-sling--dispatch
+                 (gascity-beads-sling-test--target) "ga-1" nil
+                 (list :work "ga-1" :shape 'plain)))
+    (should (= 1 launch-count))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))
+    (should (equal (plist-get launched :target)
+                   gascity-beads-sling-test--target-name))
+    (should (equal (plist-get launched :dir)
+                   gascity-beads-sling-test--city))
+    (should-not (gascity-command-validate (plist-get launched :command)))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-on-argv ()
+  "A targeted formula dispatch emits `--on' plus only non-blank vars."
+  (gascity-beads-sling-test--with-launch
+    (should-not (gascity-beads-sling--dispatch
+                 (gascity-beads-sling-test--target) "ga-1" nil
+                 (list :work "ga-1" :formula "mol-x" :shape 'on
+                       :values '(("alpha" . "one") ("blank" . "")
+                                 ("beta" . "two")))))
+    (should (= 1 launch-count))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" gascity-beads-sling-test--target-name "ga-1"
+                         "--on" "mol-x"
+                         "--var" "alpha=one" "--var" "beta=two")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-formula-argv ()
+  "A formula dispatch puts the target first, then the formula name."
+  (gascity-beads-sling-test--with-launch
+    (should-not (gascity-beads-sling--dispatch
+                 (gascity-beads-sling-test--target) nil nil
+                 (list :work nil :formula "mol-x" :shape 'formula
+                       :values '(("alpha" . "one")))))
+    (should (= 1 launch-count))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" gascity-beads-sling-test--target-name
+                         "mol-x" "--formula" "--var" "alpha=one")))
+    ;; Never the targetless shape gc refuses (`gc sling --formula …').
+    (should-not (equal (seq-take (plist-get launched :argv) 2)
+                       '("sling" "--formula")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-formula-ignores-work ()
+  "A formula dispatch keeps the work bead out of argv; the formula name is slot 2."
+  (gascity-beads-sling-test--with-launch
+    (gascity-beads-sling--dispatch
+     (gascity-beads-sling-test--target) "ga-1" nil
+     (list :work "ga-1" :formula "mol-x" :shape 'formula))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" gascity-beads-sling-test--target-name
+                         "mol-x" "--formula")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-target-arg-wins ()
+  "The dispatch TARGET argument beats the context's target."
+  (gascity-beads-sling-test--with-launch
+    (gascity-beads-sling--dispatch
+     (gascity-beads-sling-test--target) "ga-1" nil
+     (list :work "ga-1" :shape 'plain :target "other/agent"))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-skips-derivation ()
+  "An explicit target is authoritative; the roster is never read for it."
+  (gascity-beads-sling-test--with-launch
+    (cl-letf (((symbol-function 'gascity-sling--roster)
+               (lambda (&rest _)
+                 (error "Read the roster for an explicitly chosen target")))
+              ((symbol-function 'gascity-sling--derive-target)
+               (lambda (&rest _)
+                 (error "Derived a target the dispatch already chose"))))
+      (gascity-beads-sling--dispatch
+       (gascity-beads-sling-test--target) "ga-1" nil
+       (list :work "ga-1" :shape 'plain :target "other/agent")))
+    (should (= 1 launch-count))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-resolves-context-target ()
+  "A nil TARGET falls back to the context's target name."
+  (gascity-beads-sling-test--with-launch
+    (gascity-beads-sling--dispatch
+     nil "ga-1" nil
+     (list :work "ga-1" :shape 'plain :target "context/agent"))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" "context/agent" "ga-1")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-resolves-derived-target ()
+  "With no explicit target, the Who derivation's answer is used."
+  (gascity-beads-sling-test--with-launch
+    (cl-letf (((symbol-function 'gascity-sling--derive-target)
+               (lambda (_scope _roster _memory)
+                 (list :target "derived/agent" :source 'implementation-worker))))
+      (gascity-beads-sling--dispatch nil "ga-1" nil
+                                     (list :work "ga-1" :shape 'plain)))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" "derived/agent" "ga-1")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-missing-target ()
+  "Every shape refuses, before any launch, when no target resolves."
+  (gascity-beads-sling-test--with-launch
+    (dolist (context (list (list :work "ga-1" :shape 'plain)
+                           (list :work "ga-1" :formula "mol-x" :shape 'on)
+                           (list :formula "mol-x" :shape 'formula)))
+      (should-error (gascity-beads-sling--dispatch nil "ga-1" nil context)
+                    :type 'user-error
+                    :exclude-subtypes t))
+    (should (= 0 launch-count))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-missing-work ()
+  "A plain or `on' dispatch without work errors out before the launch."
+  (gascity-beads-sling-test--with-launch
+    (should-error (gascity-beads-sling--dispatch
+                   (gascity-beads-sling-test--target) nil nil
+                   (list :shape 'plain))
+                  :type 'user-error)
+    (should-error (gascity-beads-sling--dispatch
+                   (gascity-beads-sling-test--target) "  " nil
+                   (list :work "  " :formula "mol-x" :shape 'on))
+                  :type 'user-error)
+    (should (= 0 launch-count))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-missing-formula ()
+  "An `on' or formula dispatch without a formula errors before the launch."
+  (gascity-beads-sling-test--with-launch
+    (should-error (gascity-beads-sling--dispatch
+                   (gascity-beads-sling-test--target) "ga-1" nil
+                   (list :work "ga-1" :shape 'on))
+                  :type 'user-error)
+    (should-error (gascity-beads-sling--dispatch
+                   (gascity-beads-sling-test--target) nil nil
+                   (list :formula "" :shape 'formula))
+                  :type 'user-error)
+    (should (= 0 launch-count))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-prompt-dropped ()
+  "A non-blank prompt is dropped with a message, never refused or passed."
+  (gascity-beads-sling-test--with-launch
+    (let ((messages nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (push (apply #'format format args) messages))))
+        (gascity-beads-sling--dispatch
+         (gascity-beads-sling-test--target) "ga-1" "do the thing"
+         (list :work "ga-1" :shape 'plain)))
+      (should (seq-some (lambda (msg) (string-match-p "no prompt flag" msg))
+                        messages)))
+    (should (= 1 launch-count))
+    (should (equal (plist-get launched :argv)
+                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-validates-recipe-vars ()
+  "The dispatch hands the beads recipe and raw values to the shared check."
+  (gascity-beads-sling-test--with-launch
+    (let ((recipe (list :name "mol-x"))
+          (values '(("alpha" . "one")))
+          (checked nil))
+      (cl-letf (((symbol-function 'beads-formula-validate-vars)
+                 (lambda (formula vars)
+                   (setq checked (list formula vars))
+                   (user-error "Missing required formula vars: beta"))))
+        (should-error (gascity-beads-sling--dispatch
+                       (gascity-beads-sling-test--target) "ga-1" nil
+                       (list :work "ga-1" :formula "mol-x" :shape 'on
+                             :recipe recipe :values values))
+                      :type 'user-error))
+      (should (equal checked (list recipe values))))
+    (should (= 0 launch-count))))
