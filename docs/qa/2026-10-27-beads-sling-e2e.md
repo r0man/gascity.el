@@ -237,3 +237,110 @@ The pass left no live artifacts:
 - `P` (full preview) and the failure echo were observed; the recipe preview
   (`r`) was not exercised in this pass — B6/B7 cover it via the gascity
   transient tests and the earlier formula-sling e2e.
+
+## Independent re-run (second worker) — plain shape and three extra findings
+
+A second acceptance pass re-ran the gates and the interactive flow
+independently, in its own fresh tmux Emacs (`gce-e2e-bs`, server
+`gce-e2e-bs`), against both cities, with one setup difference that matters:
+the Emacs was started with `env -i` plus only `HOME`, `PATH`, `TERM`,
+`SSH_AUTH_SOCK`, `XDG_RUNTIME_DIR` and the load-path variables. A worker
+shell carries `GC_*`/`BEADS_*` variables that pin `bd` to the owning rig's
+store regardless of `default-directory` (in `~/bright-lights`, `bd list`
+answered 119 `ga-` beads until they were scrubbed), so an unscrubbed Emacs
+would have exercised the wrong store in both cities. Same bounds
+(`scripts/e2e-harness.sh`, every emacs/emacsclient/tmux call under
+`timeout(1)`), same worktree `worktrees/ga-lii6c`, beads.el `a744ac25`,
+transient 0.13.8, Emacs 31.1, gc 1.5.1. Gates re-ran green in this pass too
+(843/843 ERT, `scripts/lint.sh` exit 0).
+
+### Re-verified, remote (`bright-lights` over `/ssh:localhost:`)
+
+Cockpit `● live`, agents view opened to warm `("agent" "list")`
+(`:store ready`), bead `bl-dbib` in `beads-show-mode`:
+
+1. `S` → the seeded transient (`Sling bead bl-dbib to bright-lights/task`);
+   `T` → 30 completions, 20 of them the gc roster (`bd.dog`,
+   `core.control-dispatcher`, `hello-world/gc.implementation-worker`,
+   `mayor`, …) with `:backend "gc"` and qualified names.
+2. `T` → `mayor`, `f` → `e2e-demo-on`:
+   `✓ Ready — on run · target mayor · 0 of 1 vars set`, with
+   `How — e2e-demo-on vars` / `ot note — … [default: gce-e2e demo]`.
+3. `s` → `Launched workflow bl-eh4k (e2e-demo-on on bl-eh4k) — F: run view`.
+4. Run view: `⬣ bl-eh4k e2e-demo-on  city` under **Active**; the cockpit's
+   Moving section lists the same root. Store: `bl-eh4k` `in_progress`,
+   `gc.kind=workflow`, `gc.formula_name=e2e-demo-on`, `gc.routed_to=mayor`,
+   `gc.input_convoy_id=bl-pviv`, `gc.var.note=gce-e2e demo`; graph steps
+   `bl-matt` (`e2e-demo-on.latch`) and `bl-wuty` (`…workflow-finalize`).
+
+The defaulted var arriving in the store as `gc.var.note` confirms the
+`--var note=gce-e2e demo` passthrough end to end.
+
+### New: plain shape, from a city-store bead (`emacs-city`)
+
+The first pass's local dispatch had to use a rig-store bead (and then a
+rig-scoped target), because gc refuses a city target for a rig-store bead
+(F3). The plain shape needs no formula, so a city-store bead exercises the
+`gc sling <city-target> <bead>` equivalent directly:
+
+1. Scratch bead `ec-rqj9v` in the `emacs-city` store, `beads-show-mode`,
+   roster warm (36 gc targets).
+2. `S` → `Sling bead ec-rqj9v to emacs-city/task`; `T` → `mayor`; `s` →
+   `Slung ec-rqj9v to mayor` (the plain shape's echo: bead and Who).
+3. Store: `ec-rqj9v` carries `gc.routed_to=mayor`, and gc created the
+   auto-convoy `ec-ojdg0` (`sling-ec-rqj9v`).
+
+Plain dispatch to a reachable target therefore works exactly as the gascity
+transient's does; the first pass's refusal was the cross-store route, not the
+plain shape.
+
+### New: the cross-store advisory is a warning, not a refusal
+
+`bl-dbib` (bright-lights store) → target
+`hello-world/gc.implementation-worker`: the transient footer shows
+
+```
+⚠ cross-store route: bead bl-dbib lives in the bright-lights store but the
+  target reads the hello-world store — gc will refuse (pick a city agent or a
+  bright-lights agent)
+```
+
+and `P` repeats it in the preview's `Validation` section above
+`Routing plan (dry run)`; `s` stays available. This is the advisory half of
+REQ-005 working for a rig-scoped target; F3 is the missing half for a
+city-scoped one.
+
+### Additional findings
+
+- **G1 — the contributed `V` action is advertised but unbound (gascity.el).**
+  The bead action bar renders `V gascity-dashboard`
+  (`gascity-beads-sling--actions`), but `(key-binding (kbd "V"))` is nil in
+  `beads-show-mode` and pressing it echoes `V is undefined`: beads.el only
+  prints provider keys, it never binds them. Either the module binds `V` in
+  the beads modes or the entry must not be advertised. Affects REQ-008's
+  action-bar clause; the after-action refresh clause is covered by ERT.
+- **G2 — extended formulas have no vars in the beads transient (beads.el).**
+  `bd formula show build-basic --json` answers `extends: [build-base]` and no
+  top-level `vars`, so `beads-sling--fetch-formula` returns a recipe without
+  vars: picking `build-basic` shows no `How` section, the footer says
+  `0 vars`, and `beads-sling--missing-required-vars` has nothing to warn
+  about — although `gc sling --on build-basic` requires vars. Formulae that
+  declare their own vars (`e2e-demo`, `e2e-demo-on`) work. The plan's own
+  example formula is `build-basic`, so this limits the REQ-004/REQ-005
+  demonstration to non-extended formulas.
+- **G3 — why the root shows `Steps 0/0` (gascity.el).** The "0/0 steps"
+  limitation above is a run-view classification, not a sling defect: a
+  workflow-latch step carries `gc.kind=workflow` *and* `gc.root_bead_id`, and
+  `gascity-runs-index` tests `gascity-dashboard--run-root-p` first, so the
+  latch is indexed as its own run root (it also appears as a separate
+  *Waiting* row) and the real root has no graph beads left.
+  `gascity-dashboard--control-kinds` names `spec`, `scope-check` and
+  `workflow-finalize` but not latch `workflow` beads. Pre-existing and
+  formula-independent.
+
+### Cleanup
+
+- `bright-lights`: input bead `bl-dbib` deleted; root `bl-eh4k`, latch
+  `bl-matt`, finalize `bl-wuty` and input convoy `bl-pviv` closed.
+- `emacs-city`: input bead `ec-rqj9v` deleted; auto-convoy `ec-ojdg0`
+  closed.

@@ -31,8 +31,8 @@ trace:
       hash: sha256:c7f5758722b3f9535bd2584f743767e9b014808951d3c3c563f06c0a3e2e8c72
       title: "Grounded input context and operator constraint (forge-over-magit)"
     - path: docs/qa/2026-10-27-beads-sling-e2e.md
-      hash: sha256:e272d1389265c0152aff8374b0a9d6b4a1621138e1c16ec62250cedf415d53ac
-      title: "Changed: the AC-15 e2e report (both cities, evidence, findings)"
+      hash: sha256:2e7e6df389ce2bf5cb86af596a38b7459c84b684ec2f1ce59076a73bf6ecdd76
+      title: "Changed: the AC-15 e2e report (both cities, evidence, findings, independent re-run)"
     - path: lisp/gascity-beads-sling.el
       hash: sha256:80c3c6a0621bf03cc1be83942817730d59ae71a6064de32651808e1b016b0152
       title: "Under test (unchanged by B8): the downstream registration module"
@@ -42,7 +42,13 @@ trace:
     - id: REQ-004
       status: covered
     - id: REQ-008
-      status: covered
+      status: blocked
+      rationale: >-
+        gascity's half is implemented and unit-tested, but neither live clause
+        is demonstrable: beads.el's beads-menu--provider-children splices the
+        provider groups unparsed, so the beads dispatch menu fails with
+        `Invalid function: "City"` (be-cnn7f), and the contributed V action is
+        advertised in the bead action bar but unbound (ga-3rrs6).
     - id: REQ-009
       status: covered
 ---
@@ -63,6 +69,11 @@ The branch is the full stack, not a fresh B8 base: `beads-sling-b8` starts at
 base and never contained B6's tests, so the integration commit is what makes
 the branch match the plan's "all of Workstream B in one tree" expectation.
 The resulting tree is green: compile (warnings as errors), 843/843 ERT, lint.
+A second worker re-ran both gates on the same tree and repeated the
+interactive flow independently (scrubbed environment, own tmux Emacs, both
+cities), adding the plain-shape dispatch from a city-store bead, the
+cross-store advisory evidence and three findings; that pass is the
+"Independent re-run" section of the QA report.
 
 ## Intended Behavior
 
@@ -83,14 +94,22 @@ The resulting tree is green: compile (warnings as errors), 843/843 ERT, lint.
 | --- | --- |
 | REQ-003 | covered |
 | REQ-004 | covered |
-| REQ-008 | covered |
+| REQ-008 | blocked |
 | REQ-009 | covered |
+
+REQ-008 is `blocked` rather than `covered`: gascity's half is implemented and
+unit-tested (the provider contribution, the additive action entry, the
+post-mutation invalidation), but neither live clause is demonstrable end to
+end. The `[City]` group cannot render (`?` raises `Invalid function:
+"City"`, beads.el `be-cnn7f`), and the contributed `V` action is advertised
+in the bead action bar but unbound (`V is undefined`, finding G1). Both are
+filed; neither is a defect in the sling path.
 
 ## Changed Files
 
 | File | Change |
 | --- | --- |
-| `docs/qa/2026-10-27-beads-sling-e2e.md` | New: the AC-15 pass — setup, gates, cold-start observation, remote and local transcripts, findings, cleanup, limitations. |
+| `docs/qa/2026-10-27-beads-sling-e2e.md` | New: the AC-15 pass — setup, gates, cold-start observation, remote and local transcripts, findings, cleanup, limitations — plus the independent re-run section: the plain shape from a city-store bead, the cross-store advisory, and findings G1–G3. |
 | `plans/beads-sling-integration/task-ga-lii6c-summary.md` | New: this summary. |
 
 No production code changed by B8. The PR carries the whole Workstream B
@@ -133,7 +152,9 @@ Interactive E2E (AC-15, `scripts/e2e-harness.sh` bounds), recorded in
 | City | Bead → target → formula | Result |
 | --- | --- | --- |
 | `bright-lights` over `/ssh:localhost:` | `bl-fgg6` → `mayor` → `e2e-demo` | `Launched workflow bl-sx9x`; run view and Moving show it |
+| `bright-lights`, independent re-run | `bl-dbib` → `mayor` → `e2e-demo-on` | `Launched workflow bl-eh4k`; run view Active row; `gc.var.note` in the store |
 | `emacs-city` (local) | `ga-a9i6z` → `gascity.el/gc.run-operator` → `e2e-demo` | `Launched workflow ga-gsqi3`; run view and Moving show it |
+| `emacs-city`, independent re-run, plain shape | `ec-rqj9v` → `mayor` (no formula) | `Slung ec-rqj9v to mayor`; `gc.routed_to=mayor`; auto-convoy `ec-ojdg0` |
 
 The local pass first tried the city-scoped `mayor` target and gc refused the
 cross-store route; the refusal surfaced exactly as designed and no root was
@@ -147,16 +168,30 @@ closed afterwards; the temporary local formula copy was removed.
 | --- | --- | --- |
 | Downstream provider groups break `beads-dispatch` (`Invalid function: "City"`): providers are appended to `:setup-children` unparsed | beads.el (`beads-menu--provider-children`) | `be-cnn7f` |
 | A city-scoped cross-store route gc refuses is not warned by the sling validators | gascity.el (`gascity-sling--cross-store-p`) | `ga-6lo2o` |
+| G1: the contributed `V` cockpit action is advertised in the bead action bar but unbound (`V is undefined`) | gascity.el (`gascity-beads-sling--actions`) | `ga-3rrs6` |
+| G2: `bd formula show` drops vars inherited through `extends`, so `build-basic` shows no vars or missing-var warning in the beads transient | beads.el (`beads-sling--fetch-formula` / formula-show) | `be-qrgv8` |
+| G3: a workflow-latch step is indexed as its own run root, so the real root renders `Steps 0/0` (the `e2e-demo` limitation above) | gascity.el (`gascity-runs-index`) | `ga-99g35` |
 
-Neither blocks the sling path; both are filed with repros and fix directions.
-The `[City]` group is beads.el's rendering defect; gascity's provider returns
-the documented contract.
+None blocks the sling path (F1/G1 are message/menu surface, G2 affects which
+formulas can fill vars from the beads UI, G3 is a pre-existing run-view
+classification); all are filed with repros and fix directions. The `[City]`
+group is beads.el's rendering defect; gascity's provider returns the documented
+contract.
 
 ## Remaining Risks
 
 - The `e2e-demo` latch workflow does not advance its "Finalize workflow" step
-  on its own in either city (0/0 steps); the pass closed the roots and steps
-  by hand after collecting evidence, as earlier formula-sling passes did.
+  on its own in either city (0/0 steps, and the latch row surfaces as its own
+  waiting run); the pass closed the roots and steps by hand after collecting
+  evidence. G3 (`ga-99g35`) records the run-view classification behind the
+  `0/0` reading.
+- A formula that inherits its vars through `extends` (`build-basic` →
+  `build-base`) offers no vars in the beads transient (G2, `be-qrgv8`), so
+  REQ-004's var entry and REQ-005's missing-var warning are demonstrated live
+  only for formulas that declare their own vars (`e2e-demo`, `e2e-demo-on`);
+  the `--var` passthrough itself is confirmed (store `gc.var.note`) and by the
+  B6 ERT argv tests.
+- REQ-008 is reported `blocked` (F1 + G1) instead of `covered`.
 - The interactive pass exercised the `--on` (bead + formula) shape. The
   `plain` and targetless `--formula` argv shapes remain covered by ERT only.
 - The branch stacks eleven commits over `main`; the Refinery must merge it as
