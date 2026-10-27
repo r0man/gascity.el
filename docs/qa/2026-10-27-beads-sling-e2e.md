@@ -232,8 +232,8 @@ The pass left no live artifacts:
   formula-sling passes.
 - The dispatch was exercised through the `--on` (bead + formula) shape, which
   is the shape that creates a workflow root. The plain (`gc sling TARGET
-  BEAD`) and targetless (`--formula`) argv shapes are covered by the B6 ERT
-  suite and were not repeated here.
+  BEAD`) shape was later repeated over TRAMP by the third pass below; the
+  targetless (`--formula`) argv shape is covered by the B6 ERT suite only.
 - `P` (full preview) and the failure echo were observed; the recipe preview
   (`r`) was not exercised in this pass — B6/B7 cover it via the gascity
   transient tests and the earlier formula-sling e2e.
@@ -344,3 +344,78 @@ city-scoped one.
   `bl-matt`, finalize `bl-wuty` and input convoy `bl-pviv` closed.
 - `emacs-city`: input bead `ec-rqj9v` deleted; auto-convoy `ec-ojdg0`
   closed.
+
+## Third pass (worker-2) — the plain shape over TRAMP
+
+A third fresh tmux Emacs (`gce-b8-w2`, server `gce-b8-w2`, Emacs 31.1,
+worktree `worktrees/ga-lii6c` at `8730c6c`, `scripts/e2e-harness.sh`
+bounds, eldoc off, load path worktree `lisp/` + `~/workspace/beads.el/lisp`
++ its bundled `vui-1.4.0`) repeated the gates and drove the plain shape on
+both cities, closing the TRAMP plain-shape gap left by the first two passes.
+`scripts/gate.sh` was green (843/843 ERT; the first run hit the known
+async-reader flake, three following full runs were clean) and
+`scripts/lint.sh` exited 0; `make -C doc` was forced by touching the manual
+and passed.
+
+### Local (`emacs-city`)
+
+`M-x gascity` showed the dispatch menu; `M-x gascity-dashboard` warmed the
+store and rig memo; `ga-spcd7` in `beads-show-mode` then `S` → `T` →
+`gascity.el/gc.implementation-worker` → `s`:
+
+```
+Slung ga-spcd7 to gascity.el/gc.implementation-worker
+```
+
+The cockpit repainted with the launch visible as
+`● gascity.el/gc.run-operator-1  pi  active  7s`. A second bead
+(`ga-llczk`) repeated the flow with an advice on
+`gascity-reader-run-async` recording the action-lane argv; the recorded
+plain argv is exactly B3a's shape:
+
+```
+("gc" "sling" "gascity.el/gc.implementation-worker" "ga-llczk" "--json")
+```
+
+Both launches succeeded, so no `*gascity-log: emacs-city*` buffer was
+created (that buffer receives a failed action's full stderr); the echo and
+the runner argv are the success evidence.
+
+### TRAMP (`/ssh:localhost:/home/roman/bright-lights`)
+
+A disposable city-store bead (`bl-85id`, created with the worker shell's
+`BEADS_DIR`/`GC_BEADS_SCOPE_ROOT` unset so it landed in the bright-lights
+store, prefix `bl`) was opened in
+`*beads-show[/ssh:localhost:|bright-lights]/bl-85id …*`; the remote cockpit
+was `● live` and the agent store was warm (97 targets, 36 `:backend "gc"`,
+including `mayor`). `S` → `T` → `mayor` → `s`:
+
+```
+Slung bl-85id to mayor
+("gc" "sling" "mayor" "bl-85id" "--json")
+```
+
+Store: `bl-85id` carries `gc.routed_to=mayor`; the bright-lights `mayor`
+session is `active`. No blocking load was observed on the TRAMP route.
+
+One target-selection caveat: an earlier TRAMP attempt used
+`core.control-dispatcher`, which is a control-bead consumer. gc routed
+`bl-3xi5` to it and the dispatcher quarantined the ordinary task bead with
+`unsupported control bead kind ""` (`gc.outcome=fail`). The dispatch itself
+was correct (echo and argv `("sling" "core.control-dispatcher" "bl-3xi5"
+"--json")`); `core.control-dispatcher` simply is not a sensible Who target
+for ordinary work. The pass was repeated with `mayor`.
+
+### Cold start (third pass)
+
+From the city root with no rig buffer open, `beads-sling-targets` returned
+61 targets and 0 `:backend "gc"`; from the rig-pinned bead show buffer it
+returned 97 targets, 36 gc. That is the documented F4 rule again: the known
+city root's memoized rigs contain the rig repositories, not the city root
+itself, so the first `gc` target appears once a city/rig view has been
+opened.
+
+### Cleanup (third pass)
+
+`ga-spcd7`, `ga-llczk`, `bl-85id` and the quarantined `bl-3xi5` were all
+closed in their owning stores. No beads.el file was touched.
