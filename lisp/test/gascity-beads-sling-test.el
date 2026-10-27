@@ -245,7 +245,8 @@
 (defmacro gascity-beads-sling-test--with-launch (&rest body)
   "Run BODY with the dispatch's launch seam captured in `launched'.
 `launched' is a plist of the last `gascity-command-act-async' call —
-`:command', its `:argv' (`gascity-command-arguments'), `:target' and
+`:command', its `:argv' (`gascity-command-arguments'), `:args' (the
+keyword arguments, including the `:on-success' closure), `:target' and
 `:dir' — and `launch-count' counts the calls, so a test can prove a
 dispatch started exactly nothing.  The city resolver and the Who
 derivation are stubbed to the test fixtures, so no store or file is
@@ -259,6 +260,7 @@ read."
                   (setq launched
                         (list :command command
                               :argv (gascity-command-arguments command)
+                              :args args
                               :target (plist-get args :target)
                               :dir (plist-get args :dir)))
                   nil))
@@ -276,8 +278,12 @@ read."
                  (gascity-beads-sling-test--target) "ga-1" nil
                  (list :work "ga-1" :shape 'plain)))
     (should (= 1 launch-count))
+    ;; `--json' rides after the positionals (the global options come
+    ;; first): the launch asks for a parsed dispatch result (plan §B3,
+    ;; `json t') so a formula shape can echo the created workflow root.
     (should (equal (plist-get launched :argv)
-                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))
+                   (list "sling" gascity-beads-sling-test--target-name
+                         "ga-1" "--json")))
     (should (equal (plist-get launched :target)
                    gascity-beads-sling-test--target-name))
     (should (equal (plist-get launched :dir)
@@ -295,7 +301,7 @@ read."
     (should (= 1 launch-count))
     (should (equal (plist-get launched :argv)
                    (list "sling" gascity-beads-sling-test--target-name "ga-1"
-                         "--on" "mol-x"
+                         "--json" "--on" "mol-x"
                          "--var" "alpha=one" "--var" "beta=two")))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-formula-argv ()
@@ -308,7 +314,7 @@ read."
     (should (= 1 launch-count))
     (should (equal (plist-get launched :argv)
                    (list "sling" gascity-beads-sling-test--target-name
-                         "mol-x" "--formula" "--var" "alpha=one")))
+                         "mol-x" "--json" "--formula" "--var" "alpha=one")))
     ;; Never the targetless shape gc refuses (`gc sling --formula …').
     (should-not (equal (seq-take (plist-get launched :argv) 2)
                        '("sling" "--formula")))))
@@ -321,7 +327,7 @@ read."
      (list :work "ga-1" :formula "mol-x" :shape 'formula))
     (should (equal (plist-get launched :argv)
                    (list "sling" gascity-beads-sling-test--target-name
-                         "mol-x" "--formula")))))
+                         "mol-x" "--json" "--formula")))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-target-arg-wins ()
   "The dispatch TARGET argument beats the context's target."
@@ -330,7 +336,8 @@ read."
      (gascity-beads-sling-test--target) "ga-1" nil
      (list :work "ga-1" :shape 'plain :target "other/agent"))
     (should (equal (plist-get launched :argv)
-                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))))
+                   (list "sling" gascity-beads-sling-test--target-name
+                         "ga-1" "--json")))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-skips-derivation ()
   "An explicit target is authoritative; the roster is never read for it."
@@ -346,7 +353,8 @@ read."
        (list :work "ga-1" :shape 'plain :target "other/agent")))
     (should (= 1 launch-count))
     (should (equal (plist-get launched :argv)
-                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))))
+                   (list "sling" gascity-beads-sling-test--target-name
+                         "ga-1" "--json")))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-resolves-context-target ()
   "A nil TARGET falls back to the context's target name."
@@ -355,7 +363,7 @@ read."
      nil "ga-1" nil
      (list :work "ga-1" :shape 'plain :target "context/agent"))
     (should (equal (plist-get launched :argv)
-                   (list "sling" "context/agent" "ga-1")))))
+                   (list "sling" "context/agent" "ga-1" "--json")))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-resolves-derived-target ()
   "With no explicit target, the Who derivation's answer is used."
@@ -366,7 +374,7 @@ read."
       (gascity-beads-sling--dispatch nil "ga-1" nil
                                      (list :work "ga-1" :shape 'plain)))
     (should (equal (plist-get launched :argv)
-                   (list "sling" "derived/agent" "ga-1")))))
+                   (list "sling" "derived/agent" "ga-1" "--json")))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-missing-target ()
   "Every shape refuses, before any launch, when no target resolves."
@@ -419,7 +427,8 @@ read."
                         messages)))
     (should (= 1 launch-count))
     (should (equal (plist-get launched :argv)
-                   (list "sling" gascity-beads-sling-test--target-name "ga-1")))))
+                   (list "sling" gascity-beads-sling-test--target-name
+                         "ga-1" "--json")))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-validates-recipe-vars ()
   "The dispatch hands the beads recipe and raw values to the shared check."
@@ -438,3 +447,149 @@ read."
                       :type 'user-error))
       (should (equal checked (list recipe values))))
     (should (= 0 launch-count))))
+
+;;; Async launch, echo and one invalidation (plan §B3b, REQ-003/REQ-004)
+
+(defconst gascity-beads-sling-test--result
+  '((id . "ga-9") (status . "open"))
+  "The parsed payload a successful launch answers with.")
+
+(defconst gascity-beads-sling-test--invalidate-kinds
+  '(agent run session convoy status)
+  "The store kinds one sling dispatch invalidates, in order.")
+
+(defun gascity-beads-sling-test--succeed (launched &optional result)
+  "Invoke the captured LAUNCH's `:on-success' closure with RESULT.
+Signals a test failure when the dispatch registered no closure."
+  (let ((on-success (plist-get (plist-get launched :args) :on-success)))
+    (should on-success)
+    (funcall on-success result)))
+
+(defun gascity-beads-sling-test--dispatch-shape (shape)
+  "Dispatch the test target for SHAPE with a plain or formula context.
+The launch itself is captured by the enclosing
+`gascity-beads-sling-test--with-launch'."
+  (gascity-beads-sling--dispatch
+   (gascity-beads-sling-test--target) "ga-1" nil
+   (list :work "ga-1"
+         :shape shape
+         :formula (unless (eq shape 'plain) "mol-x"))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-async-launch ()
+  "One non-blocking launch: json payload, city pin, explicit invalidation off."
+  (gascity-beads-sling-test--with-launch
+    (let ((result (gascity-beads-sling-test--dispatch-shape 'plain)))
+      (should-not result)
+      (should (= 1 launch-count))
+      (let ((args (plist-get launched :args)))
+        ;; The payload must be parsed JSON for the launch handler (step 2).
+        (should (eq (slot-value (plist-get launched :command) 'json) t))
+        (should (plist-member args :invalidate))
+        (should-not (plist-get args :invalidate))
+        (should-not (plist-member args :on-error))
+        (should (functionp (plist-get args :on-success)))
+        (should (equal (plist-get args :target)
+                       gascity-beads-sling-test--target-name))
+        (should (equal (plist-get args :dir)
+                       gascity-beads-sling-test--city))))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-echo-plain ()
+  "A plain launch echoes the shared success text for the sling and target."
+  (gascity-beads-sling-test--with-launch
+    (let ((messages nil))
+      (cl-letf (((symbol-function 'gascity-beads-sling--invalidate) #'ignore)
+                ((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (push (apply #'format format args) messages))))
+        (gascity-beads-sling-test--dispatch-shape 'plain)
+        (should-not messages)
+        (gascity-beads-sling-test--succeed
+         launched gascity-beads-sling-test--result))
+      (should (equal messages
+                     (list (gascity-action--success-text
+                            (plist-get launched :command)
+                            gascity-beads-sling-test--target-name
+                            gascity-beads-sling-test--result)))))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-echo-formula ()
+  "The `on' and formula shapes echo through the launch handler."
+  (gascity-beads-sling-test--with-launch
+    (let ((handler-calls nil)
+          (handled nil)
+          (messages nil))
+      (cl-letf (((symbol-function 'gascity-sling--launch-handler)
+                 (lambda (command formula arg)
+                   (push (list command formula arg) handler-calls)
+                   (lambda (result) (push result handled))))
+                ((symbol-function 'gascity-beads-sling--invalidate) #'ignore)
+                ((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (push (apply #'format format args) messages))))
+        (dolist (shape '(on formula))
+          (setq handler-calls nil
+                handled nil
+                messages nil)
+          (gascity-beads-sling-test--dispatch-shape shape)
+          (should (= 1 (length handler-calls)))
+          (should (eq (caar handler-calls) (plist-get launched :command)))
+          (should (equal (nth 1 (car handler-calls)) "mol-x"))
+          (should (equal (nth 2 (car handler-calls)) "ga-1"))
+          (gascity-beads-sling-test--succeed
+           launched gascity-beads-sling-test--result)
+          (should (equal handled (list gascity-beads-sling-test--result)))
+          (should-not messages))))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-invalidate-once ()
+  "Success invalidates exactly one call per store kind, and nothing else."
+  (gascity-beads-sling-test--with-launch
+    (let ((calls nil))
+      (cl-letf (((symbol-function 'gascity-store-invalidate)
+                 (lambda (&rest args) (push args calls)))
+                ((symbol-function 'gascity-sling--launch-handler)
+                 (lambda (&rest _) #'ignore))
+                ((symbol-function 'message) #'ignore))
+        (dolist (shape '(plain on formula))
+          (setq calls nil)
+          (gascity-beads-sling-test--dispatch-shape shape)
+          ;; Nothing is invalidated at launch time: only the answer does it.
+          (should-not calls)
+          (gascity-beads-sling-test--succeed
+           launched gascity-beads-sling-test--result)
+          (should (= (length calls)
+                     (length gascity-beads-sling-test--invalidate-kinds)))
+          (should (equal (mapcar (lambda (call) (plist-get call :kind))
+                                 (reverse calls))
+                         gascity-beads-sling-test--invalidate-kinds))
+          (dolist (call calls)
+            (should (eq (plist-get call :refetch) t))
+            (should (equal (plist-get call :dir)
+                           gascity-beads-sling-test--city))))))))
+
+(ert-deftest gascity-test-beads-sling-invalidate-requires-dir ()
+  "An unresolved city invalidates nothing: nil `:dir' is a wildcard."
+  (let ((calls nil))
+    (cl-letf (((symbol-function 'gascity-store-invalidate)
+               (lambda (&rest args) (push args calls))))
+      (gascity-beads-sling--invalidate nil)
+      (should-not calls))))
+
+(ert-deftest gascity-test-beads-sling-dispatch-remembers-target ()
+  "The launch start records the Who memory and the resolved city."
+  (gascity-beads-sling-test--with-launch
+    (let ((gascity-sling--target-memory nil)
+          (gascity-beads-sling--city nil))
+      (gascity-beads-sling-test--dispatch-shape 'on)
+      (should (equal gascity-beads-sling--city
+                     gascity-beads-sling-test--city))
+      (should (equal (gascity-sling--memory-target
+                      (list :city gascity-beads-sling-test--city
+                            :formula "mol-x")
+                      gascity-sling--target-memory)
+                     gascity-beads-sling-test--target-name))
+      ;; A plain launch records under the nil formula, as the transient does.
+      (gascity-beads-sling-test--dispatch-shape 'plain)
+      (should (equal (gascity-sling--memory-target
+                      (list :city gascity-beads-sling-test--city
+                            :formula nil)
+                      gascity-sling--target-memory)
+                     gascity-beads-sling-test--target-name)))))

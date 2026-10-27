@@ -220,6 +220,29 @@ and never reads or mutates beads, so it cannot loop."
 (declare-function beads-sling-shape "beads-sling" (work formula))
 (declare-function gascity-command-act-async "gascity-action"
                   (command &rest args))
+(declare-function gascity-store-invalidate "gascity-store"
+                  (&rest args))
+
+(defconst gascity-beads-sling--invalidate-kinds
+  '(agent run session convoy status)
+  "The store kinds one completed sling in a city changes, in order.
+Each kind stands for the store key the launch writes: `agent' for
+`(\"agent\" \"list\")', `run' for `(\"run\" \"list\")', `session' for
+`(\"session\" \"list\")', `convoy' for `(\"convoy\" \"list\")' and `status'
+for `(\"status\")'.")
+
+(defun gascity-beads-sling--invalidate (dir)
+  "Invalidate the cached `gc' views a sling in DIR changes.
+Exactly one `gascity-store-invalidate' call per store kind, with
+`:refetch t', so each entry is re-read at most once per dispatch.  The
+inherited sling route is switched off at the launch (`:invalidate nil'),
+which would otherwise invalidate a different, narrower set and double
+up.  Called once from the single success closure, never from a timer or
+a render path.  A nil DIR invalidates nothing: the store treats a nil
+`:dir' as a wildcard, which would touch every city's entries."
+  (when dir
+    (dolist (kind gascity-beads-sling--invalidate-kinds)
+      (gascity-store-invalidate :dir dir :kind kind :refetch t))))
 
 (defun gascity-beads-sling--blank-p (value)
   "Non-nil when VALUE is nil or a whitespace-only string."
@@ -259,7 +282,11 @@ the formula name in the bead slot:
   on       (\"sling\" TARGET WORK \"--on\" FORMULA \"--var\" \"k=v\" …)
   formula  (\"sling\" TARGET FORMULA \"--formula\" \"--var\" \"k=v\" …)
 
-Never the targetless (\"sling\" \"--formula\" …) shape."
+Never the targetless (\"sling\" \"--formula\" …) shape.  This
+builder never asks for JSON itself; `gascity-beads-sling--dispatch'
+sets the command's `json' slot, which appends `--json' after the
+positionals (the global options come before the subcommand flags) so
+the success closure receives a parsed dispatch result (plan §B3)."
   (let ((vars (gascity-beads-sling--var-args values)))
     (pcase shape
       ('plain (gascity-command-sling :target target :arg work))
@@ -296,9 +323,20 @@ Vars are validated client-side before the launch when the context
 carries a recipe: `beads-formula-validate-vars' is fail-fast and
 signals `user-error' itself, so its return value is never tested —
 plan P2.  A non-blank PROMPT is dropped with a message — `gc sling' has
-no prompt flag — never refused and never put in argv.  The launch is
-`gascity-command-act-async' on the resolved city, and this function
-returns nil without blocking."
+no prompt flag — never refused and never put in argv.
+
+The launch is one `gascity-command-act-async' call on the resolved
+city, started when the action begins — never blocking (D9): the command
+asks for parsed JSON, the resolved target is recorded as the
+`(city . formula)' launch memory, and the city is remembered for the
+Who picker.  A formula shape (`on', `formula') hands its answer to
+`gascity-sling--launch-handler' so the created workflow root is echoed
+with the momentary `F' follow offer; a plain shape echoes the shared
+success text for the sling and its target.  Either way the one success
+closure then invalidates the launcher's cached views once per store
+kind (`gascity-beads-sling--invalidate').  Failure keeps the inherited
+first-stderr-line echo and city log, and invalidates nothing.  Returns
+nil without blocking."
   (let* ((work (or (plist-get context :work) bead))
          (formula (plist-get context :formula))
          (values (plist-get context :values))
@@ -332,11 +370,39 @@ returns nil without blocking."
         (beads-formula-validate-vars recipe values))
       (unless (gascity-beads-sling--blank-p prompt)
         (message "gc sling has no prompt flag; the instruction is dropped"))
-      (gascity-command-act-async
-       (gascity-beads-sling--command shape target-name work formula values)
-       :target target-name
-       :dir city)
-      nil)))
+      (let ((command (gascity-beads-sling--command
+                      shape target-name work formula values)))
+        ;; The launch handler reads parsed JSON from the answer.
+        (oset command json t)
+        ;; The launch itself is the (city . formula) memory's next
+        ;; default, recorded when the action starts, exactly as the
+        ;; gascity sling transient records it — and the city is
+        ;; remembered so a cold Who picker can resolve it next time.
+        (gascity-sling--remember-target city formula target-name)
+        (setq gascity-beads-sling--city city)
+        (gascity-command-act-async
+         command
+         :target target-name
+         :dir city
+         ;; One explicit invalidation per dispatch, in the single success
+         ;; closure below: the built-in sling route would invalidate a
+         ;; different, narrower set and double up.
+         :invalidate nil
+         :on-success
+         (let ((handler (and (memq shape '(on formula))
+                             (gascity-sling--launch-handler
+                              command formula work))))
+           (lambda (result)
+             ;; A formula shape echoes the created workflow root with the
+             ;; momentary `F' follow offer; a plain shape echoes the
+             ;; shared success text for the sling and its target (a
+             ;; non-nil `:on-success' replaces the inherited echo).
+             (if handler
+                 (funcall handler result)
+               (message "%s" (gascity-action--success-text
+                               command target-name result)))
+             (gascity-beads-sling--invalidate city))))
+        nil))))
 
 (defun gascity-beads-sling-register ()
   "Register Gas City's contributions with beads.el's sling seams.
