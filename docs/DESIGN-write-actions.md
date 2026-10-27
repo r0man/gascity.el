@@ -426,6 +426,11 @@ don’t collide with view keys):
 | mail inbox | `r` read · `R` reply · `a` archive · `u` mark-unread · `c`→ `gascity-mail-dispatch` (adds send) |
 | (bead refs everywhere) | `S` sling/route shortcut (→ `gascity-sling-dispatch`) |
 
+In beads.el's own views `S` is delegated to beads.el's issue-seeded
+`beads-sling-for-issue` transient, and gascity splices a `[City]` group into
+`beads-dispatch` plus an additive `V` cockpit action; gascity contributes no
+competing binding in a beads buffer (see `docs/key-registry.md`).
+
 `gascity-bead-dispatch` inner keys: `s` sling · `c` close · `o` note · `p`
 priority · `u` status · `a` assign · `r` reopen · `n` create · `v` visit
 (beads.el). `gascity-mail-dispatch` inner keys: `r` read · `R` reply · `s`
