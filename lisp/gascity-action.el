@@ -200,7 +200,8 @@ message in the echo area rather than a backtrace."
     ("mail archive" . "Archived")
     ("mail mark-read" . "Marked read")
     ("mail mark-unread" . "Marked unread")
-    ("order run" . "Ran order"))
+    ("order run" . "Ran order")
+    ("sling" . "Slung"))
   "Success echo verbs by gc subcommand: \"<verb> <target>\".
 Subcommands not listed echo \"GC <sub>: <summary>\" instead.")
 

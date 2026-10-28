@@ -1047,7 +1047,9 @@ offers a jump: better no offer than a wrong one."
                 "do-work" "gce-9")
                '((ok . t) (success . t) (target . "mayor")
                  (routed . t) (queued) (dry_run) (method . "on-formula")))
-      (should (equal (car echos) "GC sling: ok"))
+      ;; The shared helper now knows the `sling' verb (review F1); the
+      ;; target is the command's own, not the payload's answer.
+      (should (equal (car echos) "Slung sess-1"))
       (should-not maps))))
 ;;; WI-3: the derived Who default (REQ-005)
 

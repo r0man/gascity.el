@@ -107,6 +107,15 @@ spawns gc: the callers that consult it (terminal attach, view
 creation) run on the UI path where a synchronous remote `gc' is a
 multi-second stall.")
 
+;;; Downstream seam memory
+
+;; The beads sling seam (`gascity-beads-sling--city') remembers the city a
+;; dispatch resolved.  It is declared here so `gascity-context-clear-cache'
+;; can reset it with the other caches without this file requiring the
+;; downstream module (context stays below the seam, and the dependency stays
+;; one-way).  `gascity-beads-sling' owns the value and its docstring.
+(defvar gascity-beads-sling--city)
+
 (defun gascity-context-clear-cache ()
   "Forget cached rig, city, root, and remote-executable resolutions.
 The one cache entry point: also clears the city-root memo, the rig-list
@@ -118,7 +127,13 @@ re-resolution."
   (clrhash gascity-context--city-cache)
   (clrhash gascity-context--root-cache)
   (clrhash gascity-context--rigs-cache)
-  (gascity-remote-forget-executables))
+  (gascity-remote-forget-executables)
+  ;; The beads sling seam's remembered city (plan §B2, Open Question 3) is
+  ;; downstream state; reset it with the other caches when that module is
+  ;; loaded.  The variable is declared above, so no require edge runs from
+  ;; gascity-context back to gascity-beads-sling.
+  (when (boundp 'gascity-beads-sling--city)
+    (setq gascity-beads-sling--city nil)))
 
 (defun gascity-context--find-root (start marker)
   "Walk up from directory START for the file MARKER (the city marker).
@@ -218,6 +233,14 @@ Pure: no file access, so it is safe on the view-open path."
                        (when root (push root roots)))
                      gascity-context--root-cache)
             roots)))))
+
+(defun gascity-context-known-city-roots ()
+  "Return the distinct city roots this session already knows.
+The public, cache-only accessor over
+`gascity-context--known-city-roots' for downstream callers (the beads
+sling target provider) that must resolve a city without walking the
+file system or spawning `gc'."
+  (gascity-context--known-city-roots))
 
 (defun gascity-context--read-city-root (dir)
   "Read a Gas City root from the user to scope a view opened from DIR.

@@ -231,7 +231,11 @@ every row has the same columns.
 Issue (@dfn{bead}) display itself is delegated to a sibling package,
 @code{beads.el}: when you press @key{RET} on a bead, gascity opens it in
 beads.el, scoped to the right rig's store.  gascity is the city-level
-porcelain; beads.el is the issue-level porcelain.
+porcelain; beads.el is the issue-level porcelain.  The delegation is
+one-way: beads.el never requires gascity.el.  Loading gascity extends
+beads.el's own sling transient with @command{gc} targets and a
+@command{gc} dispatch backend, so @kbd{S} on an issue works without
+leaving the beads buffer (@pxref{Slinging from beads}).
 
 @c ====================================================================
 @node Concepts and Terminology
@@ -2348,6 +2352,7 @@ Cities}): every reader keeps the city the menu was opened for.
 * Launch and follow::  Start the run and follow it.
 * Remembered state::  The sling remembers your choices.
 * Sling key summary::  Every sling key.
+* Slinging from beads::  The same sling from a beads.el issue buffer.
 * Route Work::  Hand a bead, a formula or free text to an agent.
 * Dispatch a Formula::  The sling menu, its shapes and its keys.
 @end menu
@@ -2774,6 +2779,68 @@ q   Quit
 The generated variable keys avoid the reserved single letters
 @samp{A f T c a n m t s P r g x q} --- @kbd{p} is free, the preview
 moved to @kbd{P}.
+
+@node Slinging from beads
+@section Slinging from beads.el
+@cindex beads sling
+@cindex slinging a bead
+@kindex S
+@fnindex beads-sling-for-issue
+@fnindex beads-sling-dispatch
+
+beads.el owns the bead list and detail buffers, and it owns their sling
+entry point.  With gascity loaded, @kbd{S} in a beads show buffer, epic
+status, dependency tree or wisp list opens beads.el's
+@code{beads-sling-for-issue} transient with the issue at point already
+selected as the work.  (In the plain beads list @kbd{S} stays
+@code{beads-list-sort}, and in the agent list it stays
+@code{beads-agent-list-stop-all}.)  Selecting a target and launching
+runs the same @command{gc sling} the gascity menu runs; you never leave
+the beads buffer.
+
+The Who picker gains gascity's qualified @command{gc} targets from the
+cached @command{gc agent list} roster --- @samp{rig/agent} for a rig
+agent and the bare name for a city-level one --- alongside beads.el's
+local targets.  They are marked with the @samp{gc} backend.  All sling
+shapes work from the beads transient: a plain dispatch runs
+@code{gc sling TARGET BEAD}, a formula with work runs
+@code{gc sling TARGET BEAD --on FORMULA}, and a formula-only dispatch
+runs @code{gc sling TARGET FORMULA --formula}.  Every shape carries a
+resolved target, because @command{gc} refuses @code{--formula} without
+one.  Every variable that was actually set is passed as
+@code{--var name=value}; @command{gc sling} has no prompt flag, so a
+freeform instruction is dropped with a message rather than put in the
+argv.  The transient's advisory warnings (cross-store route,
+city-scoped target on a formulas-v2 recipe, missing target, missing
+required variable) are the same advisory checks the gascity footer
+shows and never block a valid launch; @command{gc} remains the
+authority.
+
+@kbd{?} in a beads buffer also gains a @strong{City} group from
+gascity: @kbd{E} opens the cockpit, @kbd{J} the rig dashboard at point,
+@kbd{K} a chosen rig dashboard, @kbd{A} the agents table and @kbd{Q}
+the gascity sling menu.  Bead action bars gain an additive @kbd{V}
+cockpit entry, bound in both bead maps; gascity does not shadow a
+beads.el key.  A beads mutation
+(closing, claiming or updating a bead) refreshes gascity's cached
+bead-derived views once.
+
+@quotation Note
+Cold start: gascity can name a city only when it already knows one ---
+from @code{gascity-context-city}, from a known city whose rig contains
+the beads buffer's repository, or from a city a previous dispatch used.
+In a fresh Emacs with no gascity view open, the Who picker therefore
+shows only beads.el's local targets until a city becomes known; open a
+gascity view or set @code{gascity-context-city} to seed it.  Nothing on
+that path spawns @command{gc} or blocks.
+@end quotation
+
+Limits: gascity adds no new CLI or server behaviour here.  beads.el owns
+the bead list and detail UI, the dispatch menu and the @kbd{S} transient;
+gascity only registers the @command{gc} targets, backend, advisories,
+menu group and refresh hook through beads.el's public seams.  The one
+registration point is @file{lisp/gascity-beads-sling.el}.  The
+gascity-side ownership record is @file{docs/cross-repo-ownership.md}.
 
 @node Route Work
 @section Route Work
