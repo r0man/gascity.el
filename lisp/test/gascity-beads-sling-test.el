@@ -848,22 +848,19 @@ the rendered layout (R4).  This needs the beads.el fix that parses
 provider groups (be-cnn7f).  Skip only while the loaded beads.el still
 signals from `transient-setup'; once the fix is present a rendering
 regression fails here rather than hiding behind the skip."
+  ;; Emacs 29.4's transient routes any setup error through `debug' and aborts
+  ;; the whole ERT run instead of signalling into the guard below (ga-5gojo).
+  ;; It is never the version this rendering test can meaningfully cover, so
+  ;; skip there; 30.2/31.1 still run and assert the rendered layout.
+  (skip-unless (version<= "30" emacs-version))
   (gascity-beads-sling-register)
   (unwind-protect
       (progn
-        ;; Emacs 29.4's transient routes setup errors through `debug' instead
-        ;; of a plain signal, so a bare `condition-case' sees a non-local exit
-        ;; and aborts the whole ERT run (ga-5gojo).  Turn the debugger into a
-        ;; signal so the same guard skips the unparseable menu on every Emacs
-        ;; version; a rendered-menu regression still fails below on 30+.
-        (let ((debug-on-error nil)
-              (debugger (lambda (&rest _)
-                          (signal 'error '("transient setup failed")))))
-          (condition-case err
-              (transient-setup 'beads-dispatch)
-            (error (ert-skip
-                    (format "beads-dispatch cannot parse provider groups (be-cnn7f): %S"
-                            err)))))
+        (condition-case err
+            (transient-setup 'beads-dispatch)
+          (error (ert-skip
+                  (format "beads-dispatch cannot parse provider groups (be-cnn7f): %S"
+                          err))))
         (with-current-buffer " *transient*"
           (should (string-match-p "City" (buffer-string))))
         (let ((city (seq-find (lambda (group)
