@@ -851,11 +851,19 @@ regression fails here rather than hiding behind the skip."
   (gascity-beads-sling-register)
   (unwind-protect
       (progn
-        (condition-case err
-            (transient-setup 'beads-dispatch)
-          (error (ert-skip
-                  (format "beads-dispatch cannot parse provider groups (be-cnn7f): %S"
-                          err))))
+        ;; Emacs 29.4's transient routes setup errors through `debug' instead
+        ;; of a plain signal, so a bare `condition-case' sees a non-local exit
+        ;; and aborts the whole ERT run (ga-5gojo).  Turn the debugger into a
+        ;; signal so the same guard skips the unparseable menu on every Emacs
+        ;; version; a rendered-menu regression still fails below on 30+.
+        (let ((debug-on-error nil)
+              (debugger (lambda (&rest _)
+                          (signal 'error '("transient setup failed")))))
+          (condition-case err
+              (transient-setup 'beads-dispatch)
+            (error (ert-skip
+                    (format "beads-dispatch cannot parse provider groups (be-cnn7f): %S"
+                            err)))))
         (with-current-buffer " *transient*"
           (should (string-match-p "City" (buffer-string))))
         (let ((city (seq-find (lambda (group)

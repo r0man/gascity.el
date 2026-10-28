@@ -39,6 +39,8 @@
 
 ;;; Code:
 
+(require 'beads-actions)
+(require 'beads-menu)
 (require 'beads-sling)
 (require 'beads-formula)
 (require 'gascity-action)
@@ -88,17 +90,13 @@
 (defvar gascity-formula-recipe-cache)
 (declare-function gascity-sling-dispatch "gascity-action" ())
 
-;; `beads-menu' and `beads-actions' are not runtime dependencies of this
-;; module: their variables are declared here with their documented empty
-;; defaults, so a package load order that has not pulled those features in
-;; yet still registers cleanly.
-(defvar beads-action-providers nil)
-(defvar beads-after-action-functions nil)
-(defvar beads-menu-providers nil)
+;; `beads-menu' and `beads-actions' are required above, so their provider
+;; hooks and action maps are defined before registration.  The two value-less
+;; map declarations stay for the byte compiler's `boundp' guards; package-lint
+;; ignores value-less defvars, while a foreign defvar with a value would be
+;; reported as a package-prefix violation (ga-ble40).
 (defvar beads-list-mode-map)
 (defvar beads-show-mode-map)
-(defvar beads-sling-target-functions)
-(defvar beads-sling-validators)
 
 (defvar gascity-beads-sling--registered nil
   "Non-nil once `gascity-beads-sling-register' has run.
