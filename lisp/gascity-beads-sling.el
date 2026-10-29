@@ -31,11 +31,13 @@
 ;; output.  Loading it only registers the contributions above; there is
 ;; no `gc' spawn, synchronous read, file walk or timer at load time.
 ;;
-;; Cold-start limitation: in a fresh Emacs with no Gas City view open and
-;; no `gascity-context-city' override, no city is known yet, so the Who
-;; picker shows only beads.el's local targets until a Gas City view or a
-;; dispatch has resolved one.  The backend still resolves the city for
-;; the launch itself.
+;; Cold start: a fresh Emacs can resolve a local city from the machine
+;; registry (`~/.gc/cities.toml') and each city's `.gc/site.toml' rig
+;; paths, without a Gas City view or a `gc' spawn.  Opening the beads
+;; sling menu warms the city's `gc agent list' in the background, so the
+;; Who picker gains the gc targets once that read lands.  An
+;; unregistered or remote directory still needs `gascity-context-city' or
+;; a Gas City view; the backend resolves the city for the launch itself.
 
 ;;; Code:
 
@@ -150,6 +152,99 @@ Reads `gascity-rigs-cached' only: a cold rig memo contributes nothing."
                      (gascity-rigs-cached root)))
        root))
 
+(defvar gascity-beads-sling--cities-file
+  (expand-file-name "~/.gc/cities.toml")
+  "Gas City's machine-wide city registry.
+Local directory → city discovery reads this file and each city's
+`.gc/site.toml` when no city is already known; it is a small local file,
+never a `gc' spawn or a TRAMP walk.")
+
+(defvar gascity-beads-sling--registry-cities 'unread
+  "Cached `((NAME . PATH) ...)' from the city registry, or `unread'.
+Set to nil to retry a missing registry; `gascity-beads-sling--reset-cache'
+clears the cache after a city or rig is registered.")
+
+(defvar gascity-beads-sling--site-rigs-cache (make-hash-table :test #'equal)
+  "Cache CITY-ROOT → its `.gc/site.toml' rig paths, including nil answers.")
+
+(defun gascity-beads-sling--reset-cache ()
+  "Forget the city-registry and per-city rig caches."
+  (setq gascity-beads-sling--registry-cities 'unread)
+  (clrhash gascity-beads-sling--site-rigs-cache))
+
+(defun gascity-beads-sling--toml-blocks (file header)
+  "Return the raw text of each `[[HEADER]]' block in FILE, in order.
+Only a local, readable FILE is read; a remote or missing file yields
+nil.  The caller extracts the one or two keys it needs."
+  (when (and (stringp file) (not (file-remote-p file)) (file-readable-p file))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (let ((re (format "^\\[\\[%s\\]\\]" (regexp-quote header))) blocks)
+        (while (re-search-forward re nil t)
+          (let ((start (point))
+                (end (save-excursion
+                       (if (re-search-forward "^\\[\\[" nil t)
+                           (match-beginning 0)
+                         (point-max)))))
+            (push (buffer-substring-no-properties start end) blocks)))
+        (nreverse blocks)))))
+
+(defun gascity-beads-sling--toml-value (block key)
+  "Return KEY's quoted value in BLOCK, or nil."
+  (when (and block
+             (string-match (format "^[ \t]*%s[ \t]*=[ \t]*\"\\([^\"]*\\)\""
+                                    (regexp-quote key))
+                           block))
+    (match-string 1 block)))
+
+(defun gascity-beads-sling--registry-cities ()
+  "Return the cached `((NAME . PATH) ...)' city registry."
+  (when (eq gascity-beads-sling--registry-cities 'unread)
+    (setq gascity-beads-sling--registry-cities
+          (delq nil
+                (mapcar (lambda (block)
+                          (let ((path (gascity-beads-sling--toml-value block "path"))
+                                (name (gascity-beads-sling--toml-value block "name")))
+                            (when (and path name) (cons name path))))
+                        (gascity-beads-sling--toml-blocks
+                         gascity-beads-sling--cities-file "cities")))))
+  gascity-beads-sling--registry-cities)
+
+(defun gascity-beads-sling--site-rig-paths (city)
+  "Return CITY's registered rig paths from its `.gc/site.toml'.
+Cached per city, including an empty answer; nil for a remote or
+unreadable city."
+  (let ((cached (gethash city gascity-beads-sling--site-rigs-cache 'missing)))
+    (if (not (eq cached 'missing))
+        cached
+      (let ((paths
+             (delq nil
+                   (mapcar (lambda (block)
+                             (gascity-beads-sling--toml-value block "path"))
+                           (gascity-beads-sling--toml-blocks
+                            (expand-file-name ".gc/site.toml" city) "rig")))))
+        (puthash city paths gascity-beads-sling--site-rigs-cache)
+        paths))))
+
+(defun gascity-beads-sling--registry-city (dir)
+  "Return the registered local city that owns DIR, or nil.
+Reads the machine registry and each candidate city's `.gc/site.toml'.
+DIR is owned when it is inside the city root or one of that city's
+registered rig repositories.  Never used for a remote DIR and never
+spawns `gc'."
+  (when (and (stringp dir) (not (file-remote-p dir)))
+    (seq-some
+     (lambda (city)
+       (let ((root (cdr city)))
+         (when (and (stringp root) (not (file-remote-p root)))
+           (when (or (gascity-beads-sling--below-p root dir)
+                     (seq-some (lambda (path)
+                                 (gascity-beads-sling--below-p path dir))
+                               (gascity-beads-sling--site-rig-paths root)))
+             root))))
+     (gascity-beads-sling--registry-cities))))
+
 (defun gascity-beads-sling--city (&optional dir)
   "Return the Gas City directory governing DIR, cache-only, or nil.
 DIR defaults to `default-directory' and is expanded once, so a TRAMP name
@@ -158,25 +253,31 @@ stays a TRAMP name.  Resolution order, first hit wins:
 1. `gascity-context-city', the user's override;
 2. a root of `gascity-context-known-city-roots' that governs DIR — DIR is
    inside that city's tree or inside one of its memoized rigs;
-3. `gascity-beads-sling--city', the city the last dispatch resolved.
+3. a city registered in `~/.gc/cities.toml' whose root or `.gc/site.toml'
+   rig contains DIR (local directories only);
+4. `gascity-beads-sling--city', the city the last dispatch resolved.
 
 A bead buffer's `default-directory' is its rig repository, outside the
 city tree (plan F4), so step 2 is what makes the Who picker work from a
 bead view; step 3 keeps it working once this session has dispatched.
 
-Probe-free: no file walk, no `file-exists-p'/`file-truename' and no `gc'
-spawn — the Who picker calls this on every render (D9, plan P10).  The
-answer is canonicalized like the store's entry keys and ends in a slash.
-Never walks DIR's parent chain."
-  (let ((dir (gascity-beads-sling--directory (or dir default-directory)))
-        (known (gascity-context-known-city-roots)))
+Cache-only after the first call: no directory walk, no
+`file-exists-p'/`file-truename' and no `gc' spawn.  The local registry
+fallback reads the small `~/.gc/cities.toml' and `.gc/site.toml' files
+once and caches them.  The answer is canonicalized like the store's
+entry keys and ends in a slash.  Never walks DIR's parent chain."
+  (let* ((dir (gascity-beads-sling--directory (or dir default-directory)))
+         (known (gascity-context-known-city-roots)))
     (when-let* ((city (or (gascity-beads-sling--directory gascity-context-city)
                           (seq-some (lambda (root)
                                       (gascity-beads-sling--city-owns-p
                                        root dir))
                                     known)
                           (gascity-beads-sling--directory
+                           (gascity-beads-sling--registry-city dir))
+                          (gascity-beads-sling--directory
                            gascity-beads-sling--city))))
+      (gascity-context-remember-city-root city)
       (gascity-remote-canonical-dir city))))
 
 (defun gascity-beads-sling-targets ()
@@ -207,6 +308,21 @@ the work bead, and contributes no `default_sling_target' row (plan F3)."
                                  :qualified-name name
                                  :source 'roster))))
             (gascity-sling--roster city))))
+
+(defun gascity-beads-sling--warm (dir)
+  "Start background reads of the city roster and rigs for DIR.
+Called when the beads sling menu opens, so the Who picker has the gc
+roster by the time the user reaches the T stage.  Never blocks: the
+store answers from its last good payload and fills in when the read
+completes."
+  (when-let* ((city (gascity-beads-sling--city dir)))
+    (gascity-store-fetch '("agent" "list") #'ignore #'ignore :dir city)
+    (gascity-store-fetch '("rig" "list") #'ignore #'ignore :dir city)
+    city))
+
+(defun gascity-beads-sling--warm-at-point (&rest _)
+  "Warm the sling stores for the current buffer's directory."
+  (ignore-errors (gascity-beads-sling--warm default-directory)))
 
 (defun gascity-beads-sling--validate-target-scope (target)
   "Return TARGET's scope: its slash prefix, or \"city\" for a bare name.
@@ -656,6 +772,9 @@ or process spawn; only the registration data structures change."
   (add-hook 'beads-action-providers #'gascity-beads-sling-actions)
   (gascity-beads-sling--bind-actions)
   (add-hook 'beads-after-action-functions #'gascity-beads-sling--after-action)
+  (dolist (command '(beads-sling-for-issue beads-sling))
+    (unless (advice-member-p #'gascity-beads-sling--warm-at-point command)
+      (advice-add command :before #'gascity-beads-sling--warm-at-point)))
   (setq gascity-beads-sling--registered t))
 
 (gascity-beads-sling-register)

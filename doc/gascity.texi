@@ -2826,13 +2826,17 @@ beads.el key.  A beads mutation
 bead-derived views once.
 
 @quotation Note
-Cold start: gascity can name a city only when it already knows one ---
-from @code{gascity-context-city}, from a known city whose rig contains
-the beads buffer's repository, or from a city a previous dispatch used.
-In a fresh Emacs with no gascity view open, the Who picker therefore
-shows only beads.el's local targets until a city becomes known; open a
-gascity view or set @code{gascity-context-city} to seed it.  Nothing on
-that path spawns @command{gc} or blocks.
+Cold start: gascity names a city from @code{gascity-context-city}, from a
+known city whose rig contains the beads buffer's repository, from a city
+a previous dispatch used, or, for a local directory, from the
+machine-wide registry at @file{~/.gc/cities.toml} and its cities'
+@file{.gc/site.toml} rig paths.  Opening the beads sling menu starts the
+city's @command{gc agent list} read in the background, so the Who picker
+fills with the Gas City agents once that read lands.  A fresh Emacs in a
+local registered rig no longer needs an open gascity view; an
+unregistered or remote directory still does, or set
+@code{gascity-context-city}.  Nothing on that path spawns @command{gc}
+synchronously or blocks.
 @end quotation
 
 Limits: gascity adds no new CLI or server behaviour here.  beads.el owns
