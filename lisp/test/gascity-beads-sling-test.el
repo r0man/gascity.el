@@ -1173,3 +1173,41 @@ expected argv: the delegation contract end to end with a stubbed gc."
             (should (equal (gascity-beads-sling--site-rig-paths city)
                            '("/tmp/r1" "/tmp/r2")))))
       (delete-directory root t))))
+
+(ert-deftest gascity-test-beads-sling-generated-prompts-are-silent ()
+  "The formula and freeform prompts beads.el generates are dropped silently."
+  (gascity-beads-sling-test--with-launch
+    (let ((messages nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (push (apply #'format format args) messages))))
+        ;; Formula shape: beads.el's generated prompt is redundant -- the
+        ;; formula and vars already carry it.
+        (gascity-beads-sling--dispatch
+         (gascity-beads-sling-test--target) "ga-1"
+         "Run formula build-basic."
+         (list :work "ga-1" :formula "build-basic" :shape 'on))
+        ;; Plain freeform: the prompt is the work text, already the argv arg.
+        (gascity-beads-sling--dispatch
+         (gascity-beads-sling-test--target) "do the thing"
+         "do the thing"
+         (list :work "do the thing" :shape 'plain)))
+      (should-not (seq-some (lambda (msg) (string-match-p "no prompt flag" msg))
+                            messages)))
+    (should (= 2 launch-count))))
+
+(ert-deftest gascity-test-beads-sling-extra-prompt-warns ()
+  "A prompt that is not the generated one still warns once."
+  (gascity-beads-sling-test--with-launch
+    (let ((messages nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (push (apply #'format format args) messages))))
+        (gascity-beads-sling--dispatch
+         (gascity-beads-sling-test--target) "ga-1"
+         "also write a test"
+         (list :work "ga-1" :formula "build-basic" :shape 'on)))
+      (should (= 1 (seq-count (lambda (msg)
+                                (string-match-p "no prompt flag" msg))
+                              messages))))
+    (should (= 1 launch-count))))
