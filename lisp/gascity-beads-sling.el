@@ -55,6 +55,7 @@
 
 (declare-function beads-sling-backend-register "beads-sling"
                   (backend))
+(declare-function beads-sling--launch-prompt "beads-sling" (context))
 (declare-function gascity-agents "gascity-agents" ())
 (declare-function gascity-dashboard "gascity-dashboard" ())
 (declare-function gascity-rig-dashboard "gascity-rig" (rig-name))
@@ -648,6 +649,21 @@ the success closure receives a parsed dispatch result (plan §B3)."
                                        :formula t :var vars))
       (_ (user-error "No sling work or formula selected")))))
 
+(defun gascity-beads-sling--prompt-lost-p (prompt context)
+  "Return non-nil when PROMPT would carry something the launch lacks.
+CONTEXT is the dispatch context plist.  beads.el generates a prompt for
+a formula shape (`Run formula …' plus the variables) and for freeform
+work (the work text); the gc backend
+already passes both through `--on'/the formula/vars or the work argv, so
+that prompt is redundant.  A prompt different from the generated one is
+an extra instruction `gc sling' has no flag for; that one is worth a
+message.  Never errors on a malformed context."
+  (and (not (gascity-beads-sling--blank-p prompt))
+       (not (equal (string-trim prompt)
+                   (string-trim
+                    (or (ignore-errors (beads-sling--launch-prompt context))
+                        ""))))))
+
 (defun gascity-beads-sling--dispatch (target bead prompt context)
   "Dispatch BEAD to TARGET through the `gc' backend.
 TARGET is a `beads-sling-target' whose `backend' is \"gc\", BEAD the
@@ -674,8 +690,12 @@ without an explicit target (P1).
 Vars are validated client-side before the launch when the context
 carries a recipe: `beads-formula-validate-vars' is fail-fast and
 signals `user-error' itself, so its return value is never tested —
-plan P2.  A non-blank PROMPT is dropped with a message — `gc sling' has
-no prompt flag — never refused and never put in argv.
+plan P2.  A PROMPT is never refused and never put in argv: `gc sling'
+has no prompt flag.  The prompt beads.el generates for a formula or for
+freeform work is already carried by the formula/vars or the work argv,
+so it is dropped silently.  Only a prompt that is not the one
+`beads-sling--launch-prompt' would generate for this context — an extra
+instruction that would otherwise be lost — is dropped with a message.
 
 The launch is one `gascity-command-act-async' call on the resolved
 city, started when the action begins — never blocking (D9): the command
@@ -720,8 +740,8 @@ nil without blocking."
       ;; Fail fast, client-side, before any process exists (P2).
       (when recipe
         (beads-formula-validate-vars recipe values))
-      (unless (gascity-beads-sling--blank-p prompt)
-        (message "gc sling has no prompt flag; the instruction is dropped"))
+      (when (gascity-beads-sling--prompt-lost-p prompt context)
+        (message "gc sling has no prompt flag; dropping the extra instruction"))
       (let ((command (gascity-beads-sling--command
                       shape target-name work formula values)))
         ;; The launch handler reads parsed JSON from the answer.
