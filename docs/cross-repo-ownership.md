@@ -94,12 +94,17 @@ list/detail UI, the `S` transient and the dispatch menu; gascity supplies only
 the `gc` target provider, backend, advisories, one menu group and one refresh
 hook.  The dependency stays one-way — beads.el never requires gascity.el.
 
-**Cold start (F4):** the target provider can name a city only from
+**Cold start (F4):** the target provider names a city from
 `gascity-context-city`, a known city root whose memoized rigs contain the beads
-buffer's rig repository, or a city a previous dispatch remembered.  A fresh
-Emacs with no gascity view open and no override therefore shows only beads.el's
-local targets in the Who picker until a city becomes known.  Nothing on that
-path spawns `gc`, walks a remote file system or blocks.
+buffer's rig repository, a city a previous dispatch remembered, or (for local
+directories) the machine-wide registry at `~/.gc/cities.toml` crossed with each
+city's `.gc/site.toml` rig paths.  The registry fallback reads two small local
+files, never `gc` and never TRAMP.  Opening the beads sling transient warms the
+city's `gc agent list` in the background, so the Who picker fills with the gc
+names once that read lands.  A fresh Emacs in a local registered rig therefore
+gets the gc targets without opening a gascity view; an unregistered, remote or
+otherwise unknown directory still needs a gascity view or
+`gascity-context-city`.  Nothing on that path blocks.
 
 ## Verification
 

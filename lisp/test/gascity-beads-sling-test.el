@@ -207,6 +207,7 @@
         (gascity-context-city nil)
         (gascity-beads-sling--city nil))
     (cl-letf (((symbol-function 'gascity-context-known-city-roots) #'ignore)
+              ((symbol-function 'gascity-beads-sling--registry-city) #'ignore)
               ((symbol-function 'gascity-store-get)
                (lambda (&rest _) (error "An unresolved city read the store")))
               ((symbol-function 'file-exists-p)
@@ -241,7 +242,8 @@
                          gascity-beads-sling-test--city))))
       ;; 3. Nothing known matches: the remembered city answers.
       (let ((gascity-context-city nil))
-        (cl-letf (((symbol-function 'gascity-context-known-city-roots) #'ignore))
+        (cl-letf (((symbol-function 'gascity-context-known-city-roots) #'ignore)
+                  ((symbol-function 'gascity-beads-sling--registry-city) #'ignore))
           (should (equal (gascity-beads-sling--city dir)
                          gascity-beads-sling-test--other-city)))))))
 
@@ -1122,3 +1124,52 @@ expected argv: the delegation contract end to end with a stubbed gc."
       (should (equal (plist-get launched :argv)
                      (list "sling" "gascity.el/gc.implementation-worker"
                            "ga-1" "--json"))))))
+
+
+(ert-deftest gascity-test-beads-sling-city-registry-resolves-rig ()
+  "A fresh session resolves a local city from the gc city registry."
+  (let* ((root (file-name-as-directory (make-temp-file "gce-registry" t)))
+         (city (file-name-as-directory (expand-file-name "city" root)))
+         (rig (file-name-as-directory (expand-file-name "rig" root)))
+         (nested (file-name-as-directory (expand-file-name "nested" rig))))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name ".gc" city) t)
+          (make-directory nested t)
+          (with-temp-file (expand-file-name "cities.toml" root)
+            (insert (format "[[cities]]\npath = \"%s\"\nname = \"city\"\n" city)))
+          (with-temp-file (expand-file-name ".gc/site.toml" city)
+            (insert (format "[[rig]]\nname = \"rig\"\npath = \"%s\"\n" rig)))
+          (let ((gascity-beads-sling--cities-file
+                 (expand-file-name "cities.toml" root))
+                (gascity-beads-sling--registry-cities 'unread)
+                (gascity-beads-sling--site-rigs-cache (make-hash-table :test #'equal))
+                (gascity-context-city nil)
+                (gascity-beads-sling--city nil))
+            (cl-letf (((symbol-function 'gascity-context-known-city-roots) #'ignore)
+                      ((symbol-function 'gascity-remote-canonical-dir) #'identity))
+              (should (equal (gascity-beads-sling--registry-city nested) city))
+              (should (equal (gascity-beads-sling--city nested) city)))))
+      (delete-directory root t))))
+
+(ert-deftest gascity-test-beads-sling-registry-city-parses-toml ()
+  "The registry and site readers extract path/name without a gc spawn."
+  (let* ((root (file-name-as-directory (make-temp-file "gce-registry" t)))
+         (city (file-name-as-directory (expand-file-name "city" root))))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name ".gc" city) t)
+          (with-temp-file (expand-file-name "cities.toml" root)
+            (insert (format "[[cities]]\nname = \"first\"\npath = \"%s\"\n" city)))
+          (with-temp-file (expand-file-name ".gc/site.toml" city)
+            (insert "[[rig]]\nname = \"r1\"\npath = \"/tmp/r1\"\n\n"
+                    "[[rig]]\nname = \"r2\"\npath = \"/tmp/r2\"\n"))
+          (let ((gascity-beads-sling--cities-file
+                 (expand-file-name "cities.toml" root))
+                (gascity-beads-sling--registry-cities 'unread)
+                (gascity-beads-sling--site-rigs-cache (make-hash-table :test #'equal)))
+            (should (equal (gascity-beads-sling--registry-cities)
+                           (list (cons "first" city))))
+            (should (equal (gascity-beads-sling--site-rig-paths city)
+                           '("/tmp/r1" "/tmp/r2")))))
+      (delete-directory root t))))
