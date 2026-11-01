@@ -59,7 +59,7 @@ six seams beads.el publishes:
 
 | Seam | What gascity contributes |
 |---|---|
-| `beads-sling-target-functions` | `gascity-beads-sling-targets`: one `beads-sling-target` per cached `gc agent list` row, `:backend "gc"`, `:kind agent`, `:scope` the rig name (nil for a city-level agent), `:metadata` carrying `:rig :city :qualified-name :source`.  Reads `gascity-store-get '("agent" "list")` with an explicit city directory; a cold store or unknown city returns nil (no spawn, no block). |
+| `beads-sling-target-functions` | `gascity-beads-sling-targets (&optional bead)`: one `beads-sling-target` per cached `gc agent list` row, `:backend "gc"`, `:kind agent`, `:scope` the rig name (nil for a city-level agent), `:metadata` carrying `:rig :city :qualified-name :source`.  beads.el forwards the work bead (the seam's optional argument), and the provider uses its id prefix to find the owning rig's `default_sling_target` in the cached rig list; that row is marked `:derived t` and becomes beads.el's Who default.  The default is synthesized when it is not a roster row.  Reads `gascity-store-get` for `("agent" "list")` and, when needed, `("rig" "list")` with an explicit city directory; a cold store or unknown city returns nil (no spawn, no block). |
 | `beads-sling-backend-register` | the named `"gc"` backend, `gascity-beads-sling--dispatch (target bead prompt context)`.  It builds a `gascity-command-sling` (never a hand-written argv), validates a missing work/target or required var with `user-error`, drops the prompt (no `gc sling` prompt flag) and launches asynchronously through `gascity-command-act-async`. |
 | `beads-sling-validators` | one advisory function returning up to four cached-data warnings, joined with `"; "`: the cross-store route, the formulas-v2 city-scoped/pool target trap, a missing target (every shape, formula included) and missing required vars.  None refuses a launch. |
 | `beads-menu-providers` | one `[City]` group (`E` cockpit, `J` rig dashboard at point, `K` rig dashboard, `A` agents, `Q` the gascity sling menu) spliced into `beads-dispatch`. |
@@ -107,11 +107,12 @@ buffer's rig repository, a city a previous dispatch remembered, or (for local
 directories) the machine-wide registry at `~/.gc/cities.toml` crossed with each
 city's `.gc/site.toml` rig paths.  The registry fallback reads two small local
 files, never `gc` and never TRAMP.  Opening the beads sling transient warms the
-city's `gc agent list` in the background, so the Who picker fills with the gc
-names once that read lands.  A fresh Emacs in a local registered rig therefore
-gets the gc targets without opening a gascity view; an unregistered, remote or
-otherwise unknown directory still needs a gascity view or
-`gascity-context-city`.  Nothing on that path blocks.
+city's `gc agent list` and `gc rig list` in the background; the rig read also
+fills the rig memo, so the bead's rig default is available to the provider once
+that read lands.  A fresh Emacs in a local registered rig therefore gets the gc
+targets, including the rig-default row, without opening a gascity view; an
+unregistered, remote or otherwise unknown directory still needs a gascity view
+or `gascity-context-city`.  Nothing on that path blocks.
 
 ## Verification
 

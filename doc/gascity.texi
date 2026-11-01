@@ -2813,7 +2813,10 @@ the beads buffer.
 The Who picker gains gascity's qualified @command{gc} targets from the
 cached @command{gc agent list} roster --- @samp{rig/agent} for a rig
 agent and the bare name for a city-level one --- alongside beads.el's
-local targets.  They are marked with the @samp{gc} backend.  All sling
+local targets.  They are marked with the @samp{gc} backend.  beads.el
+forwards the work bead to gascity's target provider, so the provider
+can also find the bead's owning rig and make that rig's configured
+@samp{default_sling_target} the derived Who default.  All sling
 shapes work from the beads transient: a plain dispatch runs
 @code{gc sling TARGET BEAD --json}, a formula with work runs
 @code{gc sling TARGET BEAD --json --on FORMULA}, and a formula-only
@@ -2845,9 +2848,10 @@ known city whose rig contains the beads buffer's repository, from a city
 a previous dispatch used, or, for a local directory, from the
 machine-wide registry at @file{~/.gc/cities.toml} and its cities'
 @file{.gc/site.toml} rig paths.  Opening the beads sling menu starts the
-city's @command{gc agent list} read in the background, so the Who picker
-fills with the Gas City agents once that read lands.  A fresh Emacs in a
-local registered rig no longer needs an open gascity view; an
+city's @command{gc agent list} and @command{gc rig list} reads in the
+background, so the Who picker fills with the Gas City agents and the
+rig-default row once those reads land.  A fresh Emacs in a local
+registered rig no longer needs an open gascity view; an
 unregistered or remote directory still does, or set
 @code{gascity-context-city}.  Nothing on that path spawns @command{gc}
 synchronously or blocks.
