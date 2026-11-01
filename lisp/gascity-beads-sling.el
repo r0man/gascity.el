@@ -66,8 +66,6 @@
 (declare-function gascity-remote-localize-path "gascity-remote"
                   (path &optional dir))
 (declare-function gascity-sling--roster "gascity-action" (&optional city))
-(declare-function gascity-context-city-root-cached "gascity-context"
-                  (&optional dir))
 (declare-function gascity-context--known-city-roots "gascity-context" ())
 (declare-function gascity-context-scope-key "gascity-context"
                   (&optional dir))
@@ -336,31 +334,6 @@ bare city agent as \"city\".  A blank target classifies as nil."
         (substring target 0 slash)
       "city")))
 
-(defun gascity-beads-sling--validate-city (&optional dir)
-  "Return a known city root for DIR (default `default-directory').
-Cache-only: it consults `gascity-context-city-root-cached' and then
-the known city roots crossed with the rig memo, matching a rig path
-lexically against DIR's host-local name.  It never walks the file
-system, never spawns `gc' and never reads the store; an unknown city
-answers nil."
-  (or (gascity-context-city-root-cached dir)
-      (let* ((dir (file-name-as-directory
-                   (expand-file-name (or dir default-directory))))
-             (local (file-local-name dir)))
-        (seq-find
-         (lambda (root)
-           (seq-some
-            (lambda (rig)
-              (let ((path (gascity-rig-path rig)))
-                (and (stringp path)
-                     (not (string-empty-p path))
-                     (string-prefix-p
-                      (file-name-as-directory
-                       (file-local-name (expand-file-name path)))
-                      local))))
-            (gascity-rigs-cached root)))
-         (gascity-context--known-city-roots)))))
-
 (defun gascity-beads-sling--validate-recipe (city formula)
   "Return the warm `gascity-formula' recipe for CITY and FORMULA, or nil.
 `gascity-formula-recipe-cache' is keyed
@@ -390,7 +363,7 @@ function."
          (formula (plist-get context :formula))
          (target (plist-get context :target))
          (target-scope (gascity-beads-sling--validate-target-scope target))
-         (city (gascity-beads-sling--validate-city))
+         (city (gascity-beads-sling--city))
          (rigs (and city (gascity-rigs-cached city)))
          (recipe (gascity-beads-sling--validate-recipe city formula))
          (warnings
@@ -597,17 +570,9 @@ a render path.  A nil DIR invalidates nothing: the store treats a nil
     (dolist (kind gascity-beads-sling--invalidate-kinds)
       (gascity-store-invalidate :dir dir :kind kind :refetch t))))
 
-(defun gascity-beads-sling--blank-p (value)
-  "Non-nil when VALUE is nil or a whitespace-only string."
-  (or (null value)
-      (and (stringp value) (string-empty-p (string-trim value)))))
-
 (defun gascity-beads-sling--first-name (&rest names)
   "Return the first non-blank string among NAMES, or nil."
-  (seq-find (lambda (name)
-              (and (stringp name)
-                   (not (gascity-beads-sling--blank-p name))))
-            names))
+  (seq-find #'gascity-formula--nonblank names))
 
 (defun gascity-beads-sling--var-args (values)
   "Return VALUES as `--var' arguments, in order, skipping blanks.
@@ -619,7 +584,7 @@ formatter, a pre-existing limit of the beads command builder."
         (mapcar (lambda (pair)
                   (let ((name (car pair))
                         (value (cdr pair)))
-                    (unless (gascity-beads-sling--blank-p value)
+                    (unless (gascity-formula--blank value)
                       (format "%s=%s" name value))))
                 values)))
 
@@ -658,7 +623,7 @@ already passes both through `--on'/the formula/vars or the work argv, so
 that prompt is redundant.  A prompt different from the generated one is
 an extra instruction `gc sling' has no flag for; that one is worth a
 message.  Never errors on a malformed context."
-  (and (not (gascity-beads-sling--blank-p prompt))
+  (and (not (gascity-formula--blank prompt))
        (not (equal (string-trim prompt)
                    (string-trim
                     (or (ignore-errors (beads-sling--launch-prompt context))
@@ -717,10 +682,10 @@ nil without blocking."
                     (beads-sling-shape work formula))))
     (cond
      ((and (memq shape '(plain on))
-           (gascity-beads-sling--blank-p work))
+           (gascity-formula--blank work))
       (user-error "No sling work selected"))
      ((and (memq shape '(on formula))
-           (gascity-beads-sling--blank-p formula))
+           (gascity-formula--blank formula))
       (user-error "No sling formula selected"))
      ((not (memq shape '(plain on formula)))
       (user-error "No sling work or formula selected")))
