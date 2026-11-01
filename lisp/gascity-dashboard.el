@@ -381,8 +381,13 @@ Stalled first, then running by most recent activity, then idle."
 ;;; Runs (§3.2, §7.6)
 
 (defun gascity-dashboard--run-root-p (bead)
-  "Return non-nil when BEAD is a workflow run root (`gc.kind' workflow)."
-  (equal (alist-get 'gc.kind (gascity-dashboard--meta bead)) "workflow"))
+  "Return non-nil when BEAD is a workflow run root (`gc.kind' workflow).
+A workflow-latch step carries `gc.kind' workflow too but names the run it
+belongs to in `gc.root_bead_id'; such a bead is a graph member, not a
+run root (ga-99g35), so the run root keeps its ladder instead of
+rendering `Steps 0/0' while its latch shows up as a run of its own."
+  (and (equal (alist-get 'gc.kind (gascity-dashboard--meta bead)) "workflow")
+       (null (gascity-dashboard--root-of bead))))
 
 (defun gascity-dashboard--root-of (bead)
   "Return the run root id BEAD belongs to, or nil."
