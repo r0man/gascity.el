@@ -83,6 +83,13 @@ The argv is the existing builder's output, pinned by the context `:shape`:
 | `on` | `("sling" TARGET BEAD "--on" FORMULA "--var" k=v ...)` |
 | `formula` | `("sling" TARGET FORMULA "--formula" "--var" k=v ...)`; never the targetless `("sling" "--formula" ...)` shape |
 
+The dispatch then sets the command's `json` slot, so the argv it actually
+launches carries `--json` after the positionals — the one token the table
+above leaves out because it is dispatch's, not the builder's: `("sling"
+TARGET BEAD "--json")`, `("sling" TARGET BEAD "--json" "--on" FORMULA
+...)` and `("sling" TARGET FORMULA "--json" "--formula" ...)`.  That is
+what lets a formula launch echo the workflow root it created.
+
 Var order is the context's resolved `:values` order, and only vars the user or
 template actually set are emitted.  `--on` versus `--formula` comes from
 `:shape`; the builder never consults `gascity-formula--needs-convoy` (F5).
