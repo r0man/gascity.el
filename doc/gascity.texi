@@ -2666,6 +2666,18 @@ an agent of another rig.  The footer warns first:
     target reads the gascity.el store — gc will refuse (pick a city agent or
     a hello-world agent)
 @end example
+
+A city-scoped agent reads the @emph{city} store, so it is not a way
+out for a bead filed in a rig store: @command{gc} 1.5.1 also refuses
+that route (@samp{refusing cross-store route: bead @dots{} lives in
+rig:@dots{} but target @dots{} reads city:@dots{}}).  The footer
+names the city route and suggests the bead's own store instead:
+
+@example
+  ⚠ cross-store route: bead hw-ab12 lives in the hello-world store but the
+    city target reads the city store — gc will refuse (pick a hello-world
+    agent or re-file the bead in the city store)
+@end example
 @end table
 
 Missing pieces warn the same way: a convoy-requiring formula with no

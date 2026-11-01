@@ -542,31 +542,53 @@ guesses."
                                rigs)))
       (gascity-rig-name rig))))
 
+(defun gascity-sling--city-store (rigs)
+  "Return the name of the city's own store in RIGS, or nil.
+`gc rig list' includes the city HQ as a rig row (`gascity-rig-hq')
+whose prefix is the city-store prefix; that row is the store a
+city-scoped agent reads.  A memo without the row (a cold or
+hand-built one) answers nil — an unresolvable city store degrades to
+no warning rather than guessing."
+  (when-let* ((hq (seq-find #'gascity-rig-hq rigs)))
+    (gascity-rig-name hq)))
+
 (defun gascity-sling--cross-store-p (work scope rigs)
-  "Return non-nil when WORK and a rig-scoped SCOPE read different stores.
+  "Return non-nil when WORK and SCOPE read different stores.
 gc refuses a bead routed to another rig's agent (\"Cross-rig … without
 --force, sling would refuse\", verified by dry run against
 bright-lights): WORK's store resolves from its id prefix against RIGS,
 and SCOPE — the target's, a rig-scoped agent naming its rig — must
-match it.  A city-scoped target never fires: the mayor routes beads
-of every store (mockup §5b's remedy).  Anything unresolvable —
-freeform work, a cold memo, free entry — degrades to no warning."
+match it.  A city-scoped target reads the city store, the HQ row of
+RIGS, so a rig-store bead routed to it is cross-store too: gc 1.5.1
+refuses that route (\"bead … lives in rig:… but target … reads
+city:…\") even though mockup §5b once called the city agent the
+remedy (ga-6lo2o).  Anything unresolvable — freeform work, a cold
+memo, free entry, a memo without its HQ row — degrades to no
+warning."
   (when-let* ((store (gascity-sling--bead-store work rigs)))
-    (and (gascity-formula--nonblank scope)
-         (not (equal scope "city"))
-         (not (equal scope store)))))
+    (cond
+     ((gascity-formula--blank scope) nil)
+     ((equal scope "city")
+      (when-let* ((city-store (gascity-sling--city-store rigs)))
+        (not (equal store city-store))))
+     (t (not (equal scope store))))))
 
 (defun gascity-sling--cross-store-warning (work scope rigs)
   "Return the cross-store route's footer warning (mockup §5b wording).
-WORK is the slung bead; SCOPE the menu's scope plist; RIGS the rig
-list the store split comes from.  The message names the bead, its
-store and the target's, and suggests a city agent or one of the
-bead's store.  nil when the route is not cross-store
+WORK is the slung bead; SCOPE the target's scope string; RIGS the rig
+list the store split comes from.  A rig-scoped target names both
+stores and suggests a city agent or one of the bead's store; a city
+target names the city store and suggests the bead's store agent,
+because gc refuses that route instead of routing it (§5b's old
+remedy, ga-6lo2o).  nil when the route is not cross-store
 \(`gascity-sling--cross-store-p')."
   (when (gascity-sling--cross-store-p work scope rigs)
     (let ((store (gascity-sling--bead-store work rigs)))
-      (format "cross-store route: bead %s lives in the %s store but the target reads the %s store — gc will refuse (pick a city agent or a %s agent)"
-              work store scope store))))
+      (if (equal scope "city")
+          (format "cross-store route: bead %s lives in the %s store but the city target reads the city store — gc will refuse (pick a %s agent or re-file the bead in the city store)"
+                  work store store)
+        (format "cross-store route: bead %s lives in the %s store but the target reads the %s store — gc will refuse (pick a city agent or a %s agent)"
+                work store scope store)))))
 
 (defun gascity-sling--missing-work-p (recipe work)
   "Return non-nil when RECIPE drains a bead but no work is in scope (§5c).
