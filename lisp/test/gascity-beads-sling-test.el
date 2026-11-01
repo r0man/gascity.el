@@ -699,11 +699,26 @@ from the fixture, and the recipe cache starts empty."
       (should (equal (gascity-beads-sling-test--warnings warning)
                      (list gascity-beads-sling-test--cross-store-warning))))))
 
+(ert-deftest gascity-test-beads-sling-validate-city-cross-store ()
+  "A rig-store bead routed to a city target warns (ga-6lo2o).
+The city agent reads the city store, so gc 1.5.1 refuses the route;
+the validator says so before launch.  A city-store bead keeps the
+clean route — the city target is its own store."
+  (gascity-beads-sling-test--with-cache
+    (let ((warning (gascity-beads-sling-validate
+                    '(:work "hw-ab12" :target "mayor" :shape plain))))
+      (should warning)
+      (should (equal (gascity-beads-sling-test--warnings warning)
+                     (list gascity-beads-sling-test--cross-store-warning)))
+      (should (string-search "reads the city store" warning)))
+    (should-not (gascity-beads-sling-validate
+                 '(:work "bl-5ja" :target "mayor" :shape plain)))))
+
 (ert-deftest gascity-test-beads-sling-validate-missing-vars ()
   "A formula context missing a required var warns once."
   (gascity-beads-sling-test--with-cache
     (let ((warning (gascity-beads-sling-validate
-                    (list :work "hw-ab12" :target "mayor" :shape 'formula
+                    (list :work "bl-5ja" :target "mayor" :shape 'formula
                           :recipe (gascity-beads-sling-test--v2-recipe)
                           :values nil))))
       (should warning)
@@ -724,7 +739,7 @@ from the fixture, and the recipe cache starts empty."
   "No warm gascity recipe means no v2-trap warning and no read."
   (gascity-beads-sling-test--with-cache
     (let ((warning (gascity-beads-sling-validate
-                    (list :work "hw-ab12" :target "mayor" :shape 'formula
+                    (list :work "bl-5ja" :target "mayor" :shape 'formula
                           :formula "build-basic" :recipe nil :values nil))))
       (should-not warning))))
 
@@ -735,7 +750,7 @@ from the fixture, and the recipe cache starts empty."
            (list (cons (cons gascity-beads-sling-test--validator-city "build-basic")
                        (gascity-beads-sling-test--v2-recipe)))))
       (let ((warning (gascity-beads-sling-validate
-                      (list :work "hw-ab12" :target "mayor" :shape 'formula
+                      (list :work "bl-5ja" :target "mayor" :shape 'formula
                             :formula "build-basic" :recipe nil :values nil))))
         (should warning)
         (should (equal (gascity-beads-sling-test--warnings warning)

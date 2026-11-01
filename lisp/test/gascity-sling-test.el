@@ -56,6 +56,7 @@
 (declare-function gascity-sling--shape "gascity-formula")
 (declare-function gascity-sling--binding-targets-p "gascity-formula")
 (declare-function gascity-sling--v2-trap-p "gascity-formula")
+(declare-function gascity-sling--city-store "gascity-formula")
 (declare-function gascity-sling--cross-store-p "gascity-formula")
 (declare-function gascity-sling--title-slug "gascity-formula")
 (declare-function gascity-sling-formula--var-class "gascity-formula")
@@ -205,8 +206,8 @@ degrade."
                  "formulas v2 target: this formula needs a rig-scoped target — the chosen city agent will fail with \"unknown formulas v2 target\" (bl-bdj); pick a rig-scoped agent with T")))
 
 (ert-deftest gascity-test-sling-cross-store-p-and-warning ()
-  "Cross-store: a bead and a rig-scoped target in different stores warn
-with the mockup §5b wording; a city target never fires and everything
+  "Cross-store: a bead and a target in different stores warn; a city
+target fires only for a rig-store bead (ga-6lo2o) and everything
 unresolvable degrades."
   (let ((rigs (gascity-sling-test--rigs)))
     ;; The store resolves from the bead's id prefix via the rig memo.
@@ -219,9 +220,23 @@ unresolvable degrades."
     (should-not (gascity-sling--bead-store "hw-ab12" nil))
     ;; The mockup §5b case: an hw bead slung at another rig's agent.
     (should (gascity-sling--cross-store-p "hw-ab12" "gascity.el" rigs))
-    ;; Same store, and the city agent (gc's own remedy) — no warning.
+    ;; Same store, and a city-store bead routed to a city agent — no
+    ;; warning.
     (should-not (gascity-sling--cross-store-p "hw-ab12" "hello-world" rigs))
-    (should-not (gascity-sling--cross-store-p "hw-ab12" "city" rigs))
+    (should-not (gascity-sling--cross-store-p "bl-5ja" "city" rigs))
+    ;; ga-6lo2o: gc 1.5.1 refuses a rig-store bead routed to a city
+    ;; agent ("refusing cross-store route: bead … lives in rig:… but
+    ;; target … reads city:…").  The city agent reads the city store,
+    ;; so the rig-store bead is a cross-store route.
+    (should (gascity-sling--cross-store-p "hw-ab12" "city" rigs))
+    ;; The city store is the HQ row of the memo; a memo without one
+    ;; (or a cold one) degrades instead of guessing.
+    (should (equal (gascity-sling--city-store rigs) "bright-lights"))
+    (should-not (gascity-sling--city-store
+                 (seq-remove #'gascity-rig-hq rigs)))
+    (should-not (gascity-sling--cross-store-p
+                 "hw-ab12" "city"
+                 (seq-remove #'gascity-rig-hq rigs)))
     ;; Unresolvable sides degrade: free entry, freeform work, cold memo.
     (should-not (gascity-sling--cross-store-p "hw-ab12" nil rigs))
     (should-not (gascity-sling--cross-store-p "fix the login" "gascity.el" rigs))
@@ -229,8 +244,13 @@ unresolvable degrades."
     ;; The mockup §5b wording, verbatim.
     (should (equal (gascity-sling--cross-store-warning "hw-ab12" "gascity.el" rigs)
                    "cross-store route: bead hw-ab12 lives in the hello-world store but the target reads the gascity.el store — gc will refuse (pick a city agent or a hello-world agent)"))
+    ;; A city target names the bead's own store as the remedy, not the
+    ;; city agent that gc now refuses.
+    (should (equal (gascity-sling--cross-store-warning "hw-ab12" "city" rigs)
+                   "cross-store route: bead hw-ab12 lives in the hello-world store but the city target reads the city store — gc will refuse (pick a hello-world agent or re-file the bead in the city store)"))
     ;; A clean route builds no warning.
-    (should-not (gascity-sling--cross-store-warning "hw-ab12" "hello-world" rigs))))
+    (should-not (gascity-sling--cross-store-warning "hw-ab12" "hello-world" rigs))
+    (should-not (gascity-sling--cross-store-warning "bl-5ja" "city" rigs))))
 
 (ert-deftest gascity-test-sling-missing-pieces ()
   "The mockup §5c checks: a drain formula without work, missing
