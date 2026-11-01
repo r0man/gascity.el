@@ -35,7 +35,9 @@
 (require 'transient)
 
 (declare-function gascity-beads-sling-register "gascity-beads-sling" ())
-(declare-function gascity-beads-sling-targets "gascity-beads-sling" ())
+(declare-function gascity-beads-sling-targets "gascity-beads-sling"
+                  (&optional bead))
+(declare-function gascity-beads-sling--warm "gascity-beads-sling" (dir))
 (declare-function gascity-beads-sling-validate "gascity-beads-sling" (context))
 (declare-function gascity-beads-sling-actions "gascity-beads-sling" (context))
 (declare-function gascity-beads-sling--menu-group "gascity-beads-sling" ())
@@ -218,6 +220,130 @@
                (lambda (&rest _) (error "Used file-in-directory-p"))))
       (should-not (gascity-beads-sling--city))
       (should-not (gascity-beads-sling-targets)))))
+
+(defun gascity-beads-sling-test--rig-with-default (default &optional prefix)
+  "Return the test rig carrying DEFAULT as its sling default."
+  (gascity-rig :name "gascity.el"
+               :prefix (or prefix "gce")
+               :path (directory-file-name gascity-beads-sling-test--rig)
+               :default-sling-target default))
+
+(ert-deftest gascity-test-beads-sling-provider-rig-default ()
+  "The forwarded work bead surfaces its rig's default as the Who default."
+  (let ((gascity-context-city gascity-beads-sling-test--city)
+        (gascity-beads-sling--city nil))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _)
+                 (list (gascity-beads-sling-test--rig-with-default
+                        "gascity.el/gc.implementation-worker"))))
+              ((symbol-function 'gascity-store-get)
+               (lambda (args &optional _dir)
+                 (should (equal args '("agent" "list")))
+                 (list :status 'ready
+                       :data gascity-beads-sling-test--agents)))
+              ((symbol-function 'gascity-reader-read)
+               (lambda (&rest _) (error "Provider spawned a sync read")))
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (&rest _) (error "Provider spawned an async read")))
+              ((symbol-function 'gascity-reader-run-async)
+               (lambda (&rest _) (error "Provider ran an action"))))
+      (let* ((targets (gascity-beads-sling-targets "gce-1"))
+             (default (seq-find
+                       (lambda (target)
+                         (equal (oref target name)
+                                "gascity.el/gc.implementation-worker"))
+                       targets)))
+        (should default)
+        (should (plist-get (oref default metadata) :derived))
+        (should (eq (plist-get (oref default metadata) :source) 'rig-default))))))
+
+(ert-deftest gascity-test-beads-sling-provider-rig-default-synthesized ()
+  "A rig default that is not a roster row is still offered as a target."
+  (let ((gascity-context-city gascity-beads-sling-test--city)
+        (gascity-beads-sling--city nil))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _)
+                 (list (gascity-beads-sling-test--rig-with-default
+                        "gascity.el/gc.worker-pool"))))
+              ((symbol-function 'gascity-store-get)
+               (lambda (&rest _)
+                 (list :status 'ready
+                       :data gascity-beads-sling-test--agents))))
+      (let* ((targets (gascity-beads-sling-targets "gce-1"))
+             (default (seq-find
+                       (lambda (target)
+                         (equal (oref target name) "gascity.el/gc.worker-pool"))
+                       targets)))
+        (should default)
+        (should (eq (oref default kind) 'agent))
+        (should (equal (oref default scope) "gascity.el"))
+        (should (plist-get (oref default metadata) :derived))
+        (should (string-match-p "rig default" (oref default description)))))))
+
+(ert-deftest gascity-test-beads-sling-provider-cold-seeded-default ()
+  "A cold seeded session resolves the city and reads the default from cache."
+  (let ((default-directory gascity-beads-sling-test--rig)
+        (gascity-context-city nil)
+        (gascity-beads-sling--city nil)
+        (gascity-context--rigs-cache (make-hash-table :test #'equal))
+        (reads nil))
+    (cl-letf (((symbol-function 'gascity-context-known-city-roots) #'ignore)
+              ((symbol-function 'gascity-beads-sling--registry-city)
+               (lambda (&rest _) gascity-beads-sling-test--city))
+              ((symbol-function 'gascity-rigs-cached) #'ignore)
+              ((symbol-function 'gascity-store-get)
+               (lambda (args &optional _dir)
+                 (push args reads)
+                 (if (equal args '("rig" "list"))
+                     (list :status 'ready
+                           :data `((rigs . (((name . "gascity.el")
+                                             (prefix . "gce")
+                                             (path . ,(directory-file-name
+                                                       gascity-beads-sling-test--rig))
+                                             (default_sling_target
+                                              . "gascity.el/gc.implementation-worker"))))))
+                   (list :status 'ready
+                         :data gascity-beads-sling-test--agents))))
+              ((symbol-function 'gascity-reader-read)
+               (lambda (&rest _) (error "Provider spawned a sync read")))
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (&rest _) (error "Provider spawned an async read")))
+              ((symbol-function 'gascity-reader-run-async)
+               (lambda (&rest _) (error "Provider ran an action"))))
+      (let* ((targets (gascity-beads-sling-targets "gce-1"))
+             (default (seq-find
+                       (lambda (target)
+                         (equal (oref target name)
+                                "gascity.el/gc.implementation-worker"))
+                       targets)))
+        (should default)
+        (should (plist-get (oref default metadata) :derived))
+        ;; The cold seeded path reads the cached store once per kind.
+        (should (equal (reverse reads)
+                       '(("rig" "list") ("agent" "list"))))))))
+
+(ert-deftest gascity-test-beads-sling-warm-fills-rig-memo ()
+  "Warming the sling reads decodes the rig list into the memo."
+  (let ((gascity-context-city gascity-beads-sling-test--city)
+        (gascity-beads-sling--city nil)
+        (gascity-context--rigs-cache (make-hash-table :test #'equal))
+        (rig-callback nil))
+    (cl-letf (((symbol-function 'gascity-store-fetch)
+               (lambda (args callback _errback &rest _)
+                 (when (equal args '("rig" "list"))
+                   (setq rig-callback callback))
+                 nil)))
+      (should (equal (gascity-beads-sling--warm gascity-beads-sling-test--city)
+                     gascity-beads-sling-test--city))
+      (should rig-callback)
+      (funcall rig-callback
+               `((rigs . [((name . "gascity.el")
+                           (prefix . "gce")
+                           (path . ,(directory-file-name
+                                     gascity-beads-sling-test--rig)))])))
+      (should (equal (mapcar #'gascity-rig-name
+                             (gascity-rigs-cached gascity-beads-sling-test--city))
+                     '("gascity.el"))))))
 
 (ert-deftest gascity-test-beads-sling-city-resolution-order ()
   "The override wins, then a known city that owns DIR, then the memory."
@@ -1146,6 +1272,9 @@ expected argv: the delegation contract end to end with a stubbed gc."
   (let ((scope nil))
     (cl-letf (((symbol-function 'beads-sling--bead-at-point)
                (lambda () "ga-1"))
+              ;; This test exercises the delegation, not the background
+              ;; warm; keep its process-free boundary explicit.
+              ((symbol-function 'gascity-beads-sling--warm) #'ignore)
               ((symbol-function 'transient-setup)
                (lambda (_name _levels _suffixes &rest args)
                  (setq scope (plist-get args :scope)))))

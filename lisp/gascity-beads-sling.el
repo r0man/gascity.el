@@ -60,8 +60,14 @@
 (declare-function gascity-dashboard "gascity-dashboard" ())
 (declare-function gascity-rig-dashboard "gascity-rig" (rig-name))
 (declare-function gascity-rig-dashboard-at-point "gascity-rig" ())
+(declare-function gascity-domain-decode-list "gascity-domain" (class seq))
 (declare-function gascity-rig-path "gascity-domain" (rig))
 (declare-function gascity-rig-prefix "gascity-domain" (rig))
+(declare-function gascity-rig-name "gascity-domain" (rig))
+(declare-function gascity-rig-default-sling-target "gascity-domain" (rig))
+(declare-function gascity-rig-default-sling-targets "gascity-domain" (rig))
+(declare-function gascity-rigs-remember "gascity-context"
+                  (rigs &optional dir))
 (declare-function gascity-remote-canonical-dir "gascity-remote" (dir))
 (declare-function gascity-remote-localize-path "gascity-remote"
                   (path &optional dir))
@@ -279,44 +285,134 @@ entry keys and ends in a slash.  Never walks DIR's parent chain."
       (gascity-context-remember-city-root city)
       (gascity-remote-canonical-dir city))))
 
-(defun gascity-beads-sling-targets ()
+(defun gascity-beads-sling--rigs (city)
+  "Return CITY's rigs from the memo or the cached `rig list' payload.
+The memo (`gascity-rigs-cached') is what a gascity view fills; the
+store fallback covers the seeded beads sling menu, whose background
+warm may have cached `gc rig list' without a view decoding it yet.
+Cache-only either way: never spawns `gc' and never blocks."
+  (or (gascity-rigs-cached city)
+      (when-let* ((payload (plist-get (gascity-store-get '("rig" "list") city)
+                                      :data))
+                  (rigs (gascity-domain-decode-list
+                         'gascity-rig (alist-get 'rigs payload))))
+        (gascity-rigs-remember rigs city))))
+
+(defun gascity-beads-sling--bead-id (bead)
+  "Return BEAD's id string, or nil.
+BEAD may be the id string a sling scope carries or a `beads-issue'
+object a completion caller supplied."
+  (cond
+   ((null bead) nil)
+   ((stringp bead) bead)
+   ((eieio-object-p bead) (oref bead id))
+   (t nil)))
+
+(defun gascity-beads-sling--rig-default-target (city bead)
+  "Return \(NAME . RIG) for BEAD's owning rig default in CITY, or nil.
+The bead id's prefix identifies its rig in the cache-only rig list, and
+the rig's `default_sling_target' wins over the first of
+`default_sling_targets' — the same deterministic rule
+`gascity-sling--derive-target' uses.  Never a `gc' read."
+  (when-let* ((bead (gascity-beads-sling--bead-id bead))
+              (prefix (gascity-beads-sling--issue-prefix bead))
+              (rig (seq-find (lambda (rig)
+                               (equal prefix (gascity-rig-prefix rig)))
+                             (gascity-beads-sling--rigs city)))
+              (name (or (gascity-rig-default-sling-target rig)
+                        (car (gascity-rig-default-sling-targets rig))))
+              ((not (gascity-formula--blank name))))
+    (cons name rig)))
+
+(defun gascity-beads-sling--agent-target (agent city default-name)
+  "Return a `beads-sling-target' for roster AGENT in CITY.
+DEFAULT-NAME is the bead's rig default, so the matching roster row is
+marked `:derived' and the Who picker shows it as the default."
+  (let* ((name (plist-get agent :name))
+         (rig (plist-get agent :rig))
+         (derived (equal name default-name)))
+    (beads-sling-target
+     :name name
+     :kind 'agent
+     :scope rig
+     :backend "gc"
+     :description name
+     :metadata (append
+                (list :rig rig
+                      :city city
+                      :qualified-name name
+                      :source (if derived 'rig-default 'roster))
+                (when derived (list :derived t))))))
+
+(defun gascity-beads-sling--default-target (name rig city)
+  "Return a synthesized `beads-sling-target' for the rig default NAME.
+RIG is the owning `gascity-rig' and CITY its city.  Used when the
+default target is configured but is not a roster row (a pool template,
+for example), so the Who picker still offers it."
+  (beads-sling-target
+   :name name
+   :kind 'agent
+   :scope (gascity-rig-name rig)
+   :backend "gc"
+   :description (format "%s (rig default)" name)
+   :metadata (list :rig (gascity-rig-name rig)
+                   :city city
+                   :qualified-name name
+                   :source 'rig-default
+                   :derived t)))
+
+(defun gascity-beads-sling-targets (&optional bead)
   "Return the city's qualified Gas City sling targets from cached data.
 One `beads-sling-target' per configured agent of the cached
 \(\"agent\" \"list\") payload (`gascity-sling--roster'), so the Who
 picker offers exactly the names `gc sling' accepts: `rig/agent' for a
 rig-scoped agent, the bare name for a city-scoped one.
 
-The `beads-sling-target-functions' contract takes no arguments and must
-never block, so this answers from the store's last good payload and the
-city `gascity-beads-sling--city' resolves from memory.  A cold store or
-an unresolved city returns nil in the same call, leaving beads.el's
-local targets as the only Who choices.  Never spawns `gc', never reads
-the work bead, and contributes no `default_sling_target' row (plan F3)."
+BEAD, when beads.el forwards the work item (its target-provider seam),
+resolves the owning rig from the id prefix and marks that rig's
+`default_sling_target' row `:derived', so the Who picker surfaces the
+default beads.el's own derivation cannot see.  Without a matching
+roster row the default is synthesized as a target of its own.
+
+The provider must never block, so both the roster and the rig list came
+from the store's last good payload; the city
+`gascity-beads-sling--city' resolves from memory.  A cold store or an
+unresolved city returns nil in the same call, leaving beads.el's local
+targets as the only Who choices.  Never spawns `gc'."
   (when-let* ((city (gascity-beads-sling--city)))
-    (mapcar (lambda (agent)
-              (let ((name (plist-get agent :name))
-                    (rig (plist-get agent :rig)))
-                (beads-sling-target
-                 :name name
-                 :kind 'agent
-                 :scope rig
-                 :backend "gc"
-                 :description name
-                 :metadata (list :rig rig
-                                 :city city
-                                 :qualified-name name
-                                 :source 'roster))))
-            (gascity-sling--roster city))))
+    (let* ((default (and bead
+                         (gascity-beads-sling--rig-default-target city bead)))
+           (default-name (car default))
+           (targets (mapcar (lambda (agent)
+                              (gascity-beads-sling--agent-target
+                               agent city default-name))
+                            (gascity-sling--roster city))))
+      (if (and default-name
+               (not (seq-some (lambda (target)
+                                (equal (oref target name) default-name))
+                              targets)))
+          (append targets
+                  (list (gascity-beads-sling--default-target
+                         default-name (cdr default) city)))
+        targets))))
 
 (defun gascity-beads-sling--warm (dir)
   "Start background reads of the city roster and rigs for DIR.
 Called when the beads sling menu opens, so the Who picker has the gc
-roster by the time the user reaches the T stage.  Never blocks: the
-store answers from its last good payload and fills in when the read
-completes."
+roster and the rig defaults by the time the user reaches the T stage.
+The rig read also fills the rig memo, which the provider's
+context-sensitive default needs.  Never blocks: the store answers from
+its last good payload and fills in when the read completes."
   (when-let* ((city (gascity-beads-sling--city dir)))
     (gascity-store-fetch '("agent" "list") #'ignore #'ignore :dir city)
-    (gascity-store-fetch '("rig" "list") #'ignore #'ignore :dir city)
+    (gascity-store-fetch
+     '("rig" "list")
+     (lambda (payload)
+       (gascity-rigs-remember
+        (gascity-domain-decode-list
+         'gascity-rig (alist-get 'rigs payload))
+        city))
+     #'ignore :dir city)
     city))
 
 (defun gascity-beads-sling--warm-at-point (&rest _)
