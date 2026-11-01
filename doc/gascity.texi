@@ -2816,7 +2816,13 @@ agent and the bare name for a city-level one --- alongside beads.el's
 local targets.  They are marked with the @samp{gc} backend.  beads.el
 forwards the work bead to gascity's target provider, so the provider
 can also find the bead's owning rig and make that rig's configured
-@samp{default_sling_target} the derived Who default.  All sling
+@samp{default_sling_target} the derived Who default.  When a managed
+rig has no configured default, gascity derives a Gas City coordinator
+instead --- @samp{<rig>/gc.run-operator} first, then
+@samp{<rig>/gc.implementation-worker} --- so a formula sling does not
+fall back to beads.el's local @samp{<project>/task} role.  Choosing a
+local target for a formula in a managed rig still works, but the footer
+warns that it starts a local agent rather than a Gas City run.  All sling
 shapes work from the beads transient: a plain dispatch runs
 @code{gc sling TARGET BEAD --json}, a formula with work runs
 @code{gc sling TARGET BEAD --json --on FORMULA}, and a formula-only

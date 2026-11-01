@@ -285,6 +285,23 @@ entry keys and ends in a slash.  Never walks DIR's parent chain."
       (gascity-context-remember-city-root city)
       (gascity-remote-canonical-dir city))))
 
+(defun gascity-beads-sling-managed-p (&optional dir)
+  "Return the Gas City root managing DIR, or nil.
+DIR defaults to `default-directory'.  A local repository registered in
+the city registry (`~/.gc/cities.toml') and a city's `.gc/site.toml'
+counts as managed even when no gascity view has been opened; the check
+is cache-only after the first registry read.  A nil answer means
+beads.el should keep using its own local targets."
+  (gascity-beads-sling--city dir))
+
+(defun gascity-beads-sling--bead-rig (city bead)
+  "Return the rig owning BEAD's id prefix in CITY, or nil."
+  (when-let* ((bead (gascity-beads-sling--bead-id bead))
+              (prefix (gascity-beads-sling--issue-prefix bead)))
+    (seq-find (lambda (rig)
+                (equal prefix (gascity-rig-prefix rig)))
+              (gascity-beads-sling--rigs city))))
+
 (defun gascity-beads-sling--rigs (city)
   "Return CITY's rigs from the memo or the cached `rig list' payload.
 The memo (`gascity-rigs-cached') is what a gascity view fills; the
@@ -314,20 +331,34 @@ The bead id's prefix identifies its rig in the cache-only rig list, and
 the rig's `default_sling_target' wins over the first of
 `default_sling_targets' — the same deterministic rule
 `gascity-sling--derive-target' uses.  Never a `gc' read."
-  (when-let* ((bead (gascity-beads-sling--bead-id bead))
-              (prefix (gascity-beads-sling--issue-prefix bead))
-              (rig (seq-find (lambda (rig)
-                               (equal prefix (gascity-rig-prefix rig)))
-                             (gascity-beads-sling--rigs city)))
+  (when-let* ((rig (gascity-beads-sling--bead-rig city bead))
               (name (or (gascity-rig-default-sling-target rig)
                         (car (gascity-rig-default-sling-targets rig))))
               ((not (gascity-formula--blank name))))
     (cons name rig)))
 
-(defun gascity-beads-sling--agent-target (agent city default-name)
+(defun gascity-beads-sling--managed-default-name (rig roster)
+  "Return a pack coordinator target for RIG in ROSTER, or nil.
+Prefers <rig>/gc.run-operator, then <rig>/gc.implementation-worker.
+Used when a managed rig has no configured `default_sling_target', so
+that a formula sling still defaults to a Gas City workflow rather than
+beads.el's local `<project>/task' role."
+  (when-let* ((rig-name (gascity-rig-name rig)))
+    (seq-find
+     (lambda (candidate)
+       (seq-some (lambda (agent)
+                   (equal (plist-get agent :name) candidate))
+                 roster))
+     (list (format "%s/gc.run-operator" rig-name)
+           (format "%s/gc.implementation-worker" rig-name)))))
+
+(defun gascity-beads-sling--agent-target (agent city default-name
+                                               &optional derived-source)
   "Return a `beads-sling-target' for roster AGENT in CITY.
 DEFAULT-NAME is the bead's rig default, so the matching roster row is
-marked `:derived' and the Who picker shows it as the default."
+marked `:derived' and the Who picker shows it as the default.
+DERIVED-SOURCE is the `:source' recorded for that row (`rig-default' or
+`managed-rig')."
   (let* ((name (plist-get agent :name))
          (rig (plist-get agent :rig))
          (derived (equal name default-name)))
@@ -341,7 +372,9 @@ marked `:derived' and the Who picker shows it as the default."
                 (list :rig rig
                       :city city
                       :qualified-name name
-                      :source (if derived 'rig-default 'roster))
+                      :source (if derived
+                                  (or derived-source 'rig-default)
+                                'roster))
                 (when derived (list :derived t))))))
 
 (defun gascity-beads-sling--default-target (name rig city)
@@ -371,8 +404,12 @@ rig-scoped agent, the bare name for a city-scoped one.
 BEAD, when beads.el forwards the work item (its target-provider seam),
 resolves the owning rig from the id prefix and marks that rig's
 `default_sling_target' row `:derived', so the Who picker surfaces the
-default beads.el's own derivation cannot see.  Without a matching
-roster row the default is synthesized as a target of its own.
+default beads.el's own derivation cannot see.  A managed rig with no
+configured default derives `<rig>/gc.run-operator', else
+`<rig>/gc.implementation-worker', as the `:derived' row instead of
+leaving beads.el's local `<project>/task' role as the default.  Without
+a matching roster row a configured default is synthesized as a target of
+its own.
 
 The provider must never block, so both the roster and the rig list came
 from the store's last good payload; the city
@@ -380,20 +417,32 @@ from the store's last good payload; the city
 unresolved city returns nil in the same call, leaving beads.el's local
 targets as the only Who choices.  Never spawns `gc'."
   (when-let* ((city (gascity-beads-sling--city)))
-    (let* ((default (and bead
-                         (gascity-beads-sling--rig-default-target city bead)))
-           (default-name (car default))
+    (let* ((configured (and bead
+                            (gascity-beads-sling--rig-default-target
+                             city bead)))
+           (configured-name (car configured))
+           (roster (gascity-sling--roster city))
+           (managed-rig (and bead
+                             (not configured-name)
+                             (gascity-beads-sling--bead-rig city bead)))
+           (managed-name (and managed-rig
+                              (gascity-beads-sling--managed-default-name
+                               managed-rig roster)))
+           (default-name (or configured-name managed-name))
+           (default-source (if configured-name
+                               'rig-default
+                             (and managed-name 'managed-rig)))
            (targets (mapcar (lambda (agent)
                               (gascity-beads-sling--agent-target
-                               agent city default-name))
-                            (gascity-sling--roster city))))
-      (if (and default-name
+                               agent city default-name default-source))
+                            roster)))
+      (if (and configured-name
                (not (seq-some (lambda (target)
-                                (equal (oref target name) default-name))
+                                (equal (oref target name) configured-name))
                               targets)))
           (append targets
                   (list (gascity-beads-sling--default-target
-                         default-name (cdr default) city)))
+                         configured-name (cdr configured) city)))
         targets))))
 
 (defun gascity-beads-sling--warm (dir)
@@ -444,6 +493,30 @@ by name alone (P8).  A cold recipe answers nil without a read."
 The bl-bdj warning's suggestion names a rig the city actually has;
 an all-city memo answers nil and the wording stays generic."
   (seq-find (lambda (rig) (not (gascity-rig-hq rig))) rigs))
+
+(defun gascity-beads-sling--validate-managed-sling (context)
+  "Warn when a managed rig sends a formula to a non-gc target.
+CONTEXT is the sling context plist.  The derived default is a gc
+coordinator, so this fires only when the
+user explicitly picks a local role/backend for a formula in a repo Gas
+City manages.  Cached data only; a cold roster warns nothing."
+  (let* ((city (gascity-beads-sling--city))
+         (work (plist-get context :work))
+         (formula (plist-get context :formula))
+         (shape (plist-get context :shape))
+         (target (plist-get context :target))
+         (gc-targets (and city (gascity-beads-sling-targets work))))
+    (when (and city
+               gc-targets
+               (memq shape '(on formula))
+               (not (gascity-formula--blank formula))
+               (not (gascity-formula--blank target))
+               (not (seq-some (lambda (gc-target)
+                                (equal (oref gc-target name) target))
+                              gc-targets)))
+      (format "This repository is managed by Gas City (%s); a formula dispatch to %s starts a local agent, not a Gas City run. Pick a gc target."
+              (file-name-nondirectory (directory-file-name city))
+              target))))
 
 (defun gascity-beads-sling-validate (context)
   "Return advisory warnings for sling CONTEXT, or nil.
@@ -849,6 +922,8 @@ or process spawn; only the registration data structures change."
     :description "Gas City (gc sling)"))
   (add-hook 'beads-sling-target-functions #'gascity-beads-sling-targets)
   (add-hook 'beads-sling-validators #'gascity-beads-sling-validate)
+  (add-hook 'beads-sling-validators
+            #'gascity-beads-sling--validate-managed-sling)
   (add-to-list 'beads-menu-providers #'gascity-beads-sling--menu-group)
   (add-hook 'beads-action-providers #'gascity-beads-sling-actions)
   (gascity-beads-sling--bind-actions)

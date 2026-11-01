@@ -1381,3 +1381,71 @@ expected argv: the delegation contract end to end with a stubbed gc."
                                 (string-match-p "no prompt flag" msg))
                               messages))))
     (should (= 1 launch-count))))
+
+;;; Managed-rig default and warning
+
+(ert-deftest gascity-test-beads-sling-managed-p ()
+  "A context city answers the managed-rig predicate."
+  (let ((gascity-context-city gascity-beads-sling-test--city))
+    (should (equal (gascity-beads-sling-managed-p)
+                   gascity-beads-sling-test--city))))
+
+(ert-deftest gascity-test-beads-sling-provider-managed-default ()
+  "A managed rig with no configured default derives a gc coordinator."
+  (let ((gascity-context-city gascity-beads-sling-test--city)
+        (gascity-beads-sling--city nil))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _)
+                 (gascity-beads-sling-test--rigs
+                  gascity-beads-sling-test--city)))
+              ((symbol-function 'gascity-store-get)
+               (lambda (args &optional _)
+                 (should (equal args '("agent" "list")))
+                 (list :status 'ready
+                       :data gascity-beads-sling-test--agents)))
+              ((symbol-function 'gascity-reader-read)
+               (lambda (&rest _) (error "Provider spawned a sync read")))
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (&rest _) (error "Provider spawned an async read")))
+              ((symbol-function 'gascity-reader-run-async)
+               (lambda (&rest _) (error "Provider ran an action"))))
+      (let* ((targets (gascity-beads-sling-targets "gce-1"))
+             (default (seq-find
+                       (lambda (target)
+                         (equal (oref target name)
+                                "gascity.el/gc.implementation-worker"))
+                       targets)))
+        (should default)
+        (should (plist-get (oref default metadata) :derived))
+        (should (eq (plist-get (oref default metadata) :source)
+                    'managed-rig))))))
+
+(ert-deftest gascity-test-beads-sling-validate-managed-sling ()
+  "A formula to a local target in a managed rig warns; a gc target does not."
+  (let ((gascity-context-city gascity-beads-sling-test--city)
+        (gascity-beads-sling--city nil))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _)
+                 (gascity-beads-sling-test--rigs
+                  gascity-beads-sling-test--city)))
+              ((symbol-function 'gascity-store-get)
+               (lambda (&rest _)
+                 (list :status 'ready
+                       :data gascity-beads-sling-test--agents)))
+              ((symbol-function 'gascity-reader-read)
+               (lambda (&rest _) (error "Validator spawned a sync read")))
+              ((symbol-function 'gascity-reader-read-async)
+               (lambda (&rest _) (error "Validator spawned an async read")))
+              ((symbol-function 'gascity-reader-run-async)
+               (lambda (&rest _) (error "Validator ran an action"))))
+      (let ((warning (gascity-beads-sling--validate-managed-sling
+                      '(:work "gce-1" :formula "build-basic"
+                        :shape on :target "gascity.el/task"))))
+        (should warning)
+        (should (string-match-p "managed by Gas City" warning)))
+      (should-not (gascity-beads-sling--validate-managed-sling
+                   '(:work "gce-1" :formula "build-basic" :shape on
+                     :target "gascity.el/gc.implementation-worker")))
+      (should-not (gascity-beads-sling--validate-managed-sling
+                   '(:work "gce-1" :formula "build-basic" :shape plain
+                     :target "gascity.el/task"))))))
