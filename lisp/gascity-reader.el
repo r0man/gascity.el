@@ -792,6 +792,26 @@ another read's pipe (QA L-1)."
       (when (process-live-p proc) (delete-process proc))
       (when (buffer-live-p buf) (kill-buffer buf)))))
 
+(defun gascity-reader--drain-pipe (proc)
+  "Wait (bounded) for pipe PROC to finish and return its text, trimmed.
+Returns nil when PROC captured nothing or its buffer is gone.  PROC's
+sentinel must be a no-op (the local stderr pipe): the default pipe
+sentinel appends Emacs's own `Process … finished (exit N)' note to the
+buffer, which then leaked into gc's failure message whenever the
+stderr pipe closed before the main process's sentinel read it
+\(ga-r8vmg).  The wait accepts output for at most 10 ms per iteration
+and gives up after 20, so a wedged pipe cannot block the sentinel."
+  (when (and (processp proc) (process-live-p proc))
+    (let ((n 20))
+      (while (and (> n 0) (process-live-p proc)
+                  (accept-process-output proc 0.01 nil t))
+        (setq n (1- n)))))
+  (let ((buf (and (processp proc) (process-buffer proc))))
+    (when (buffer-live-p buf)
+      (let ((text (with-current-buffer buf
+                    (string-trim (buffer-string)))))
+        (and (not (string-empty-p text)) text)))))
+
 ;;; Asynchronous reader
 
 (defvar gascity-reader-skip-dir-probe nil
@@ -901,7 +921,9 @@ happens to accept a file name there, while TRAMP's direct-async handler
 \(`tramp-handle-make-process', enabled per connection through the
 connection-local variable `tramp-direct-async-process') accepts only nil
 or a buffer and signals `wrong-type-argument bufferp'.  Locally, stderr
-is captured in a hidden scratch buffer (killed on exit); on failure its
+is captured through a pipe process of our own (no-op sentinel, so
+Emacs's `Process … finished' note never joins the captured text; the
+pipe is drained before it is read and killed on exit); on failure that
 text feeds `gascity-reader--failure-message', so gc's real diagnostic
 \(a rig that `gc rig status' rejects, say) is shown even though the JSON
 envelope carries only the generic sentinel phrase.  On a remote
@@ -1040,15 +1062,27 @@ turns it on, at the cost of a fresh ssh per read."
             ;; wrapper — a string :stderr crashes direct-async, a buffer
             ;; is tramp-sh's fifo machinery (see the docstring).
             (command (gascity-reader--command executable full-args t))
-            ;; Local runs capture the process's stderr; so do remote
-            ;; direct-async runs, whose LOCAL login program (ssh) has
-            ;; stderr chatter of its own — there TRAMP passes the buffer
-            ;; to the local `make-process' as-is.  The tramp-sh path must
-            ;; get nil.  `tramp-direct-async-process-p' is the very
-            ;; predicate TRAMP's dispatch consults.
-            (stderr-buffer (when (or (not remote)
-                                     (and (fboundp 'tramp-direct-async-process-p)
-                                          (tramp-direct-async-process-p)))
+            ;; A LOCAL run captures gc's stderr through a pipe process of
+            ;; our own: Emacs's default pipe sentinel appends its
+            ;; "Process gascity-gc stderr finished (exit N)" note to the
+            ;; buffer, which reached the user as part of gc's diagnostic
+            ;; whenever the stderr pipe closed before the main sentinel
+            ;; read it (ga-r8vmg).  A pipe we own gets a no-op sentinel
+            ;; and is drained before it is read.  Remote direct-async
+            ;; runs pass a scratch buffer instead — TRAMP's handler
+            ;; accepts only nil, a buffer or a string — holding the
+            ;; LOCAL login program's chatter, which is ignored on that
+            ;; path either way; the tramp-sh path must get nil.
+            ;; `tramp-direct-async-process-p' is the very predicate
+            ;; TRAMP's dispatch consults.
+            (stderr-pipe (when (not remote)
+                           (make-pipe-process
+                            :name "gascity-gc-stderr" :noquery t
+                            :buffer (generate-new-buffer " *gascity-gc-stderr*")
+                            :sentinel #'ignore)))
+            (stderr-buffer (when (and remote
+                                      (fboundp 'tramp-direct-async-process-p)
+                                      (tramp-direct-async-process-p))
                              (generate-new-buffer " *gascity-gc-stderr*"))))
        (when (fboundp 'gascity--log)
          (gascity--log 'info "Running async: %s %s"
@@ -1065,7 +1099,7 @@ turns it on, at the cost of a fresh ssh per read."
               :noquery t
               :connection-type 'pipe
               :file-handler t
-              :stderr stderr-buffer
+              :stderr (or stderr-pipe stderr-buffer)
               ;; Chunks are consed and joined once: repeated `concat'
               ;; is quadratic on a large payload (QA F3).
               :filter (lambda (_proc chunk)
@@ -1084,25 +1118,22 @@ turns it on, at the cost of a fresh ssh per read."
                                           (mapconcat #'identity args " ")))
                           (when errback
                             ;; The same envelope-aware message builder as the
-                            ;; sync path.  A LOCAL run captures gc's stderr
-                            ;; in the scratch buffer, so read it: gc reports
-                            ;; most failures on stderr while its JSON envelope
-                            ;; only carries the generic sentinel phrase, and
-                            ;; the builder prefers specific stderr over that
-                            ;; phrase.  Remotely the separation happened on
-                            ;; the host (`2>/dev/null') and, under
-                            ;; direct-async, the scratch buffer holds the
-                            ;; local login program's chatter — neither is
-                            ;; gc's own diagnostic.  A remote 127 still gets
-                            ;; the setup hint via REMOTE.
+                            ;; sync path.  A LOCAL run captures gc's stderr in
+                            ;; our own pipe, drained here so the tail of the
+                            ;; text is in: gc reports most failures on stderr
+                            ;; while its JSON envelope only carries the
+                            ;; generic sentinel phrase, and the builder
+                            ;; prefers specific stderr over that phrase.
+                            ;; Remotely the separation happened on the host
+                            ;; (`2>/dev/null') and, under direct-async, the
+                            ;; scratch buffer holds the local login program's
+                            ;; chatter — neither is gc's own diagnostic.  A
+                            ;; remote 127 still gets the setup hint via
+                            ;; REMOTE.
                             (funcall errback
                                      (gascity-reader--failure-message
                                       executable args code output
-                                      (and (not remote)
-                                           (bufferp stderr-buffer)
-                                           (buffer-live-p stderr-buffer)
-                                           (with-current-buffer stderr-buffer
-                                             (string-trim (buffer-string))))
+                                      (gascity-reader--drain-pipe stderr-pipe)
                                       remote))))
                          (t
                           (condition-case perr
@@ -1115,10 +1146,12 @@ turns it on, at the cost of a fresh ssh per read."
                              (when errback
                                (funcall errback
                                         (error-message-string perr)))))))
+                      (gascity-reader--kill-pipe stderr-pipe)
                       (when (and (bufferp stderr-buffer)
                                  (buffer-live-p stderr-buffer))
                         (kill-buffer stderr-buffer))))))))
          (error
+          (gascity-reader--kill-pipe stderr-pipe)
           (when (and (bufferp stderr-buffer) (buffer-live-p stderr-buffer))
             (kill-buffer stderr-buffer))
           (when errback

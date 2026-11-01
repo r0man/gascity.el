@@ -6339,6 +6339,28 @@ for diagnostics'."
                "failed: gc rig status: rig \"bright-lights\" not found in city.toml (exit 1)"
                msg)))))
 
+(ert-deftest gascity-test-local-reader-read-async-stderr-has-no-sentinel-chatter ()
+  "A local async failure's stderr text carries gc's words only.
+The child closes its stderr (fd 2) before it exits, so the stderr pipe
+— and with it Emacs's default pipe sentinel — has certainly finished
+before the main process's sentinel reads the text.  That deterministically
+reproduces the race behind ga-r8vmg, where the default sentinel's
+\"Process gascity-gc stderr finished (exit 1)\" note was appended to gc's
+diagnostic; the captured stderr must never include that chatter."
+  (let ((default-directory temporary-file-directory)
+        (gascity-executable "/bin/sh")
+        (result (list nil)))
+    (gascity-reader-read-async
+     '("-c" "echo 'gc: rig \"bright-lights\" not found' >&2; exec 2>&-; sleep 0.2; exit 1"
+       "--json")
+     (lambda (_data) (setcar result :called))
+     (lambda (msg) (setcar result msg)))
+    (let ((msg (gascity-test--wait-for result)))
+      (should (string-match-p
+               "failed: gc: rig \"bright-lights\" not found (exit 1)\\'"
+               msg))
+      (should-not (string-match-p "Process " msg)))))
+
 (ert-deftest gascity-test-error-detail-preference ()
   "`gascity-error-detail' prefers non-empty :stderr over the message.
 An empty or missing :stderr falls through to the condition message,
