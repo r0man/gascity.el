@@ -41,6 +41,22 @@
                     0 'help-echo (gascity-ui-time "2026-09-25T13:57:00Z" now))
                    "2026-09-25T13:57:00Z"))))
 
+(ert-deftest gascity-test-ui-epoch-timestamps-render-unknown ()
+  "gc's 1970 placeholder timestamps render as an explicit dash.
+Control-dispatcher sessions carry `1970-01-01T00:04:56Z' when gc has
+no real created/last-active time (ga-4mvlw.1); showing the epoch date
+looks like a real but absurd time."
+  (let ((now (gascity-ui-parse-time "2026-09-25T14:00:00Z"))
+        (epoch "1970-01-01T00:04:56Z"))
+    (should (gascity-ui-epoch-time-p epoch))
+    (should-not (gascity-ui-epoch-time-p "2026-09-25T13:57:00Z"))
+    (should-not (gascity-ui-epoch-time-p nil))
+    (should-not (gascity-ui-epoch-time-p "garbage"))
+    (should (equal (gascity-ui-relative-time epoch now) "—"))
+    (should (equal (gascity-ui-time epoch now) "—"))
+    (should (equal (gascity-ui-ago epoch now) "—"))
+    (should (equal (gascity-ui-clock epoch) ""))))
+
 (ert-deftest gascity-test-ui-relative-time-yesterday ()
   "A timestamp on the previous calendar day, over 24h old, is `yesterday'."
   (let* ((now (float-time (encode-time (list 0 0 23 25 9 2026 nil -1 nil))))

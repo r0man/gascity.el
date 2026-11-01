@@ -254,6 +254,9 @@ the session's own state when it is not active, `stalled' when gc says
 running with no session, else `suspended' or `stopped'."
   (let ((state (and session (gascity-session-state session)))
         (age (and session (gascity-ui-parse-time (gascity-session-last-active session)))))
+    ;; gc's 1970 placeholder is not a real last-active time: do not read
+    ;; it as an enormous age that turns a live agent idle (ga-4mvlw.1).
+    (if (and age (gascity-ui-epoch-time-p age)) (setq age nil))
     (cond ((and session (equal state "active"))
            (if (and age (> (- (float-time) age)
                            (or (bound-and-true-p gascity-dashboard-agent-idle-threshold)

@@ -87,6 +87,16 @@ stopped agents take their template's provider from `gc agent list'."
     (should (equal (substring-no-properties (aref (cadr entry) 1)) "gc.w-1"))
     (should (equal (aref (cadr entry) 3) "stalled"))))
 
+(ert-deftest gascity-test-agents-entry-epoch-active-is-unknown ()
+  "A session's 1970 placeholder last-active renders as a dash, not 1970.
+Control-dispatcher sessions have no real timestamps (ga-4mvlw.1)."
+  (let* ((agent (list :name "core.control-dispatcher" :rig nil :state 'running
+                      :active "1970-01-01T00:04:56Z"
+                      :object (make-instance 'gascity-agent
+                                             :name "core.control-dispatcher")))
+         (entry (gascity-agents--entry agent (float-time))))
+    (should (equal (substring-no-properties (aref (cadr entry) 4)) "—"))))
+
 (defconst gascity-agents-test--fixture-now 1790323200
   "A fixed `now` inside the v3 fixtures' timeframe (2026-09-25 10:00
 CEST), so idle/active states the fixture timestamps drive are stable.")
@@ -691,9 +701,25 @@ the `a' prefix on this bead-holding view."
          (stopped (gascity-test--vnode-text-plain
                    (gascity-status--agent-row '((qualified_name . "bd.dog-1")
                                                 (name . "bd.dog-1"))
-                                              nil map nil 4))))
+                                              nil map nil 4)))
+         ;; gc's epoch placeholder must not be read as an enormous age
+         ;; that turns a live agent idle (ga-4mvlw.1).
+         (epoch-session (gascity-domain-decode
+                         'gascity-session
+                         '((agent_name . "core.control-dispatcher")
+                           (name . "core.control-dispatcher")
+                           (state . "active")
+                           (last_active . "1970-01-01T01:05:01+01:00"))))
+         (epoch-map (gascity-status--session-map-rows (list epoch-session)))
+         (epoch-row (gascity-test--vnode-text-plain
+                     (gascity-status--agent-row
+                      '((qualified_name . "core.control-dispatcher")
+                        (name . "core.control-dispatcher") (running . t))
+                      nil epoch-map nil))))
     (should (string-match-p "^  ● mayor +active +8m$" live))
-    (should (string-match-p "^    ○ bd.dog-1 +stopped *$" stopped))))
+    (should (string-match-p "^    ○ bd.dog-1 +stopped *$" stopped))
+    (should (string-match-p "^  ● core.control-dispatcher +active +—$"
+                            epoch-row))))
 
 (defun gascity-test--vnode-text-plain (vnode)
   "Return the plain content of text VNODE."

@@ -190,17 +190,31 @@ never an error."
           ((< s 86400) (format "%dh" (/ s 3600)))
           (t (format "%dd" (/ s 86400))))))
 
+(defconst gascity-ui--plausible-time-floor 946684800.0
+  "Epoch seconds of 2000-01-01, the floor of a real gc timestamp.
+Anything earlier is gc's zero-value placeholder, not an actual time.")
+
+(defun gascity-ui-epoch-time-p (ts)
+  "Return non-nil when TS is gc's 1970 epoch placeholder.
+Some gc sessions (control dispatchers, notably) carry no real
+created/last-active time and surface it as `1970-01-01T…Z'.  Such a
+timestamp is not a real moment, so the views render an explicit `—'
+instead of an absurd epoch date (ga-4mvlw.1)."
+  (let ((time (if (numberp ts) ts (gascity-ui-parse-time ts))))
+    (and time (< time gascity-ui--plausible-time-floor))))
+
 (defun gascity-ui-relative-time (ts &optional now)
   "Return timestamp TS relative to NOW, the dashboard way.
 Under a minute `12s', under an hour `3m', under a day `2h'; then
 `yesterday' when TS falls on the previous calendar day, else the
 month and day (`Sep 22'), with the year added when it differs from
 NOW's.  NOW defaults to the current time (a float).  TS is an ISO
-string or a float; nil or malformed yields the empty string."
+string or a float; nil or malformed yields the empty string, and gc's
+1970 epoch placeholder yields `—' (see `gascity-ui-epoch-time-p')."
   (let* ((time (if (numberp ts) ts (gascity-ui-parse-time ts)))
          (now (or now (float-time))))
-    (if (null time)
-        ""
+    (if (or (null time) (< time gascity-ui--plausible-time-floor))
+        (if time "—" "")
       (let ((age (- now time)))
         (if (< age 86400)
             (gascity-ui-duration age)
@@ -219,7 +233,7 @@ string or a float; nil or malformed yields the empty string."
 (defun gascity-ui-time (ts &optional now)
   "Return TS as a relative time string carrying the ISO TS as `help-echo'.
 See `gascity-ui-relative-time' for NOW and the format.  An absent TS
-renders as the empty string."
+renders as the empty string; gc's 1970 epoch placeholder renders `—'."
   (let ((rel (gascity-ui-relative-time ts now)))
     (if (or (string-empty-p rel) (not (stringp ts)))
         rel
@@ -235,9 +249,10 @@ NOW as for `gascity-ui-time'."
 
 (defun gascity-ui-clock (ts)
   "Return the local wall-clock `HH:MM' of timestamp TS, or \"\".
-The ISO TS rides along as `help-echo'."
+The ISO TS rides along as `help-echo'.  gc's 1970 epoch placeholder
+has no wall clock and yields the empty string."
   (let ((time (gascity-ui-parse-time ts)))
-    (if time
+    (if (and time (not (gascity-ui-epoch-time-p time)))
         (propertize (format-time-string "%H:%M" time) 'help-echo ts)
       "")))
 
