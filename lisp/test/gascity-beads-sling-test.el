@@ -688,6 +688,32 @@ from the fixture, and the recipe cache starts empty."
                  '(:work "hw-ab12" :target "hello-world/polecat"
                    :shape plain)))))
 
+(ert-deftest gascity-test-beads-sling-validate-uses-remembered-city ()
+  "The validator resolves the city through the one shared resolver.
+The remembered city is the last fallback of `gascity-beads-sling--city';
+the removed validator-local resolver could not see it, so the rigs stayed
+cold and the cross-store warning was lost."
+  (let ((gascity-context-city nil)
+        (gascity-beads-sling--city gascity-beads-sling-test--validator-city)
+        (default-directory gascity-beads-sling-test--rig)
+        (gascity-formula-recipe-cache nil))
+    (cl-letf (((symbol-function 'gascity-context-known-city-roots) #'ignore)
+              ((symbol-function 'gascity-context-remember-city-root) #'ignore)
+              ((symbol-function 'gascity-remote-canonical-dir)
+               (lambda (dir) dir))
+              ((symbol-function 'gascity-rigs-cached)
+               (lambda (&optional _dir)
+                 (gascity-beads-sling-test--validator-rigs)))
+              ((symbol-function 'gascity-context-scope-key)
+               (lambda (&optional _dir)
+                 gascity-beads-sling-test--validator-city)))
+      (let ((warning (gascity-beads-sling-validate
+                      '(:work "hw-ab12"
+                        :target "gascity.el/gc.implementation-worker"
+                        :shape plain))))
+        (should (equal (gascity-beads-sling-test--warnings warning)
+                       (list gascity-beads-sling-test--cross-store-warning)))))))
+
 (ert-deftest gascity-test-beads-sling-validate-cross-store ()
   "A bead and a rig-scoped target in different stores warn once."
   (gascity-beads-sling-test--with-cache
@@ -1088,7 +1114,7 @@ call order."
       (should (equal (nth 4 argv) "--formula"))
       ;; No positional slot is empty, and `--formula' is never the
       ;; subcommand's first argument (P1).
-      (should-not (seq-some #'gascity-beads-sling--blank-p argv))
+      (should-not (seq-some #'gascity-formula--blank argv))
       (should-not (equal (seq-take argv 2) '("sling" "--formula"))))))
 
 (ert-deftest gascity-test-beads-sling-dispatch-formula-uses-resolved-target ()
