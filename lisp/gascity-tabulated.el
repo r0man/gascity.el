@@ -93,15 +93,18 @@ session's \"last active\" reads in local time.  This is a pure string
 reshape (no parsing/conversion), so it is stable regardless of the
 system clock or time zone.  Falls back to the date alone when TS carries
 no time part, and to the bare \"YYYY-MM-DD\" prefix for any shape this
-does not recognize."
+does not recognize.  gc's 1970 epoch placeholder renders as `—': it
+is not a real time (ga-4mvlw.1)."
   (if (and ts (stringp ts) (not (string-empty-p ts)))
-      (if (string-match
-           "\\`\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)\\(?:[T ]\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)\\)?"
-           ts)
-          (let ((date (match-string 1 ts))
-                (time (match-string 2 ts)))
-            (if time (concat date " " time) date))
-        (substring ts 0 (min 10 (length ts))))
+      (if (gascity-ui-epoch-time-p ts)
+          "—"
+        (if (string-match
+             "\\`\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)\\(?:[T ]\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)\\)?"
+             ts)
+            (let ((date (match-string 1 ts))
+                  (time (match-string 2 ts)))
+              (if time (concat date " " time) date))
+          (substring ts 0 (min 10 (length ts)))))
     ""))
 
 (defun gascity-tabulated--abbreviate-path (path)

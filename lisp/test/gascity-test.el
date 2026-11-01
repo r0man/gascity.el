@@ -307,6 +307,10 @@ shape (127 is a shell exit, never a signal status)."
   (should (equal (gascity-tabulated--vector->list '(1 2)) '(1 2)))
   (should (equal (gascity-tabulated--format-timestamp "2026-06-01T19:18:18Z")
                  "2026-06-01 19:18"))
+  ;; gc's 1970 placeholder is not a real time: show an explicit dash
+  ;; rather than an absurd epoch date (ga-4mvlw.1).
+  (should (equal (gascity-tabulated--format-timestamp "1970-01-01T00:04:56Z")
+                 "—"))
   (should (equal (gascity-tabulated--format-timestamp "") ""))
   (should (equal (gascity-tabulated--format-timestamp nil) ""))
   (should (equal (gascity-tabulated--str 42) "42"))
@@ -338,7 +342,10 @@ regardless of the system clock or time zone."
   (should (equal (gascity-tabulated--format-timestamp nil) ""))
   ;; An unrecognized shape falls back to the old bare date-prefix behavior.
   (should (equal (gascity-tabulated--format-timestamp "not-a-timestamp")
-                 "not-a-time")))
+                 "not-a-time"))
+  ;; gc's epoch placeholder has its own explicit rendering.
+  (should (equal (gascity-tabulated--format-timestamp "1970-01-01T00:04:56Z")
+                 "—")))
 
 ;;; Tabulated column truncation (keeps rows aligned)
 
