@@ -135,6 +135,49 @@ under requirements-planner-1, everything else open."
     (should (equal (mapcar (lambda (s) (plist-get s :name)) (plist-get passed :ladder))
                    '("prepare-worktree" "implement" "close-source-anchor")))))
 
+(defconst gascity-runs-test--latch-beads
+  `((id . "bl-eh4k") (status . "in_progress") (issue_type . "task")
+    (metadata . ((gc.kind . "workflow") (gc.formula_name . "e2e-demo-on")))
+    (gascity-rig . "burningswell-cl"))
+  "A v2 run root.")
+
+(defun gascity-runs-test--latch-fixture ()
+  "Return a run whose latch step carries both `gc.kind' workflow and a root."
+  (list gascity-runs-test--latch-beads
+        `((id . "bl-matt") (status . "in_progress") (issue_type . "task")
+          (metadata . ((gc.kind . "workflow")
+                       (gc.step_id . "e2e-demo-on.latch")
+                       (gc.step_ref . "e2e-demo-on.latch")
+                       (gc.root_bead_id . "bl-eh4k")))
+          (gascity-rig . "burningswell-cl"))
+        `((id . "bl-step") (status . "open") (issue_type . "task")
+          (metadata . ((gc.root_bead_id . "bl-eh4k")
+                       (gc.step_ref . "e2e-demo-on.work")))
+          (gascity-rig . "burningswell-cl"))))
+
+(ert-deftest gascity-test-runs-latch-step-is-a-graph-member ()
+  "A latch step (`gc.kind' workflow plus `gc.root_bead_id') belongs to its
+root's graph, not the run list: the root keeps its ladder instead of
+rendering `Steps 0/0' while the latch shows up as its own run (ga-99g35)."
+  (let* ((beads (gascity-runs-test--latch-fixture))
+         (index (gascity-runs-test--index beads))
+         (roots (mapcar (lambda (b) (alist-get 'id b)) (plist-get index :roots)))
+         (run (gascity-runs-test--by-id
+               (mapcar (lambda (r) (gascity-runs-summary index r))
+                       (plist-get index :roots))
+               "bl-eh4k")))
+    (should (equal roots '("bl-eh4k")))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (gascity-runs-graph index "bl-eh4k"))
+                   '("bl-matt" "bl-step")))
+    (should (equal (plist-get run :progress) "0/2"))
+    (should (equal (mapcar (lambda (s) (plist-get s :name)) (plist-get run :ladder))
+                   '("latch" "work")))
+    (should-not (gascity-dashboard--run-root-p (cadr beads)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                           (gascity-dashboard--active-runs beads))
+                   '("bl-eh4k")))))
+
 (defun gascity-runs-test--drain-beads (member-status)
   "Return a run whose drain step `implement' has members in MEMBER-STATUS.
 Shaped after burningswell's bs-8jif: the drain step stays open while
