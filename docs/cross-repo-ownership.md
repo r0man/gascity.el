@@ -59,9 +59,9 @@ six seams beads.el publishes:
 
 | Seam | What gascity contributes |
 |---|---|
-| `beads-sling-target-functions` | `gascity-beads-sling-targets (&optional bead)`: one `beads-sling-target` per cached `gc agent list` row, `:backend "gc"`, `:kind agent`, `:scope` the rig name (nil for a city-level agent), `:metadata` carrying `:rig :city :qualified-name :source`.  beads.el forwards the work bead (the seam's optional argument), and the provider uses its id prefix to find the owning rig's `default_sling_target` in the cached rig list; that row is marked `:derived t` and becomes beads.el's Who default.  The default is synthesized when it is not a roster row.  Reads `gascity-store-get` for `("agent" "list")` and, when needed, `("rig" "list")` with an explicit city directory; a cold store or unknown city returns nil (no spawn, no block). |
+| `beads-sling-target-functions` | `gascity-beads-sling-targets (&optional bead)`: one `beads-sling-target` per cached `gc agent list` row, `:backend "gc"`, `:kind agent`, `:scope` the rig name (nil for a city-level agent), `:metadata` carrying `:rig :city :qualified-name :source`.  beads.el forwards the work bead (the seam's optional argument), and the provider uses its id prefix to find the owning rig's `default_sling_target` in the cached rig list; that row is marked `:derived t` and becomes beads.el's Who default.  When a managed rig has no configured default, the provider derives `<rig>/gc.run-operator`, else `<rig>/gc.implementation-worker`, and marks it `:derived t` with `:source managed-rig`; a configured default that is not a roster row is synthesized.  Reads `gascity-store-get` for `("agent" "list")` and, when needed, `("rig" "list")` with an explicit city directory; a cold store or unknown city returns nil (no spawn, no block). |
 | `beads-sling-backend-register` | the named `"gc"` backend, `gascity-beads-sling--dispatch (target bead prompt context)`.  It builds a `gascity-command-sling` (never a hand-written argv), validates a missing work/target or required var with `user-error`, drops the prompt (no `gc sling` prompt flag) and launches asynchronously through `gascity-command-act-async`. |
-| `beads-sling-validators` | one advisory function returning up to four cached-data warnings, joined with `"; "`: the cross-store route, the formulas-v2 city-scoped/pool target trap, a missing target (every shape, formula included) and missing required vars.  None refuses a launch. |
+| `beads-sling-validators` | two advisory functions, joined with `"; "`: the four cached-data warnings (cross-store route, formulas-v2 city-scoped/pool target trap, missing target for every shape, missing required vars), and a managed-rig warning when a formula is sent to a non-gc target.  None refuses a launch. |
 | `beads-menu-providers` | one `[City]` group (`E` cockpit, `J` rig dashboard at point, `K` rig dashboard, `A` agents, `Q` the gascity sling menu) spliced into `beads-dispatch`. |
 | `beads-action-providers` | one additive `V` cockpit entry on the `:list` and `:show` action bars; beads.el keeps `S` and every other key. |
 | `beads-after-action-functions` | `gascity-beads-sling--after-action`: after a beads mutation, one `gascity-store-invalidate` for the city's aggregate kinds (`status run session convoy agent`) under the cache-only city root, and one for the `bd` kind under each affected issue's memoized rig root, both with `:refetch t`.  Unresolved roots contribute nothing; no allow-list, no beads read, no timer. |
@@ -110,9 +110,9 @@ files, never `gc` and never TRAMP.  Opening the beads sling transient warms the
 city's `gc agent list` and `gc rig list` in the background; the rig read also
 fills the rig memo, so the bead's rig default is available to the provider once
 that read lands.  A fresh Emacs in a local registered rig therefore gets the gc
-targets, including the rig-default row, without opening a gascity view; an
-unregistered, remote or otherwise unknown directory still needs a gascity view
-or `gascity-context-city`.  Nothing on that path blocks.
+targets, including the rig-default or derived managed-rig row, without opening
+a gascity view; an unregistered, remote or otherwise unknown directory still
+needs a gascity view or `gascity-context-city`.  Nothing on that path blocks.
 
 ## Verification
 
