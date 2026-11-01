@@ -2815,11 +2815,13 @@ cached @command{gc agent list} roster --- @samp{rig/agent} for a rig
 agent and the bare name for a city-level one --- alongside beads.el's
 local targets.  They are marked with the @samp{gc} backend.  All sling
 shapes work from the beads transient: a plain dispatch runs
-@code{gc sling TARGET BEAD}, a formula with work runs
-@code{gc sling TARGET BEAD --on FORMULA}, and a formula-only dispatch
-runs @code{gc sling TARGET FORMULA --formula}.  Every shape carries a
-resolved target, because @command{gc} refuses @code{--formula} without
-one.  Every variable that was actually set is passed as
+@code{gc sling TARGET BEAD --json}, a formula with work runs
+@code{gc sling TARGET BEAD --json --on FORMULA}, and a formula-only
+dispatch runs @code{gc sling TARGET FORMULA --json --formula}.  The
+@option{--json} token follows the positionals and asks for the parsed
+dispatch result, so the echo can name the workflow root a formula
+launch created.  Every shape carries a resolved target, because
+@command{gc} refuses @code{--formula} without one.  Every variable that was actually set is passed as
 @code{--var name=value}; @command{gc sling} has no prompt flag, so a
 freeform instruction is dropped with a message rather than put in the
 argv.  The transient's advisory warnings (cross-store route,
