@@ -34,6 +34,20 @@ not part of `gate.sh` - the doc linter's checkdoc rules differ across the
 Emacs versions in the test matrix (29.4/30.2 flag docstring verbs that
 31.1 accepts).
 
+### Loading from a source checkout
+
+Emacs prefers an existing `.elc` over a newer `.el` by default, so after
+pulling a fix into this checkout a running Emacs can silently keep the old
+bytecode. Remove stale bytecode before loading the package from `lisp/`:
+
+```bash
+find lisp -name '*.elc' -delete
+```
+
+(Or `make clean` before a fresh build.) This bit the dogfood pass on
+2026-11-01: the live checkouts had `.elc` from an older build and the UI
+behaved as if already-merged fixes were missing.
+
 The targets, and what each one runs:
 
 ```bash
