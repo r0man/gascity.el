@@ -2433,6 +2433,20 @@ acts on it, `?' shows every verb, `j' jumps to a view.
   (gascity-dashboard--install-filter)
   (gascity-live-attach (current-buffer)))
 
+(defun gascity-dashboard--translate-runtime-error (err)
+  "Re-signal ERR, translating a raw runtime-directory failure.
+A `files--ensure-directory' failure under /run/user is not actionable
+as a file error: it means gc's runtime directory is unusable (gc 1.5.1
+cannot find the supervisor without XDG_RUNTIME_DIR under a clean
+environment).  Signal a `user-error' naming the fix instead; every
+other file error is re-signalled unchanged (ga-x40e)."
+  (let ((message (error-message-string err)))
+    (if (string-match-p "/run/user/[0-9]+" message)
+        (user-error
+         "Cannot use the runtime directory: %s; set XDG_RUNTIME_DIR=/run/user/%d"
+         message (user-uid))
+      (signal (car err) (cdr err)))))
+
 ;;;###autoload
 (defun gascity-dashboard ()
   "Show the city cockpit: what needs you, what is moving, who works.
@@ -2441,24 +2455,27 @@ pinned `default-directory'), so local and remote cockpits coexist.
 Called from the menu of `project-switch-project', it opens the cockpit
 of the chosen project's city."
   (interactive)
-  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
-         (city (or (gascity-context-city-name dir) "city"))
-         (buf (gascity-view-get-buffer-create
-               (format gascity-dashboard-buffer-name city) dir)))
-    (with-current-buffer buf
-      (unless (derived-mode-p 'gascity-dashboard-mode)
-        (gascity-dashboard-mode))
-      (setq gascity-dashboard--city city))
-    (unless (gascity-section-refresh-instance buf)
-      (let ((filters (with-current-buffer buf
-                       (alist-get (gascity-dashboard--city-key)
-                                  gascity-dashboard-filters nil nil #'equal))))
-        ;; vui-mount switch-to-buffers internally; display once, below.
-        (save-window-excursion
-          (vui-mount (vui-component 'gascity-dashboard-app
-                                    :initial-filters filters)
-                     (buffer-name buf)))))
-    (pop-to-buffer buf)))
+  (condition-case err
+      (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
+             (city (or (gascity-context-city-name dir) "city"))
+             (buf (gascity-view-get-buffer-create
+                   (format gascity-dashboard-buffer-name city) dir)))
+        (with-current-buffer buf
+          (unless (derived-mode-p 'gascity-dashboard-mode)
+            (gascity-dashboard-mode))
+          (setq gascity-dashboard--city city))
+        (unless (gascity-section-refresh-instance buf)
+          (let ((filters (with-current-buffer buf
+                           (alist-get (gascity-dashboard--city-key)
+                                      gascity-dashboard-filters nil nil #'equal))))
+            ;; vui-mount switch-to-buffers internally; display once, below.
+            (save-window-excursion
+              (vui-mount (vui-component 'gascity-dashboard-app
+                                        :initial-filters filters)
+                         (buffer-name buf)))))
+        (pop-to-buffer buf))
+    (file-error
+     (gascity-dashboard--translate-runtime-error err))))
 
 (cl-defmethod gascity-command-execute-interactive ((_cmd gascity-command-status))
   "Open the cockpit instead of streaming raw `gc status' output."

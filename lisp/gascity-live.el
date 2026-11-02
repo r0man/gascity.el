@@ -496,23 +496,27 @@ dropped, which is `offline'."
       (gascity-live--queue stream :all))
     (condition-case err
         (setq proc
-              (make-process
-               :name (format "gascity-live %s" (gascity-live--stream-name stream))
-               :command (gascity-live-command stream)
-               :connection-type 'pipe
-               :coding 'utf-8-unix
-               :noquery t
-               :stderr stderr-pipe
-               :file-handler nil
-               :filter (lambda (_proc chunk)
-                         (gascity-live--filter stream chunk))
-               :sentinel (lambda (proc _event)
-                           (unless (process-live-p proc)
-                             ;; Collect the last stderr bytes first.
-                             (when (process-live-p stderr-pipe)
-                               (accept-process-output stderr-pipe 0.05 nil t))
-                             (delete-process stderr-pipe)
-                             (gascity-live--exited stream proc mark)))))
+              (let ((process-environment
+                     (append (gascity-reader--child-env-entries
+                              nil (not (file-remote-p root)))
+                             process-environment)))
+                (make-process
+                 :name (format "gascity-live %s" (gascity-live--stream-name stream))
+                 :command (gascity-live-command stream)
+                 :connection-type 'pipe
+                 :coding 'utf-8-unix
+                 :noquery t
+                 :stderr stderr-pipe
+                 :file-handler nil
+                 :filter (lambda (_proc chunk)
+                           (gascity-live--filter stream chunk))
+                 :sentinel (lambda (proc _event)
+                             (unless (process-live-p proc)
+                               ;; Collect the last stderr bytes first.
+                               (when (process-live-p stderr-pipe)
+                                 (accept-process-output stderr-pipe 0.05 nil t))
+                               (delete-process stderr-pipe)
+                               (gascity-live--exited stream proc mark))))))
       (error
        (setq proc nil)
        (delete-process stderr-pipe)

@@ -8969,5 +8969,136 @@ so the cockpit is reached through its jump group (`j j')."
       (delete-directory home t)
       (delete-directory city t))))
 
+;;; XDG_RUNTIME_DIR default for locally spawned gc (ga-x40e)
+;;
+;; Under `env -i' no XDG_RUNTIME_DIR is inherited, and gc 1.5.1 then
+;; cannot find the supervisor (the packaged runtime probe falls back to
+;; an unusable path).  Locally spawned gc children therefore get the
+;; per-uid runtime dir when it exists; an explicit value always wins,
+;; and remote children are left to the host environment.
+
+(defun gascity-test--without-xdg-runtime-dir ()
+  "Return `process-environment' with XDG_RUNTIME_DIR removed."
+  (cl-remove-if (lambda (entry) (string-prefix-p "XDG_RUNTIME_DIR=" entry))
+                process-environment))
+
+(defmacro gascity-test--with-runtime-dir (uid dir &rest body)
+  "Run BODY with UID and only DIR existing as a runtime directory."
+  (declare (indent 2))
+  `(cl-letf (((symbol-function 'user-uid) (lambda () ,uid))
+             ((symbol-function 'file-directory-p)
+              (lambda (name) (equal name ,dir))))
+     ,@body))
+
+(ert-deftest gascity-test-reader-runtime-dir-default-entries ()
+  "A local child gets the per-uid XDG_RUNTIME_DIR when it is unset
+and the directory exists; city-env anchors still lead the environment."
+  (let ((process-environment (gascity-test--without-xdg-runtime-dir)))
+    (gascity-test--with-runtime-dir 4242 "/run/user/4242"
+      (should (equal (gascity-reader--child-env-entries nil t)
+                     '("XDG_RUNTIME_DIR=/run/user/4242")))
+      (should (equal (gascity-reader--child-env-entries
+                      '(("GC_CITY" . "/tmp/city/")) t)
+                     '("GC_CITY=/tmp/city/"
+                       "XDG_RUNTIME_DIR=/run/user/4242")))
+      ;; A remote child is governed by the host environment.
+      (should-not (gascity-reader--child-env-entries nil nil)))))
+
+(ert-deftest gascity-test-reader-runtime-dir-explicit-preserved ()
+  "An explicit XDG_RUNTIME_DIR is never replaced, even with a usable
+per-uid directory present."
+  (let ((process-environment
+         (cons "XDG_RUNTIME_DIR=/custom/runtime"
+               (gascity-test--without-xdg-runtime-dir))))
+    (gascity-test--with-runtime-dir 4242 "/run/user/4242"
+      (should-not (gascity-reader--child-env-entries nil t)))))
+
+(ert-deftest gascity-test-reader-runtime-dir-absent-unchanged ()
+  "An unset XDG_RUNTIME_DIR with no per-uid directory adds nothing."
+  (let ((process-environment (gascity-test--without-xdg-runtime-dir)))
+    (gascity-test--with-runtime-dir 4242 "/run/user/9999"
+      (should-not (gascity-reader--child-env-entries nil t)))))
+
+(ert-deftest gascity-test-reader-run-injects-runtime-dir ()
+  "The sync runner spawns gc with the default XDG_RUNTIME_DIR."
+  (let* ((process-environment (gascity-test--without-xdg-runtime-dir))
+         captured)
+    (gascity-test--with-runtime-dir 4242 "/run/user/4242"
+      (cl-letf (((symbol-function 'gascity-remote-find-executable)
+                 (lambda (&optional _) "gc"))
+                ((symbol-function 'gascity-reader--city-env-overrides) #'ignore)
+                ((symbol-function 'make-nearby-temp-file)
+                 (lambda (&rest _) (make-temp-file "gascity-test-stderr")))
+                ((symbol-function 'process-file)
+                 (lambda (&rest _)
+                   (setq captured process-environment)
+                   0)))
+        (with-temp-buffer
+          (should (= 0 (plist-get (gascity-reader-run '("status"))
+                                  :exit-code))))))
+    (should (member "XDG_RUNTIME_DIR=/run/user/4242" captured))))
+
+(ert-deftest gascity-test-reader-read-async-injects-runtime-dir ()
+  "The async read runner spawns gc with the default XDG_RUNTIME_DIR."
+  (let* ((process-environment (gascity-test--without-xdg-runtime-dir))
+         (gascity-reader-skip-dir-probe t)
+         captured)
+    (gascity-test--with-runtime-dir 4242 "/run/user/4242"
+      (cl-letf (((symbol-function 'gascity-remote-find-executable)
+                 (lambda (&optional _) "gc"))
+                ((symbol-function 'gascity-reader--city-env-overrides) #'ignore)
+                ((symbol-function 'make-process)
+                 (lambda (&rest _)
+                   (setq captured process-environment)
+                   (error "stubbed spawn"))))
+        (with-temp-buffer
+          (should-not
+           (gascity-reader-read-async
+            '("status") #'ignore (lambda (_msg) t))))))
+    (should (member "XDG_RUNTIME_DIR=/run/user/4242" captured))))
+
+(ert-deftest gascity-test-reader-run-async-injects-runtime-dir ()
+  "The async action runner spawns gc with the default XDG_RUNTIME_DIR."
+  (let* ((process-environment (gascity-test--without-xdg-runtime-dir))
+         captured)
+    (gascity-test--with-runtime-dir 4242 "/run/user/4242"
+      (cl-letf (((symbol-function 'gascity-remote-find-executable)
+                 (lambda (&optional _) "gc"))
+                ((symbol-function 'gascity-reader--city-env-overrides) #'ignore)
+                ((symbol-function 'make-process)
+                 (lambda (&rest _)
+                   (setq captured process-environment)
+                   (error "stubbed spawn"))))
+        (gascity-reader-run-async '("session" "suspend" "x") #'ignore)))
+    (should (member "XDG_RUNTIME_DIR=/run/user/4242" captured))))
+
+(ert-deftest gascity-test-dashboard-runtime-dir-error-is-friendly ()
+  "A raw files--ensure-directory failure on /run/user is reported as a
+`user-error' naming XDG_RUNTIME_DIR instead of aborting with the files
+error (ga-x40e)."
+  (cl-letf (((symbol-function 'gascity-context-city-for-view)
+             (lambda (&optional _) "/tmp/fake-city/"))
+            ((symbol-function 'gascity-view-get-buffer-create)
+             (lambda (&rest _)
+               (signal 'file-error
+                       (list "Creating directory"
+                             "Permission denied" "/run/user/1000")))))
+    (let ((err (should-error (gascity-dashboard) :type 'user-error)))
+      (should (string-match-p "XDG_RUNTIME_DIR=/run/user/"
+                              (error-message-string err))))))
+
+(ert-deftest gascity-test-dashboard-other-file-error-passes-through ()
+  "Only runtime-directory failures are translated; other file errors
+keep their own type and message."
+  (cl-letf (((symbol-function 'gascity-context-city-for-view)
+             (lambda (&optional _) "/tmp/fake-city/"))
+            ((symbol-function 'gascity-view-get-buffer-create)
+             (lambda (&rest _)
+               (signal 'file-error
+                       (list "Opening input file"
+                             "No such file" "/tmp/nope")))))
+    (let ((err (should-error (gascity-dashboard) :type 'file-error)))
+      (should (string-match-p "No such file" (error-message-string err))))))
+
 (provide 'gascity-test)
 ;;; gascity-test.el ends here

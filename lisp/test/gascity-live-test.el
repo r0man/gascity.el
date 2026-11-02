@@ -681,5 +681,32 @@ or a repeating timer behind, and clears them (gascity-test-helpers)."
     (should (zerop (hash-table-count gascity-live--streams)))
     (should-not (memq timer timer-list))))
 
+;;; Local child environment (ga-x40e)
+
+(ert-deftest gascity-test-live-spawn-injects-runtime-dir ()
+  "The live event stream spawns gc with the default XDG_RUNTIME_DIR.
+gc 1.5.1 cannot find the supervisor under `env -i'; the stream gets the
+same per-uid default as the reader's local runners."
+  (gascity-live-test--with-clean-state
+    (let* ((process-environment
+            (cl-remove-if (lambda (entry)
+                            (string-prefix-p "XDG_RUNTIME_DIR=" entry))
+                          process-environment))
+           captured
+           (stream (gascity-live-test--stream :root "/tmp/city/")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'user-uid) (lambda () 4242))
+                    ((symbol-function 'file-directory-p)
+                     (lambda (name) (equal name "/run/user/4242")))
+                    ((symbol-function 'make-process)
+                     (lambda (&rest _)
+                       (setq captured process-environment)
+                       (error "stubbed spawn")))
+                    ((symbol-function 'gascity-live--schedule-retry) #'ignore))
+            (gascity-live--spawn stream)
+            (should (member "XDG_RUNTIME_DIR=/run/user/4242" captured)))
+        (when-let* ((buf (gascity-live--stream-stderr-buffer stream)))
+          (when (buffer-live-p buf) (kill-buffer buf)))))))
+
 (provide 'gascity-live-test)
 ;;; gascity-live-test.el ends here

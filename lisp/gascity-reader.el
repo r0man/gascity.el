@@ -341,7 +341,9 @@ TRAMP I/O, a deadline that always holds."
    (let* ((executable (gascity-remote-find-executable gascity-executable))
           (delimiter (and (file-remote-p default-directory)
                           (gascity-reader--stderr-delimiter)))
-          (city-env (gascity-reader--city-env-overrides args))
+          (child-env (gascity-reader--child-env-entries
+                      (gascity-reader--city-env-overrides args)
+                      (not (file-remote-p default-directory))))
           (command (gascity-reader--command executable args delimiter))
           (stderr-file (and (not delimiter)
                             (make-nearby-temp-file "gascity-stderr-")))
@@ -356,10 +358,7 @@ TRAMP I/O, a deadline that always holds."
            ;; value survives shell quoting; PATH is left to the
            ;; remote wrapper's host-evaluated assignment.
            (let ((process-environment
-                  (if city-env
-                      (append (gascity-reader--env-entries city-env)
-                              process-environment)
-                    process-environment)))
+                  (append child-env process-environment)))
              (let* ((exit-code
                      (condition-case err
                          (apply #'gascity-remote-call-unshared #'process-file (car command) nil
@@ -392,6 +391,30 @@ TRAMP I/O, a deadline that always holds."
        (when (and stderr-file (file-exists-p stderr-file))
          (delete-file stderr-file))
        result))))))
+
+(defun gascity-reader--default-runtime-dir ()
+  "Return the fallback XDG_RUNTIME_DIR for a local gc child, or nil.
+A clean environment (`env -i HOME=... PATH=... TERM=...') has no
+XDG_RUNTIME_DIR, but gc needs it to find the supervisor's runtime
+socket and API.  When the variable is unset (or empty) and
+/run/user/UID exists, return that directory.  An explicit value is
+never replaced — see `gascity-reader--child-env-entries'."
+  (let ((explicit (getenv "XDG_RUNTIME_DIR")))
+    (when (or (null explicit) (equal explicit ""))
+      (let ((dir (format "/run/user/%d" (user-uid))))
+        (when (file-directory-p dir) dir)))))
+
+(defun gascity-reader--child-env-entries (city-env &optional local)
+  "Return `process-environment' entries for one gc child.
+CITY-ENV is the list of (VAR . VALUE) city overrides to lead the list.
+LOCAL non-nil means the child runs on this host: when XDG_RUNTIME_DIR
+is unset and the per-uid runtime directory exists, its default is added
+so gc can find the supervisor under a clean environment.  A remote
+child (LOCAL nil) is left to the host's own environment."
+  (append (gascity-reader--env-entries city-env)
+          (when-let* ((dir (and local
+                                (gascity-reader--default-runtime-dir))))
+            (list (format "XDG_RUNTIME_DIR=%s" dir)))))
 
 (defun gascity-reader--env-entries (city-env)
   "Return CITY-ENV (a list of (VAR . VALUE)) as environment entries.
@@ -1053,6 +1076,8 @@ turns it on, at the cost of a fresh ssh per read."
             ;; (and so `default-directory' and any connection-locally
             ;; applied `gascity-executable') happens to be current then.
             (remote (file-remote-p default-directory))
+            (child-env (gascity-reader--child-env-entries
+                        city-env (not remote)))
             ;; First contact with a host resolves gc there — synchronous
             ;; channel round trips, cached per connection afterwards; a
             ;; wedged connection must not freeze the caller (§8.5).
@@ -1089,10 +1114,7 @@ turns it on, at the cost of a fresh ssh per read."
                        executable (mapconcat #'identity full-args " ")))
        (condition-case err
            (let ((process-environment
-                  (if city-env
-                      (append (gascity-reader--env-entries city-env)
-                              process-environment)
-                    process-environment)))
+                  (append child-env process-environment)))
              (gascity-remote-call-unshared #'make-process
               :name "gascity-gc"
               :command command
@@ -1251,6 +1273,8 @@ none was started (CALLBACK has then already been called)."
           (city-env (car targeted))
           (argv (cdr targeted))
           (remote (file-remote-p default-directory))
+          (child-env (gascity-reader--child-env-entries
+                      city-env (not remote)))
           (executable
            (condition-case err
                (gascity-reader--bounded-executable)
@@ -1277,10 +1301,7 @@ none was started (CALLBACK has then already been called)."
                        executable (mapconcat #'identity argv " ")))
        (condition-case err
            (let ((process-environment
-                  (if city-env
-                      (append (gascity-reader--env-entries city-env)
-                              process-environment)
-                    process-environment)))
+                  (append child-env process-environment)))
              (gascity-remote-call-unshared #'make-process
               :name "gascity-gc-action"
               :command command

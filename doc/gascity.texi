@@ -372,6 +372,7 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 
 @menu
 * Requirements::  Emacs, gc, beads.el and vui.
+* The gc environment::  XDG_RUNTIME_DIR and the supervisor.
 * Loading from a checkout::  Put lisp/ on the load-path.
 * Building and installing with autotools::  autogen.sh, configure, make.
 @end menu
@@ -419,6 +420,43 @@ where @code{beads} is beads.el, @code{vui} is its dashboard reconciler and
 @code{transient} (0.10.1 or later) is the menu backend.  Emacs 31 and
 later bundle a new enough @code{transient}; on 29.1--30 it comes from GNU
 ELPA (@command{scripts/ci-deps} installs it in CI).
+
+@node The gc environment
+@section The gc environment
+
+@cindex environment variables
+@cindex XDG_RUNTIME_DIR
+@cindex supervisor
+@command{gc} finds the running supervisor through the per-user runtime
+directory, normally @file{/run/user/@var{uid}}.  Emacs started from a
+desktop session inherits @env{XDG_RUNTIME_DIR}; a clean environment
+(@code{env -i HOME=@dots{} PATH=@dots{} TERM=@dots{}}, a systemd unit, or
+a CI job) does not, and a packaged @command{gc} then cannot locate the
+supervisor.  A cockpit opened there shows @samp{supervisor down} and
+fails to read state.
+
+For every @command{gc} child started on this host --- synchronous reads,
+asynchronous views, actions and the live event stream --- gascity adds
+
+@example
+XDG_RUNTIME_DIR=/run/user/@var{uid}
+@end example
+
+@noindent
+to the child environment when @env{XDG_RUNTIME_DIR} is unset and that
+directory exists.  An explicit value is never replaced, and a remote or
+ssh city is left to the host's own environment.  If the runtime
+directory is unusable, gascity reports a @code{user-error} naming
+@env{XDG_RUNTIME_DIR} and its expected value instead of aborting with a
+raw filesystem error.
+
+Set the variable yourself when your runtime directory is somewhere
+else, and export it before starting Emacs:
+
+@example
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+emacs
+@end example
 
 @node Loading from a checkout
 @section Loading from a checkout
