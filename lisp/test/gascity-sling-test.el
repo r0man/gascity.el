@@ -583,18 +583,20 @@ dismisses it.  A plain-route launch offers nothing (§9)."
 ;;; The redesign: the reserved set (WI-4)
 
 (ert-deftest gascity-test-sling-reserved-set-matches-mockups ()
-  "The redesigned reserved set is exactly the mockup §10 key summary
-— `A f T c a n m t s P r g x q' — with `p' freed and `P' added; the
-generated var keys avoid it and `gascity-test-sling-reserved-keys-
-complete' keeps it in sync with the bound layout."
+  "The redesigned reserved set is exactly the preview-first key
+summary — `A f T c a n m t s r g x q' — with `p' freed and `P' retired
+along with the old direct-launch/preview pair; the generated var keys
+avoid it and `gascity-test-sling-reserved-keys-complete' keeps it in
+sync with the bound layout."
   (skip-unless (gascity-test-sling-redesign-p))
-  (let ((mockups '("A" "f" "T" "c" "a" "n" "m" "t" "s" "P" "r" "g" "x" "q")))
+  (let ((mockups '("A" "f" "T" "c" "a" "n" "m" "t" "s" "r" "g" "x" "q")))
     (should (= (length gascity-sling--reserved-keys) (length mockups)))
     (should-not (cl-set-difference gascity-sling--reserved-keys mockups
                                   :test #'equal))
     (should-not (cl-set-difference mockups gascity-sling--reserved-keys
                                    :test #'equal))
-    (should-not (member "p" gascity-sling--reserved-keys))))
+    (should-not (member "p" gascity-sling--reserved-keys))
+    (should-not (member "P" gascity-sling--reserved-keys))))
 
 ;;; WI-1: shape inference and the one-sentence header (REQ-001/002)
 
@@ -2077,13 +2079,14 @@ have slung the derived target."
           (should (member "--json" args))
           (should-not (member "--dry-run" args)))))))
 
-(ert-deftest gascity-test-sling-full-preview-suffix-is-wired ()
-  "`P' is the menu's full-preview suffix (REQ-008) and a non-transient
-one: the buffer it opens is the interactive surface, while the
-menu's state is remembered for the city (bug S-2)."
+(ert-deftest gascity-test-sling-menu-s-opens-the-full-preview ()
+  "The menu's `s' opens the full preview instead of launching.
+The Actions group binds `s' to `gascity-sling-dispatch-full-preview'
+with the preview-first label, and the retired `P' row is gone: the
+preview buffer is the only interactive surface, where its own `s' or
+`C-c C-c' launches and `q' aborts."
   (should (commandp 'gascity-sling-dispatch-full-preview))
-  ;; A non-transient suffix: one press opens the buffer and leaves the menu.
-  ;; `P' is bound in the Actions group of the stacked layout (its
+  ;; `s' is bound in the Actions group of the stacked layout (its
   ;; position depends on the picked formula's How group, so the group
   ;; is found by content).
   (let* ((groups (gascity-sling--children-specs
@@ -2092,31 +2095,160 @@ menu's state is remembered for the city (bug S-2)."
                               (and (vectorp group)
                                    (seq-some (lambda (s)
                                                (and (consp s)
-                                                    (equal (car s) "P")))
+                                                    (equal (car s) "s")))
                                              (append group nil))))
                             groups))
-         (spec (and actions
-                    (seq-find (lambda (s)
-                                (and (consp s) (equal (car s) "P")))
-                              (append actions nil)))))
-    (should (equal (list "P" "Full preview…"
+         (specs (append actions nil)))
+    (should (equal (list "s" "Preview & launch…"
                          'gascity-sling-dispatch-full-preview)
-                   spec)))
-  ;; The reserved set stays in sync with the binding (OQ-2).
-  (should (member "P" gascity-sling--reserved-keys))
-  (let ((bound nil))
-    (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
-               (lambda (_name) nil))
-              ((symbol-function 'gascity-context-city-name)
-               (lambda (&optional _dir) "testcity")))
-      (dolist (group (gascity-sling--children-specs
-                      (list :formula nil :target nil :arg nil)))
-        (when (vectorp group)
-          (dolist (spec (append group nil))
-            (when (and (consp spec) (stringp (car spec))
-                       (equal (car spec) "P"))
-              (setq bound (nth 2 spec))))))
-      (should (eq bound 'gascity-sling-dispatch-full-preview)))))
+                   (assoc "s" specs)))
+    ;; The old `P' preview row is retired with the direct launcher.
+    (should-not (assoc "P" specs))
+    (should-not (eq (nth 2 (assoc "s" specs))
+                    'gascity-sling-dispatch-run)))
+  ;; The reserved set stays in sync with the bindings (OQ-2): `s' is
+  ;; reserved, the retired `P' is not.
+  (should (member "s" gascity-sling--reserved-keys))
+  (should-not (member "P" gascity-sling--reserved-keys)))
+
+(ert-deftest gascity-test-sling-menu-s-preview-then-launch ()
+  "Preview-first, plain shape: the menu's `s' paints the preview and
+starts only the dry run; nothing is dispatched until the preview's own
+`s' launches exactly what was previewed."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((scope (list :city gascity-sling-test--city :formula nil
+                       :target "sess-1" :work "gce-1")))
+      (gascity-sling-test--with-menu scope
+        (call-interactively #'gascity-sling-dispatch-full-preview))
+      ;; The menu keystroke previews: one spawn, the dry run.
+      (should (null reads))
+      (should (= (length actions) 1))
+      (should (equal (car (car actions))
+                     '("sling" "sess-1" "gce-1" "--dry-run")))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (should (eq major-mode 'gascity-sling-preview-mode))
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      ;; Confirmed: the real plain sling, JSON, no dry run.
+      (should (= (length actions) 2))
+      (let ((args (car (car actions))))
+        (should (equal (seq-take args 3) '("sling" "sess-1" "gce-1")))
+        (should (member "--json" args))
+        (should-not (member "--dry-run" args))))))
+
+(ert-deftest gascity-test-sling-preview-then-launch-formula-on ()
+  "Preview-first, targeted `--on' shape: the menu's `s' previews the
+formula-on-work dispatch and the preview's `s' launches it (JSON, no
+dry run).  The formula-only shape is its own test, because the preview
+buffer's dry run is serialized per target and the stubs never answer
+it."
+  (gascity-sling-test--with-preview reads actions
+      '(("summary_path" . "build/summary.md"))
+    ;; Targeted `--on': formula with work.
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target "rig/agent" :work "bl-1")))
+      (gascity-sling-test--with-menu scope
+        (call-interactively #'gascity-sling-dispatch-full-preview))
+      (should (= (length actions) 1))
+      (should (equal (seq-take (car (car actions)) 3)
+                     '("sling" "rig/agent" "bl-1")))
+      (should (member "--on" (car (car actions))))
+      (should (member "--dry-run" (car (car actions))))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      (should (= (length actions) 2))
+      (let ((args (car (car actions))))
+        (should (equal (seq-take args 3) '("sling" "rig/agent" "bl-1")))
+        (should (equal (cadr (member "--on" args)) "do-work"))
+        (should (member "--json" args))
+        (should-not (member "--dry-run" args))))))
+
+(ert-deftest gascity-test-sling-preview-then-launch-formula-only ()
+  "Preview-first, formula-only shape: the menu's `s' previews the
+targetless `--formula' dispatch and the preview's `s' launches it."
+  (gascity-sling-test--with-preview reads actions nil
+    (let* ((plain (gascity-domain-decode
+                   'gascity-formula
+                   '((name . "e2e-demo")
+                     (vars . [])
+                     (steps . [((id . "run") (title . "Run"))])
+                     (deps . []))))
+           (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                        :target "rig/agent" :work nil)))
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) plain)))
+        (gascity-sling-test--with-menu scope
+          (call-interactively #'gascity-sling-dispatch-full-preview)))
+      (should (= (length actions) 1))
+      (should (member "--formula" (car (car actions))))
+      (should (member "--dry-run" (car (car actions))))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      (should (= (length actions) 2))
+      (let ((args (car (car actions))))
+        (should (equal (seq-take args 3) '("sling" "rig/agent" "e2e-demo")))
+        (should (member "--formula" args))
+        (should (member "--json" args))
+        (should-not (member "--dry-run" args))))))
+
+(ert-deftest gascity-test-sling-preview-aborts-with-q ()
+  "`q' in the preview buffer aborts: nothing is dispatched, the city's
+remembered menu state survives the abort, and `C-c C-c' is the same
+explicit launch binding as `s'."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((scope (list :city gascity-sling-test--city :formula nil
+                       :target "sess-1" :work "gce-1")))
+      (gascity-sling--full-preview scope nil)
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (should (eq (key-binding "q") #'quit-window))
+        (should (eq (key-binding (kbd "C-c C-c"))
+                    #'gascity-sling-preview-launch))
+        (let ((closed nil))
+          (cl-letf (((symbol-function 'quit-window)
+                     (lambda (&rest _) (interactive) (setq closed t))))
+            (call-interactively (key-binding "q")))
+          (should closed)))
+      ;; Only the dry run ran; aborting launched nothing and kept the
+      ;; previewed state remembered for the next `S' (bug S-2).
+      (should (= (length actions) 1))
+      (should (null gascity-sling--target-memory))
+      (should (assoc gascity-sling-test--city gascity-sling--remembered)))))
+
+(ert-deftest gascity-test-sling-preview-launch-records-target-memory ()
+  "The launch the preview confirms records the per-(city, formula)
+target memory exactly like the menu's old `s' (WI-3 rule 2, REQ-012):
+plain launches under FORMULA nil, formula launches under its name."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((gascity-sling--target-memory nil))
+      ;; Plain: no formula.
+      (gascity-sling--full-preview
+       (list :city gascity-sling-test--city :formula nil
+             :target "sess-1" :work "gce-1")
+       nil)
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      (should (equal (cdr (assoc (cons gascity-sling-test--city nil)
+                                 gascity-sling--target-memory))
+                     "sess-1"))
+      ;; The two previews share the buffer target; the stub never
+      ;; answers the first dry run, so clear the scheduler between them.
+      (gascity-store-clear)
+      ;; Formula: recorded under its name.
+      (cl-letf (((symbol-function 'gascity-sling-formula--current-values)
+                 (lambda () '(("summary_path" . "build/summary.md")))))
+        (gascity-sling--full-preview
+         (list :city gascity-sling-test--city :formula "do-work"
+               :target "rig/agent" :work "bl-1")
+         nil))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (cl-letf (((symbol-function 'quit-window) #'ignore))
+          (call-interactively #'gascity-sling-preview-launch)))
+      (should (equal (cdr (assoc (cons gascity-sling-test--city "do-work")
+                                 gascity-sling--target-memory))
+                     "rig/agent")))))
 
 ;;; WI-11 post-approval findings F1–F6: regression tests
 

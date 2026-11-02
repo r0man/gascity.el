@@ -518,15 +518,19 @@ sibling group that keeps every infix live (so its key and seeded
 value still dispatch) and is revealed by transient’s `C-x a` (show
 all suffix levels) — a many-var formula must not push the Actions
 group off a 23-line terminal (ga-40tbg.5) · **Actions**
-(`s P r g x q`). Routing flags
+(`s r g x q`, preview-first). Routing flags
 (`-c -a -n -m -t`) render **only on the plain shape** and are consumed
 only by the plain path, as before.
 
-Beyond the earlier unified menu: `P` opens the **full preview buffer**
-(header sentence, every validation check in full, the recipe DAG,
-and the `--dry-run` routing plan when it answers — first paint is
-client-side and never blocks; `s` launches from the buffer; preview
-is never a gate), the client-side **pre-launch warnings** fire in the
+Beyond the earlier unified menu: the menu's `s` opens the **full
+preview buffer** first (header sentence, every validation check in
+full, the recipe DAG, the gathered variables, and the `--dry-run`
+routing plan when it answers — first paint is client-side and never
+blocks); from the buffer `s` or `C-c C-c` launches exactly what was
+previewed and `q` aborts.  The plain, `on` and formula-only shapes all
+go through it, and the preview-first change retires the old direct
+launch/`P` pair (beads.el's delegated sling follows the same
+workflow).  The client-side **pre-launch warnings** fire in the
 footer (the bl-bdj formulas-v2 trap on a v2 formula with
 binding-qualified step run targets + a city-scoped target; cross-store
 routes — unmissable, never blocking, gc stays the authority), and a
@@ -536,8 +540,9 @@ any other key dismisses; stay put by default; plain routes keep the
 plain echo, no offer).
 
 Generated variable keys are deterministic and avoid the reserved set
-`A f T c a n m t s P r g x q` (`p` is freed — the preview moved to
-`P`). User documentation: the “The Sling Command” chapter of the
+`A f T c a n m t s r g x q` (`p` and `P` are free — the preview-first
+workflow retired the old direct-launch/preview pair). User
+documentation: the “The Sling Command” chapter of the
 manual (`doc/gascity.texi`).
 
 ---

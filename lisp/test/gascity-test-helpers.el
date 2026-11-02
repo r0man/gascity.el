@@ -293,12 +293,13 @@ and both return nil (no process was started)."
   "Non-nil when the redesigned sling layout (plans/sling-command) is loaded.
 The sling redesign lands as parallel work items (WI-1..WI-9 rewrite the
 layout; WI-10 ports this suite), so the suite runs against whichever
-layout the load path presents: the redesigned transient reserves `P'
-for the full preview and frees the old `p' (mockup §10), while the old
-layout reserves `p' and has no `P'.  Ported tests skip until the
-redesign is present; layout-agnostic tests run under both."
+layout the load path presents: the redesigned transient has the
+full-preview suffix (`s' previews first) and frees the old `p' (mockup
+§10), while the old layout reserves `p' and has no full-preview suffix.
+Ported tests skip until the redesign is present; layout-agnostic tests
+run under both."
   (and (boundp 'gascity-sling--reserved-keys)
-       (member "P" gascity-sling--reserved-keys)
+       (fboundp 'gascity-sling-dispatch-full-preview)
        (not (member "p" gascity-sling--reserved-keys))))
 
 (declare-function gascity-sling--children-specs "gascity-action")

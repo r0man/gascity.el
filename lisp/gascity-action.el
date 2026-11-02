@@ -1117,11 +1117,12 @@ With a prefix argument, capture that many trailing LINES instead of the
 ;; mockup layout — header (scope sentence plus the live footer), What
 ;; (`A' the work picker, `f' pick), the picked formula's full-width
 ;; How vars group, Who (`T'), the Routing flags (settled plain shape
-;; only), then Actions (`s P r g x q').  `f' picks a
+;; only), then Actions (`s r g x q').  `f' picks a
 ;; formula in place (the same prefix re-setups with the new scope); `T'
 ;; sets a visible target agent (roster completion, §6c); `A' picks the
-;; work (bead/convoy or text) in place; `s'/`P' sling or open the
-;; full preview.  With a formula picked the formula path runs
+;; work (bead/convoy or text) in place; `s' opens the full preview
+;; first (the preview buffer's own `s' or `C-c C-c' launches, `q'
+;; aborts).  With a formula picked the formula path runs
 ;; (validated vars, shape via `gascity-formula--needs-convoy', routing
 ;; flags ignored — they are consumed only by the plain path); without
 ;; one the plain flag path runs as before.  The generated variable
@@ -1792,40 +1793,47 @@ never blocks: this handler runs only once the action has answered
 
 (transient-define-suffix gascity-sling-dispatch-run (args)
   "Sling for real using the dispatch flags ARGS.
-The city's remembered menu state is cleared: the next `S' starts fresh."
+Not bound in the menu: `s' opens the full preview first, and the
+preview buffer's own `s' launches what it previewed.  This suffix
+remains the programmatic direct-launch path for callers that have
+already previewed.  The city's remembered menu state is cleared: the
+next `S' starts fresh."
   (interactive (list (transient-args 'gascity-sling-dispatch)))
   (let ((city (plist-get (transient-scope) :city)))
     (gascity-sling--run args nil)
     (gascity-sling--forget city)))
 
 (transient-define-suffix gascity-sling-dispatch-preview (args)
-  "Preview the sling (gc `--dry-run' routing plan) for the dispatch ARGS.
+  "Show gc's `--dry-run' routing plan in a plain view for ARGS.
 The menu stays open with its formula, target, arg and vars — the target
-and arg read for the preview now in the header — so `s' slings exactly
-what was previewed (bug S-2).  The state is also remembered for the
-city, so re-entering `S' after leaving restores it."
+and arg read for this preview now in the header — so a re-opened full
+preview and the launch that follows it use exactly these answers (bug
+S-2).  The state is also remembered for the city, so re-entering `S'
+after leaving restores it.  This is the design's `r'-adjacent dry-run
+view; the full preview (`gascity-sling-dispatch-full-preview', the
+menu's `s') is the launch gate."
   :transient t
   (interactive (list (transient-args 'gascity-sling-dispatch)))
   (gascity-sling--resetup (gascity-sling--run args t)))
 
 ;;; ============================================================
-;;; Sling — the full preview buffer (`P', REQ-008, mockup §8)
+;;; Sling — the full preview buffer (`s', REQ-008, mockup §8)
 ;;; ============================================================
 ;;
-;; `p' shows gc's `--dry-run' routing plan alone; `P' opens the whole
-;; picture in one city-pinned buffer: the header sentence, every
-;; client-side validation check with its full text, the cached
-;; recipe's step DAG (steps → needs), and the routing plan filling in
-;; when the async dry run answers — the first paint is client-side and
-;; never blocks on the dry run (D9).  Nothing is read or prompted to
-;; open it: a missing target or work is a validation warning, and the
-;; routing plan section keeps its reason.  `s' launches directly from
-;; the buffer (completing a missing piece the way the menu's `s'
-;; would); `q' quits; the menu's `r' keeps the server-substituted
-;; recipe preview.  The preview is never a gate: the menu's `s' works
-;; anytime, with or without `P'.  The menu exits on `P' — the buffer
-;; is the interactive surface — but its state is remembered per city
-;; (bug S-2), so a later `S s' slings exactly what was previewed.
+;; Preview-first: the menu's `s' opens the whole picture in one
+;; city-pinned buffer instead of dispatching — the header sentence,
+;; every client-side validation check with its full text, the cached
+;; recipe's step DAG (steps → needs), the gathered variables, and the
+;; routing plan filling in when the async dry run answers (first paint
+;; is client-side and never blocks, D9).  Nothing is read or prompted
+;; to open it: a missing target or work is a validation warning, and
+;; the routing plan section keeps its reason.  From the buffer, `s' or
+;; `C-c C-c' launches exactly what was previewed (completing a missing
+;; piece the way the old direct launch did); `q' aborts without
+;; dispatching; the menu's `r' keeps the server-substituted recipe
+;; preview.  The menu exits on `s' — the buffer is the interactive
+;; surface — but its state is remembered per city (bug S-2), so a
+;; later `S' restores what was previewed.
 
 (defconst gascity-sling-preview-buffer-name "*gc-sling: preview*"
   "Base name of the full sling preview buffer (`P', REQ-008).
@@ -1854,8 +1862,9 @@ redesign (the bl-bdj trap, cross-store routing) belong here.")
 
 (defvar-keymap gascity-sling-preview-mode-map
   :doc "Keymap of the full sling preview buffer (REQ-008).
-`s' launches the previewed sling from here; `q' quits."
+`s' and `C-c C-c' launch the previewed sling from here; `q' aborts."
   "s" #'gascity-sling-preview-launch
+  "C-c C-c" #'gascity-sling-preview-launch
   "q" #'quit-window)
 
 (define-derived-mode gascity-sling-preview-mode special-mode "GC-Sling-Preview"
@@ -1863,9 +1872,10 @@ redesign (the bl-bdj trap, cross-store routing) belong here.")
 The buffer holds everything gascity can compute client-side — the
 header sentence, the validation checks in full, the cached recipe's
 steps → needs DAG — plus gc's `--dry-run' routing plan when it
-answers.  `s' launches exactly what was previewed, completing a
-missing target or work the way the menu's `s' would (D9); `q' quits.
-The preview is never a gate: the menu's `s' works anytime.
+answers.  `s' (or its `C-c' prefix twin) launches exactly what was
+previewed, completing a missing target or work the way the old direct
+launch would (D9); `q' aborts without dispatching.  This buffer is what
+the menu's `s' always opens first.
 
 The buffer is created through `gascity-view-get-buffer-create', so
 it is host-qualified and its `default-directory' stays pinned to
@@ -2086,7 +2096,7 @@ will replace from."
   (with-current-buffer buf
     (let ((inhibit-read-only t))
       (erase-buffer)
-      (insert (format "Sling preview — %s  (s launch · q quit)\n"
+      (insert (format "Sling preview — %s  (s or C-c C-c launch · q abort)\n"
                      (or (gascity-context-city-name) "gc"))
               (make-string 72 ?─) "\n"
               "  " (gascity-sling--preview-header scope recipe target) "\n")
@@ -2106,6 +2116,8 @@ will replace from."
 
 (defun gascity-sling--full-preview (scope args)
   "Open the full preview buffer (REQ-008) for the menu SCOPE and ARGS.
+This is what the menu's `s' opens first; the buffer's own `s' (or its
+`C-c' prefix twin) then launches exactly the dispatch previewed here.
 Resolves the same dispatch the menu's `s'/`p' would run — without
 reading or prompting anything — paints every client-side section at
 once, then starts the `--dry-run' whose answer fills the Routing
@@ -2150,16 +2162,23 @@ S-2), so a later `S s' slings exactly what was previewed."
                   :formula-only formula-only
                   :launch (if formula
                               ;; The proven dispatch path, completing a
-                              ;; missing target the way `s' does.
+                              ;; missing target the way the old direct
+                              ;; launch did — and recording the launch
+                              ;; target memory (WI-3 rule 2, REQ-012).
                               (lambda ()
-                                (gascity-sling-formula--dispatch
-                                 recipe
-                                 (or target
-                                     (gascity-sling--read-agent
-                                      "Target agent: " nil
-                                      (gascity-sling--roster-cached
-                                       (gascity-sling--city-dir scope))))
-                                 arg values nil nudge title))
+                                (let* ((default-directory
+                                        (gascity-sling--city-dir scope))
+                                       (chosen
+                                        (or target
+                                            (gascity-sling--read-agent
+                                             "Target agent: " nil
+                                             (gascity-sling--roster-cached
+                                              (gascity-sling--city-dir scope))))))
+                                  (gascity-sling-formula--dispatch
+                                   recipe chosen arg values nil nudge title)
+                                  (gascity-sling--remember-target
+                                   (gascity-sling--city-dir scope)
+                                   formula chosen)))
                             ;; The plain path, exactly `gascity-sling--run':
                             ;; the city pin travels with the launch (the
                             ;; buffer is host-pinned, but its caller may
@@ -2167,21 +2186,29 @@ S-2), so a later `S s' slings exactly what was previewed."
                             (lambda ()
                               (let* ((default-directory
                                       (gascity-sling--city-dir scope))
-                                     (arg (or arg
-                                              (gascity-sling--read-work)))
+                                     (work (or arg
+                                               (gascity-sling--read-work)))
+                                     (chosen
+                                      (or target
+                                          (gascity-sling--read-agent
+                                           "Target agent: " nil
+                                           (gascity-sling--roster-cached
+                                            (gascity-sling--city-dir scope)))))
                                      (command
                                       (apply #'gascity-command-sling
-                                             :target
-                                             (or target
-                                                 (gascity-sling--read-agent
-                                                  "Target agent: " nil
-                                                  (gascity-sling--roster-cached
-                                                   (gascity-sling--city-dir scope))))
-                                             :arg arg
-                                             (gascity-sling--parse-transient-args args))))
+                                             :target chosen
+                                             :arg work
+                                             (gascity-sling--parse-transient-args
+                                              args))))
                                 (oset command json t)
                                 (gascity-command-act-async
-                                 command :dir (gascity-sling--city-dir scope)))))))
+                                 command :dir (gascity-sling--city-dir scope))
+                                ;; A real launch remembers its target
+                                ;; (WI-3 rule 2); a failing build above
+                                ;; records nothing.
+                                (gascity-sling--remember-target
+                                 (gascity-sling--city-dir scope)
+                                 nil chosen))))))
       (gascity-sling--preview-paint buf scope recipe values target)
       (pop-to-buffer buf)
       ;; The dry run: started after first paint, its answer fills in.
@@ -2216,29 +2243,31 @@ S-2), so a later `S s' slings exactly what was previewed."
 
 (transient-define-suffix gascity-sling-dispatch-full-preview (args)
   "Open the full preview buffer for the dispatch ARGS (REQ-008).
-Everything computable client-side renders at once — the header
-sentence, the validation checks with their full text, the cached
-recipe's steps → needs DAG — and gc's `--dry-run' routing plan fills
-its section in when the async call answers.  The menu exits: the
-buffer is the interactive surface now — `s' there launches exactly
-what was previewed, `q' quits — while the state is remembered for
-the city (bug S-2), so a later `S s' slings the same dispatch.  The
-preview is never a gate: the menu's `s' works anytime."
+The menu's `s': preview first instead of dispatching.  Everything
+computable client-side renders at once — the header sentence, the
+validation checks with their full text, the cached recipe's steps →
+needs DAG — and gc's `--dry-run' routing plan fills its section in
+when the async call answers.  The menu exits: the buffer is the
+interactive surface now — `s' (or its `C-c' prefix twin) there
+launches exactly what was previewed, `q' aborts — while the state is
+remembered for the city (bug S-2), so a later `S' restores the same
+dispatch."
   (interactive (list (transient-args 'gascity-sling-dispatch)))
   (gascity-sling--full-preview (transient-scope) args))
 
 (defun gascity-sling-preview-launch ()
   "Launch the sling this buffer previews (REQ-008).
-`s' in the preview buffer: no input is gathered beyond what the
-menu's own `s' would read — a missing target (or, on the plain
-path, work) is completed with the same one-shot prompts, then the
-call starts and returns (D9); gc's answer is echoed and the buffer
-quits.  The city's remembered menu state is cleared, like the
-menu's `s' (a real launch forgets, bug S-2)."
+`s' (or its `C-c' prefix twin) in the preview buffer: no input is
+gathered beyond what the old menu launch would read — a missing
+target (or, on the plain path, work) is completed with the same
+one-shot prompts, then the call starts and returns (D9); gc's answer
+is echoed and the buffer quits.  The city's remembered menu state is
+cleared, like the menu's old direct launch (a real launch forgets,
+bug S-2)."
   (interactive)
   (let ((data gascity-sling-preview--data))
     (unless (and data (functionp (plist-get data :launch)))
-      (user-error "This buffer previews nothing — open it with P in the sling menu"))
+      (user-error "This buffer previews nothing — open it with s in the sling menu"))
     (funcall (plist-get data :launch))
     (gascity-sling--forget (plist-get data :city))
     (quit-window)))
@@ -2254,15 +2283,16 @@ menu's `s' (a real launch forgets, bug S-2)."
                                   :formula nil :target nil :arg nil))))
 
 (defconst gascity-sling--reserved-keys
-  '("A" "f" "T" "c" "a" "n" "m" "t" "s" "P" "r" "g" "x" "q")
+  '("A" "f" "T" "c" "a" "n" "m" "t" "s" "r" "g" "x" "q")
   "Every single letter statically bound in `gascity-sling-dispatch'.
 The list is exactly the mockup §10 key summary: the What stage
 \(`A' work picker, `f' formula pick), the Who stage (`T' target),
 the routing
 flags `-c -a -n -m -t' (rendered on the settled plain shape only)
-and the Actions (`s', `P' the full preview, `r', `g', `x', `q').  The
-old `p' dry-run suffix is freed — `P' previews everything.  The
-generated variable infix keys avoid exactly this list; it lives
+and the Actions (`s' preview-first, `r', `g', `x', `q').  The old
+`p' dry-run suffix is freed, and the preview-first change retires `P'
+with the old direct-launch/preview pair.  The generated variable
+infix keys avoid exactly this list; it lives
 beside the layout it keys so a re-binding cannot silently collide
 \(OQ-2), and a test asserts the two stay in sync.")
 
@@ -2539,8 +2569,7 @@ the header (ga-4ia4)."
                 '("-t" "Wisp root title" "--title="))))
      (list
       (vector "Actions"
-              '("s" "Sling…" gascity-sling-dispatch-run)
-              '("P" "Full preview…" gascity-sling-dispatch-full-preview)
+              '("s" "Preview & launch…" gascity-sling-dispatch-full-preview)
               '("r" "Preview recipe…" gascity-sling-dispatch-recipe)
               '("g" "Refresh catalog" gascity-sling-dispatch-refresh)
               '("x" "Reset (clear work, formula, target)" gascity-sling-dispatch-reset)

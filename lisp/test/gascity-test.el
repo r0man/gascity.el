@@ -2210,11 +2210,11 @@ failure surfaces as a clean `user-error'."
 (ert-deftest gascity-test-sling-unified-wiring ()
   "REQ-A/REQ-H (ported to the redesign): the unified prefix carries
 every stage suffix in place — `f' pick, `g' refresh, `T' target, `r'
-recipe, `s' run, `x' reset and the `P' full preview that replaces
-the old `p' dry-run suffix — and the absorbed pre-unification
-commands stay gone.  (The `A' work picker is asserted through the
-layout in `gascity-test-sling-unified-layout', not by name: the plan
-does not pin its command symbol.)"
+recipe, `s' the preview-first full-preview entry, `x' reset and the
+retained programmatic `gascity-sling-dispatch-run' — and the absorbed
+pre-unification commands stay gone.  (The `A' work picker is asserted
+through the layout in `gascity-test-sling-unified-layout', not by
+name: the plan does not pin its command symbol.)"
   (skip-unless (gascity-test-sling-redesign-p))
   (should (commandp 'gascity-sling-dispatch))
   (should (commandp 'gascity-sling-dispatch-pick))
@@ -2243,7 +2243,8 @@ group (city title, one-sentence header, live footer), then `What'
 `How — <formula> vars' group, `Who' (`T'), the routing flags —
 the full plain group on the plain shape with work, the one `-n'
 nudge flag on a targeted formula shape (F9) — and `Actions'
-(`s P r g x q').  A cold entry shows What, Who and Actions only; a
+(`s r g x q', preview-first: `s' opens the full preview).  A cold
+entry shows What, Who and Actions only; a
 formula shape with no target has no routing flags.  The header's
 sentence and footer stay raw unwrapped
 `:info …' specs (nested `((:info …))' crashes setup — kept from the
@@ -2278,10 +2279,12 @@ pre-unification fix)."
           (let ((specs (append (nth 1 groups) nil)))
             (should (assoc "A" specs))
             (should (assoc "f" specs)))
-          ;; The Actions bind s P r g x q (§1).
+          ;; The Actions bind s r g x q (§1) — `s' is the preview-first
+          ;; entry, not the old direct launcher; `P' is retired.
           (let ((specs (append (nth 4 groups) nil)))
-            (should (assoc "s" specs))
-            (should (assoc "P" specs))
+            (should (equal (nth 2 (assoc "s" specs))
+                           'gascity-sling-dispatch-full-preview))
+            (should-not (assoc "P" specs))
             (should (assoc "r" specs))
             (should (assoc "g" specs))
             (should (assoc "x" specs))

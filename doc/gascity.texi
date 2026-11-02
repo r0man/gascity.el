@@ -2322,9 +2322,9 @@ a single adaptive
 menu that routes a @dfn{bead}, a @dfn{formula} run, or freeform task text
 to the agent that should take it (@pxref{Terminology}).  The menu asks only the questions context
 has not already answered: with a bead at point and a remembered
-target, the whole dispatch is two keystrokes, @kbd{S} then @kbd{s},
-with zero prompts.  A cold menu walks six conceptual stages with
-typed completion:
+target, @kbd{S} then @kbd{s} opens the full preview with zero prompts,
+and the preview's own @kbd{s} launches.  A cold menu walks six
+conceptual stages with typed completion:
 
 @example
 What → Who → How → Preview → Launch → Follow
@@ -2430,8 +2430,9 @@ routing, @option{-m} merge strategy, @option{-t} wisp root title ---
 renders only on the plain shape.  A targeted formula shape renders
 just the two flags carved out for it: @option{-n} and @option{-t}.
 @item Actions
-@kbd{s} launch, @kbd{P} full preview, @kbd{r} recipe preview,
-@kbd{g} refresh formulas, @kbd{x} reset, @kbd{q} quit.
+@kbd{s} preview and launch (it always opens the full preview buffer
+first, @pxref{The preview buffer}), @kbd{r} recipe preview, @kbd{g}
+refresh formulas, @kbd{x} reset, @kbd{q} quit.
 @end table
 
 An answered stage collapses to its one line: the answer is visible,
@@ -2490,7 +2491,8 @@ Picking a formula is also how the shape changes (@pxref{The sling
 shapes}): with work in scope the run is targeted (@option{--on});
 without work, targetless (@option{--formula}).  A formula that
 declares no variables --- @samp{pancakes} --- keeps the How stage out
-of the menu entirely; the flow is What, Who, @kbd{s}.
+of the menu entirely; the flow is What, Who, @kbd{s}, then @kbd{s}
+again in the preview buffer.
 
 @shot{sling-formula-dark, The formula shape with no work attached (ef-deuteranopia-dark)}
 
@@ -2624,9 +2626,10 @@ or the reason it has something to say:
 @end example
 
 The footer renders from cached data only: nothing on the menu's
-render path runs @command{gc}.  A warning never blocks @kbd{s} ---
+render path runs @command{gc}.  A warning never blocks the launch ---
 @command{gc} remains the authority --- but it is unmissable, and the
-full detail is one @kbd{P} away (@pxref{The preview buffer}).
+full detail is one @kbd{s} away in the preview buffer
+(@pxref{The preview buffer}).
 
 @node Validation warnings
 @section Validation warnings
@@ -2689,9 +2692,10 @@ no target at all (@samp{No target — T to choose, or s will prompt}).
 @section The preview buffer
 @cindex preview buffer
 
-@kbd{P} opens the full preview: everything gascity can compute
-client-side renders at once, and @command{gc}'s routing plan --- from
-@command{gc sling @dots{} --dry-run} --- fills in when it answers.
+@kbd{s} in the menu opens the full preview first: everything gascity
+can compute client-side renders at once, and @command{gc}'s routing
+plan --- from @command{gc sling @dots{} --dry-run} --- fills in when it
+answers.
 First paint never blocks on the dry run.  The buffer opens through
 the same host-qualified, city-pinned machinery as every gascity view
 (@pxref{Remote buffers}), titled @samp{Sling preview — @var{CITY}},
@@ -2711,20 +2715,26 @@ A @emph{Routing plan} section: which agent or session gets each step,
 from the dry run.
 @end itemize
 
-@kbd{s} launches directly from the preview buffer; @kbd{q} closes
-it.  @kbd{r} keeps its old job, the server-substituted recipe
-preview.  The preview is never a gate: @kbd{s} works in the menu at
-any time, warning or not.
+@kbd{s} (or @kbd{C-c C-c}) launches exactly what the buffer previews;
+@kbd{q} aborts without dispatching.  The menu's @kbd{s} is the only way
+in --- it always previews first, for the plain, @option{--on} and
+@option{--formula} shapes alike.  @kbd{r} keeps its old job, the
+server-substituted recipe preview.  A warning in the Validation
+section never removes the launch binding: @command{gc} stays the
+authority and a missing target or work is completed with the same
+one-shot prompts the old direct launch used.
 
-@shot{sling-preview-dark, The P full preview buffer (ef-deuteranopia-dark)}
+@shot{sling-preview-dark, The full preview buffer (ef-deuteranopia-dark)}
 
 @node Launch and follow
 @section Launch and follow
 @cindex follow offer
 
-@kbd{s} launches.  The call runs asynchronously like every gascity
-action (@pxref{Actions}): the menu closes, the echo area
-reports, and the views the launch touched re-read.
+@kbd{s} in the preview buffer launches what it previewed (the menu's
+@kbd{s} opened it first, @pxref{The preview buffer}).  The call runs
+asynchronously like every gascity action (@pxref{Actions}): the menu
+closed when the preview opened, the buffer closes on launch, the echo
+area reports, and the views the launch touched re-read.
 
 A plain route echoes the routing (@samp{Routed bl-5ja to mayor}) ---
 no workflow is created, so there is nothing to follow.  A formula
@@ -2779,8 +2789,8 @@ T   Target (agents grouped by rig; the derived default heads the header)
     numeric, choice, bool; keys deterministic, outside the reserved set;
     vars beyond the inline cap fold under an ellipsis row, live but
     hidden until C-x a)
-s   Launch (anytime — the preview is never a gate)
-P   Full preview buffer (validation, recipe DAG, routing plan)
+s   Preview and launch (opens the full preview; its own `s' or
+    `C-c C-c' launches, `q' aborts)
 r   Recipe preview (server-side substituted, as today)
 g   Refresh formulas
 x   Reset (clear work, formula, target, vars)
@@ -2789,8 +2799,9 @@ q   Quit
 
 @noindent
 The generated variable keys avoid the reserved single letters
-@samp{A f T c a n m t s P r g x q} --- @kbd{p} is free, the preview
-moved to @kbd{P}.
+@samp{A f T c a n m t s r g x q} --- @kbd{p} and @kbd{P} are free;
+the preview-first change retired the old direct-launch/preview pair
+(@kbd{s} launch and @kbd{P} preview).
 
 @node Slinging from beads
 @section Slinging from beads.el
@@ -2806,9 +2817,12 @@ status, dependency tree or wisp list opens beads.el's
 @code{beads-sling-for-issue} transient with the issue at point already
 selected as the work.  (In the plain beads list @kbd{S} stays
 @code{beads-list-sort}, and in the agent list it stays
-@code{beads-agent-list-stop-all}.)  Selecting a target and launching
-runs the same @command{gc sling} the gascity menu runs; you never leave
-the beads buffer.
+@code{beads-agent-list-stop-all}.)  beads.el's menu follows the same
+preview-first workflow as the gascity menu: @kbd{s} opens its full
+preview buffer, where @kbd{s} or @kbd{C-c C-c} launches and @kbd{q}
+aborts.  Confirming runs the same @command{gc sling} the gascity menu
+runs; you never leave the beads buffer, and gascity's registered
+@code{gc} backend only sees the launch, exactly as before.
 
 The Who picker gains gascity's qualified @command{gc} targets from the
 cached @command{gc agent list} roster --- @samp{rig/agent} for a rig
@@ -2881,9 +2895,10 @@ gascity-sling-dispatch} anywhere).  @xref{Sling and Dispatch}.
 The menu asks what, who and how, in typed completion: @kbd{A} picks the
 work (beads and convoys; @kbd{C-u} for free text), @kbd{f} a formula,
 @kbd{T} the target agent, the generated infix keys fill the formula's
-variables, and @kbd{s} launches.  With a bead at point and a remembered
-target, @kbd{S} @kbd{s} dispatches with no prompts at all; @kbd{P}
-opens the full preview first.  @xref{Sling key summary}.
+variables, and @kbd{s} opens the full preview.  With a bead at point
+and a remembered target, @kbd{S} @kbd{s} previews with no prompts at
+all; the preview's own @kbd{s} then launches.  @xref{Sling key
+summary}.
 
 Beads themselves are managed in beads.el.  @kbd{j b} opens the beads of
 the rig at point (or a chosen rig) in beads.el, and @kbd{c} opens the
@@ -2904,9 +2919,9 @@ route, a formula with work is the targeted @option{--on} shape, and a
 formula without work is the targetless @option{--formula} shape.
 @kbd{A} picks work, @kbd{f} picks the formula (whose declared variables
 become typed infix keys), @kbd{T} picks the target, the live footer
-summarizes the dispatch and warns about traps, @kbd{s} launches (the
-preview is never a gate), @kbd{P} opens the full preview and the
-momentary @kbd{F} follows the run a launch created.
+summarizes the dispatch and warns about traps, @kbd{s} opens the full
+preview, the preview's own @kbd{s} (or @kbd{C-c C-c}) launches, and
+the momentary @kbd{F} follows the run a launch created.
 @xref{The sling shapes}, @xref{Sling key summary}.
 
 @c ====================================================================
@@ -3370,9 +3385,9 @@ generated infix keys fill the formula's variables (@pxref{Typed
 variables}).  The live footer shows what will be dispatched
 (@pxref{The live footer}).
 @item
-@kbd{P} opens the preview first (@pxref{The preview buffer}); @kbd{s}
-launches.  The echo area confirms the dispatch and the new run appears
-in the target rig.
+@kbd{s} opens the preview first (@pxref{The preview buffer}); @kbd{s}
+again (or @kbd{C-c C-c}) there launches, and @kbd{q} aborts.  The echo
+area confirms the dispatch and the new run appears in the target rig.
 @end enumerate
 
 @noindent
