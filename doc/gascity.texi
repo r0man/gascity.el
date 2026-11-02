@@ -4874,6 +4874,7 @@ CITY@@host*} remotely).  Turn on @code{gascity-enable-debug} and raise
 * Module layout::               The module stack, lowest first.
 * Building this manual::        Info, HTML and PDF from the Texinfo source.
 * Linting and documentation drift::  make lint and the generated tables.
+* Clean-environment smoke test::  A live-city guard CI cannot run.
 * Regenerating the screenshots::  The fixture-city capture pipeline.
 @end menu
 
@@ -4996,6 +4997,43 @@ Reference}.  The full gate, from a clean checkout, is:
 ./autogen.sh && ./configure --with-beads-dir="$HOME/workspace/beads.el"
 make && make check && make lint
 @end example
+
+@node Clean-environment smoke test
+@section Clean-environment smoke test
+
+@cindex clean environment
+@cindex XDG_RUNTIME_DIR
+@cindex smoke test
+@cindex live city
+@command{gc} cannot find the supervisor without
+@env{XDG_RUNTIME_DIR}, so a cockpit opened under @code{env -i} is a
+regression that the offline suite cannot see.  A local, live-city smoke
+test covers it:
+
+@example
+scripts/clean-env-smoke.sh [CITY_ROOT]
+@end example
+
+@noindent
+@var{CITY_ROOT} defaults to @env{GC_CITY}, then to the first
+@file{city.toml} found by walking up from the repository root.  The
+script skips cleanly (exit 0 with a @samp{SKIP} line) when there is no
+city or when @file{/run/user/@var{uid}} does not exist.  Otherwise it
+starts Emacs under @code{env -i HOME=@dots{} PATH=@dots{} TERM=@dots{}}
+(no @env{XDG_RUNTIME_DIR}), loads gascity from this checkout, asserts
+the @file{/run/user/@var{uid}} fallback from
+@ref{The gc environment}, and runs a real @code{gc status --json}
+through @code{gascity-reader-run} from the city root, requiring exit 0
+and a non-empty agents list.  The Emacs half is
+@file{scripts/clean-env-smoke.el}; the shell wrapper resolves the
+sibling beads.el and vui from the configured @file{Makefile} (with
+@env{BEADS_DIR} / @env{VUI_DIR} fallbacks).
+
+This target is deliberately not part of @command{make check} or CI: it
+needs a running city and a per-user runtime directory.  Run it by hand
+after touching the reader's child-environment plumbing, and record the
+result in a @file{docs/qa/} report like the interactive pass it
+complements.
 
 @node Regenerating the screenshots
 @section Regenerating the screenshots

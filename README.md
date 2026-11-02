@@ -87,8 +87,14 @@ scripts/lint.sh   # checkdoc + package-lint
 ```
 
 Tests that need a live `gc` and a city guard themselves with
-`skip-unless`. See the manual's *Contributing* chapter and
-[AGENTS.md](AGENTS.md).
+`skip-unless`. The clean-environment path (no `XDG_RUNTIME_DIR`) has a
+local-only, live-city guard that CI cannot run:
+
+```sh
+scripts/clean-env-smoke.sh [CITY_ROOT]
+```
+
+See the manual's *Contributing* chapter and [AGENTS.md](AGENTS.md).
 
 ## License
 
