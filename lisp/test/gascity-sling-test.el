@@ -1870,6 +1870,55 @@ failed dry run fills its first stderr line instead."
         (should (string-search "failed: boom" (buffer-string)))
         (should-not (string-search "\n  …\n" (buffer-string)))))))
 
+(ert-deftest gascity-test-sling-full-preview-formula-only-plan-names-no-work ()
+  "A formula-only sling routes no work bead, so its Routing plan names
+that instead of showing gc's literal `bd update {}' template (ga-rg917)."
+  (gascity-sling-test--with-preview reads actions nil
+    (let ((recipe (gascity-domain-decode
+                   'gascity-formula
+                   '((name . "e2e-demo")
+                     (vars . [])
+                     (steps . [((id . "run") (title . "Run"))])
+                     (deps . []))))
+          (scope (list :city gascity-sling-test--city :formula "e2e-demo"
+                       :target "rig/agent" :arg "hw-71jq")))
+      (cl-letf (((symbol-function 'gascity-formula-recipe-cached)
+                 (lambda (_name) recipe)))
+        (gascity-sling--full-preview scope nil))
+      (should (= (length actions) 1))
+      (funcall (nth 1 (car actions))
+               (list :exit-code 0
+                     :stdout (concat "Target:\n"
+                                     "  Session config: rig/agent (min=0)\n"
+                                     "  Sling query: bd update {} --set-metadata gc.routed_to=rig/agent\n")
+                     :stderr "" :executable "gc"))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (let ((text (buffer-string)))
+          (should-not (string-search "bd update {}" text))
+          (should (string-search
+                   "Sling query: (no work bead to route — formula-only sling)"
+                   text)))))))
+
+(ert-deftest gascity-test-sling-full-preview-convoy-plan-keeps-gc-template ()
+  "A convoy-requiring formula with a work bead is not formula-only, so
+its Routing plan keeps gc's own `Sling query' text (ga-rg917)."
+  (gascity-sling-test--with-preview reads actions
+      '(("summary_path" . "build/summary.md"))
+    (let ((scope (list :city gascity-sling-test--city :formula "do-work"
+                       :target "rig/agent" :arg "bl-1")))
+      (gascity-sling--full-preview scope nil)
+      (should (= (length actions) 1))
+      (funcall (nth 1 (car actions))
+               (list :exit-code 0
+                     :stdout (concat "Target:\n"
+                                     "  Session config: rig/agent (min=0)\n"
+                                     "  Sling query: bd update {} --set-metadata gc.routed_to=rig/agent\n")
+                     :stderr "" :executable "gc"))
+      (with-current-buffer (gascity-sling-test--preview-buffer)
+        (let ((text (buffer-string)))
+          (should (string-search "Sling query: bd update {}" text))
+          (should-not (string-search "no work bead to route" text)))))))
+
 (ert-deftest gascity-test-sling-full-preview-launches-from-the-buffer ()
   "The preview buffer binds `s' to launching exactly what was
 previewed (REQ-008): the dry-run command without `--dry-run', reported

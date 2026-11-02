@@ -2005,22 +2005,48 @@ dispatch has no recipe and the section says so."
                      (if needs (mapconcat #'identity needs ", ") "nothing"))))
          steps)))))
 
+(defun gascity-sling--preview-formula-only-p (formula recipe arg)
+  "Return non-nil when the FORMULA dispatch routes no work bead.
+The formula path is targetless — gc's `--formula' shape — whenever
+RECIPE does not need a convoy, or ARG is blank; a work bead picked in
+the menu is then not routed (ga-rg917)."
+  (and formula
+       (not (and (gascity-formula--needs-convoy recipe)
+                 (gascity-formula--nonblank arg)))))
+
+(defun gascity-sling--preview-plan-text (formula-only text)
+  "Return gc's dry-run TEXT adapted for a FORMULA-ONLY dispatch.
+Such a dispatch routes no work bead, so gc's target-level `Sling
+query: bd update {} …' template would read as an empty bead id in the
+plan (ga-rg917).  Name the absence instead; every other line stays
+gc's own text, verbatim."
+  (if (and formula-only (stringp text))
+      (replace-regexp-in-string
+       "^[ \t]*Sling query:.*{}.*$"
+       "  Sling query: (no work bead to route — formula-only sling)"
+       text)
+    text))
+
 (defun gascity-sling--preview-fill-plan (buf text)
   "Fill BUF's Routing plan section with the dry run's TEXT answer.
 TEXT is gc's captured stdout, the failure's first line, or the reason
 no plan was asked for; blank stdout shows the `(no plan output)'
 placeholder of `gascity-sling--show-plan'.  The section shows `…'
 until the async dry run answers; a killed BUF is left alone — a late
-answer must not resurrect it (D9)."
+answer must not resurrect it (D9).  A formula-only dispatch's literal
+`{}' routing template is named rather than shown (ga-rg917)."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (when (and (markerp gascity-sling-preview--plan-marker)
                  (marker-position gascity-sling-preview--plan-marker))
-        (let ((inhibit-read-only t)
-              (body (if (and (stringp text)
-                             (not (string-empty-p (string-trim text))))
-                        text
-                      "(no plan output)")))
+        (let* ((inhibit-read-only t)
+               (body (if (and (stringp text)
+                              (not (string-empty-p (string-trim text))))
+                         text
+                       "(no plan output)"))
+               (body (gascity-sling--preview-plan-text
+                      (plist-get gascity-sling-preview--data :formula-only)
+                      body)))
           (save-excursion
             (goto-char gascity-sling-preview--plan-marker)
             (delete-region (point) (point-max))
@@ -2104,6 +2130,10 @@ S-2), so a later `S s' slings exactly what was previewed."
          (target (or (plist-get scope :target)
                      (plist-get (gascity-sling--derived-target scope) :target)))
          (arg (gascity-sling--work scope))
+         ;; Formula-only: the targetless `--formula' shape routes no
+         ;; work bead, even when the menu still holds one (ga-rg917).
+         (formula-only (gascity-sling--preview-formula-only-p
+                        formula recipe arg))
          ;; The formula shape's carved-out routing flags (F9, then the
          ;; F9-adjacent --title): the preview's launch and dry run carry
          ;; them too, so `P' previews exactly what `s' would sling.
@@ -2117,6 +2147,7 @@ S-2), so a later `S s' slings exactly what was previewed."
       (setq gascity-sling-preview--data
             (list :city (gascity-sling--city-dir scope)
                   :scope scope
+                  :formula-only formula-only
                   :launch (if formula
                               ;; The proven dispatch path, completing a
                               ;; missing target the way `s' does.
