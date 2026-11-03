@@ -149,6 +149,27 @@ it.")
 plain-agent one, a `{{implementation_target}}' placeholder, a drain
 step and two required vars.")
 
+(defconst gascity-sling-test--live-build-basic
+  (gascity-sling-test--recipe
+   "build-basic"
+   (vector '((id . "prepare") (metadata . ((gc.run_target . "gc.run-operator"))))
+           '((id . "requirements")
+             (metadata . ((gc.run_target . "gc.requirements-planner"))))
+           '((id . "plan") (metadata . ((gc.run_target . "gc.design-author"))))
+           '((id . "decompose")
+             (metadata . ((gc.run_target . "gc.task-decomposer"))))
+           '((id . "implement")
+             (metadata . ((gc.run_target . "{{implementation_target}}"))))
+           '((id . "review.setup")
+             (metadata . ((gc.run_target . "gc.run-operator"))))
+           '((id . "review") (metadata . ((gc.run_target . "gc.run-operator"))))
+           '((id . "finalize")
+             (metadata . ((gc.run_target . "gc.run-operator"))))
+           '((id . "publish") (metadata . ((gc.run_target . "gc.publisher"))))))
+  "A live-build-basic-shaped recipe (bright-lights, gc 1.5.1): the
+operator coordinates four steps, every lane target one — a strict
+plurality, so the formula rule derives `gc.run-operator'.")
+
 (defconst gascity-sling-test--pancakes
   (gascity-sling-test--recipe
    "pancakes"
@@ -186,6 +207,25 @@ suffix specs (cons cells or nested vectors)."
   (should (gascity-sling--binding-targets-p gascity-sling-test--build-basic))
   (should-not (gascity-sling--binding-targets-p gascity-sling-test--pancakes))
   (should-not (gascity-sling--binding-targets-p nil)))
+
+(ert-deftest gascity-test-sling-formula-run-target ()
+  "A recipe's coordinating binding-qualified run target: a single
+  distinct target answers, the strict plurality answers (the live
+  build-basic's gc.run-operator), a tie is ambiguous, placeholders and
+  plain agent names never qualify, and no recipe answers nothing."
+  (should (equal (gascity-sling--formula-run-target
+                   (gascity-sling-test--recipe
+                    "one" gascity-sling-test--v2-steps))
+                 "gc.run-operator"))
+  (should (equal (gascity-sling--formula-run-target
+                   gascity-sling-test--live-build-basic)
+                 "gc.run-operator"))
+  ;; Two distinct targets with one step each: ambiguous, no guess.
+  (should-not (gascity-sling--formula-run-target
+               gascity-sling-test--build-basic))
+  ;; Only plain agent names and a placeholder: nothing qualifies.
+  (should-not (gascity-sling--formula-run-target gascity-sling-test--pancakes))
+  (should-not (gascity-sling--formula-run-target nil)))
 
 (ert-deftest gascity-test-sling-v2-trap-p-and-warning ()
   "The bl-bdj trap: binding-qualified run targets with a city-scoped
@@ -1204,6 +1244,87 @@ template; none derives nothing."
     (should-not (funcall worker
                          (list (list :name "hello-world/gc.run-operator"
                                      :rig "hello-world"))))))
+
+(ert-deftest gascity-test-sling-derive-target-formula-run-target ()
+  "The formula-derived Who default (ga-rghou): build-basic on a bead of
+  a rig derives the QUALIFIED `<bead-rig>/gc.run-operator'; the rig
+  default and the memory still win; freeform work, an unknown prefix
+  and a cold memo/recipe never derive (fail-soft)."
+  (let* ((city gascity-sling-test--city)
+         (scope (list :city city :formula "build-basic" :target nil
+                      :work "hw-aij"))
+         (recipe gascity-sling-test--live-build-basic)
+         (roster (list (list :name "hello-world/gc.implementation-worker"
+                             :rig "hello-world")))
+         (rigs (list (gascity-rig :name "hello-world" :prefix "hw"))))
+    (cl-letf (((symbol-function 'gascity-rigs-cached)
+               (lambda (&rest _) rigs)))
+      ;; The formula rule, between the memory and the convention.
+      (should (equal (gascity-sling--derive-target scope roster nil recipe)
+                     '(:target "hello-world/gc.run-operator"
+                       :source formula-run-target)))
+      ;; The rig default still wins.
+      (cl-letf (((symbol-function 'gascity-rigs-cached)
+                 (lambda (&rest _)
+                   (list (gascity-rig :name "hello-world" :prefix "hw"
+                                     :default-sling-target
+                                     "hello-world/gc.other")))))
+        (should (equal (gascity-sling--derive-target scope roster nil recipe)
+                       '(:target "hello-world/gc.other"
+                         :source rig-default))))
+      ;; The per-(city, formula) memory still wins.
+      (should (equal (gascity-sling--derive-target
+                      scope roster
+                      (list (cons (cons city "build-basic")
+                                  "hello-world/gc.remembered"))
+                      recipe)
+                     '(:target "hello-world/gc.remembered" :source memory)))
+      ;; Freeform work and an unknown prefix resolve no rig: the formula
+      ;; rule skips and the convention (or nothing) answers.
+      (dolist (work '("fix the docs" "zzz-9"))
+        (let ((free (plist-put (copy-sequence scope) :work work)))
+          (should (equal (gascity-sling--derive-target free roster nil recipe)
+                         '(:target "hello-world/gc.implementation-worker"
+                           :source implementation-worker)))
+          (should-not (gascity-sling--derive-target free nil nil recipe))))
+      ;; A cold rig memo skips the formula rule too.
+      (cl-letf (((symbol-function 'gascity-rigs-cached)
+                 (lambda (&rest _) nil)))
+        (should (equal (gascity-sling--derive-target scope roster nil recipe)
+                       '(:target "hello-world/gc.implementation-worker"
+                         :source implementation-worker)))))))
+
+(ert-deftest gascity-test-sling-derive-target-reads-recipe-from-cache ()
+  "The render-path derivation reads the picked formula's recipe from
+  the cache only (`gascity-formula-recipe-remembered'): a warmed entry
+  derives the formula rule, a cold one skips it without spawning gc."
+  (let* ((city gascity-sling-test--city)
+         (scope (list :city city :formula "build-basic" :target nil
+                      :work "hw-aij"))
+         (roster (list (list :name "hello-world/gc.implementation-worker"
+                             :rig "hello-world")))
+         (rigs (list (gascity-rig :name "hello-world" :prefix "hw"))))
+    (cl-letf (((symbol-function 'gascity-sling--roster)
+               (lambda (&optional _) roster))
+              ((symbol-function 'gascity-rigs-cached)
+               (lambda (&rest _) rigs))
+              ((symbol-function 'gascity-context-scope-key)
+               (lambda (&optional _) city))
+              ((symbol-function 'gascity-command-formula-show!)
+               (lambda (&rest _)
+                 (error "the derivation must read the recipe cache only"))))
+      ;; Warmed: the remembered recipe answers the formula rule.
+      (let ((gascity-formula-recipe-cache
+             (list (cons (cons city "build-basic")
+                         gascity-sling-test--live-build-basic))))
+        (should (equal (gascity-sling--derived-target scope)
+                       '(:target "hello-world/gc.run-operator"
+                         :source formula-run-target))))
+      ;; Cold: no recipe, no formula rule — and still no gc read.
+      (let ((gascity-formula-recipe-cache nil))
+        (should (equal (gascity-sling--derived-target scope)
+                       '(:target "hello-world/gc.implementation-worker"
+                         :source implementation-worker)))))))
 
 (ert-deftest gascity-test-sling-target-memory-hit-and-miss ()
   "The per-(city, formula) target memory: a launch records its target,

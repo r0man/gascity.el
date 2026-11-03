@@ -78,6 +78,7 @@
 (declare-function gascity-formula--nonblank "gascity-formula")
 (declare-function gascity-sling-formula--work-title-at-point "gascity-formula")
 (declare-function gascity-formula-recipe-cached "gascity-formula")
+(declare-function gascity-formula-recipe-remembered "gascity-formula")
 (declare-function gascity-formula--needs-convoy "gascity-formula")
 (declare-function gascity-formula--blank "gascity-formula")
 (declare-function gascity-agents-roster "gascity-agents")
@@ -94,6 +95,7 @@
 ;; here so the whole-package compile gate sees the wiring; the
 ;; footer's tests stub each one at its contract.
 (declare-function gascity-sling--shape (work formula) "gascity-formula")
+(declare-function gascity-sling--formula-run-target (recipe) "gascity-formula")
 (declare-function gascity-sling--v2-trap-p (recipe scope) "gascity-formula")
 (declare-function gascity-sling--v2-trap-warning
                   (&optional rig) "gascity-formula")
@@ -1212,11 +1214,13 @@ followed by `S s' slings what was previewed (bug S-2).")
 ;;
 ;; `s' never asks Who again when a target is derivable.  The answer
 ;; is computed client-side, in the design's order: the work bead's rig
-;; default, the per-(city, formula) launch memory, then the
-;; implementation-worker convention — the roster's exactly one
-;; rig-scoped `gc.implementation-worker'.  Every input is cached
-;; data (`gascity-store-get', the rig memo): the derivation runs from
-;; the menu's render path too, so it must never spawn gc (D9).
+;; default, the per-(city, formula) launch memory, the picked
+;; formula's coordinating run target (qualified with the work bead's
+;; rig), then the implementation-worker convention — the roster's
+;; exactly one rig-scoped `gc.implementation-worker'.  Every input is
+;; cached data (`gascity-store-get', the rig memo, the recipe cache):
+;; the derivation runs from the menu's render path too, so it must
+;; never spawn gc (D9).
 
 (defvar gascity-sling--target-memory nil
   "The sling menu's per-((city . formula)) launch target memory.
@@ -1308,24 +1312,49 @@ Duplicate entries of the same agent are one."
                        roster)))))
     (pcase names (`(,only) only) (_ nil))))
 
-(defun gascity-sling--derive-target (scope roster memory)
+(defun gascity-sling--formula-target (scope recipe)
+  "Return SCOPE's formula-derived Who answer, or nil.
+The picked RECIPE's coordinating binding-qualified run target
+\(`gascity-sling--formula-run-target', e.g. `gc.run-operator') is
+qualified with the work bead's rig, resolved from its id prefix
+through the rig memo (`gascity-sling--work-rig'), giving
+`<bead-rig>/<run-target>' — `hello-world/gc.run-operator`.  gc only
+resolves the bare binding-qualified form from inside the rig
+directory (verified on 1.5.1), so a city-scoped cockpit must offer
+and derive the QUALIFIED name; the bare form never surfaces here.
+Freeform work, an unresolvable prefix, a cold rig memo, no formula or
+no unambiguous run target all answer nil — fail-soft; gc stays the
+authority.  Returns `(:target NAME :source formula-run-target)'."
+  (when-let* ((target (gascity-sling--formula-run-target recipe))
+              (rig (gascity-sling--work-rig scope))
+              (rig-name (gascity-rig-name rig)))
+    (list :target (format "%s/%s" rig-name target)
+          :source 'formula-run-target)))
+
+(defun gascity-sling--derive-target (scope roster memory &optional recipe)
   "Return the derived Who target for SCOPE, ROSTER and MEMORY, or nil.
 The design's order (REQ-005): \(1) the work bead's rig
 `default_sling_target'/`default_sling_targets', fail-soft when the
 rig data carries none; \(2) the per-(city, formula) target memory;
-\(3) the implementation-worker convention — ROSTER's exactly one
+\(3) the picked formula's coordinating run target, qualified with the
+work bead's rig (`gascity-sling--formula-target', ga-rghou);
+\(4) the implementation-worker convention — ROSTER's exactly one
 rig-scoped `gc.implementation-worker' when unambiguous.  Pure over
 its inputs: SCOPE is the menu's scope plist, ROSTER a list of agent
 plists (`:name' `:rig'), MEMORY the `gascity-sling--target-memory'
-alist.  The answer is `(:target NAME :source SOURCE)' with SOURCE one
-of `rig-default', `memory' or `implementation-worker' — the header's
-derived tag and the `T' picker's seed render from it — or nil when no
-rule derives.  A target set in the scope wins over the derivation;
-this function never consults it."
+alist and RECIPE the picked formula's cached recipe (nil when none is
+picked or the read has not answered).  The answer is `(:target NAME
+:source SOURCE)' with SOURCE one of `rig-default', `memory',
+`formula-run-target' or `implementation-worker' — the header's derived
+tag and the `T' picker's seed render from it — or nil when no rule
+derives.  A target set in the scope wins over the derivation; this
+function never consults it."
   (or (when-let* ((target (gascity-sling--rig-default-target scope)))
         (list :target target :source 'rig-default))
       (when-let* ((target (gascity-sling--memory-target scope memory)))
         (list :target target :source 'memory))
+      (when-let* ((answer (gascity-sling--formula-target scope recipe)))
+        answer)
       (when-let* ((target (gascity-sling--implementation-worker-target roster)))
         (list :target target :source 'implementation-worker))))
 
@@ -1359,15 +1388,19 @@ scope's city."
   "Return the derived Who target of SCOPE (default the live scope).
 Gathers the derivation's inputs from session state — the roster from
 the cached `gc agent list' payload (`gascity-sling--roster'), the
-memory from `gascity-sling--target-memory' — and runs
-`gascity-sling--derive-target' over them.  See that function for the
-answer's shape and the rule order.  Pure over cached data, never a
-gc read (D9): the header and footer render through this."
-  (let ((scope (or scope (ignore-errors (transient-scope)))))
+memory from `gascity-sling--target-memory', the picked formula's
+recipe from the cache only (`gascity-formula-recipe-remembered') —
+and runs `gascity-sling--derive-target' over them.  See that function
+for the answer's shape and the rule order.  Pure over cached data,
+never a gc read (D9): the header and footer render through this."
+  (let* ((scope (or scope (ignore-errors (transient-scope))))
+         (city (and scope (gascity-sling--city-dir scope))))
     (when scope
       (gascity-sling--derive-target
-       scope (gascity-sling--roster (gascity-sling--city-dir scope))
-       gascity-sling--target-memory))))
+       scope (gascity-sling--roster city)
+       gascity-sling--target-memory
+       (when-let* ((formula (plist-get scope :formula)))
+         (gascity-formula-recipe-remembered formula city))))))
 (defun gascity-sling--carried-args ()
   "Return the sling menu's current args minus unedited convention seeds.
 `transient-args' includes every infix that has a value, and a
@@ -1463,6 +1496,9 @@ records under FORMULA nil); a preview records nothing."
            ;; sees: a bead id picked here can still rig-default its
            ;; target (rule 1 keys off the work bead).
            (scope (plist-put (copy-sequence scope) :work arg))
+           ;; Warm the recipe cache before the derivation: the
+           ;; formula-run-target rule answers from cached data only.
+           (recipe (and formula (gascity-formula-recipe-cached formula)))
            (target (or (plist-get scope :target)
                        ;; The derived Who default (WI-3): a derivable
                        ;; target is used without prompting (REQ-005);
@@ -1482,7 +1518,7 @@ records under FORMULA nil); a preview records nothing."
           ;; stays plain-only (F-5).
           (let ((plist (gascity-sling--parse-transient-args args)))
             (gascity-sling-formula--dispatch
-             (gascity-formula-recipe-cached formula)
+             recipe
              target arg (gascity-sling-formula--current-values) preview
              (plist-get plist :nudge)
              (plist-get plist :title)))
@@ -2439,6 +2475,9 @@ list' — and joins them with WI-2's single builder
 `gascity-agents--roster'; the Who picker and the footer answer from
 this list, and `gascity-store-peek' schedules background refreshes
 when stale (§8.5): never blocking, never a synchronous gc (D9).  The
+list includes every `gc agent list' config the observed rows do not
+name (state `configured'), so a rig's `gc.run-operator' is offered
+even with no live session (ga-rghou).  The
 render path's derivation answers from its own config-only snapshot
 \(`gascity-sling--roster') — pool instances never name configs.  The
 work-bead read
@@ -2500,6 +2539,12 @@ the header (ga-4ia4)."
   (let* ((default-directory (gascity-sling--city-dir scope))
          (formula (plist-get scope :formula))
          (work (gascity-sling--work scope))
+         ;; Read the recipe before deriving: the formula-run-target rule
+         ;; (ga-rghou) answers from the cache only, and the first setup
+         ;; of a menu is what warms it.
+         (recipe (and formula
+                      (gascity-formula-recipe-cached
+                       (plist-get scope :formula))))
          ;; The var seeds name what `s' would actually launch: inject
          ;; the derived Who default as `:derived-target' when the user
          ;; has not set one, so `*_target'/`rig_name' seeds answer
@@ -2510,10 +2555,7 @@ the header (ga-4ia4)."
             (let ((derived (gascity-sling--derived-target scope)))
               (if-let* ((target (plist-get derived :target)))
                   (plist-put (copy-sequence scope) :derived-target target)
-                scope))))
-         (recipe (and formula
-                      (gascity-formula-recipe-cached
-                       (plist-get scope :formula)))))
+                scope)))))
     (append
      (list
       (vector (format "Sling — %s" (gascity-context-city-name))

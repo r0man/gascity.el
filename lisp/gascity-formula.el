@@ -196,6 +196,17 @@ applied server-side."
           (push (cons key recipe) gascity-formula-recipe-cache)
           recipe))))
 
+(defun gascity-formula-recipe-remembered (name &optional dir)
+  "Return NAME's memoized recipe for DIR's city, or nil when unread.
+The non-blocking counterpart of `gascity-formula-recipe-cached': it
+never reads gc (D9), for render-path callers such as the sling's Who
+derivation, which needs the picked formula's steps only after the
+menu setup has read them.  A cold entry answers nil, so the formula
+rule skips fail-soft instead of spawning gc from a redisplay.  DIR
+defaults to `default-directory'."
+  (cdr (assoc (cons (gascity-context-scope-key dir) name)
+              gascity-formula-recipe-cache)))
+
 (defun gascity-formula-invalidate ()
   "Forget this city's cached formula catalog and recipes.
 Clears the entries keyed by `gascity-context-scope-key' from both
@@ -499,6 +510,32 @@ over the cached recipe; a nil RECIPE (no formula picked) is no."
                    (gascity-sling--binding-qualified-target-p
                     (alist-get 'gc.run_target (alist-get 'metadata step))))
                  (gascity-formula-steps recipe))))
+
+(defun gascity-sling--formula-run-target (recipe)
+  "Return RECIPE's coordinating binding-qualified step run target, or nil.
+A v2 formula names a lane agent per step; the one target that
+coordinates the most steps is the formula's routing target — the live
+build-basic names `gc.run-operator' in 10 of its 24 run-target steps,
+every other lane in one or two.  A single distinct binding-qualified
+target also answers.  The rule derives only a STRICT plurality: when
+two targets share the top count it is ambiguous and answers nil, so gc
+stays the authority.  Placeholders (`{{implementation_target}}'), plain
+agent names and a nil RECIPE never qualify.  Pure."
+  (when recipe
+    (let ((counts nil)
+          (max 0)
+          (at-max nil))
+      (dolist (step (gascity-formula-steps recipe))
+        (let ((target (alist-get 'gc.run_target (alist-get 'metadata step))))
+          (when (gascity-sling--binding-qualified-target-p target)
+            (setf (alist-get target counts nil nil #'equal)
+                  (1+ (or (alist-get target counts nil nil #'equal) 0))))))
+      (dolist (cell counts)
+        (cond ((> (cdr cell) max)
+               (setq max (cdr cell) at-max (list (car cell))))
+              ((= (cdr cell) max)
+               (push (car cell) at-max))))
+      (pcase at-max (`(,only) only) (_ nil)))))
 
 (defun gascity-sling--v2-trap-p (recipe scope)
   "Return non-nil when RECIPE at SCOPE is the bl-bdj trap (REQ-010).

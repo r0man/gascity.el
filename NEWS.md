@@ -4,6 +4,25 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### Sling Who lists every configured agent and derives the formula's run target
+
+The sling's **T** picker now offers every agent `gc agent list` reports, not
+only the ones a status or session row observes: a rig's `gc.run-operator` and
+its other lane templates appear with state `configured` as soon as they are
+configured, so a bright-lights cockpit can target
+`hello-world/gc.run-operator` (ga-rghou).  Names stay qualified --- the bare
+`gc.run-operator` never appears, because gc resolves that form only from the
+rig directory.  The Agents table itself stays observed-only.
+
+The Who default gains a formula-derived rule between the per-(city, formula)
+memory and the implementation-worker convention: a picked formula whose steps
+name a binding-qualified `gc.run_target` derives `<bead-rig>/<run-target>` ---
+build-basic on an `hw-` bead derives `hello-world/gc.run-operator`.  The target
+coordinating the most steps wins; a tie between two targets is ambiguous and
+derives nothing, and freeform work, an unknown bead prefix, a cold rig memo or
+an unread recipe cache fall through fail-soft.  The derivation records its
+source as `formula-run-target`.
+
 ### Opening a view outside a city no longer silently reads another city
 
 Every city-scoped view (cockpit, runs, events, mail, agents, health, costs,

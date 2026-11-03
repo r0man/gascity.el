@@ -24,6 +24,10 @@
 ;; the `T' picker's candidates (`gascity-agents-roster-candidates'),
 ;; the scope classifier (`gascity-agents-scope') and the target lookup
 ;; (`gascity-agents-roster-scope') the pre-launch validators consume.
+;; Unlike the table, the roster also carries the configured agents of
+;; `gc agent list' that no status or session row observes — state
+;; `configured' (ga-rghou): a rig's `gc.run-operator' and its other
+;; lane templates are exactly the sling targets the picker must offer.
 ;;
 ;; Reads (one named loader each, through the store — shared with the
 ;; cockpit, capped per host, bounded by its deadline): `gc status', `gc
@@ -221,6 +225,25 @@ else is city-scoped.  Pure."
             (substring name 0 (string-search "/" name))
           "city"))))
 
+(defun gascity-agents--configured-row (agent)
+  "Return AGENT's sling roster row, or nil when it names no agent.
+AGENT is one `gc agent list' entry — a configured agent or pool
+template, whether or not any status or session row observes it.  The
+row names it by its qualified name and normalizes `:rig' from that
+name's slash prefix (the list's own `scope' is absent on some rows).
+Its state is `configured' — the config exists, no status or session
+row observes it — or `suspended' when the config is suspended; a live
+or status row for the same name always wins over it.  The action
+object and provider are filled as the observed rows' are."
+  (let ((name (alist-get 'qualified_name agent)))
+    (when (stringp name)
+      (let ((rig (gascity-dashboard--rig-of name)))
+        (list :name name
+              :rig rig
+              :state (if (alist-get 'suspended agent) 'suspended 'configured)
+              :provider (alist-get 'provider agent)
+              :object (gascity-dashboard--agent-object name nil nil nil rig))))))
+
 (defun gascity-agents--roster (data)
   "Return the agent plists of DATA, city agents first then per rig.
 DATA is the Agents view's reads plist (:status :sessions :agents
@@ -229,16 +252,34 @@ the rest still join).  The `T' picker's candidate order (mockup §6c):
 city agents first, then each rig's in `gc status''s rig order; within
 a group the dashboard's row order (stalled first) is kept, and
 agents of rigs the status payload does not name follow, grouped by
-scope in row order.  Pure."
+scope in row order.  Observed rows come first within a group; the
+`gc agent list' agents no status or session row observes follow them
+with state `configured' (ga-rghou): the Who picker must offer every
+config `gc sling' accepts, not only the ones with live state.  The
+Agents table itself stays observed-only.  Deduplicated by qualified
+name, live/status rows first.  Pure."
   (let* ((rows (gascity-agents--rows data (float-time)))
+         (observed (make-hash-table :test 'equal))
          (rigs (delete-dups
                 (seq-keep (lambda (rig) (alist-get 'name rig))
                           (append (alist-get 'rigs (plist-get data :status))
                                   nil))))
-         (scope (lambda (agent) (gascity-agents-scope agent)))
-         (city (seq-filter (lambda (a) (equal (funcall scope a) "city")) rows)))
+         (scope (lambda (agent) (gascity-agents-scope agent))))
+    ;; The configured agents no observed row names (ga-rghou): a rig's
+    ;; `gc.run-operator' and its other lane templates have no live
+    ;; session most of the time, yet they are exactly the Who
+    ;; roster's entries.  Append them before grouping so they land in
+    ;; their rig's (or the city's) group, after the observed rows.
+    (dolist (row rows)
+      (puthash (plist-get row :name) t observed))
+    (dolist (agent (append (alist-get 'agents (plist-get data :agents)) nil))
+      (let ((name (alist-get 'qualified_name agent)))
+        (when (and (stringp name) (not (gethash name observed)))
+          (when-let* ((row (gascity-agents--configured-row agent)))
+            (puthash name t observed)
+            (setq rows (append rows (list row)))))))
     (append
-     city
+     (seq-filter (lambda (a) (equal (funcall scope a) "city")) rows)
      (apply #'append
             (mapcar (lambda (rig)
                       (seq-filter (lambda (a) (equal (funcall scope a) rig)) rows))

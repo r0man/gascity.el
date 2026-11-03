@@ -122,22 +122,62 @@ everything else is city."
 
 (ert-deftest gascity-test-agents-roster-city-first-then-rigs ()
   "The roster orders city agents first, then each rig's in `gc status''s
-rig order; a failed read's key degrades to the rows the rest join."
+rig order; a failed read's slice is skipped and a cold data value gives
+no rows."
   (gascity-agents-test--with-fixture-now
     (let* ((roster (gascity-agents--roster (gascity-agents-test--data)))
            (scopes (mapcar #'gascity-agents-scope roster))
-           (names (mapcar (lambda (a) (plist-get a :name)) roster)))
+           (names (mapcar (lambda (a) (plist-get a :name)) roster))
+           (first-rig (seq-position scopes "beads.el")))
       ;; City first (mayor, the live session, leads), then beads.el and
       ;; gascity.el — the status payload's rig order.
-      (should (equal scopes '("city" "city" "city" "city"
-                              "beads.el" "gascity.el")))
       (should (equal (car names) "mayor"))
+      (should first-rig)
+      (should (seq-every-p (lambda (s) (equal s "city"))
+                           (seq-take scopes first-rig)))
       (should (member "bd.dog-1" names))
       (should (member "beads.el/core.control-dispatcher" names))
-      (should (equal (nth 4 names) "beads.el/core.control-dispatcher"))
-      (should (equal (nth 5 names) "gascity.el/core.control-dispatcher"))
+      (should (member "gascity.el/core.control-dispatcher" names))
+      ;; The configured-only lane templates are there too, after the
+      ;; observed rows of their rig (ga-rghou).
+      (should (member "beads.el/gc.run-operator" names))
+      (should (< (seq-position names "beads.el/core.control-dispatcher")
+                 (seq-position names "beads.el/gc.run-operator")))
       ;; A cold reads plist degrades to no rows, never an error.
       (should-not (gascity-agents--roster nil)))))
+
+(ert-deftest gascity-test-agents-roster-includes-configured-only ()
+  "The Who roster includes `gc agent list' configs no status or session
+row observes, with the qualified name only and state `configured'; an
+observed row for the same name wins, never a duplicate (ga-rghou: the
+bright-lights `T' picker missed hello-world/gc.run-operator)."
+  (gascity-agents-test--with-fixture-now
+    (let* ((roster (gascity-agents--roster (gascity-agents-test--data)))
+           (names (mapcar (lambda (a) (plist-get a :name)) roster))
+           (run-op (seq-find (lambda (a)
+                               (equal (plist-get a :name)
+                                      "beads.el/gc.run-operator"))
+                             roster))
+           (live (seq-find (lambda (a)
+                             (equal (plist-get a :name)
+                                    "gascity.el/core.control-dispatcher"))
+                           roster)))
+      (should run-op)
+      (should (eq (plist-get run-op :state) 'configured))
+      (should (equal (plist-get run-op :rig) "beads.el"))
+      (should (equal (cdr (assoc "beads.el/gc.run-operator"
+                                 (gascity-agents-roster-candidates roster)))
+                     "beads.el · configured"))
+      ;; Qualified names only: the bare binding-qualified form never
+      ;; surfaces (gc resolves it only from inside the rig).
+      (should-not (member "gc.run-operator" names))
+      ;; The live/status row keeps its state; the configured copy never
+      ;; adds a second row.
+      (should (eq (plist-get live :state) 'running))
+      (should (= 1 (seq-count (lambda (n)
+                                (equal n "gascity.el/core.control-dispatcher"))
+                              names)))
+      (should (= 1 (seq-count (lambda (n) (equal n "mayor")) names))))))
 
 (ert-deftest gascity-test-agents-roster-candidates-annotate ()
   "Candidates are (name . \"<rig|city> · state\") — the mockup §6c

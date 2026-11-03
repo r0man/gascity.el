@@ -2541,16 +2541,23 @@ again in the preview buffer.
 
 @kbd{T} answers Who.  Completion runs over @emph{agents}, not
 sessions --- city agents first, then one group per rig, each
-candidate annotated with its scope and live state:
+candidate annotated with its scope and state.  The list is every
+agent @command{gc agent list} reports, including a configured agent
+or pool template with no live session (shown as @samp{configured}):
 
 @example
-Target agent: hello-world/gc.implementation-worker
+Target agent: hello-world/gc.run-operator
   mayor                                    city · active
-  pi                                       city · provider pi
-  hello-world/gc.implementation-worker     hello-world · derived default
-  hello-world/gc.run-operator              hello-world · stopped
-  hello-world/gc.requirements-planner      hello-world · idle
+  bd.dog                                   city · configured
+  hello-world/core.control-dispatcher      hello-world · active
+  hello-world/gc.implementation-worker     hello-world · configured
+  hello-world/gc.run-operator              hello-world · configured
 @end example
+
+Names are always the @emph{qualified} form gc accepts from any
+directory (@samp{hello-world/gc.run-operator}); a bare
+@samp{gc.run-operator} is never offered, because gc resolves that
+form only from inside the rig directory.
 
 Free entry still works: a typed name is used verbatim, so a cold
 roster never dead-ends the menu.
@@ -2567,15 +2574,26 @@ resolve the rig.
 Per-(city, formula) target memory: the target you last launched this
 formula with on this city, recorded at launch.
 @item
+The picked formula's coordinating run target, qualified with the
+work bead's rig.  A formula whose steps name a binding-qualified
+@code{gc.run_target} derives @samp{@var{bead-rig}/@var{target}} ---
+build-basic on a @samp{hw-} bead derives
+@samp{hello-world/gc.run-operator}.  The target that coordinates the
+most steps is the formula's routing target; a tie between two targets
+is ambiguous and derives nothing.
+@item
 The implementation-worker convention: when the roster confirms
 exactly one rig-scoped @code{gc.implementation-worker}, it is the
 target for build formulas.
 @end enumerate
 
-A derived target shows with a @samp{derived} tag in the header and
-is the @kbd{T} picker's initial input --- @key{RET} keeps it --- and
-@kbd{s} uses it without prompting.  When nothing is derivable the
-header says so, and @kbd{s} prompts for a target instead of guessing.
+A derived target fills the header sentence and is the @kbd{T}
+picker's initial input --- @key{RET} keeps it --- and @kbd{s} uses it
+without prompting.  Each rule records its source (@samp{rig-default},
+@samp{memory}, @samp{formula-run-target} or
+@samp{implementation-worker}) with the answer.  When nothing is
+derivable the header says so, and @kbd{s} prompts for a target instead
+of guessing.
 
 @node Typed variables
 @section Typed variables
