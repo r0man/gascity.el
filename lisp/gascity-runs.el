@@ -228,6 +228,135 @@ The first failed bead's `gc.failure_reason', else its close reason."
              (let ((reason (alist-get 'close_reason bead)))
                (and (stringp reason) (not (string-empty-p reason)) reason))))))
 
+(defun gascity-runs--failure-info (beads)
+  "Return (CLASS . REASON) from the first of BEADS that names one.
+CLASS is `gc.failure_class', REASON `gc.failure_reason' else the close
+reason.  Either may be nil; nil when no bead names either."
+  (let ((class nil)
+        (reason nil))
+    (dolist (b beads)
+      (setq class (or class (gascity-runs--meta b 'gc.failure_class)))
+      (setq reason
+            (or reason
+                (gascity-runs--meta b 'gc.failure_reason)
+                (let ((r (alist-get 'close_reason b)))
+                  (and (stringp r) (not (string-empty-p r)) r)))))
+    (and (or class reason) (cons class reason))))
+
+(defun gascity-runs--failed-beads-of-run (index root)
+  "Return the failed beads of run ROOT in INDEX.
+A member run's failure class usually lives on its failed step, not its
+root, so the graph comes first; ROOT itself is appended when it failed."
+  (append
+   (seq-filter (lambda (b) (equal (gascity-runs--meta b 'gc.outcome) "fail"))
+               (gascity-runs-graph index (alist-get 'id root)))
+   (and (equal (gascity-runs--meta root 'gc.outcome) "fail") (list root))))
+
+(defun gascity-runs--step-failure (step graph index formula)
+  "Return the failure plist of ladder STEP in GRAPH/INDEX, or nil.
+FORMULA names the run's formula, used to read step paths.  A failed
+member run of the step's drain (`gc.drain_control_id'), or a failed
+bead beneath the step's path, marks it.  The class and reason come
+from the first failed bead that names them."
+  (let* ((id (plist-get step :id))
+         (name (plist-get step :name))
+         (bead (seq-find (lambda (b) (equal (alist-get 'id b) id)) graph))
+         (members (gethash id (plist-get index :drains)))
+         (member (seq-find (lambda (m) (eq (gascity-runs-state m) 'failed))
+                           members))
+         (member-beads (and member
+                            (gascity-runs--failed-beads-of-run index member)))
+         (path-beads
+          ;; A done or running step with a failed bead beneath it was
+          ;; retried: only a failed or pending step is judged on its
+          ;; nested beads (a drain member is judged separately).
+          (when (memq (plist-get step :state) '(failed pending))
+            (seq-filter
+             (lambda (b)
+               (let ((path (gascity-dashboard--step-path b formula)))
+                 (and path
+                      (equal (gascity-runs--meta b 'gc.outcome) "fail")
+                      (or (equal path name)
+                          (string-prefix-p (concat name ".") path)))))
+             graph))))
+    (when (or member-beads path-beads (eq (plist-get step :state) 'failed))
+      (let* ((candidates (append member-beads path-beads
+                                 (and bead (list bead))))
+             (info (gascity-runs--failure-info candidates))
+             (ref (or (and bead (gascity-runs--meta bead 'gc.step_ref))
+                      (and candidates
+                           (gascity-runs--meta (car candidates) 'gc.step_ref))
+                      name))
+             (member-ref (and candidates
+                              (gascity-runs--meta (car candidates) 'gc.step_ref))))
+        (list :name name
+              :id id
+              :ref ref
+              :member-ref (and member-ref (not (equal member-ref ref)) member-ref)
+              :class (car info)
+              :reason (cdr info)
+              :member (and member (alist-get 'id member)))))))
+
+(defun gascity-runs--nested-failure (ladder graph formula)
+  "Return the failure plist of a failed bead beneath a pending step.
+LADDER is the run's step ladder, GRAPH its beads, FORMULA its formula
+name.  A step that is done or running is left alone: a retried loop in
+a live run is not a failure (ga-g092a)."
+  (seq-some
+   (lambda (b)
+     (let* ((path (gascity-dashboard--step-path b formula))
+            (top (and path (car (split-string path "\\."))))
+            (step (and top
+                       (seq-find (lambda (s) (equal (plist-get s :name) top))
+                                 ladder))))
+       (when (and step (not (memq (plist-get step :state) '(done active))))
+         (let* ((step-bead (seq-find (lambda (x)
+                                       (equal (alist-get 'id x)
+                                              (plist-get step :id)))
+                                     graph))
+                (info (gascity-runs--failure-info (list b))))
+           (list :name (plist-get step :name)
+                 :id (plist-get step :id)
+                 :ref (or (and step-bead
+                               (gascity-runs--meta step-bead 'gc.step_ref))
+                          (and formula (concat formula "." (plist-get step :name)))
+                          path)
+                 :member-ref (or (gascity-runs--meta b 'gc.step_ref) path)
+                 :class (car info)
+                 :reason (cdr info))))))
+   (seq-filter (lambda (b) (equal (gascity-runs--meta b 'gc.outcome) "fail"))
+               graph)))
+
+(defun gascity-runs-failed-step (index root)
+  "Return the failed step of run ROOT in INDEX, or nil.
+A plist (:name :id :ref :member-ref :class :reason :member).  The ladder is
+authoritative: its first `failed' step.  An open drain step stays
+`active' while any member runs, so a failed member run
+\(`gc.drain_control_id') marks its drain step failed too.  In a run
+still in progress a failed bead beneath a step that is neither done nor
+running marks that step failed; a retried loop does not."
+  (let* ((graph (gascity-runs-graph index (alist-get 'id root)))
+         (ladder (gascity-runs-ladder index root))
+         (formula (gascity-runs--meta root 'gc.formula_name))
+         (found nil))
+    (dolist (step ladder)
+      (unless found
+        (setq found (gascity-runs--step-failure step graph index formula))))
+    (or found
+        (and (eq (gascity-runs-state root) 'active)
+             (gascity-runs--nested-failure ladder graph formula)))))
+
+(defun gascity-runs--failed-step-badge (step)
+  "Return the badge text of failed STEP: `✕ REF  CLASS' (or reason)."
+  (let ((ref (or (plist-get step :ref) (plist-get step :name) "?"))
+        (detail (or (plist-get step :class) (plist-get step :reason))))
+    (concat (gascity-ui-glyph 'failed) " "
+            (gascity-ui-truncate ref 28)
+            (if detail
+                (concat "  " (gascity-dashboard--dim
+                              (gascity-ui-truncate detail 40)))
+              ""))))
+
 (defun gascity-runs--worker-bead (graph)
   "Return the in-progress bead of GRAPH that names its live worker, or nil."
   (car (gascity-dashboard--one-per-worker
@@ -239,7 +368,9 @@ The first failed bead's `gc.failure_reason', else its close reason."
 (defun gascity-runs-summary (index root)
   "Return the summary plist of run ROOT from INDEX.
 Keys: :id :root :rig :formula :state :ladder :label :progress :time
-:outcome :failure :worker-bead :parent (the run it drains for, or nil)."
+:outcome :failure :failed-step :worker-bead :parent (the run it drains
+for, or nil).  :failed-step is set for an active run whose ladder has a
+failed step (ga-g092a); a failed run's reason is :failure."
   (let* ((id (alist-get 'id root))
          (graph (gascity-runs-graph index id))
          (ladder (gascity-runs-ladder index root))
@@ -254,6 +385,8 @@ Keys: :id :root :rig :formula :state :ladder :label :progress :time
           :time (gascity-runs--time root)
           :outcome (gascity-runs--meta root 'gc.outcome)
           :failure (and (eq state 'failed) (gascity-runs--failure graph))
+          :failed-step (and (eq state 'active)
+                            (gascity-runs-failed-step index root))
           :worker-bead (and (eq state 'active) (gascity-runs--worker-bead graph))
           :parent (gascity-runs-parent-id index root))))
 
@@ -400,8 +533,10 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                           (gascity-ui-fit (or (plist-get run :rig) "city") 10))
                          " " (gascity-runs--time-cell (plist-get run :time) now))))
          (tail (pcase state
-                 ('active (if worker (car worker)
-                            (gascity-dashboard--dim "no live worker")))
+                 ('active (if-let* ((failed (plist-get run :failed-step)))
+                             (gascity-runs--failed-step-badge failed)
+                           (if worker (car worker)
+                             (gascity-dashboard--dim "no live worker"))))
                  ('waiting (gascity-dashboard--dim "waiting"))
                  ('failed (gascity-dashboard--dim
                            (or (plist-get run :failure) "outcome: fail")))

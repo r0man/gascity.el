@@ -160,8 +160,10 @@ looks like a real but absurd time."
   (list :state 'ready :data data))
 
 (cl-defun gascity-cockpit-test--ctx (&key status sessions mail events beads
-                                          convoys escalations filters view)
-  "Return a cockpit render context from canned payloads."
+                                          convoys escalations filters view
+                                          run-beads)
+  "Return a cockpit render context from canned payloads.
+RUN-BEADS is the Runs view's composite read (run roots and graph beads)."
   (let ((ctx (gascity-dashboard--context
               (list :status (gascity-cockpit-test--load status)
                     :sessions (gascity-cockpit-test--load
@@ -172,7 +174,8 @@ looks like a real but absurd time."
                     :convoys (gascity-cockpit-test--load
                               `((convoys . ,(vconcat convoys))))
                     :escalations (gascity-cockpit-test--load (vconcat escalations))
-                    :runs (gascity-cockpit-test--load nil))
+                    :runs (gascity-cockpit-test--load
+                           (and run-beads (list :beads run-beads))))
               filters (float-time))))
     (plist-put ctx :view view)))
 
@@ -305,6 +308,54 @@ steps alone it would read idle while its members work."
                  (gascity-cockpit-test--ctx :events (list event event)))))
     (should (equal (gascity-cockpit-test--kinds items) '((fail "run"))))
     (should (string-match-p "be-j2b build-basic  failed" (plist-get (car items) :text)))))
+
+(ert-deftest gascity-test-cockpit-needs-you-active-run-failed-step ()
+  "■ run: an active run whose ladder has a failed step is a Needs-you
+fail item naming the run, the failed step ref and gc.failure_class
+(ga-g092a).  The Runs read carries the closed failed step the work read
+does not."
+  (require 'gascity-runs)
+  (let* ((root `((id . "bs-8jif") (status . "in_progress")
+                 (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+                 (gascity-rig . "burningswell-cl")))
+         (drain `((id . "bs-q2el") (status . "closed")
+                  (metadata . ((gc.kind . "drain") (gc.root_bead_id . "bs-8jif")
+                               (gc.step_ref . "build-basic.implement")
+                               (gc.outcome . "fail")))
+                  (gascity-rig . "burningswell-cl")))
+         (member `((id . "bs-0c3f") (status . "closed")
+                   (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")
+                                (gc.drain_control_id . "bs-q2el")
+                                (gc.outcome . "fail")))
+                   (gascity-rig . "burningswell-cl")))
+         (failed `((id . "bs-fail") (status . "closed")
+                   (metadata . ((gc.root_bead_id . "bs-0c3f")
+                                (gc.step_ref . "do-work.prepare-worktree")
+                                (gc.outcome . "fail")
+                                (gc.failure_class . "environment_missing_origin")
+                                (gc.failure_reason . "rig checkout has no git remote")))
+                   (gascity-rig . "burningswell-cl")))
+         (items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx
+                  :beads (list root drain)
+                  :run-beads (list root drain member failed))))
+         (item (seq-find (lambda (i) (equal (plist-get i :id)
+                                            "failed-step:bs-8jif"))
+                         items)))
+    (should item)
+    (should (eq (plist-get item :level) 'fail))
+    (should (equal (plist-get item :kind) "run"))
+    (should (string-match-p "bs-8jif" (plist-get item :text)))
+    (should (string-match-p "build-basic.implement" (plist-get item :text)))
+    (should (equal (plist-get item :right) "environment_missing_origin"))
+    (should (equal (plist-get (plist-get item :props) 'gascity-bead) "bs-8jif"))
+    (should (equal (plist-get (plist-get item :props) 'gascity-run-rig)
+                   "burningswell-cl"))
+    ;; The drawer names the class and the reason the row has no room for.
+    (let ((drawer (gascity-dashboard--needs-you-drawer item)))
+      (should (seq-some (lambda (l) (string-match-p "environment_missing_origin" l))
+                        drawer))
+      (should (seq-some (lambda (l) (string-match-p "no git remote" l)) drawer)))))
 
 (ert-deftest gascity-test-cockpit-needs-you-dead-assignee ()
   "▲ bead: bead.dead_assignee_reopened, one row per bead."

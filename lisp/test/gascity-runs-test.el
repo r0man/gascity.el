@@ -219,6 +219,145 @@ its member runs (roots naming it in `gc.drain_control_id') work."
                     (gascity-dashboard--ladder-string (plist-get run :ladder)))
                    "◆··"))))
 
+(defun gascity-runs-test--failing-drain-beads (&optional drain-outcome)
+  "Return a live run whose implement drain step has a failed member run.
+DRAIN-OUTCOME \"fail\" closes the drain step failed; nil leaves it open
+while its members run.  The failed member run `bs-0c3f' carries the
+failure class and reason on its failed prepare-worktree step."
+  (let* ((root `((id . "bs-8jif") (status . "in_progress") (issue_type . "task")
+                 (created_at . ,(gascity-runs-test--ts 7200))
+                 (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+                 (gascity-rig . "burningswell-cl")))
+         (step (lambda (id ref status &optional kind outcome deps)
+                 `((id . ,id) (status . ,status) (issue_type . "task")
+                   (metadata . ((gc.root_bead_id . "bs-8jif")
+                                (gc.step_ref . ,ref)
+                                ,@(and kind `((gc.kind . ,kind)))
+                                ,@(and outcome `((gc.outcome . ,outcome)))))
+                   (dependencies . ,(vconcat
+                                     (mapcar (lambda (d)
+                                               `((type . "blocks")
+                                                 (depends_on_id . ,d)))
+                                             deps)))
+                   (gascity-rig . "burningswell-cl"))))
+         (member (lambda (id status outcome)
+                   `((id . ,id) (status . ,status) (issue_type . "task")
+                     (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")
+                                  (gc.drain_control_id . "bs-q2el")
+                                  ,@(and outcome `((gc.outcome . ,outcome)))))
+                     (gascity-rig . "burningswell-cl")))))
+    (list root
+          (funcall step "bs-4yih" "build-basic.decompose" "closed" nil "pass")
+          (funcall step "bs-q2el" "build-basic.implement"
+                   (if drain-outcome "closed" "open") "drain" drain-outcome
+                   '("bs-4yih"))
+          (funcall step "bs-k89n" "build-basic.summarize" "open" nil nil
+                   '("bs-q2el"))
+          (funcall member "bs-0c3f" "closed" "fail")
+          `((id . "bs-fail") (status . "closed") (issue_type . "task")
+            (metadata . ((gc.root_bead_id . "bs-0c3f")
+                         (gc.step_ref . "do-work.prepare-worktree")
+                         (gc.outcome . "fail")
+                         (gc.failure_class . "environment_missing_origin")
+                         (gc.failure_reason . "rig checkout has no git remote")))
+            (gascity-rig . "burningswell-cl"))
+          (funcall member "bs-b1o1" "in_progress" nil))))
+
+(ert-deftest gascity-test-runs-active-run-failed-drain-step ()
+  "A root still in progress whose drain step failed is a failed step:
+the summary names it, with the member run's failure class, while the
+run state stays `active' (ga-g092a)."
+  (let* ((runs (gascity-runs-test--summaries
+                (gascity-runs-test--failing-drain-beads "fail")))
+         (run (gascity-runs-test--by-id runs "bs-8jif"))
+         (step (plist-get run :failed-step)))
+    (should (eq (plist-get run :state) 'active))
+    (should (equal (plist-get run :label) "implement"))
+    (should step)
+    (should (equal (plist-get step :name) "implement"))
+    (should (equal (plist-get step :ref) "build-basic.implement"))
+    (should (equal (plist-get step :member-ref) "do-work.prepare-worktree"))
+    (should (equal (plist-get step :class) "environment_missing_origin"))
+    (should (equal (plist-get step :reason) "rig checkout has no git remote"))
+    (should (equal (plist-get step :member) "bs-0c3f"))))
+
+(ert-deftest gascity-test-runs-active-run-failed-member-under-open-drain ()
+  "An open drain step reads `active' while a member still runs, yet a
+failed member run makes it the run's failed step: the summary keeps the
+run active and carries the failure (ga-g092a)."
+  (let* ((runs (gascity-runs-test--summaries
+                (gascity-runs-test--failing-drain-beads nil)))
+         (run (gascity-runs-test--by-id runs "bs-8jif"))
+         (step (plist-get run :failed-step)))
+    (should (eq (plist-get run :state) 'active))
+    ;; The ladder step itself is active (a member is still in progress).
+    (should (equal (substring-no-properties
+                    (gascity-dashboard--ladder-string (plist-get run :ladder)))
+                   "◆⬣·"))
+    (should (equal (plist-get step :name) "implement"))
+    (should (equal (plist-get step :class) "environment_missing_origin"))))
+
+(ert-deftest gascity-test-runs-active-run-failed-nested-step ()
+  "A failed bead beneath a pending top-level step marks that step failed
+while the root is still in progress."
+  (let* ((root `((id . "bs-nest") (status . "in_progress") (issue_type . "task")
+                 (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+                 (gascity-rig . "burningswell-cl")))
+         (step `((id . "bs-rev") (status . "open") (issue_type . "task")
+                 (metadata . ((gc.root_bead_id . "bs-nest")
+                              (gc.step_ref . "build-basic.review")))
+                 (gascity-rig . "burningswell-cl")))
+         (nested `((id . "bs-rev.1") (status . "closed") (issue_type . "task")
+                   (metadata . ((gc.root_bead_id . "bs-nest")
+                                (gc.step_ref . "build-basic.review.iteration.1")
+                                (gc.outcome . "fail")
+                                (gc.failure_class . "review_rejected")))
+                   (gascity-rig . "burningswell-cl")))
+         (runs (gascity-runs-test--summaries (list root step nested)))
+         (run (gascity-runs-test--by-id runs "bs-nest"))
+         (failed (plist-get run :failed-step)))
+    (should (eq (plist-get run :state) 'active))
+    (should (equal (plist-get failed :name) "review"))
+    (should (equal (plist-get failed :ref) "build-basic.review"))
+    (should (equal (plist-get failed :member-ref)
+                   "build-basic.review.iteration.1"))
+    (should (equal (plist-get failed :class) "review_rejected"))))
+
+(ert-deftest gascity-test-runs-active-run-retried-loop-not-failed ()
+  "A done step with a failed earlier iteration in a live run is not a
+failed step: the retry succeeded, so the run stays unflagged."
+  (let* ((root `((id . "bs-retry") (status . "in_progress") (issue_type . "task")
+                 (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+                 (gascity-rig . "burningswell-cl")))
+         (step `((id . "bs-rev") (status . "closed") (issue_type . "task")
+                 (metadata . ((gc.root_bead_id . "bs-retry")
+                              (gc.step_ref . "build-basic.review")
+                              (gc.outcome . "pass")))
+                 (gascity-rig . "burningswell-cl")))
+         (failed-iter `((id . "bs-rev.1") (status . "closed") (issue_type . "task")
+                        (metadata . ((gc.root_bead_id . "bs-retry")
+                                     (gc.step_ref . "build-basic.review.iteration.1")
+                                     (gc.outcome . "fail")
+                                     (gc.failure_class . "review_rejected")))
+                        (gascity-rig . "burningswell-cl")))
+         (run (gascity-runs-test--by-id
+               (gascity-runs-test--summaries (list root step failed-iter))
+               "bs-retry")))
+    (should (eq (plist-get run :state) 'active))
+    (should (equal (plist-get run :progress) "1/1"))
+    (should-not (plist-get run :failed-step))))
+
+(ert-deftest gascity-test-runs-active-run-failed-step-card ()
+  "The Runs card of an active run with a failed step carries the failure
+summary, not just the ladder glyph (ga-g092a)."
+  (let* ((beads (gascity-runs-test--failing-drain-beads "fail"))
+         (ctx (gascity-runs-test--ctx beads))
+         (text (gascity-runs-test--text (gascity-runs-lines ctx))))
+    (should (string-match-p "^Active  1 · 1 sub-run$" text))
+    (should (string-match-p
+             "◆✕·  implement +1/3 +✕ build-basic.implement +environment_missing_origin"
+             text))))
+
 (ert-deftest gascity-test-runs-active-run-worker ()
   "An active run's label is its active step; its worker is the live session."
   (let* ((runs (gascity-runs-test--summaries (gascity-runs-test--active-beads)))

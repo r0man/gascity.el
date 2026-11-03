@@ -89,6 +89,7 @@
 (declare-function gascity-runs-ladder "gascity-runs")
 (declare-function gascity-runs-last-activity "gascity-runs")
 (declare-function gascity-runs-parent-id "gascity-runs")
+(declare-function gascity-runs-failed-step "gascity-runs")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -835,6 +836,29 @@ escalated/held beads, unread mail, store health."
                  :right (or (alist-get 'gascity-rig root) "city")
                  :props (list 'gascity-bead id
                               'gascity-run-rig (or (alist-get 'gascity-rig root) ""))))))
+      ;; ■ active runs with a failed step: the root is still in
+      ;; progress (a drain step failed, or a nested step failed) yet
+      ;; the run reads `active' everywhere else (ga-g092a).  The Runs
+      ;; read carries the closed failed step the work read drops.
+      (when run-index
+        (let ((seen (make-hash-table :test 'equal)))
+          (dolist (root (gascity-dashboard--active-runs run-beads))
+            (let* ((id (alist-get 'id root))
+                   (step (gascity-runs-failed-step run-index root)))
+              (when (and step (not (gethash id seen)))
+                (puthash id t seen)
+                (add :level 'fail :kind "run"
+                     :id (concat "failed-step:" id)
+                     :text (format "%s %s %s" id (gascity-ui-glyph 'failed)
+                                   (or (plist-get step :ref)
+                                       (plist-get step :name) "?"))
+                     :right (or (plist-get step :class)
+                                (alist-get 'gascity-rig root) "city")
+                     :props (list 'gascity-bead id
+                                  'gascity-run-rig
+                                  (or (alist-get 'gascity-rig root) ""))
+                     :drawer (lambda ()
+                               (gascity-dashboard--failed-step-drawer root step))))))))
       ;; ■ runs that failed in the window (root closed, gc.outcome fail).
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
@@ -1321,6 +1345,28 @@ properties.  The row is a thing whose SPC toggles the drawer."
      (gascity-dashboard--cap-groups groups "needs-you" #'gascity-jump-events t)
      ctx :loads '(:status :sessions :events :work :runs :mail :escalations)
      :label "status")))
+
+(defun gascity-dashboard--failed-step-drawer (root step)
+  "Return the drawer lines of a failed STEP in run ROOT.
+The Needs-you row names the run and the step ref; the drawer adds the
+failure class, reason and member run (ga-g092a)."
+  (delq nil
+        (list (format "run      %s  %s"
+                      (alist-get 'id root)
+                      (or (alist-get 'gc.formula_name
+                                     (gascity-dashboard--meta root))
+                          (alist-get 'title root) ""))
+              (format "step     %s  %s" (or (plist-get step :name) "")
+                      (or (plist-get step :ref) ""))
+              (and (plist-get step :class)
+                   (format "class    %s" (plist-get step :class)))
+              (and (plist-get step :reason)
+                   (format "reason   %s" (plist-get step :reason)))
+              (and (plist-get step :member)
+                   (format "member   %s%s" (plist-get step :member)
+                           (if (plist-get step :member-ref)
+                               (concat "  " (plist-get step :member-ref))
+                             ""))))))
 
 (defun gascity-dashboard--needs-you-drawer (item)
   "Return the drawer lines of a Needs you ITEM."
