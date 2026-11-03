@@ -319,6 +319,151 @@ steps alone it would read idle while its members work."
     (should (= (length items) (length ids)))
     (should (seq-every-p (lambda (i) (eq (plist-get i :level) 'watch)) items))))
 
+(ert-deftest gascity-test-cockpit-needs-you-stale-work-assignee ()
+  "■ work: an in-progress bead whose assignee session is gone.
+The row names the bead, assignee, age since claim and lease; its right
+column names the run and its drawer the step title (ga-o7vtw)."
+  (let* ((bead `((id . "hwg-6ga") (status . "in_progress")
+                 (title . "Prepare gstack release readiness")
+                 (assignee . "gl-wisp-t5uh")
+                 (started_at . ,(gascity-cockpit-test--ts 2640))
+                 (lease_expires_at . ,(gascity-cockpit-test--ts -180))
+                 (metadata . ((gc.root_bead_id . "hwg-onb")))
+                 (gascity-rig . "hello-world-gstack")))
+         (items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :beads (list bead)))))
+    (should (equal (gascity-cockpit-test--kinds items) '((fail "work"))))
+    (let ((item (car items)))
+      (should (string-match-p "^hwg-6ga  gl-wisp-t5uh gone  age 44m  lease in 2m"
+                              (plist-get item :text)))
+      (should (equal (plist-get item :right) "hwg-onb"))
+      (should (equal (plist-get (plist-get item :props) 'gascity-bead) "hwg-6ga"))
+      (should (string-match-p "^Prepare gstack release readiness$"
+                              (car (funcall (plist-get item :drawer))))))))
+
+(ert-deftest gascity-test-cockpit-needs-you-stale-work-lease ()
+  "■ work: a lapsed lease flags a holder that cannot show activity after
+its deadline (here a live session last active before the lease lapsed);
+ a live holder with a live lease is not flagged."
+  (let* ((sessions (list `((id . "ec-live1") (agent_name . "gascity.el/w")
+                           (state . "active")
+                           (last_active . ,(gascity-cockpit-test--ts 900))
+                           (session_name . "gc__w-ec-live1"))))
+         (bead `((id . "ga-lease") (status . "in_progress") (title . "step")
+                 (assignee . "ec-live1")
+                 (started_at . ,(gascity-cockpit-test--ts 600))
+                 (lease_expires_at . ,(gascity-cockpit-test--ts 300))))
+         (items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :beads (list bead) :sessions sessions))))
+    (should (equal (gascity-cockpit-test--kinds items) '((fail "work"))))
+    (should (string-match-p "^ga-lease  ec-live1  age 10m  lease lapsed 5m$"
+                            (plist-get (car items) :text)))
+    ;; The same bead with a live lease and a live holder needs nothing.
+    (setf (alist-get 'lease_expires_at bead)
+          (gascity-cockpit-test--ts -600))
+    (should-not (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :beads (list bead) :sessions sessions)))))
+
+(ert-deftest gascity-test-cockpit-needs-you-stale-work-live-holder-not-flagged ()
+  "A live session active after the bead's lease deadline is not stale.
+`gc bd heartbeat' is what renews a claim lease and pi workers do not
+call it, so an actively working claim's lease lapses while it works;
+flagging that would put every running worker in Needs you (seen live in
+the emacs-city acceptance pass, ga-o7vtw)."
+  (let* ((sessions (list `((id . "ec-busy")
+                           (agent_name . "gascity.el/gc.implementation-worker")
+                           (state . "active")
+                           (last_active . ,(gascity-cockpit-test--ts 5))
+                           (session_name . "gc__implementation-worker-ec-busy"))))
+         (bead `((id . "ga-busy") (status . "in_progress")
+                 (assignee . "ec-busy")
+                 (started_at . ,(gascity-cockpit-test--ts 600))
+                 (lease_expires_at . ,(gascity-cockpit-test--ts 300))))
+         (items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :beads (list bead) :sessions sessions))))
+    (should-not items)
+    ;; The Work row still shows the holder and its age (and the lease is
+    ;; visible in the bead drawer).
+    (let ((text (gascity-cockpit-test--text
+                 (gascity-dashboard--work-lines
+                  (gascity-cockpit-test--ctx :beads (list bead) :sessions sessions)))))
+      (should (string-match-p "ga-busy +ec-busy +10m" text)))))
+
+(ert-deftest gascity-test-cockpit-needs-you-stale-work-joins-session-id ()
+  "A bead claimed with a supervisor session id (`ec-wisp-…', not the
+`<role>-<handle>' form) joins the live session on its id: a running
+worker is no dead assignee."
+  (let* ((sessions (list `((id . "ec-wisp-qcz1lk")
+                           (agent_name . "gascity.el/gc.implementation-worker-2")
+                           (state . "active")
+                           (session_name . "gc__implementation-worker-ec-wisp-qcz1lk"))))
+         (bead `((id . "ga-o7vtw") (status . "in_progress")
+                 (assignee . "ec-wisp-qcz1lk")
+                 (started_at . ,(gascity-cockpit-test--ts 60))
+                 (lease_expires_at . ,(gascity-cockpit-test--ts -240))))
+         (items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :beads (list bead) :sessions sessions))))
+    (should-not items)))
+
+(ert-deftest gascity-test-cockpit-needs-you-stale-work-skips-noise ()
+  "Wisps and session beads in progress are never stale work."
+  (let* ((beads (list `((id . "ec-wisp-abcd") (status . "in_progress")
+                        (assignee . "gl-wisp-gone")
+                        (started_at . ,(gascity-cockpit-test--ts 600)))
+                      `((id . "ec-aaaa") (status . "in_progress")
+                        (issue_type . "session")
+                        (assignee . "gl-wisp-gone")
+                        (started_at . ,(gascity-cockpit-test--ts 600)))))
+         (items (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :beads beads))))
+    (should-not items)))
+
+(ert-deftest gascity-test-cockpit-needs-you-stale-work-render-is-pure ()
+  "Stale-work detection and the Work rows reuse the render payloads.
+No gc read, sync or async, runs while they compute (ga-o7vtw)."
+  (let* ((bead `((id . "ga-stale") (status . "in_progress")
+                 (assignee . "gl-wisp-gone")
+                 (started_at . ,(gascity-cockpit-test--ts 600))))
+         (ctx (gascity-cockpit-test--ctx :beads (list bead)))
+         (boom (lambda (&rest args) (error "gc read at render: %S" args))))
+    (let ((gascity-dashboard--view nil))
+      (cl-letf (((symbol-function 'gascity-reader-read) boom)
+                ((symbol-function 'gascity-reader-read-async) boom)
+                ((symbol-function 'gascity-reader-run) boom)
+                ((symbol-function 'gascity-store-fetch) boom)
+                ((symbol-function 'process-file) boom)
+                ((symbol-function 'call-process) boom))
+        (should (= 1 (length (gascity-dashboard--needs-you ctx))))
+        (should (string-match-p "ga-stale"
+                                (gascity-cockpit-test--text
+                                 (gascity-dashboard--work-lines ctx))))))))
+
+(ert-deftest gascity-test-cockpit-work-lists-in-progress ()
+  "Work lists the oldest in-progress rows, with assignee and age, ahead
+of the ready beads (ga-o7vtw)."
+  (let* ((old `((id . "hwg-old") (status . "in_progress") (priority . 2)
+                (title . "Old step") (assignee . "gl-wisp-old")
+                (started_at . ,(gascity-cockpit-test--ts 7200))
+                (gascity-rig . "hello-world-gstack")))
+         (new `((id . "hwg-new") (status . "in_progress") (priority . 2)
+                (title . "New step") (assignee . "gl-wisp-new")
+                (started_at . ,(gascity-cockpit-test--ts 600))
+                (gascity-rig . "hello-world-gstack")))
+         (ready '((id . "hwg-rdy") (status . "open") (priority . 2)
+                  (title . "Ready one") (gascity-rig . "hello-world-gstack")))
+         (lines (gascity-dashboard--work-lines
+                 (gascity-cockpit-test--ctx :beads (list new old ready))))
+         (text (gascity-cockpit-test--text lines)))
+    (should (string-prefix-p "Work  1 ready · 2 in progress" (car lines)))
+    (let ((old-pos (string-match "hwg-old" text))
+          (new-pos (string-match "hwg-new" text)))
+      (should old-pos)
+      (should new-pos)
+      (should (< old-pos new-pos)))
+    (should (string-match-p "hwg-old +gl-wisp-old gone +2h +Old step" text))
+    (should (string-match-p "hwg-new +gl-wisp-new gone +10m +New step" text))
+    (should (string-match-p "hwg-rdy +P2 +Ready one" text))))
+
 (ert-deftest gascity-test-cockpit-needs-you-escalated ()
   "▲ bead: labelled gc:escalation (label-regex read) or hold:* (work read)."
   (let* ((esc '((id . "ec-e1") (status . "open") (title . "help")

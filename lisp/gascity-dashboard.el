@@ -15,11 +15,14 @@
 ;;   header line   city, `@host' for a remote city, live state, age
 ;;   top lines     city + path; agents · sessions · runs · ready · mail
 ;;                 · dolt, with `◐' when gc reports partial errors
-;;   Needs you     stalled agents, crashed sessions, idle/failed runs,
+;;   Needs you     stalled agents, in-progress work whose holder is gone
+;;                 or lease lapsed, crashed sessions, idle/failed runs,
 ;;                 reopened and escalated beads, unread mail, store health
 ;;   Moving        active runs with their step ladder and live workers
 ;;   Agents        running, then idle; stopped folded into one line
-;;   Work          ready beads by priority, noise hidden with a count
+;;   Work          in-progress work with its assignee and age (oldest
+;;                 first), then ready beads by priority; noise hidden
+;;                 with a count
 ;;   Activity      recent events, churn folded into ×N rows per 15 min
 ;;   Rigs          one row per rig
 ;;
@@ -255,13 +258,16 @@ names itself: (ID . ID)."
 (defun gascity-dashboard--session-for-assignee (assignee sessions)
   "Return the live session in SESSIONS a bead ASSIGNEE refers to, or nil.
 Joins on the tmux `session_name' (what gc assigns work to), then on the
-session id parsed from the assignee's trailing handle, then on the
+session `id' itself (gc claims a bead with its supervisor session id,
+`ec-wisp-qcz1lk', which is not the parseable `<role>-<handle>' form),
+then on the id parsed from the assignee's trailing handle, then on the
 qualified agent name."
   (when (and (stringp assignee) (not (string-empty-p assignee)))
-    (let ((live (seq-filter #'gascity-dashboard--live-session-p sessions))
-          (id (cdr (gascity-dashboard--parse-assignee assignee))))
+    (let* ((live (seq-filter #'gascity-dashboard--live-session-p sessions))
+           (id (cdr (gascity-dashboard--parse-assignee assignee)))
+           (ids (delq nil (list assignee id))))
       (or (seq-find (lambda (s) (equal (alist-get 'session_name s) assignee)) live)
-          (and id (seq-find (lambda (s) (equal (alist-get 'id s) id)) live))
+          (seq-find (lambda (s) (member (alist-get 'id s) ids)) live)
           (seq-find (lambda (s) (equal (alist-get 'agent_name s) assignee)) live)))))
 
 (defun gascity-dashboard--agent-object (name session socket &optional running rig)
@@ -586,6 +592,130 @@ is that agent's plist when exactly one matches, else nil."
           ((= (length members) 1) (cons (plist-get (car members) :name) (car members)))
           (t (cons (if (string-empty-p template) (or subject "?") template) nil)))))
 
+(defun gascity-dashboard--claimed-at (bead)
+  "Return BEAD's claim timestamp: `started_at', `gc.claimed_at', `updated_at'."
+  (or (alist-get 'started_at bead)
+      (alist-get 'gc.claimed_at (gascity-dashboard--meta bead))
+      (alist-get 'updated_at bead)))
+
+(defun gascity-dashboard--session-active-after-p (session timestamp)
+  "Return non-nil when live SESSION was active after TIMESTAMP.
+A session whose `last_active' is unknown cannot show activity, so it
+answers nil (no evidence either way)."
+  (let ((active (and session (gascity-ui-parse-time
+                              (alist-get 'last_active session)))))
+    (and active timestamp (> active timestamp))))
+
+(defun gascity-dashboard--stale-work (ctx)
+  "Return the in-progress work of CTX whose holder is gone or lease lapsed.
+Each entry is a plist :bead :assignee :dead :root :claimed :lease,
+with :lease the seconds left before `lease_expires_at' (negative once
+lapsed) and :claimed the float claim time.
+
+Only real work counts: an in-progress wisp, session, convoy, nudge or
+message bead is never flagged (its holder is not a worker).  An entry
+is stale when either
+
+  - its assignee has no live session behind it (`gone'), or
+  - its lease has lapsed and the holder cannot show activity after that
+deadline.  `gc bd heartbeat' keeps a claim's lease alive; a worker that
+dies stops heartbeating.  pi workers in practice do not heartbeat, so an
+active worker's lease lapses while it works: a live session whose
+`last_active' is after `lease_expires_at' is not condemned for it (the
+Work row still shows the lease).  A holder silent past its own deadline
+is the stall `gc bd reclaim' is about.
+
+Pure over CTX's work and session payloads: no extra gc read
+\(dashboard-v3 §8.3 R2, ga-o7vtw)."
+  (let ((sessions (plist-get ctx :sessions))
+        (now (plist-get ctx :now))
+        (out nil))
+    (dolist (bead (plist-get ctx :beads))
+      (when (and (equal (alist-get 'status bead) "in_progress")
+                 (null (gascity-event-noise bead)))
+        (let* ((assignee (alist-get 'assignee bead))
+               (assigned (and (stringp assignee) (not (string-empty-p assignee))))
+               (live (and assigned (gascity-dashboard--session-for-assignee
+                                    assignee sessions)))
+               (lease (gascity-ui-parse-time (alist-get 'lease_expires_at bead)))
+               (left (and lease (- lease now)))
+               (dead (and assigned (not live)))
+               (lapsed (and left (<= left 0)
+                            (not (gascity-dashboard--session-active-after-p
+                                  live lease)))))
+          (when (or dead lapsed)
+            (push (list :bead bead
+                        :assignee (and assigned assignee)
+                        :dead dead
+                        :root (gascity-dashboard--root-of bead)
+                        :claimed (gascity-ui-parse-time
+                                  (gascity-dashboard--claimed-at bead))
+                        :lease left)
+                  out)))))
+    (nreverse out)))
+
+(defun gascity-dashboard--stale-work-text (entry now)
+  "Return the one-line Needs you text of stale-work ENTRY at NOW.
+Names the bead, the assignee (and `gone' when its session is), the age
+since it was claimed and the lease's expiry."
+  (let* ((bead (plist-get entry :bead))
+         (assignee (plist-get entry :assignee))
+         (claimed (plist-get entry :claimed))
+         (left (plist-get entry :lease)))
+    (concat (or (alist-get 'id bead) "?")
+            "  " (cond ((null assignee) "unassigned")
+                        ((plist-get entry :dead) (concat assignee " gone"))
+                        (t assignee))
+            (if claimed
+                (format "  age %s" (gascity-ui-duration (- now claimed)))
+              "")
+            (if left
+                (format "  lease %s %s"
+                        (if (<= left 0) "lapsed" "in")
+                        (gascity-ui-duration (abs left)))
+              ""))))
+
+(defun gascity-dashboard--stale-work-drawer (entry now)
+  "Return the drawer lines of stale-work ENTRY at NOW."
+  (let* ((bead (plist-get entry :bead))
+         (claimed (plist-get entry :claimed))
+         (left (plist-get entry :lease)))
+    (append
+     (list (or (alist-get 'title bead) "?"))
+     (list (concat (format "run %s" (or (plist-get entry :root) "none"))
+                   (if left
+                       (format " · lease %s %s"
+                               (if (<= left 0) "lapsed" "expires in")
+                               (gascity-ui-duration (abs left)))
+                     "")
+                   (if claimed
+                       (format " · claimed %s ago"
+                               (gascity-ui-duration (- now claimed)))
+                     "")))
+     (gascity-dashboard--bead-drawer bead))))
+
+(defun gascity-dashboard--stale-work-items (ctx)
+  "Return CTX's Needs you fail items for stale in-progress work.
+One item per `gascity-dashboard--stale-work' entry; its row names the
+bead, assignee, age and lease, and its drawer the run and the step."
+  (let ((now (plist-get ctx :now)))
+    (mapcar
+     (lambda (entry)
+       (let* ((bead (plist-get entry :bead))
+              (id (alist-get 'id bead))
+              (rig (alist-get 'gascity-rig bead)))
+         (list :level 'fail :kind "work"
+               :id (concat "stale-work:" id)
+               :text (gascity-dashboard--stale-work-text entry now)
+               ;; The text carries the age and lease: a wider cell, no
+               ;; separate time column (`gascity-dashboard--needs-you-lines').
+               :width 56
+               :right (or (plist-get entry :root) rig "city")
+               :drawer (lambda () (gascity-dashboard--stale-work-drawer entry now))
+               :props (list 'gascity-bead id
+                            'gascity-run-rig (or rig "")))))
+     (gascity-dashboard--stale-work ctx))))
+
 (defun gascity-dashboard--needs-you-items (ctx)
   "Return CTX's Needs you items, computed once per render.
 The render stores them in CTX (`:needs-you'); the section and the pulse
@@ -597,8 +727,9 @@ both read them."
 Each item is a plist (:level fail|watch :kind KIND :id ID :text TEXT
 :right RIGHT :time TS :props PROPS), PROPS being the at-point text
 properties of its row.  Sources, in priority order: stalled agents,
-crashed/timed-out sessions not woken since, idle runs, failed runs,
-reopened beads, escalated/held beads, unread mail, store health."
+in-progress work whose holder is gone or lease lapsed, crashed/timed-out
+sessions not woken since, idle runs, failed runs, reopened beads,
+escalated/held beads, unread mail, store health."
   (let* ((now (plist-get ctx :now))
          (events (plist-get ctx :events))
          (beads (plist-get ctx :beads))
@@ -614,6 +745,11 @@ reopened beads, escalated/held beads, unread mail, store health."
                :right (or (plist-get a :rig) "city")
                :drawer (lambda () (gascity-dashboard--agent-drawer a))
                :props (list 'gascity-agent (plist-get a :object)))))
+      ;; ■ in-progress work whose assignee session is gone or whose lease
+      ;; has lapsed: the stall a run's own idle check cannot see when the
+      ;; step still looks freshly claimed (ga-o7vtw).
+      (dolist (item (gascity-dashboard--stale-work-items ctx))
+        (apply #'add item))
       ;; ■ sessions that crashed or timed out and were not woken since,
       ;; one row per agent (or pool) and signal type, ×N (QA #6).
       (let ((woke (make-hash-table :test 'equal))
@@ -1167,7 +1303,8 @@ properties.  The row is a thing whose SPC toggles the drawer."
                    (concat "needs:" (plist-get item :id))
                    (concat "  " (gascity-ui-glyph (plist-get item :level)) " "
                            (gascity-ui-fit (plist-get item :kind) 8) " "
-                           (gascity-ui-fit (plist-get item :text) 48)
+                           (gascity-ui-fit (plist-get item :text)
+                                           (or (plist-get item :width) 48))
                            (if (plist-get item :time)
                                (concat " " (gascity-ui-fit
                                             (gascity-ui-time (plist-get item :time)
@@ -1465,7 +1602,8 @@ CTX is the render context."
 (defun gascity-dashboard--work (ctx)
   "Return the Work model of CTX: :ready :in-progress :blocked :hidden."
   (let ((filters (plist-get ctx :filters))
-        (ready nil) (in-progress 0) (blocked 0) (hidden nil))
+        (ready nil) (in-progress 0) (in-progress-beads nil)
+        (blocked 0) (hidden nil))
     (dolist (b (plist-get ctx :beads))
       (when (gascity-dashboard--in-rig-p b ctx)
         (let ((noise (gascity-event-noise b))
@@ -1476,7 +1614,8 @@ CTX is the render context."
             (setf (alist-get noise hidden) (1+ (alist-get noise hidden 0))))
            ((equal status "in_progress")
             (unless (gascity-dashboard--run-root-p b)
-              (setq in-progress (1+ in-progress))))
+              (setq in-progress (1+ in-progress))
+              (push b in-progress-beads)))
            ((equal status "blocked") (setq blocked (1+ blocked)))
            ((equal status "open")
             (unless (or (gascity-dashboard--root-of b)
@@ -1490,11 +1629,52 @@ CTX is the render context."
                              (string< (or (alist-get 'created_at a) "")
                                       (or (alist-get 'created_at b) ""))))))
           :in-progress in-progress
+          ;; The section lists the oldest claimed first: a step nobody is
+          ;; moving is the one that needs the operator (ga-o7vtw).
+          :in-progress-beads
+          (sort in-progress-beads
+                (lambda (a b)
+                  (< (or (gascity-ui-parse-time (gascity-dashboard--claimed-at a))
+                         1e300)
+                     (or (gascity-ui-parse-time (gascity-dashboard--claimed-at b))
+                         1e300))))
           :blocked blocked
           :hidden (nreverse hidden))))
 
+(defun gascity-dashboard--work-in-progress-row (bead ctx)
+  "Return the Work row of in-progress BEAD in CTX.
+The row carries the assignee and the age since it was claimed; `gone'
+after the assignee marks a holder with no live session (the Needs you
+row's reason).  The id starts in the ready rows' id column."
+  (let* ((id (alist-get 'id bead))
+         (assignee (alist-get 'assignee bead))
+         (live (and assignee (gascity-dashboard--session-for-assignee
+                              assignee (plist-get ctx :sessions))))
+         (claimed (gascity-ui-parse-time (gascity-dashboard--claimed-at bead)))
+         (rig (alist-get 'gascity-rig bead)))
+    (gascity-dashboard--object-row
+     (concat "work-row:" id)
+     (concat "  " (gascity-ui-fit id 9)
+             " " (gascity-ui-fit (cond ((null assignee) "unassigned")
+                                        (live assignee)
+                                        (t (concat assignee " gone")))
+                                  20)
+             " " (gascity-ui-fit
+                    (if claimed
+                        (gascity-ui-duration (- (plist-get ctx :now) claimed))
+                      "")
+                    4)
+             " " (gascity-ui-fit (or (alist-get 'title bead) "") 24))
+     (gascity-dashboard--dim (or rig "city"))
+     (lambda () (gascity-dashboard--bead-drawer bead))
+     'gascity-bead id
+     'gascity-run-rig (or rig ""))))
+
 (defun gascity-dashboard--work-lines (ctx)
-  "Return the Work section lines for CTX."
+  "Return the Work section lines for CTX.
+In-progress work leads (oldest claim first, with assignee and age), then
+the ready beads by priority: the section counts in-progress work but
+used to list only ready rows (ga-o7vtw)."
   (let* ((work (gascity-dashboard--work ctx))
          (ready (plist-get work :ready))
          (convoys (seq-count (lambda (c) (not (equal (alist-get 'status c) "closed")))
@@ -1505,7 +1685,11 @@ CTX is the render context."
                        (format "%d ready · %d in progress · %d blocked · %d convoys"
                                (length ready) (plist-get work :in-progress)
                                (plist-get work :blocked) convoys)))
-         (rows (mapcar
+         (rows (append
+                (mapcar (lambda (b)
+                          (gascity-dashboard--work-in-progress-row b ctx))
+                        (plist-get work :in-progress-beads))
+                (mapcar
                 (lambda (b)
                   (let ((id (alist-get 'id b)))
                     (gascity-dashboard--object-row
@@ -1516,7 +1700,7 @@ CTX is the render context."
                      (gascity-dashboard--dim (or (alist-get 'gascity-rig b) "city"))
                      (lambda () (gascity-dashboard--bead-drawer b))
                      'gascity-bead id)))
-                ready)))
+                ready))))
     (gascity-dashboard--section-lines
      "work" "Work" summary
      (gascity-dashboard--cap-groups rows "work" #'gascity-jump-beads)

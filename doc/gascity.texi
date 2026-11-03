@@ -1031,10 +1031,13 @@ beads, unread mail and the beads store's size (@samp{◐} when
 
 @table @asis
 @item Needs you
-Stalled agents (running without a live session), sessions that crashed
-or timed out and were not woken since, runs with no step progress for
-@code{gascity-dashboard-run-idle-threshold} seconds, runs that failed,
-beads reopened after their assignee died, beads labelled
+Stalled agents (running without a live session), in-progress work whose
+assignee has no live session or whose lease has lapsed with no session
+activity since (the row names the bead, assignee, age since claim and
+lease, its right column the run, and its drawer the step), sessions that
+crashed or timed out and were not woken since, runs with no step
+progress for @code{gascity-dashboard-run-idle-threshold} seconds, runs
+that failed, beads reopened after their assignee died, beads labelled
 @samp{gc:escalation} or @samp{hold:*}, unread mail and store-health
 warnings --- @samp{■} before @samp{▲}.
 @item Moving
@@ -1063,9 +1066,12 @@ Running agents by recent activity, then idle ones; stopped agents fold
 into one @samp{▸ stopped} line.  Named sessions such as the mayor are
 agents too.
 @item Work
-Ready beads by priority, then age.  Wisps, nudge beads, order churn,
-message beads and session beads are hidden, always with a
-@samp{(N hidden)} count.
+In-progress work first, oldest claim first, each row naming its
+assignee and the age since it was claimed (@samp{gone} after the
+assignee marks a holder with no live session); then ready beads by
+priority, then age.
+Wisps, nudge beads, order churn, message beads and session beads are
+hidden, always with a @samp{(N hidden)} count.
 @item Activity
 Recent events (@code{gascity-dashboard-window}, two hours by default).
 Order firings, noise-bead lifecycle and bead updates fold into
