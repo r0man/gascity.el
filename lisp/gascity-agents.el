@@ -1,4 +1,4 @@
-;;; gascity-agents.el --- The Agents view: table and tree -*- lexical-binding: t; -*-
+;;; gascity-agents.el --- The Agents view: a tabulated list -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026
 
@@ -8,20 +8,21 @@
 
 ;; The Agents view (dashboard-v3 §7.3), `j a' from every view:
 ;;
-;; - `gascity-agents': a tabulated list of every agent of the city —
-;;   `gc status''s configured agents joined to their live sessions, plus
-;;   the named sessions (the mayor) — with state, last activity, the
-;;   bead on the hook and the provider.  Stalled agents (■) are pinned
-;;   first.  `/' filters by state (running by default; stalled rows are
-;;   always shown), rig, provider and a search string.
-;; - `T' switches to the tree (`gascity-agents-tree'): city → rigs →
-;;   pools → agents, built from the gascity-status.el components, and
-;;   `T' there switches back.
+;; - `gascity-agents' is the single Agents view: a tabulated list of
+;;   every agent of the city — `gc status''s configured agents joined to
+;;   their live sessions, plus the named sessions (the mayor) — with
+;;   state, last activity, the bead on the hook and the provider.
+;;   Stalled agents (■) are pinned first.  `/' filters by state (running
+;;   by default; stalled rows are always shown), rig, provider and a
+;;   search string; the shared tabulated keys sort, page and bookmark.
+;;   The tree alternative was retired (ga-2mmet): it rendered the same
+;;   agents, and pool topology, if wanted later, reads better as a
+;;   grouping option on this table than as a second view.
 ;;
 ;; The sling's Who completion (REQ-005, plans/sling-command WI-2) also
 ;; reads here: `gascity-agents-roster' returns the same agent plists
 ;; ordered city-first then per rig, over the very same store reads —
-;; the `T' picker's candidates (`gascity-agents-roster-candidates'),
+;; the sling's `T' target picker candidates (`gascity-agents-roster-candidates'),
 ;; the scope classifier (`gascity-agents-scope') and the target lookup
 ;; (`gascity-agents-roster-scope') the pre-launch validators consume.
 ;; Unlike the table, the roster also carries the configured agents of
@@ -50,9 +51,7 @@
 (require 'gascity-context)
 (require 'gascity-domain)
 (require 'gascity-store)
-(require 'gascity-section)
 (require 'gascity-tabulated)
-(require 'gascity-status)
 (require 'gascity-dashboard)
 
 (declare-function gascity-polecat-detail-at-point "gascity-session")
@@ -66,10 +65,7 @@
 (declare-function gascity-session-peek-at-point "gascity-action")
 
 (defconst gascity-agents-buffer-name "*gascity-agents: %s*"
-  "Format of the Agents table's base buffer name; %s is the city.")
-
-(defconst gascity-agents-tree-buffer-name "*gascity-agents-tree: %s*"
-  "Format of the Agents tree's base buffer name; %s is the city.")
+  "Format of the Agents view's base buffer name; %s is the city.")
 
 ;;; Reads
 
@@ -542,7 +538,6 @@ With CACHED (opening the view), fresh store entries answer at once."
   :parent gascity-tabulated-base-map
   "g"   #'gascity-agents-refresh
   "/"   #'gascity-agents-filter
-  "T"   #'gascity-agents-tree
   "RET" #'gascity-tmux-at-point
   "t"   #'gascity-tmux-at-point
   "i"   #'gascity-polecat-detail-at-point
@@ -560,8 +555,8 @@ With CACHED (opening the view), fresh store entries answer at once."
 
 (define-derived-mode gascity-agents-mode tabulated-list-mode "GC-Agents"
   "Major mode for the Agents table (dashboard-v3 §7.3).
-RET attaches the agent's terminal, `i' opens its detail, `T' the tree;
-the §5.3 agent keys act on the row at point.
+RET attaches the agent's terminal and `i' opens its detail; the §5.3
+agent keys act on the row at point.
 
 \\{gascity-agents-mode-map}"
   :group 'gascity
@@ -607,160 +602,6 @@ the §5.3 agent keys act on the row at point.
         (gascity-agents--render))
       (gascity-agents-refresh 'cached))
     (pop-to-buffer buf)))
-
-;;; Tree (`T')
-
-(vui-defcomponent gascity-agents-tree-app ()
-  "The Agents tree: city → rigs → pools → agents (dashboard-v3 §7.3)."
-  :state ((refresh-tick 0) (collapsed-rigs nil) (collapsed-pools nil)
-          (collapsed-city nil) (collapsed-named nil))
-  :render
-  (let* ((status (gascity-ui-store-load
-                  (gascity-store-use '("status") :tick refresh-tick)))
-         (sessions (gascity-ui-store-load
-                    (gascity-store-use '("session" "list") :tick refresh-tick)))
-         (agents (gascity-ui-store-load
-                  (gascity-store-use '("agent" "list") :tick refresh-tick))))
-    (pcase (plist-get status :state)
-      ('pending (vui-text (propertize "  …" 'face 'gascity-dim)))
-      ('error (gascity-ui-error-line "status" (plist-get status :error)))
-      (_
-       (gascity-agents--tree-vnode
-        (plist-get status :data)
-        (plist-get sessions :data)
-        (gascity-status--pool-templates
-         (alist-get 'agents (plist-get agents :data)))
-        collapsed-rigs collapsed-pools collapsed-city collapsed-named)))))
-
-(defun gascity-agents--tree-vnode (status sessions-payload templates
-                                          collapsed-rigs collapsed-pools
-                                          collapsed-city collapsed-named)
-  "Return the tree of STATUS joined to SESSIONS-PAYLOAD, pools by TEMPLATES.
-COLLAPSED-RIGS / COLLAPSED-POOLS name the folded groups; COLLAPSED-CITY
-folds the whole city block, COLLAPSED-NAMED its named-sessions rows.
-Named sessions without a status agent (the mayor) join the city scope."
-  (let* ((session-rows (gascity-domain-decode-list
-                        'gascity-session
-                        (or (alist-get 'sessions sessions-payload) [])))
-         (session-map (gascity-status--session-map-rows session-rows))
-         (socket (gascity-resolve-tmux-socket (alist-get 'city_name status) 'no-probe))
-         (agents (append (alist-get 'agents status) nil))
-         (known (mapcar (lambda (a) (alist-get 'qualified_name a)) agents))
-         (named (seq-keep
-                 (lambda (s)
-                   (let ((name (gascity-session-qualified-name s)))
-                     (and name (not (member name known))
-                          (null (gascity-session-rig s))
-                          (gascity-session-running-p s)
-                          `((name . ,name) (qualified_name . ,name)
-                            (scope . "city") (running . t)))))
-                 session-rows))
-         (all (append agents named))
-         (rigs (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs status)))
-         (city-agents (seq-filter #'gascity-status--city-agent-p agents)))
-    (vui-vstack
-     :spacing 1
-     (vui-vstack
-      (gascity-ui-section-header
-       (format "%s City" (if collapsed-city "▸" "▾"))
-       nil
-       'beads-thing (gascity-status--fold-thing 'city "City"))
-      (unless collapsed-city
-        (gascity-status--agent-group-vnodes
-         (gascity-status--group-agents city-agents templates session-map)
-         nil session-map socket collapsed-pools)))
-     (when named
-       (vui-vstack
-        (gascity-ui-section-header
-         (format "%s Named sessions" (if collapsed-named "▸" "▾"))
-         nil
-         'beads-thing (gascity-status--fold-thing 'named "Named sessions"))
-        (unless collapsed-named
-          (vui-list named
-                    (lambda (a)
-                      (gascity-status--agent-row a nil session-map socket))
-                    (lambda (a)
-                      (or (alist-get 'qualified_name a) "?"))))))
-     (vui-list rigs
-               (lambda (rig)
-                 (vui-component 'gascity-status-rig
-                                :rig rig :agents all :templates templates
-                                :session-map session-map :socket socket
-                                :collapsed-pools collapsed-pools
-                                :collapsed (and (member (gascity-rig-name rig)
-                                                        collapsed-rigs)
-                                                t)))
-               #'gascity-rig-name
-               :spacing 1))))
-
-(defun gascity-agents-tree--toggle (kind name)
-  "Fold or unfold the tree's city, rig, pool or named block (KIND) NAME."
-  (when-let* ((root (and (boundp 'vui--root-instance) vui--root-instance)))
-    (let* ((key (pcase kind
-                  ('rig :collapsed-rigs)
-                  ('pool :collapsed-pools)
-                  ('city :collapsed-city)
-                  ('named :collapsed-named)
-                  (_ (error "Unknown fold kind: %S" kind))))
-           (state (vui-instance-state root))
-           (current (plist-get state key)))
-      (setf (vui-instance-state root)
-            (plist-put state key (if (member name current)
-                                     (remove name current)
-                                   (cons name current))))
-      (vui-flush-sync))))
-
-(defun gascity-agents-tree-refresh ()
-  "Re-read the Agents tree, keeping folds and point."
-  (interactive)
-  (unless (gascity-section-refresh-instance (current-buffer))
-    (user-error "No agents tree here")))
-
-(defvar-keymap gascity-agents-tree-mode-map
-  :doc "Keymap for `gascity-agents-tree-mode'."
-  :parent gascity-section-mode-map
-  "g"   #'gascity-agents-tree-refresh
-  "T"   #'gascity-agents
-  "RET" #'gascity-tmux-at-point
-  "t"   #'gascity-tmux-at-point
-  "i"   #'gascity-polecat-detail-at-point
-  "d"   #'gascity-dired-at-point
-  "v"   #'gascity-session-peek-at-point
-  "M"   #'gascity-session-nudge-at-point
-  "s"   #'gascity-session-suspend-at-point
-  "K"   #'gascity-session-kill-at-point
-  "w"   #'gascity-session-wake-at-point
-  "D"   #'gascity-session-drain-at-point
-  "R"   #'gascity-session-reset-at-point
-  "U"   #'gascity-session-undrain-at-point)
-
-(define-derived-mode gascity-agents-tree-mode gascity-section-mode "GC-Agents-Tree"
-  "Major mode for the Agents tree (dashboard-v3 §7.3).
-SPC folds a rig or a pool, `T' returns to the table.
-
-\\{gascity-agents-tree-mode-map}"
-  :interactive nil
-  :group 'gascity
-  (setq truncate-lines t)
-  (setq-local gascity-status-toggle-function #'gascity-agents-tree--toggle)
-  (setq-local header-line-format
-              '(:eval (gascity-ui-header-line
-                       "Agents (tree)" nil "T table  ? help  j jump  g refresh"))))
-
-;;;###autoload
-(defun gascity-agents-tree ()
-  "Show the city's agents as a tree: city → rigs → pools → agents (`T')."
-  (interactive)
-  (let* ((dir (gascity-context-city-for-view (beads-prefix-invocation-directory)))
-         (buf (gascity-view-get-buffer-create
-               (format gascity-agents-tree-buffer-name (gascity-agents--city dir)) dir)))
-    (with-current-buffer buf
-      (unless (derived-mode-p 'gascity-agents-tree-mode)
-        (gascity-agents-tree-mode)))
-    (unless (gascity-section-refresh-instance buf)
-      (save-window-excursion
-        (vui-mount (vui-component 'gascity-agents-tree-app) (buffer-name buf))))
-    (pop-to-buffer-same-window buf)))
 
 (provide 'gascity-agents)
 ;;; gascity-agents.el ends here

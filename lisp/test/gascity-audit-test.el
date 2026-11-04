@@ -198,7 +198,6 @@ session looks after its first view opened.  Streams stay off (batch)."
 (defvar gascity-audit-views
   `(("cockpit" gascity-dashboard)
     ("agents" gascity-agents)
-    ("agents tree" gascity-agents-tree)
     ("agent detail" ,(lambda () (gascity-polecat-detail (gascity-audit--agent))))
     ("runs" gascity-runs)
     ("run detail" ,(lambda () (gascity-run-show "be-52m5" nil "beads.el")))

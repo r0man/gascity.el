@@ -26,7 +26,6 @@
   '((cockpit        gascity-dashboard-mode-map      vui  t nil)
     (rig-dashboard  gascity-rig-dashboard-mode-map  vui  t t)
     (agent-detail   gascity-session-detail-mode-map vui  t t)
-    (agents-tree    gascity-agents-tree-mode-map    vui  t nil)
     (agents         gascity-agents-mode-map         list t nil)
     (session-list   gascity-session-list-mode-map   list t nil)
     (runs           gascity-runs-mode-map           vui  nil nil)

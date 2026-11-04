@@ -20,7 +20,7 @@
 
 (defconst gascity-test-integrate--view-maps
   '(gascity-runs-mode-map gascity-run-mode-map gascity-agents-mode-map
-    gascity-agents-tree-mode-map gascity-session-detail-mode-map
+    gascity-session-detail-mode-map
     gascity-health-mode-map gascity-rig-dashboard-mode-map
     gascity-rig-list-mode-map gascity-session-list-mode-map
     gascity-convoy-list-mode-map gascity-mail-inbox-mode-map
@@ -53,7 +53,7 @@ the city at point (`gascity-live-city-function')."
 (ert-deftest gascity-test-integrate-views-attach-on-mount ()
   "Every vui view (via `gascity-section-mode') and every tabulated list
 \(via `gascity-tabulated--show' / its mode) joins its city's stream."
-  (dolist (mode '(gascity-runs-mode gascity-run-mode gascity-agents-tree-mode
+  (dolist (mode '(gascity-runs-mode gascity-run-mode
                   gascity-session-detail-mode gascity-health-mode
                   gascity-rig-dashboard-mode gascity-agents-mode))
     (ert-info ((symbol-name mode))

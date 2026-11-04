@@ -54,7 +54,6 @@
 (declare-function gascity-dashboard "gascity-dashboard")
 (declare-function gascity-rig-dashboard "gascity-rig")
 (declare-function gascity-agents "gascity-agents")
-(declare-function gascity-agents-tree "gascity-agents")
 (declare-function gascity-polecat-detail "gascity-session")
 (declare-function gascity-runs "gascity-runs")
 (declare-function gascity-run-show "gascity-run")
@@ -131,8 +130,6 @@ first sender at once, before `gc mail thread' answers."
     (agents :mode gascity-agents-mode :prefix "gascity-agents"
             :open ,(lambda (_) (gascity-agents))
             :filters ,(lambda () gascity-agents--filter))
-    (agents-tree :mode gascity-agents-tree-mode :prefix "gascity-agents-tree"
-                 :open ,(lambda (_) (gascity-agents-tree)))
     (agent :mode gascity-session-detail-mode :prefix "gascity-agent"
            :args gascity-bookmark--agent-args
            :subject ,(lambda (args) (plist-get args :name))

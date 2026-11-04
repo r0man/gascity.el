@@ -100,7 +100,6 @@
 (let ((default-directory mx-dir))
   (mx-view "cockpit" #'gascity-dashboard)
   (mx-view "agents" #'gascity-agents)
-  (mx-view "agents-tree" #'gascity-agents-tree)
   (mx-view "agent-detail" (lambda () (gascity-polecat-detail (make-instance 'gascity-agent :name "mayor"))))
   (mx-view "runs" #'gascity-runs)
   (mx-view "run-detail" (lambda () (gascity-run-show "hw-hry" nil "hello-world")))

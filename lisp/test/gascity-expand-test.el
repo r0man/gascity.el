@@ -184,7 +184,7 @@ changes nothing (QA: silent on Rigs, echoed on Agents)."
   "`+'/`-' in every vui view and in the `?' dispatch; the lists do not bind
 `+' and keep Emacs's inherited `-' (negative argument)."
   (dolist (map (list gascity-dashboard-mode-map gascity-rig-dashboard-mode-map
-                     gascity-agents-tree-mode-map gascity-session-detail-mode-map
+                     gascity-session-detail-mode-map
                      gascity-health-mode-map gascity-run-mode-map))
     (should (eq (keymap-lookup map "+") #'gascity-section-more))
     (should (eq (keymap-lookup map "-") #'gascity-section-less)))

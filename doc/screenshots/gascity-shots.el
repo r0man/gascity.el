@@ -264,11 +264,6 @@ at most SECONDS (default 20)."
     (redisplay t))
   nil)
 
-(defun gascity-shots--agents-tree-buffer ()
-  "Open the Agents tree (`T')."
-  (gascity-agents-tree)
-  (gascity-shots--selected-buffer))
-
 (defun gascity-shots--loading-p (buffer)
   "Return non-nil while BUFFER still shows data being loaded.
 A read the buffer subscribes to is in flight in the store, or a
@@ -422,7 +417,6 @@ the cold menu.  Returns nil so the whole frame is captured
   (list
    ;; vui views — auto-fit height.
    (list "cockpit" #'gascity-shots--cockpit-buffer :settle 15)
-   (list "agents-tree" #'gascity-shots--agents-tree-buffer :settle 12)
    (list "runs" (gascity-shots--view #'gascity-runs) :settle 15)
    (list "health" (gascity-shots--view #'gascity-health) :settle 15)
    (list "costs" (gascity-shots--view #'gascity-costs) :settle 12)

@@ -279,89 +279,19 @@ free entry, the accessor never errors."
     (should (string-match-p "◐" (format "%s" mode-name)))))
 
 (ert-deftest gascity-test-agents-keys ()
-  "§5.3 agent keys and `T' in the table and tree."
-  (dolist (map (list gascity-agents-mode-map gascity-agents-tree-mode-map))
-    (should (eq (keymap-lookup map "RET") #'gascity-tmux-at-point))
-    (should (eq (keymap-lookup map "i") #'gascity-polecat-detail-at-point))
-    (should (eq (keymap-lookup map "M") #'gascity-session-nudge-at-point))
-    (should (eq (keymap-lookup map "S") 'gascity-sling-dispatch))
-    (should (keymap-lookup map "T")))
+  "§5.3 agent keys in the table; `T' is retired with the tree."
+  (should (eq (keymap-lookup gascity-agents-mode-map "RET")
+              #'gascity-tmux-at-point))
+  (should (eq (keymap-lookup gascity-agents-mode-map "i")
+              #'gascity-polecat-detail-at-point))
+  (should (eq (keymap-lookup gascity-agents-mode-map "M")
+              #'gascity-session-nudge-at-point))
+  (should (eq (keymap-lookup gascity-agents-mode-map "S") 'gascity-sling-dispatch))
+  (should-not (keymap-lookup gascity-agents-mode-map "T"))
   (should (eq (keymap-lookup gascity-agents-mode-map "/") #'gascity-agents-filter))
   (dolist (key '("-s" "-r" "-p" "-q" "-S" "x"))
     (should (transient-get-suffix 'gascity-agents-filter key)))
   (should (eq (keymap-lookup gascity-dashboard-mode-map "j a") 'gascity-jump-agents)))
-
-;;; Tree
-
-(ert-deftest gascity-test-agents-tree-folds ()
-  "The tree groups pools, puts the mayor in the city, and SPC folds a rig."
-  (let ((vui-render-delay nil)
-        (buf (get-buffer-create "*gascity-agents-tree-test*")))
-    (cl-letf (((symbol-function 'gascity-reader-read-async) #'gascity-agents-test--read))
-      (unwind-protect
-          (save-window-excursion
-            (with-current-buffer buf (gascity-agents-tree-mode))
-            (vui-mount (vui-component 'gascity-agents-tree-app) (buffer-name buf))
-            (with-current-buffer buf
-              (should (string-match-p "▾ bd.dog  scaled 0–2" (buffer-string)))
-              ;; Idle is ○ in the tree as in the table (§6.1, QA A3).
-              (should (string-match-p "^  ○ mayor +idle" (buffer-string)))
-              (goto-char (point-min))
-              (re-search-forward "▾ beads.el")
-              (beginning-of-line)
-              (gascity-thing-toggle)
-              (should (string-match-p "▸ beads.el" (buffer-string)))
-              (gascity-agents-tree-refresh)
-              (should (string-match-p "▸ beads.el" (buffer-string)))))
-        (kill-buffer buf)))))
-
-(ert-deftest gascity-test-agents-tree-city-folds ()
-  "SPC on the City header folds the whole city block; it survives `g'."
-  (let ((vui-render-delay nil)
-        (buf (get-buffer-create "*gascity-agents-tree-city-test*")))
-    (cl-letf (((symbol-function 'gascity-reader-read-async) #'gascity-agents-test--read))
-      (unwind-protect
-          (save-window-excursion
-            (with-current-buffer buf (gascity-agents-tree-mode))
-            (vui-mount (vui-component 'gascity-agents-tree-app) (buffer-name buf))
-            (with-current-buffer buf
-              (should (string-match-p "▾ City" (buffer-string)))
-              ;; The city block renders its pooled workers.
-              (should (string-match-p "bd.dog" (buffer-string)))
-              (goto-char (point-min))
-              (re-search-forward "▾ City")
-              (beginning-of-line)
-              (gascity-thing-toggle)
-              (should (string-match-p "▸ City" (buffer-string)))
-              (should-not (string-match-p "bd.dog" (buffer-string)))
-              (gascity-agents-tree-refresh)
-              ;; The fold survives `g', like a rig or pool fold.
-              (should (string-match-p "▸ City" (buffer-string)))
-              (should-not (string-match-p "bd.dog" (buffer-string)))))
-        (kill-buffer buf)))))
-
-(ert-deftest gascity-test-agents-tree-named-folds ()
-  "SPC on the Named sessions header folds the mayor away; it survives `g'."
-  (let ((vui-render-delay nil)
-        (buf (get-buffer-create "*gascity-agents-tree-named-test*")))
-    (cl-letf (((symbol-function 'gascity-reader-read-async) #'gascity-agents-test--read))
-      (unwind-protect
-          (save-window-excursion
-            (with-current-buffer buf (gascity-agents-tree-mode))
-            (vui-mount (vui-component 'gascity-agents-tree-app) (buffer-name buf))
-            (with-current-buffer buf
-              (should (string-match-p "▾ Named sessions" (buffer-string)))
-              (should (string-match-p "○ mayor" (buffer-string)))
-              (goto-char (point-min))
-              (re-search-forward "▾ Named sessions")
-              (beginning-of-line)
-              (gascity-thing-toggle)
-              (should (string-match-p "▸ Named sessions" (buffer-string)))
-              (should-not (string-match-p "○ mayor" (buffer-string)))
-              (gascity-agents-tree-refresh)
-              (should (string-match-p "▸ Named sessions" (buffer-string)))
-              (should-not (string-match-p "○ mayor" (buffer-string)))))
-        (kill-buffer buf)))))
 
 ;;; Agent detail (§7.4)
 
@@ -726,44 +656,6 @@ the `a' prefix on this bead-holding view."
                (names (mapcar #'car sorted)))
           (should (equal (seq-take names 2) (if dir '("z" "c") '("c" "z"))))
           (should (equal (seq-drop names 2) (if dir '("b" "a") '("a" "b")))))))))
-
-(ert-deftest gascity-test-agents-tree-row-state-and-age ()
-  "Tree rows show the state and the relative last activity (§7.3)."
-  (let* ((session (gascity-domain-decode
-                   'gascity-session
-                   `((agent_name . "mayor") (name . "mayor") (state . "active")
-                     (last_active . ,(gascity-cockpit-test--ts 480)))))
-         (map (gascity-status--session-map-rows (list session)))
-         (live (gascity-test--vnode-text-plain
-                (gascity-status--agent-row '((qualified_name . "mayor") (name . "mayor")
-                                             (running . t))
-                                           nil map nil)))
-         (stopped (gascity-test--vnode-text-plain
-                   (gascity-status--agent-row '((qualified_name . "bd.dog-1")
-                                                (name . "bd.dog-1"))
-                                              nil map nil 4)))
-         ;; gc's epoch placeholder must not be read as an enormous age
-         ;; that turns a live agent idle (ga-4mvlw.1).
-         (epoch-session (gascity-domain-decode
-                         'gascity-session
-                         '((agent_name . "core.control-dispatcher")
-                           (name . "core.control-dispatcher")
-                           (state . "active")
-                           (last_active . "1970-01-01T01:05:01+01:00"))))
-         (epoch-map (gascity-status--session-map-rows (list epoch-session)))
-         (epoch-row (gascity-test--vnode-text-plain
-                     (gascity-status--agent-row
-                      '((qualified_name . "core.control-dispatcher")
-                        (name . "core.control-dispatcher") (running . t))
-                      nil epoch-map nil))))
-    (should (string-match-p "^  ● mayor +active +8m$" live))
-    (should (string-match-p "^    ○ bd.dog-1 +stopped *$" stopped))
-    (should (string-match-p "^  ● core.control-dispatcher +active +—$"
-                            epoch-row))))
-
-(defun gascity-test--vnode-text-plain (vnode)
-  "Return the plain content of text VNODE."
-  (substring-no-properties (vui-vnode-text-content vnode)))
 
 (ert-deftest gascity-test-agent-detail-no-bookkeeping-beads ()
   "The detail lists no session/convoy/wisp beads, and a shared city-root

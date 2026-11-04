@@ -278,7 +278,7 @@ table must be wired into the build, the manual and the drift check."
         #'string<))
 
 (defconst gascity-manual-test--standard-dark-shots
-  '("agents-tree-dark" "cities-dark" "mail-inbox-dark"
+  '("cities-dark" "mail-inbox-dark"
     "order-list-dark" "remote-cities-dark" "rig-list-dark")
   "The dark shots added when the screenshot theme standardized (REQ-005).
 Pinned so a rename that drops one from the manifest, the shot list or the

@@ -4,6 +4,16 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### The Agents table is the single Agents view
+
+The alternative Agents tree (`gascity-agents-tree`, `T`) is removed.  It
+rendered the same observed agents as the table (`gascity-agents`, `j a`),
+but without the table's state/rig/provider/search filters, sortable
+columns, paging, bookmarks or shared list keys.  `T` is now unbound in the
+Agents table; its bookmark kind and its two screenshots are gone.  Pool
+topology, if it is wanted later, belongs as a `Group by rig`/pool option on
+the table rather than as a second view (ga-2mmet).
+
 ### `j s` opens the Sessions view; the jump registry is complete
 
 The flat session list (`gascity-session-list`, its own state/rig filters and
@@ -62,12 +72,7 @@ older copy that lacks the macro `beads.el`'s menu macro expands to;
 `scripts/ci-deps` installs it (and `package-lint`) for CI.  `Eldev` and
 `.eldev/` are removed.
 
-### Dashboard polish: fold the City block, show — for absent cells, refresh the inbox after send
-
-The Agents tree's **City** header now folds and unfolds with `SPC`/`TAB` (and
-`RET`), showing a `▸`/`▾` indicator like every rig and pool header, and the
-fold survives `g`; the **Named sessions** block folds the same way, matching
-the CLI's layout.
+### Dashboard polish: show — for absent cells, refresh the inbox after send
 
 An absent value in a tabulated list no longer renders as a blank cell: the
 shared cell helper draws an em-dash (`—`), so a pool worker's empty

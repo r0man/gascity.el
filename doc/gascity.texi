@@ -180,7 +180,7 @@ per city: what needs you, what is moving, who is working, what is
 queued, what just happened, and the rigs.
 @item
 @strong{Agents and runs} (@pxref{Agents}, @pxref{Runs and Live Events}) --- every
-agent as a table or a tree, every workflow run with its step ladder,
+agent as a filtered table, every workflow run with its step ladder,
 and each of them in detail.
 @item
 @strong{A rig dashboard} (@pxref{The Rig Dashboard}) --- one rig, with
@@ -347,7 +347,7 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 @item Buffers and navigation (move/toggle, jump prefix, filter menus, visual language, objects at point) @tab cockpit-dark, cockpit-light, dispatch-dark @tab Non-visual keys and glyphs; the cockpit and its dispatch menu exercise them.
 @item Lists: pagination, sorting, detail @tab order-list-dark @tab A paginated tabulated list with the shared list keys.
 @item Cockpit @tab cockpit-dark, cockpit-light @tab The triage buffer, in both themes.
-@item Agents (list, tree, detail) @tab agents-dark, agents-tree-dark @tab The agents list and tree; the detail opens from the list.
+@item Agents (table, detail) @tab agents-dark @tab The agents table; the detail opens from the list.
 @item Rig dashboard @tab rig-dashboard-dark @tab The single-rig counterpart to the cockpit.
 @item Health @tab health-dark @tab Plumbing, versions, store and doctor.
 @item Cities @tab cities-dark @tab Every reachable city and host.
@@ -614,7 +614,7 @@ A single @dfn{rig} in detail; prompts for the rig (@pxref{The Rig
 Dashboard}, @pxref{Terminology}).
 @item gascity-agents
 @fnindex gascity-agents
-Every agent of the city; @kbd{T} for the tree (@pxref{Agents}).
+Every agent of the city (@pxref{Agents}).
 @item gascity-runs
 @fnindex gascity-runs
 Workflow runs (@pxref{Runs and Live Events}).
@@ -1215,14 +1215,6 @@ by @command{gc}'s account, with no live session) are pinned to the top.
 @shot{agents-dark, The Agents view (ef-deuteranopia-dark)}
 
 @table @kbd
-@item T
-@kindex T @r{(agents)}
-@fnindex gascity-agents-tree
-Switch to the tree, @file{*gascity-agents-tree:@: CITY*}: city, then
-rigs, then pools (with their @samp{scaled 0--2} bounds), then agents.
-The @strong{City} and @strong{Named sessions} headers fold like a rig or
-pool with @key{SPC}, showing @samp{▸}/@samp{▾}, and the fold survives
-@kbd{g}.  @kbd{T} there switches back.
 @item /
 @kindex / @r{(agents)}
 @fnindex gascity-agents-filter
@@ -1246,11 +1238,8 @@ Agent detail, peek, Dired.
 Nudge, suspend, kill, wake, drain, reset, undrain (@pxref{Actions}).
 @end table
 
-@shot{agents-tree-dark, The Agents tree: city rigs pools agents (ef-deuteranopia-dark)}
-
 @noindent
-The list shares the keys of every tabulated list (@pxref{Lists}); the
-tree is a vui view with the section keys.
+The list shares the keys of every tabulated list (@pxref{Lists}).
 
 @node Agent Detail
 @section Agent Detail
@@ -1310,10 +1299,9 @@ Bead actions and sling.
 @node Inspect Agents and Sessions
 @section Inspect Agents and Sessions
 
-@kbd{j a} lists every agent of the city, or @kbd{M-x gascity-agents};
-@kbd{T} switches to the city/rigs/pools/agents tree.  Each row shows the
-agent's state, last activity, current bead and provider, with stalled
-agents pinned to the top.  @xref{The Agents view}.
+@kbd{j a} lists every agent of the city, or @kbd{M-x gascity-agents}.
+Each row shows the agent's state, last activity, current bead and
+provider, with stalled agents pinned to the top.  @xref{The Agents view}.
 
 @key{RET} (or @kbd{t}) attaches the agent's terminal; @kbd{i} opens its
 detail view with its work, current run, transcript, mail and history;
@@ -3378,8 +3366,8 @@ event arrives, so the lighter follows the city's event stream.
 @cindex bookmarks
 
 Every gascity view is an Emacs bookmark: @kbd{C-x r m}
-(@code{bookmark-set}) in the cockpit, a rig dashboard, the Agents table
-or tree, an agent's detail, Runs, a run's detail, Events, the mail inbox
+(@code{bookmark-set}) in the cockpit, a rig dashboard, the Agents table,
+an agent's detail, Runs, a run's detail, Events, the mail inbox
 or a thread, Health, Cities, costs, or any of the lists, and @kbd{C-x r
 b} (@code{bookmark-jump}), @code{bookmark-bmenu-list} or
 @code{consult-bookmark} opens it again.
@@ -3549,12 +3537,9 @@ Namespaced: agent verbs are under @kbd{a}.
 @item @code{agent-detail} --- @code{gascity-session-detail-mode-map}
 @cindex agent detail view
 One agent's detail (@pxref{Agents}).  Namespaced.
-@item @code{agents-tree} --- @code{gascity-agents-tree-mode-map}
-@cindex agents tree view
-The hierarchical agent tree (@pxref{Agents}).  Mixed.
 @item @code{agents} --- @code{gascity-agents-mode-map}
 @cindex agents view
-The flat agent table (@pxref{Agents}).  Mixed.
+The agent table (@pxref{Agents}).  Mixed.
 @item @code{session-list} --- @code{gascity-session-list-mode-map}
 @cindex session list view
 The session list (@pxref{Sessions}).  Mixed.
@@ -3706,16 +3691,9 @@ Open one agent's detail (view @code{agent-detail}) in
 @code{gascity-session-detail-mode-map} (@pxref{Agents}).  Namespaced.
 @end deffn
 
-@deffn {Command} gascity-agents-tree
-@fnindex gascity-agents-tree
-Open the hierarchical agent tree (view @code{agents-tree}) in
-@code{gascity-agents-tree-mode} with keymap
-@code{gascity-agents-tree-mode-map} (@pxref{Agents}).  Mixed.
-@end deffn
-
 @deffn {Command} gascity-agents
 @fnindex gascity-agents
-Open the flat agent table (view @code{agents}) in
+Open the agent table (view @code{agents}) in
 @code{gascity-agents-mode} with keymap @code{gascity-agents-mode-map}
 (@pxref{Agents}).  Mixed.
 @end deffn
@@ -3826,11 +3804,6 @@ The keymap of @code{gascity-rig-dashboard-mode} (@pxref{The Rig Dashboard}).
 @vindex gascity-session-detail-mode-map
 @defvr {Keymap} gascity-session-detail-mode-map
 The keymap of @code{gascity-session-detail-mode} (@pxref{Agent Detail}).
-@end defvr
-
-@vindex gascity-agents-tree-mode-map
-@defvr {Keymap} gascity-agents-tree-mode-map
-The keymap of @code{gascity-agents-tree-mode} (@pxref{The Agents view}).
 @end defvr
 
 @vindex gascity-agents-mode-map
@@ -4948,12 +4921,12 @@ The city cockpit, the @kbd{?} dispatch and the @kbd{j} jump prefix.
 The per-city @code{gc events --follow} stream and its routing.
 @item gascity-agents.el
 @itemx gascity-runs.el
-The Agents view and tree; the Runs view.
+The Agents view (table); the Runs view.
 @item gascity-health.el
 @itemx gascity-cities.el
 The Health view and @command{gc costs}; the Cities list.
 @item gascity-status.el
-The agent-tree joins (city, rigs, pools) shared by the rig dashboard.
+The session joins shared by the rig dashboard.
 @item gascity-rig.el
 @itemx gascity-session.el
 @itemx gascity-run.el

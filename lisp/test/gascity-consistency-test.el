@@ -30,7 +30,6 @@
 (defconst gascity-consistency--views
   '((cockpit        gascity-dashboard-mode-map      vui  t)
     (agents         gascity-agents-mode-map         list t)
-    (agents-tree    gascity-agents-tree-mode-map    vui  t)
     (agent-detail   gascity-session-detail-mode-map vui  t :namespaced t)
     (rig-dashboard  gascity-rig-dashboard-mode-map  vui  t :namespaced t)
     (runs           gascity-runs-mode-map           vui  nil)
