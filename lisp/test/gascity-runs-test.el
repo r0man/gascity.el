@@ -662,6 +662,9 @@ data shows the error line; the view never blanks."
 
 ;;; Mounted views (movement, toggles, RET)
 
+(defvar gascity-runs-test--events []
+  "Events the serve stub answers for `gc events --since'.")
+
 (defun gascity-runs-test--serve (beads)
   "Return a canned `gascity-reader-read-async' serving BEADS for beads.el."
   (lambda (args callback &optional _errback &rest _)
@@ -674,9 +677,9 @@ data shows the error line; the view never blanks."
         `((convoy . ((id . ,id) (status . "closed") (title . "input")))
           (progress . ((closed . 7) (total . 7)))))
        ;; The inspector's recent events: none by default, so a rendered
-       ;; drawer is deterministic; the inspector tests supply their own
-       ;; payload to `gascity-run--step-drawer' directly.
-       (`("events" . ,_) [])
+       ;; drawer is deterministic.  A line-mode read's payload is
+       ;; (GOOD . BAD), exactly as `gascity-reader-read-async' delivers it.
+       (`("events" . ,_) (cons gascity-runs-test--events 0))
        (`("bd" "list" . ,rest)
         (if (member "beads.el" rest)
             (vconcat (seq-filter
@@ -1237,7 +1240,7 @@ artifact says so without erroring, and check/input paths stay out."
                  (ctx (gascity-runs-test--inspector-ctx
                        beads "hw-live" :now now
                        :sessions (alist-get 'sessions gascity-runs-test--sessions)
-                       :events (list :state 'ready :data events)))
+                       :events (list :state 'ready :data (cons events 0))))
                  (lines (gascity-run--step-drawer step iteration ctx))
                  (text (gascity-runs-test--text lines)))
             (should (equal (nth 0 lines)
@@ -1358,6 +1361,29 @@ stage groups, and the inspector still renders without signaling."
         (should (string-match-p "publish\\.md (remote: not checked)" text))
         (should (string-match-p "summary\\.md (remote: not checked)" text))
         (should-not calls)))))
+
+(ert-deftest gascity-test-run-inspector-events-render-from-line-payload ()
+  "An open drawer renders the newest matching events from the store's
+line-mode (GOOD . BAD) payload, and leaves unrelated events out."
+  (let ((gascity-runs-test--events
+         `[((type . "bead.updated")
+            (ts . ,(gascity-runs-test--ts 100))
+            (payload . ((bead . ((id . "be-fy7m"))))))
+           ((type . "bead.claimed")
+            (ts . ,(gascity-runs-test--ts 200))
+            (payload . ((bead . ((id . "be-bcb5"))))))
+           ((type . "order.fired")
+            (ts . ,(gascity-runs-test--ts 10))
+            (payload . ((bead . ((id . "be-other"))))))]))
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (goto-char (point-min))
+      (re-search-forward "^    ⬣ requirements")
+      (gascity-thing-toggle)
+      (should (string-match-p "│ events   bead.updated be-fy7m"
+                              (buffer-string)))
+      (should (string-match-p "│ events   bead.claimed be-bcb5"
+                              (buffer-string)))
+      (should-not (string-match-p "order\\.fired" (buffer-string))))))
 
 (ert-deftest gascity-test-run-inspector-events-read-is-store-gated ()
   "The inspector reads events only while a drawer is open, with the

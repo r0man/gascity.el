@@ -574,7 +574,9 @@ is the step, its iteration or a descendant.  A failed events load says
 Never signals, and never reads gc on the render path."
   (let* ((load (plist-get ctx :events))
          (ids (gascity-run--event-ids step iteration ctx))
-         (events (gascity-dashboard--data load))
+         ;; A `:lines t' store payload is `(GOOD . BAD)', the good events
+         ;; and the count of undecodable lines; never the cons itself.
+         (events (car (gascity-dashboard--data load)))
          (matching
           (and events
                (seq-filter
