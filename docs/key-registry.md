@@ -54,6 +54,20 @@ everywhere:
 verbs** in any view that can also show a bead. gascity never rebinds one
 of them to a non-bead verb there.
 
+## The run detail's bead rows
+
+The run detail (`gascity-run-mode-map`, `*gascity-run: ID*`) can hold bead
+refs but never agent rows, so the F1 namespacing does not apply.  It keeps
+`w` as **copy id** --- the reserved key's cross-package bead-row meaning ---
+not wake, and records that reuse as the sanctioned exception in
+`docs/DESIGN-write-actions.md` §10 and in
+`lisp/test/gascity-consistency-test.el`.  Its other new keys are local
+additions, unbound in the run detail before and supplied by no parent map:
+`I` (`gascity-run-inspect`, toggle the step inspector) and `!`
+(`gascity-run-diagnose`, reveal and diagnose the failed step).  `i`, `v`
+and `t` stay the agent aliases (`gascity-runs-agent-detail`,
+`-peek`, `-tmux`) and work from the inspector's worker line.
+
 In **beads.el's own view buffers** `S` is beads.el's `S`:
 `beads-sling-for-issue` opens the `beads-sling` transient seeded with the
 issue at point.  gascity contributes no competing `S` binding there; its

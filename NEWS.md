@@ -4,6 +4,65 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### The run detail groups its steps into lifecycle stages
+
+A run whose formula has a stage table (the `mol-*` review, design and bug
+flows, and `build-base`/`build-basic`) now renders its top-level steps
+under lifecycle stage headers in table order, each with a state glyph and
+`done/total` progress, instead of one flat list.  A stage is `failed` if
+any member failed, `active` if any runs, `done` only when every member is
+done, and `pending` otherwise; an empty stage stays visible (`Approval`
+reads `0/0` in a build run).  A failed stage appends `failed` and carries
+the failure class and reason in its help text.  `SPC` folds a stage
+independently of the step folds, and `C` lifts control nodes (spec, scope
+check, finalize) out of the stages into one trailing `Control` group.
+Anchors matching no table entry collect in an `Other` group, and a formula
+with no table keeps the flat list rather than guessing (ga-tkxsx).
+
+### The run detail's summary counts every bead in the run
+
+The steps section now reads `Steps N/M · G beads` for mapped and flat runs
+alike.  `N/M` is the step ladder over top-level anchors; `G` is the size of
+the run's whole bead graph, including iterations, nested steps and control
+nodes.  A mapped formula's stage progress counts top-level anchors, not
+graph beads, so nested ids collapse into their anchor.  This is the in-view
+half of the anchor-versus-graph-bead distinction the manual now spells out
+(ga-tkxsx, run-view-v2 REQ-004).
+
+### A step's drawer is a full inspector
+
+`SPC` on a step row (or `I` on any row, fold rows included) opens the step
+inspector: the step's ref, bead, status and outcome; its attempt and
+iteration bead; its worker with session liveness, lease and heartbeat; the
+run's and the step's artifacts with existence and age; the three newest
+matching events; and the failure class and reason (or `(none)`).  Artifact
+entries are visitable with `RET`; on a remote city they read `remote: not
+checked` rather than statting over TRAMP, and a missing local file reads
+`(missing)`.  The events read starts only while a drawer is open and uses
+the cockpit's store key, so it dedupes and live events invalidate it.  The
+step, iteration and worker lines carry the same identity properties as
+their rows, so `RET`, `i`, `v` and `t` work from the drawer unchanged
+(ga-ti6ah, ga-en6f5).
+
+### New run-detail keys: `I` inspect, `w` copy id, `!` diagnose
+
+The run detail binds `I` (`gascity-run-inspect`) to toggle the inspector,
+`w` (`gascity-run-copy-id`) to copy the step or iteration bead id, and `!`
+(`gascity-run-diagnose`) to reveal and diagnose the run's failed step,
+expanding a collapsed stage and any folded loop above it and echoing
+`✕ ref  class: reason`.  `w` is the reserved key's cross-package bead-row
+meaning (copy id) and is recorded as the sanctioned exception in
+docs/DESIGN-write-actions.md §10; `I` and `!` were unbound in the run
+detail before.  `doc/generated/keys.texi` includes the new keys
+(ga-en6f5).
+
+### Failure diagnosis is one key, not separate diagnose views
+
+The run-detail failure class/reason resolution and the one-key `!`
+diagnose supersede the separate diagnose beads `ga-32wpi` and `ga-lpnpb`;
+their user-visible behavior now lives in `gascity-run-diagnose` and the
+step inspector.
+
 ### The Agents table is the single Agents view
 
 The alternative Agents tree (`gascity-agents-tree`, `T`) is removed.  It

@@ -1965,17 +1965,27 @@ Detail, peek and attach for the run's worker at point.
 @file{*gascity-run:@: ID*}:
 
 @example
-⬣ be-52m5  build-basic                       beads.el · started 2h
+⬣ be-52m5  build-basic                                   beads.el · started 2h
   formula  build-basic (graph.v2)   source ~/.gc/cache/@dots{}/build-basic.formula.toml
   plans    requirements.md · implementation-plan.md · review-report.md
-  convoy   be-93dg  open 0/1  project-switch-scope
+  convoy   be-93dg  closed 7/7  input
 
-Steps  1/10                                    C show control nodes
-  ◆ prepare                   be-5aht   pass     run-operator      2h
-  ⬣ requirements              be-bcb5   iter 1   ● requirements-planner-1
-  ▾ review                    be-mqhp   loop
-      · setup-build-basic-review  be-bdcr
-      ▸ build-basic-review-loop   be-zdon   loop
+Steps  1/10 · 37 beads                                    C show control nodes
+  ▾ ⬣ Intake         1/5
+    ◆ prepare                 be-5aht   pass      run-operator          Sep 25
+    ⬣ requirements            be-fy7m   iter 1    ● requirements-planner-1  3m
+    · plan                    be-x2g9   iter 1                          Sep 25
+    · plan-review             be-9nno                                   Sep 25
+    · decompose               be-mp6p   iter 1                          Sep 25
+  ▾ · Implementation 0/2
+    · implement               be-gevv   drain                           Sep 25
+    · summarize-implementation be-h3pj   iter 1                         Sep 25
+  ▾ · Review         0/1
+    ▸ review                  be-mqhp   · loop                          Sep 25
+  ▾ · Approval       0/0
+  ▾ · Finalization   0/2
+    · finalize                be-t1f2   iter 1                          Sep 25
+    · publish                 be-s4bt                                   Sep 25
 @end example
 
 @noindent
@@ -1988,23 +1998,108 @@ with their ladders (@samp{└ ⬣ bs-0c3f  do-work  ◆⬣·  implement 1/3});
 @key{RET} on one opens that run's detail.  The @samp{plans} line lists
 the run's plan files; @key{RET} on one visits it, on the city's host.
 
+When the run's formula has a stage table --- the @code{mol-*} review,
+design and bug flows, and @code{build-base}/@code{build-basic} ---
+the top-level steps are grouped under lifecycle stages in table order
+(@samp{Intake}, @samp{Implementation}, @samp{Review}, @samp{Approval},
+@samp{Finalization} for a build run), each with a state glyph and
+@samp{done/total} progress.  @key{SPC} on a stage header folds that
+stage, independently of the step folds.  A stage with no members is
+kept, not dropped (Approval shows @samp{0/0} in a build run); anchors
+matching no entry collect in a trailing @samp{Other} group, so no
+present step disappears.  Control nodes never join a stage: @kbd{C}
+lifts them recursively into one trailing @samp{Control} group with its
+own progress.
+
+A stage is @samp{failed} if any member failed, else @samp{active} if
+any is running, else @samp{done} only when every member is done, else
+@samp{pending}; an empty stage is @samp{pending}.  A failed stage
+appends the dim word @samp{failed} and its header's help text carries
+the failure class and reason.  The stage glyphs also accept
+@command{gc}'s own @code{RunStage} vocabulary, rendering @code{complete}
+as @samp{done} and @code{blocked} as @samp{failed}.
+
+The stage and ladder counts are over the formula's top-level
+@dfn{anchors}, while the @samp{N beads} in the section summary counts
+every bead in the run's graph --- iterations, nested steps and control
+nodes too.  A mapped formula's stage progress therefore counts
+anchors, not graph beads: a nested
+@samp{review-pipeline.review-claude} collapses into its
+@samp{review-pipeline} anchor.  A formula with no stage table (an
+unknown or private formula) renders the flat step list without guessing
+a taxonomy; the bead count in the summary applies to it as well.
+
+@kbd{SPC} on a step row, or @kbd{I} on any step row including a fold
+row, opens the @dfn{step inspector}, a drawer under the row:
+
+@example
+    │ step     build-basic.requirements  be-fy7m  in_progress
+    │ attempt  1 · iteration bead be-bcb5
+    │ worker   gc__requirements-planner-ec-fl8o  ● requirements-planner-1
+    │ artifacts run   decomposition.md (missing) · @dots{}
+    │ events   (no recent events)
+    │ failure  (none)
+@end example
+
+@noindent
+The inspector's lines are:
+
+@table @samp
+@item step
+The step's ref, bead id, status and @code{gc.outcome}.
+@item attempt
+The attempt number, iteration number and iteration bead, when present.
+@item worker
+The assignee and agent name, @samp{●} live or @samp{○} not, the lease
+remaining or expired, and the heartbeat age.  @samp{no session} means
+no live session matches the assignee.
+@item artifacts
+The run's plan files (@samp{artifacts run}), then the step's and its
+latest iteration's artifact paths (@samp{artifacts step}).  On a local
+city each entry carries its size and age; a remote city reads
+@samp{remote: not checked} rather than stat over TRAMP, and an absent
+file reads @samp{(missing)}.  @key{RET} on an entry visits it.
+@item events
+The three newest events for the step, its iteration or a descendant;
+@samp{(no recent events)} when none match, @samp{events unavailable}
+when the events read failed.
+@item failure
+The failure class and reason from the step or its nearest failed
+descendant, or @samp{(none)} for a healthy step.
+@end table
+
 @table @kbd
 @item @key{RET}
 @fnindex gascity-run-activate
-Open the bead, plan file or worker at point.
+Open the bead, artifact or worker at point, on a row or an inspector
+line.
 @item b
 @fnindex gascity-run-root-bead
 Open the root bead in beads.el.
 @item C
 @fnindex gascity-run-toggle-control
 Show or hide control nodes (spec, scope check, finalize).
+@item I
+@fnindex gascity-run-inspect
+Toggle the step inspector for the row at point, fold rows included.
+@item w
+@fnindex gascity-run-copy-id
+Copy the bead id at point: the step's id, or the iteration's id on the
+inspector's iteration line.
+@item !
+@fnindex gascity-run-diagnose
+Reveal the run's failed step (expanding its stage and any folded loop
+above it), open its inspector, and echo @samp{✕ ref  class: reason}.
+With no failed step it reports a user error instead of failing quietly.
 @item i
 @itemx v
 @itemx t
-Detail, peek and attach for the worker at point.
+Detail, snapshot peek and live attach for the worker at point; they
+work from a row and from the inspector's worker line.  @kbd{t} is the
+live log attach, @kbd{v} the snapshot peek.
 @item g
 @fnindex gascity-run-refresh
-Reload.
+Reload, keeping point, folds and drawers.
 @end table
 
 @noindent

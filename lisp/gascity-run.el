@@ -1228,10 +1228,17 @@ failed step is a `user-error'."
 (define-derived-mode gascity-run-mode gascity-section-mode "GC-Run"
   "Major mode for the run detail (dashboard-v3 §7.7).
 
-TAB/S-TAB move between steps, SPC folds a loop or opens a step's
-drawer, RET opens the step's bead or visits a plan file, `b' the root
-bead, `C' shows the control nodes, and the i, v and t keys reach a
-step's live worker.
+TAB/S-TAB move between steps, SPC folds a stage or a loop or opens a
+step's inspector drawer, RET opens the step's bead or visits an
+artifact, `b' the root bead, `C' shows the control nodes, and `I'
+toggles the inspector for any step row (fold rows included).
+
+`w' copies the step's bead id (the iteration id on the inspector's
+iteration line) and `!' reveals and diagnoses the run's failed step by
+expanding its stage and any folded loop above it, opening its inspector
+and echoing the failure class and reason.  The i, v and t keys reach a
+step's live worker (detail, snapshot peek, live attach) from a row or
+from an inspector line.
 
 \\{gascity-run-mode-map}"
   :interactive nil
