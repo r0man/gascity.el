@@ -44,6 +44,16 @@ step, iteration and worker lines carry the same identity properties as
 their rows, so `RET`, `i`, `v` and `t` work from the drawer unchanged
 (ga-ti6ah, ga-en6f5).
 
+### The run detail opens its beads in the run's store
+
+Opening a run by id (`M-x gascity-run-show ga-tkxsx`) used to leave the
+detail without a rig, so `RET` on a step and `b` on the root delegated
+the bead to the city store, which cannot see a rig's beads; beads.el
+reported `Error loading issue`.  With no rig passed, the view now reads
+the run root's `gascity-rig` stamp from the payload it already renders,
+so both keys open the bead in the rig store.  A run opened from the Runs
+view still uses the rig it carried (ga-rv28a).
+
 ### New run-detail keys: `I` inspect, `w` copy id, `!` diagnose
 
 The run detail binds `I` (`gascity-run-inspect`) to toggle the inspector,

@@ -1002,7 +1002,7 @@ On a drain step's member run, open that run's detail.  RET never folds
           (member (gascity-run-show member nil
                                     (get-text-property (point) 'gascity-run-member-rig)))
           (bead (gascity-runs-call-with-store
-                 gascity-run--current-rig
+                 (gascity-run--store-rig)
                  (lambda (store) (gascity-beads--show-in-store bead store))))
           ((get-text-property (point) 'gascity-section) nil)
           (t (user-error "Nothing to act on here")))))
@@ -1012,7 +1012,7 @@ On a drain step's member run, open that run's detail.  RET never folds
   (interactive)
   (let ((run gascity-run--current-run))
     (gascity-runs-call-with-store
-     gascity-run--current-rig
+     (gascity-run--store-rig)
      (lambda (store) (gascity-beads--show-in-store run store)))))
 
 (defun gascity-run-toggle-control ()
@@ -1064,6 +1064,17 @@ command never spawns gc, so `!' stays non-blocking."
                                 (equal (alist-get 'id bead) id))
                               (plist-get index :roots)))))
     (and root (cons index root))))
+
+(defun gascity-run--store-rig ()
+  "Return the rig store of this run, or nil for the city store.
+Prefer the rig `gascity-run-show' was called with (a run opened from
+`gascity-runs' then needs no store read).  With none — a run opened by
+id via `M-x gascity-run-show' — the rendered run-beads payload stamps
+every bead with the rig store it came from (`gascity-rig'), and the run
+root's stamp is the store its step beads live in too."
+  (or gascity-run--current-rig
+      (let ((root (cdr (gascity-run--stored-run))))
+        (and root (alist-get 'gascity-rig root)))))
 
 (defun gascity-run--failed-chain (node)
   "Return NODE followed by its deepest failed child chain.

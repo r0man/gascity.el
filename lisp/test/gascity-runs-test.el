@@ -975,6 +975,25 @@ the city's host; `b' opens the root; `i' reaches the live assignee."
         (re-search-forward "^    ◆ prepare")
         (should-error (gascity-runs-agent-detail) :type 'user-error)))))
 
+(ert-deftest gascity-test-run-detail-acts-without-a-rig-use-the-run-s-store ()
+  "RET/`b' resolve the store from the payload when no rig was passed.
+This is how `M-x gascity-run-show' opens a run: the buffer knows only
+its city, so the step bead's `gascity-rig' stamp must supply the store
+or the delegation opens the bead in the city store and fails."
+  (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+    (let (shown)
+      (cl-letf (((symbol-function 'gascity-beads--show-in-store)
+                 (lambda (id store) (setq shown (list id store))))
+                ((symbol-function 'gascity-beads--rig-store-cached)
+                 (lambda (rig) (concat "/stores/" rig "/"))))
+        (setq gascity-run--current-rig nil)
+        (goto-char (point-min))
+        (re-search-forward "^    ◆ prepare")
+        (gascity-run-activate)
+        (should (equal shown '("be-5aht" "/stores/beads.el/")))
+        (gascity-run-root-bead)
+        (should (equal shown '("be-52m5" "/stores/beads.el/")))))))
+
 (ert-deftest gascity-test-run-detail-failed-run-opens-failure ()
   "A failed run's loop containing the failure starts expanded down to it."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
