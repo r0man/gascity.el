@@ -821,6 +821,10 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-session-peek-at-point}
 @tab Show recent output of the session/agent at point without attaching.
 @item @code{run-detail}
+@tab @kbd{w}
+@tab @code{gascity-run-copy-id}
+@tab Copy the bead id at point to the kill ring (‘w’).
+@item @code{run-detail}
 @tab @kbd{i}
 @tab @code{gascity-runs-agent-detail}
 @tab Open the detail of the live worker at point (‘i’).

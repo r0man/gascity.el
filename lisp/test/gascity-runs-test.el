@@ -1379,6 +1379,151 @@ cockpit's exact argv (same window, line mode)."
                                  (equal args '("events" "--since" "2h")))
                                reads)))))))
 
+;;; Inspector actions (run-view-v2 §3)
+
+(ert-deftest gascity-test-run-detail-copy-id ()
+  "`w' copies the bead id at point: the step's on a step row and the
+iteration's on the drawer's iteration line."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (let (copied)
+      (cl-letf (((symbol-function 'kill-new)
+                 (lambda (s &optional _replace) (setq copied s))))
+        (goto-char (point-min))
+        (re-search-forward "^    ▾ review")
+        (gascity-run-copy-id)
+        (should (equal copied "be-fkq"))
+        ;; The requirements row shows `iter 1'; its drawer names the
+        ;; iteration bead, and w there copies that id.
+        (goto-char (point-min))
+        (re-search-forward "^    ◆ requirements")
+        (gascity-thing-toggle)
+        (goto-char (point-min))
+        (re-search-forward "attempt  1 · iteration bead be-59r")
+        (gascity-run-copy-id)
+        (should (equal copied "be-59r"))))))
+
+(ert-deftest gascity-test-run-detail-inspect-toggles-drawer ()
+  "`I' opens the inspector for a leaf step and for a fold row (without
+changing the fold), closes it again, and refuses a stage header."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (goto-char (point-min))
+    (re-search-forward "^    ◆ prepare")
+    (gascity-run-inspect)
+    (should (string-match-p "│ step     build-basic.prepare  be-e29"
+                            (buffer-string)))
+    (gascity-run-inspect)
+    (should-not (string-match-p "│ step     build-basic.prepare"
+                                (buffer-string)))
+    ;; A fold row: I opens its inspector while its children keep their
+    ;; own fold state.
+    (goto-char (point-min))
+    (re-search-forward "^    ▾ review")
+    (gascity-run-inspect)
+    (let ((text (buffer-string)))
+      (should (string-match-p "│ step     build-basic.review  be-fkq" text))
+      (should (string-match-p "^      ▾ build-basic-review-loop" text)))
+    (gascity-run-inspect)
+    (should-not (string-match-p "│ step     build-basic.review" (buffer-string)))
+    ;; A stage header is not a step.
+    (goto-char (point-min))
+    (re-search-forward "^  ▾ ✕ Review")
+    (should-error (gascity-run-inspect) :type 'user-error)))
+
+(ert-deftest gascity-test-run-detail-diagnose-reveals-collapsed-stage ()
+  "`!' expands the failed step's collapsed stage, moves point to its row
+and echoes the ref, class and reason, truncated to the echo area."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    ;; Collapse Review: the failing row is not on screen.
+    (goto-char (point-min))
+    (re-search-forward "^  ▾ ✕ Review")
+    (gascity-thing-toggle)
+    (should (string-match-p "^  ▸ ✕ Review" (buffer-string)))
+    (should-not (string-match-p "be-fkq" (buffer-string)))
+    (let (shown)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (setq shown (apply #'format format-string args)))))
+        (gascity-run-diagnose))
+      (should (string-match-p "^  ▾ ✕ Review" (buffer-string)))
+      (should (equal (get-text-property (point) 'gascity-bead) "be-fkq"))
+      (should (string-match-p
+               "✕ build-basic\\.review  hard: control_dispatch_error" shown)))))
+
+(ert-deftest gascity-test-run-detail-diagnose-expands-folded-ancestors ()
+  "`!' re-opens a folded loop above the failed bead before landing on it."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    ;; Fold the failing loop: its nested rows disappear.
+    (goto-char (point-min))
+    (re-search-forward "^      ▾ build-basic-review-loop")
+    (gascity-thing-toggle)
+    (should (string-match-p "^      ▸ build-basic-review-loop" (buffer-string)))
+    ;; The collapsed fold row still names its own bead; its child row is
+    ;; what disappears.
+    (should-not (string-match-p "be-5v6" (buffer-string)))
+    (cl-letf (((symbol-function 'gascity-runs-failed-step)
+               (lambda (&rest _)
+                 '(:name "review" :id "be-1bn"
+                   :ref "build-basic.review.build-basic-review-loop"
+                   :class "hard" :reason "control_dispatch_error"))))
+      (gascity-run-diagnose))
+    (should (string-match-p "^      ▾ build-basic-review-loop" (buffer-string)))
+    (should (equal (get-text-property (point) 'gascity-bead) "be-1bn"))))
+
+(ert-deftest gascity-test-run-detail-diagnose-falls-back-to-stage ()
+  "When the failed row cannot be located `!' lands on the containing stage
+header instead of failing silently."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (cl-letf (((symbol-function 'gascity-runs-failed-step)
+               (lambda (&rest _)
+                 '(:name "review" :id "be-gone" :ref "build-basic.review"))))
+      (gascity-run-diagnose))
+    (should (equal (get-text-property (point) 'gascity-run-stage) "review"))))
+
+(ert-deftest gascity-test-run-detail-diagnose-without-failure ()
+  "A healthy run has no failed step to jump to."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-qrpg"
+    (should-error (gascity-run-diagnose) :type 'user-error)))
+
+(ert-deftest gascity-test-run-detail-drawer-targets-resolve ()
+  "Drawer bead, artifact and worker lines carry the row's identity
+properties, so RET/i/v/t resolve from the drawer without new commands."
+  (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+    (let (opened visited detail)
+      (cl-letf (((symbol-function 'gascity-beads--show-in-store)
+                 (lambda (id _store) (setq opened id)))
+                ((symbol-function 'gascity-beads--rig-store-cached)
+                 (lambda (rig) (concat "/stores/" rig "/")))
+                ((symbol-function 'find-file)
+                 (lambda (file &rest _) (setq visited file)))
+                ((symbol-function 'gascity-polecat-detail-at-point)
+                 (lambda () (interactive)
+                   (setq detail (gascity-agent-name (gascity-agent-at-point))))))
+        (goto-char (point-min))
+        (re-search-forward "^    ⬣ requirements")
+        (gascity-thing-toggle)
+        ;; The step line's bead is the step.
+        (goto-char (point-min))
+        (re-search-forward "│ step     build-basic.requirements  be-fy7m")
+        (gascity-run-activate)
+        (should (equal opened "be-fy7m"))
+        ;; The attempt line names the iteration bead, and RET at the end
+        ;; of that line still resolves it.
+        (goto-char (point-min))
+        (re-search-forward "iteration bead be-bcb5")
+        (gascity-run-activate)
+        (should (equal opened "be-bcb5"))
+        ;; The artifact label visits its file.
+        (goto-char (point-min))
+        (re-search-forward "decomposition\\.md (missing)")
+        (goto-char (match-beginning 0))
+        (gascity-run-activate)
+        (should (string-suffix-p "decomposition.md" visited))
+        ;; The worker line reaches the live assignee.
+        (goto-char (point-min))
+        (re-search-forward "│ worker   gc__requirements-planner-ec-fl8o")
+        (gascity-runs-agent-detail)
+        (should (equal detail "beads.el/gc.requirements-planner-1"))))))
+
 ;;; Render guard (§8.3 R2, §8.4)
 
 (ert-deftest gascity-test-runs-render-remote-is-io-free ()
