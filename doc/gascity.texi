@@ -353,7 +353,7 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 @item Cities @tab cities-dark @tab Every reachable city and host.
 @item Costs @tab costs-dark @tab Recorded usage by run, wall-seconds and list-price estimate.
 @item Mode-line lighter @tab lighter-dark @tab The lighter in a mode line.
-@item Runs and run detail @tab runs-dark @tab The run cards; a run's steps open from them.
+@item Runs and run detail @tab runs-dark, run-detail-dark @tab The run cards, and one run's stage groups with the failed step's inspector.
 @item Live refresh @tab cockpit-dark, events-dark @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
 @item Events @tab events-dark @tab The event log.
 @item Mail (inbox, thread, compose) @tab mail-inbox-dark @tab The inbox; thread and compose are the same buffer family.
@@ -1987,6 +1987,8 @@ Steps  1/10 · 37 beads                                    C show control nodes
     · finalize                be-t1f2   iter 1                          Sep 25
     · publish                 be-s4bt                                   Sep 25
 @end example
+
+@shot{run-detail-dark, The run detail: stage groups and the failed step's inspector (ef-deuteranopia-dark)}
 
 @noindent
 The steps are the run's beads arranged by step: iterations hang under

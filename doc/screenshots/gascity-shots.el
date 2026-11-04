@@ -412,12 +412,28 @@ the cold menu.  Returns nil so the whole frame is captured
    nil)
   (gascity-shots--await (gascity-shots--selected-buffer)))
 
+(defun gascity-shots--run-detail-buffer ()
+  "Open the fixture's build-basic run detail, revealing the failed step.
+The `!' command (`gascity-run-diagnose') expands the failed Review stage,
+opens that step's inspector and moves point to its row, so one capture
+shows the stage groups and the inspector together.  The fixture has no
+controller, so the inspector's worker line reads `no session'."
+  (gascity-run-show "demo-run")
+  (let ((buffer (gascity-shots--selected-buffer)))
+    (gascity-shots--await buffer 20)
+    (with-current-buffer buffer
+      (goto-char (point-min))
+      (gascity-run-diagnose))
+    (gascity-shots--await buffer 10)
+    buffer))
+
 (defun gascity-shots-all ()
   "Return the full alist of shots: (NAME THUNK . PROPS)."
   (list
    ;; vui views — auto-fit height.
    (list "cockpit" #'gascity-shots--cockpit-buffer :settle 15)
    (list "runs" (gascity-shots--view #'gascity-runs) :settle 15)
+   (list "run-detail" #'gascity-shots--run-detail-buffer :settle 15)
    (list "health" (gascity-shots--view #'gascity-health) :settle 15)
    (list "costs" (gascity-shots--view #'gascity-costs) :settle 12)
    (list "rig-dashboard"
