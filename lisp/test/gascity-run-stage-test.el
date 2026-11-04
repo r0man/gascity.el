@@ -228,21 +228,18 @@ Showing the control nodes (C) leaves the stage groups unchanged."
                          (mapcar (lambda (group) (plist-get group :total))
                                  shown))))))
 
-(ert-deftest gascity-test-run-stage-status-and-progress ()
+(ert-deftest gascity-test-run-stage-status-and-counts ()
   "Stage state precedence is failed > active > done(all) > pending.
-Progress counts done members over total; glyphs translate gc's words."
+Groups carry done/total counts; glyphs translate gc's words."
   (let ((done (gascity-run-stage-test--node "done" 'done))
         (active (gascity-run-stage-test--node "active" 'active))
         (failed (gascity-run-stage-test--node "failed" 'failed))
         (pending (gascity-run-stage-test--node "pending" 'pending)))
     (should (eq (gascity-run-stage-state (list done done active)) 'active))
-    (should (equal (gascity-run-stage-progress (list done done active)) "2/3"))
     (should (eq (gascity-run-stage-state (list done done)) 'done))
-    (should (equal (gascity-run-stage-progress (list done done)) "2/2"))
     (should (eq (gascity-run-stage-state (list failed done active)) 'failed))
     (should (eq (gascity-run-stage-state (list done pending)) 'pending))
     (should (eq (gascity-run-stage-state nil) 'pending))
-    (should (equal (gascity-run-stage-progress nil) "0/0"))
     ;; A group carries the same state and counts.
     (let* ((tree (list (gascity-run-stage-test--node "prepare" 'done)
                        (gascity-run-stage-test--node "requirements" 'done)
@@ -250,9 +247,7 @@ Progress counts done members over total; glyphs translate gc's words."
            (intake (car (gascity-run-stage-groups tree "build-basic"))))
       (should (eq (plist-get intake :state) 'active))
       (should (= (plist-get intake :done) 2))
-      (should (= (plist-get intake :total) 3))
-      (should (equal (gascity-run-stage-progress (plist-get intake :anchors))
-                     "2/3")))
+      (should (= (plist-get intake :total) 3)))
     ;; Glyphs: the module's states plus gc's RunStage vocabulary.
     (should (equal (substring-no-properties
                     (gascity-run-stage-glyph 'done)) "◆"))

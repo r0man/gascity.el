@@ -569,9 +569,11 @@ step's step path."
 (defun gascity-run--event-lines (step iteration ctx)
   "Return the inspector's recent-event lines for STEP and ITERATION in CTX.
 The three newest events (`gascity-event-time') whose `gascity-event-bead'
-is the step, its iteration or a descendant.  A failed events load says
-`events unavailable'; a load without a match says `(no recent events)'.
-Never signals, and never reads gc on the render path."
+is the step, its iteration or a descendant.  A cold pending load emits
+no line at all (it has read nothing yet, so it must not claim there is
+nothing to report); a failed events load says `events unavailable'; a
+ready load without a match says `(no recent events)'.  Never signals,
+and never reads gc on the render path."
   (let* ((load (plist-get ctx :events))
          (ids (gascity-run--event-ids step iteration ctx))
          ;; A `:lines t' store payload is `(GOOD . BAD)', the good events
@@ -591,6 +593,7 @@ Never signals, and never reads gc on the render path."
     (cond
      ((and load (eq (plist-get load :state) 'error))
       (list "events   events unavailable"))
+     ((eq (plist-get load :state) 'pending) nil)
      (newest
       (mapcar (lambda (event)
                 (format "events   %s %s  %s"
@@ -858,6 +861,7 @@ rows, RET and the step fold machinery are inherited, not duplicated."
 (defun gascity-run-lines (ctx)
   "Return every run detail line for render context CTX.
 CTX keys: :run-id :now :loads (:beads) :index :sessions :socket :convoy
+:events (the drawer's events load) :failed-step (the diagnosed failure)
 :view (:collapsed :drawers :expanded :stage-collapsed :control).  A
 formula with a stage table renders its top-level anchors under stage
 headers; one without keeps the flat step rows (run-view-v2 §2)."
@@ -962,7 +966,7 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
          (sessions-load (gascity-ui-effective-load sessions-res last-sessions))
          (events-load (gascity-ui-effective-load events-res last-events))
          (ctx (list :run-id run-id :now (float-time)
-                    :loads (list :beads beads-load :events events-load)
+                    :loads (list :beads beads-load)
                     :events events-load
                     :index index
                     :sessions (append (alist-get 'sessions (gascity-dashboard--data
@@ -1148,7 +1152,8 @@ fold thing counts as the step's row."
   "Return the echo-area text for the failure plist FAILED."
   (let ((class (plist-get failed :class))
         (reason (plist-get failed :reason)))
-    (concat "✕ " (or (plist-get failed :ref) (plist-get failed :name) "?")
+    (concat (gascity-ui-glyph 'failed) " "
+            (or (plist-get failed :ref) (plist-get failed :name) "?")
             (cond ((and class reason) (format "  %s: %s" class reason))
                   (class (format "  %s" class))
                   (reason (format "  %s" reason))

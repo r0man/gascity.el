@@ -641,6 +641,8 @@ data shows the error line; the view never blanks."
     (should (eq (keymap-lookup gascity-runs-mode-map (car pair)) (cdr pair))))
   (dolist (pair '(("g" . gascity-run-refresh) ("RET" . gascity-run-activate)
                   ("b" . gascity-run-root-bead) ("C" . gascity-run-toggle-control)
+                  ("I" . gascity-run-inspect) ("w" . gascity-run-copy-id)
+                  ("!" . gascity-run-diagnose)
                   ("i" . gascity-runs-agent-detail) ("t" . gascity-runs-agent-tmux)
                   ("SPC" . gascity-thing-toggle) ("N" . gascity-section-next)))
     (should (eq (keymap-lookup gascity-run-mode-map (car pair)) (cdr pair))))
@@ -904,6 +906,10 @@ active step's live worker; loops fold."
 					       text))
 				      (should (string-match-p "^  ▾ · Implementation +0/2$" text))
 				      (should (string-match-p "^  ▾ · Review +0/1$" text))
+				      ;; The full five-stage group set renders (Approval has no
+				      ;; members but is not dropped), matching the pure partition.
+				      (should (string-match-p "^  ▾ · Approval +0/0$" text))
+				      (should (string-match-p "^  ▾ · Finalization +0/2$" text))
 				      ;; Quiet loops start folded.
 				      (should (string-match-p "^    ▸ review +be-mqhp +· loop" text))
 				      (should-not (string-match-p "setup-build-basic-review" text)))
@@ -1111,7 +1117,15 @@ other stages alone, and survives a refresh with point on the header."
       (gascity-run-refresh)
       (should (string-match-p "^  ▸ ⬣ Intake" (buffer-string)))
       (should (string-match-p "Intake" (thing-at-point 'line t)))
-      (should (= (point) p)))))
+      (should (= (point) p)))
+    ;; An open drawer and its expanded stage survive a refresh too.
+    (goto-char (point-min))
+    (re-search-forward "^    · implement")
+    (gascity-thing-toggle)
+    (should (string-match-p "│ step     build-basic\\.implement" (buffer-string)))
+    (gascity-run-refresh)
+    (should (string-match-p "^  ▾ · Implementation +0/2$" (buffer-string)))
+    (should (string-match-p "│ step     build-basic\\.implement" (buffer-string)))))
 
 (ert-deftest gascity-test-run-detail-flat-fallback ()
   "A formula with no stage table keeps today's flat rows byte-identical
@@ -1424,6 +1438,25 @@ cockpit's exact argv (same window, line mode)."
                                  (equal args '("events" "--since" "2h")))
                                reads)))))))
 
+(ert-deftest gascity-test-run-inspector-events-pending-is-silent ()
+  "A cold pending events load emits no events line at all: the inspector
+must not claim there are no recent events before it has read them."
+  (let* ((beads (gascity-runs-test--active-beads))
+         (step (seq-find (lambda (b) (equal (alist-get 'id b) "be-fy7m")) beads))
+         (iteration (seq-find (lambda (b) (equal (alist-get 'id b) "be-bcb5"))
+                              beads))
+         (pending (gascity-runs-test--inspector-ctx
+                   beads "be-52m5" :events '(:state pending)))
+         (ready (gascity-runs-test--inspector-ctx
+                 beads "be-52m5" :events '(:state ready :data nil))))
+    (should (null (gascity-run--event-lines step iteration pending)))
+    (should-not (string-match-p "no recent events"
+                                (gascity-runs-test--text
+                                 (gascity-run--step-drawer step iteration pending))))
+    ;; A load that really has no matching event still says so.
+    (should (equal (gascity-run--event-lines step iteration ready)
+                   '("events   (no recent events)")))))
+
 ;;; Inspector actions (run-view-v2 §3)
 
 (ert-deftest gascity-test-run-detail-copy-id ()
@@ -1567,7 +1600,24 @@ properties, so RET/i/v/t resolve from the drawer without new commands."
         (goto-char (point-min))
         (re-search-forward "│ worker   gc__requirements-planner-ec-fl8o")
         (gascity-runs-agent-detail)
-        (should (equal detail "beads.el/gc.requirements-planner-1"))))))
+        (should (equal detail "beads.el/gc.requirements-planner-1"))
+        ;; `v' peeks the session id gc accepts, not the qualified agent
+        ;; name (a pool worker's agent name is not a session id).  `t'
+        ;; already attaches by session name; both resolve the same id.
+        (let (peeked)
+          (cl-letf (((symbol-function 'gascity-session-peek--show)
+                     (lambda (target _lines) (setq peeked target))))
+            (goto-char (point-min))
+            (re-search-forward "│ worker   gc__requirements-planner-ec-fl8o")
+            (gascity-runs-agent-peek))
+          (should (equal peeked "gc__requirements-planner-ec-fl8o")))
+        (let (attached)
+          (cl-letf (((symbol-function 'gascity-terminal-attach-tmux)
+                     (lambda (session &rest _) (setq attached session))))
+            (goto-char (point-min))
+            (re-search-forward "│ worker   gc__requirements-planner-ec-fl8o")
+            (gascity-runs-agent-tmux))
+          (should (equal attached "gc__requirements-planner-ec-fl8o")))))))
 
 ;;; Render guard (§8.3 R2, §8.4)
 

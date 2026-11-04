@@ -367,14 +367,22 @@ display-oriented `scoped-name'."
     (or name (user-error "No order at point"))))
 
 (defun gascity-action--session-at-point ()
-  "Return the session alias at point, or signal a `user-error'.
+  "Return the session target at point, or signal a `user-error'.
 Every session verb (nudge, suspend, kill, wake, drain, reset, undrain,
 peek) resolves its target here, so an agent with no session (a pool
 slot, `gascity-agent-sessionless-p') is refused with the reason rather
-than sent to gc to fail with \"session not found\"."
-  (gascity-agent-check-session
-   (or (gascity-action--agent-at-point-name)
-       (user-error "No session at point"))))
+than sent to gc to fail with \"session not found\".
+
+The target is the live session id when the agent has one (what
+`gc session' commands take, and the only value that resolves for a
+pool worker, whose qualified agent name is not a session), falling
+back to the qualified agent name (same fallback as
+`gascity-session-follow-log')."
+  (let ((agent (gascity-agent-at-point)))
+    (unless agent (user-error "No session at point"))
+    (gascity-agent-check-session (gascity-agent-name agent))
+    (or (gascity-agent-session-name agent)
+        (gascity-agent-name agent))))
 
 (defun gascity--refresh-current-view ()
   "Refresh the current gascity list, dashboard, or detail view after a mutation."

@@ -44,8 +44,21 @@
 
 ;;; Formula stage table
 
+(defconst gascity-run-stage-base-stages
+  '(("intake" "Intake"
+     ("prepare" "requirements" "plan" "plan-review" "decompose"))
+    ("implementation" "Implementation"
+     ("implement" "implement-same-session" "summarize-implementation"))
+    ("review" "Review" ("review"))
+    ("approval" "Approval" nil)
+    ("finalization" "Finalization" ("finalize" "publish")))
+  "The five-stage lifecycle shared by `build-base' and `build-basic'.
+Emacs-authored (see the Commentary): the starter workflow is the base
+lifecycle with a shorter plan and review, so one table carries both and
+the relationship is visible in the data.")
+
 (defconst gascity-run-stage-formulas
-  '(("mol-adopt-pr-v2"
+  `(("mol-adopt-pr-v2"
      ("preflight" "Preflight" ("preflight"))
      ("rebase" "Worktree / rebase" ("rebase-check"))
      ("pre-review-ci" "Pre-review CI"
@@ -103,26 +116,13 @@
      ("ci" "CI" ("wait-for-ci"))
      ("merge" "Merge"
       ("approve-merge" "verify-merge-approval" "merge-and-finalize")))
-    ("build-base"
-     ("intake" "Intake"
-      ("prepare" "requirements" "plan" "plan-review" "decompose"))
-     ("implementation" "Implementation"
-      ("implement" "implement-same-session" "summarize-implementation"))
-     ("review" "Review" ("review"))
-     ("approval" "Approval" nil)
-     ("finalization" "Finalization" ("finalize" "publish")))
-    ("build-basic"
-     ("intake" "Intake"
-      ("prepare" "requirements" "plan" "plan-review" "decompose"))
-     ("implementation" "Implementation"
-      ("implement" "implement-same-session" "summarize-implementation"))
-     ("review" "Review" ("review"))
-     ("approval" "Approval" nil)
-     ("finalization" "Finalization" ("finalize" "publish"))))
+    ("build-base" . ,gascity-run-stage-base-stages)
+    ("build-basic" . ,gascity-run-stage-base-stages))
   "Formula name → ordered (KEY LABEL STEP-IDS) lifecycle stages.
 `mol-*' entries are gc's `stagesForFormula' tables; `build-base' and
-`build-basic' are Emacs-authored (see the module commentary).  A
-formula absent here has no stage table and keeps the flat step view.
+`build-basic' share the Emacs-authored `gascity-run-stage-base-stages';
+the Commentary explains why that table is not gc's.  A formula absent
+here has no stage table and keeps the flat step view.
 STEP-IDS may be nested (`review-pipeline.review-claude'); matching is
 by their top-level anchor, so such an id belongs to the anchor
 `review-pipeline'.")
@@ -196,10 +196,6 @@ pending otherwise, including when it has no members."
 (defun gascity-run-stage--done (nodes)
   "Return the number of NODES whose state is done."
   (seq-count (lambda (node) (eq (plist-get node :state) 'done)) nodes))
-
-(defun gascity-run-stage-progress (nodes)
-  "Return NODES as a `DONE/TOTAL' progress string."
-  (format "%d/%d" (gascity-run-stage--done nodes) (length nodes)))
 
 (defun gascity-run-stage-glyph (state)
   "Return the glyph for stage STATE, propertized with its face.
