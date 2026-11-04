@@ -185,10 +185,12 @@ A plist (:collapsed :drawers :expanded) of the root component.")
     ("j e" . gascity-jump-events)
     ("j h" . gascity-jump-health)
     ("j c" . gascity-jump-cities)
-    ("j o" . gascity-order-list)
-    ("j v" . gascity-convoy-list)
-    ("j d" . gascity-dolt-list)
+    ("j o" . gascity-jump-orders)
+    ("j v" . gascity-jump-convoys)
+    ("j d" . gascity-jump-dolt)
     ("j g" . gascity-jump-rig)
+    ("j l" . gascity-jump-rigs)
+    ("j s" . gascity-jump-sessions)
     ("j $" . gascity-jump-costs))
   "The `j' jump prefix (§5.2): key → command.")
 
@@ -2435,6 +2437,14 @@ CANDIDATES is the jump target list passed through to
   (interactive)
   (gascity-jump--scoped-call '(gascity-agents gascity-session-list) "Agents"))
 
+(defun gascity-jump-sessions ()
+  "Jump to the Sessions view (`j s').
+The flat `gc session list' table, not the Agents view (`j a'): every
+runtime session the city reports, with the sessions' own filters and
+bookmark."
+  (interactive)
+  (gascity-jump--scoped-call '(gascity-session-list) "Sessions"))
+
 (defun gascity-jump-runs ()
   "Jump to the Runs view (`j r')."
   (interactive)
@@ -2546,6 +2556,7 @@ store (ga-40tbg.2)."
   "d" #'gascity-jump-dolt
   "g" #'gascity-jump-rig
   "l" #'gascity-jump-rigs
+  "s" #'gascity-jump-sessions
   "$" #'gascity-jump-costs)
 
 (defalias 'gascity-jump-prefix gascity-jump-map
@@ -2570,6 +2581,7 @@ teaches the view keys."
     ("j d" "dolt" gascity-jump-dolt)
     ("j g" "rig dashboard" gascity-jump-rig)
     ("j l" "rigs" gascity-jump-rigs)
+    ("j s" "sessions" gascity-jump-sessions)
     ("j $" "costs" gascity-jump-costs)]
    ["Agent at point"
     ("M" "nudge…" gascity-session-nudge-at-point)

@@ -4,6 +4,16 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### `j s` opens the Sessions view; the jump registry is complete
+
+The flat session list (`gascity-session-list`, its own state/rig filters and
+`gascity-sessions` bookmark) was reachable only via `M-x` or a bookmark.  It
+now has `j s` in every view's `j` prefix and in the `?` dispatch's Jump
+group.  The cockpit's "… N more" hints gain `j l` (rigs), and every hint
+now names the same `gascity-jump-*` command the prefix and the dispatch bind
+(`j o`/`j v`/`j d` previously pointed at the lists directly), so the three
+registries cannot drift; a parity ERT test enforces it (ga-s3nt3).
+
 ### Sling Who lists every configured agent and derives the formula's run target
 
 The sling's **T** picker now offers every agent `gc agent list` reports, not

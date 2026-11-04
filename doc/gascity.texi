@@ -813,11 +813,13 @@ takes previous-line, the two actions that once lived there moved: agent
 @kindex j
 @fnindex gascity-jump-cockpit
 @fnindex gascity-jump-agents
+@fnindex gascity-jump-sessions
 @fnindex gascity-jump-beads
 @fnindex gascity-jump-health
 @fnindex gascity-jump-cities
 @fnindex gascity-jump-costs
 @fnindex gascity-jump-rig
+@fnindex gascity-jump-rigs
 Views are reached through @kbd{j} followed by one letter, in every
 gascity view.  (Single capitals are taken: @kbd{R}, for one, is
 reset.)
@@ -826,6 +828,7 @@ reset.)
 @headitem Keys @tab View
 @item @kbd{j j} @tab the cockpit (@pxref{The Cockpit})
 @item @kbd{j a} @tab agents (@pxref{Agents})
+@item @kbd{j s} @tab sessions, the flat agent-session list (@pxref{Sessions})
 @item @kbd{j r} @tab runs (@pxref{Runs and Live Events})
 @item @kbd{j b} @tab beads in beads.el, scoped to the rig at point, else chosen: a rig or the city
 @item @kbd{j m} @tab the mail inbox (@pxref{Mail})
@@ -834,6 +837,7 @@ reset.)
 @item @kbd{j c} @tab Cities (@pxref{Cities and Remote Cities})
 @item @kbd{j o} @kbd{j v} @kbd{j d} @tab the order, convoy and Dolt lists (@pxref{Tabulated Lists})
 @item @kbd{j g} @tab the dashboard of the rig at point, else chosen
+@item @kbd{j l} @tab the rigs list (@pxref{Rigs})
 @item @kbd{j $} @tab @command{gc costs} output (@pxref{Costs})
 @end multitable
 
@@ -1318,7 +1322,7 @@ detail view with its work, current run, transcript, mail and history;
 @xref{Agent Detail}, @ref{Actions}.
 
 The same agents appear in the @strong{Sessions} tabulated list, with
-their rig, state, provider and working directory; @key{RET} and @kbd{t}
+their rig, state, provider and working directory (@kbd{j s}); @key{RET} and @kbd{t}
 attach, @kbd{i} opens the detail, and @kbd{d} opens Dired in the
 worktree.  @xref{Sessions}.
 

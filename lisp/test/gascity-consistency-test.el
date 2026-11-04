@@ -221,8 +221,8 @@ views; the dispatch's keys are unique."
                        gascity-consistency--section-keys))
         (keys nil))
     (dolist (key '("j j" "j a" "j r" "j b" "j m" "j e" "j h" "j c" "j o" "j v"
-                   "j d" "j g" "j $" "M" "s" "w" "K" "D" "R" "U" "t" "S" "c" "m" "L"
-                   "C" "O" "W" "g" "/" "+" "-"))
+                   "j d" "j g" "j l" "j s" "j $" "M" "s" "w" "K" "D" "R" "U"
+                   "t" "S" "c" "m" "L" "C" "O" "W" "g" "/" "+" "-"))
       (let* ((suffix (transient-get-suffix 'gascity-dispatch key))
              (cmd (plist-get (cdr suffix) :command))
              (allowed (cdr (assoc key table))))
@@ -265,6 +265,46 @@ run detail."
           (gascity-dashboard-activate))))
     (should (equal (reverse opened)
                    '(agents (run "be-j2b" "beads.el") mail health)))))
+
+;;; Jump registry
+
+(defun gascity-consistency--jump-keys ()
+  "Return the jump map's (\"j x\" . command) pairs, in key order."
+  (let (pairs)
+    (map-keymap (lambda (event cmd)
+                  (when (and (integerp event) (commandp cmd))
+                    (push (cons (concat "j " (char-to-string event)) cmd) pairs)))
+                gascity-jump-map)
+    (nreverse pairs)))
+
+(ert-deftest gascity-test-jump-sessions ()
+  "`j s' reaches the Sessions view from the jump prefix and the dispatch."
+  (should (eq (keymap-lookup gascity-jump-map "s") #'gascity-jump-sessions))
+  (let ((suffix (transient-get-suffix 'gascity-dispatch "j s")))
+    (should suffix)
+    (should (eq (plist-get (cdr suffix) :command) 'gascity-jump-sessions)))
+  (let (opened)
+    (cl-letf (((symbol-function 'gascity-session-list)
+               (lambda () (interactive) (setq opened t))))
+      (gascity-jump-sessions)
+      (should opened))))
+
+(ert-deftest gascity-test-jump-registry-parity ()
+  "One registry: the jump map, the dispatch Jump group and the hint table agree."
+  (let ((pairs (gascity-consistency--jump-keys)))
+    (should pairs)
+    (dolist (pair pairs)
+      (ert-info ((format "%s -> %S" (car pair) (cdr pair)))
+        (let ((suffix (transient-get-suffix 'gascity-dispatch (car pair))))
+          (should suffix)
+          (should (eq (plist-get (cdr suffix) :command) (cdr pair))))
+        (should (eq (cdr (assoc (car pair) gascity-dashboard--jumps))
+                    (cdr pair))))))
+  ;; And the hint table names no command the map does not bind.
+  (dolist (pair gascity-dashboard--jumps)
+    (ert-info ((format "%s" (car pair)))
+      (should (eq (keymap-lookup gascity-jump-map (substring (car pair) 2))
+                  (cdr pair))))))
 
 (provide 'gascity-consistency-test)
 ;;; gascity-consistency-test.el ends here
