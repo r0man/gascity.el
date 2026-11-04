@@ -56,6 +56,7 @@
 (require 'gascity-section)
 (require 'gascity-dashboard)
 (require 'gascity-runs)
+(require 'gascity-run-stage)
 
 (defconst gascity-run-buffer-name "*gascity-run: %s*"
   "Format of the run detail buffer name; %s is the run's root bead id.")
@@ -394,6 +395,114 @@ run's graph: each gets a row with its ladder, RET opens its run detail."
           'beads-thing (gascity-dashboard--thing 'row (concat "sub:" id)))))
      (reverse (gethash (alist-get 'id step) (plist-get index :drains))))))
 
+;;; Stage groups (run-view-v2 §2)
+
+(defun gascity-run--control-nodes (nodes)
+  "Return the control nodes of tree NODES at every depth, in tree order."
+  (mapcan (lambda (node)
+            (append (and (gascity-run--control-p (plist-get node :bead))
+                         (list node))
+                    (gascity-run--control-nodes (plist-get node :children))))
+          nodes))
+
+(defun gascity-run--control-group (tree)
+  "Return the trailing stage group of TREE's control nodes.
+The group exists so `C' can show the control nodes of a mapped run in
+one place; it is separate from the formula stages, so it never counts
+in their progress."
+  (let ((nodes (gascity-run--control-nodes tree)))
+    (list :key "control" :label "Control"
+          :state (gascity-run-stage-state nodes)
+          :done (seq-count (lambda (node)
+                             (eq (gascity-run--node-state node) 'done))
+                           nodes)
+          :total (length nodes)
+          :anchors nodes)))
+
+(defvar gascity-run-stage--label-width 14
+  "Width of the stage label column in the run detail.")
+
+(defun gascity-run-stage-header-line (group ctx)
+  "Return the header row of stage GROUP in render context CTX.
+GROUP is one of `gascity-run-stage-groups' plists.  The row is a fold
+thing keyed `stage:<KEY>': SPC flips its membership in CTX's
+:stage-collapsed list, so stages start open and fold independently of
+the step folds.  A failed stage appends the dim word `failed' and
+carries its failure class and members' name/state pairs in
+`help-echo'; the Control group is non-foldable when it is empty."
+  (let* ((key (plist-get group :key))
+         (members (plist-get group :anchors))
+         (state (plist-get group :state))
+         (thing (concat "stage:" key))
+         (foldable (or members (not (equal key "control"))))
+         (collapsed (and foldable
+                         (member thing
+                                 (plist-get (plist-get ctx :view)
+                                            :stage-collapsed))))
+         (failed-step (plist-get ctx :failed-step))
+         (failure (and (eq state 'failed)
+                       failed-step
+                       (member (plist-get failed-step :id)
+                               (mapcar (lambda (node)
+                                         (alist-get 'id (plist-get node :bead)))
+                                       members))
+                       failed-step))
+         (help
+          (and (eq state 'failed)
+               (string-join
+                (delq nil
+                      (list (and failure
+                                 (let ((class (plist-get failure :class))
+                                       (reason (plist-get failure :reason)))
+                                   (cond ((and class reason) (concat class ": " reason))
+                                         (t (or class reason)))))
+                            (and members
+                                 (mapconcat
+                                  (lambda (node)
+                                    (format "%s %s"
+                                            (or (plist-get node :name) "")
+                                            (gascity-run--node-state node)))
+                                  members ", "))))
+                " · "))))
+    (gascity-dashboard--row
+     (concat "  "
+             (if foldable
+                 (gascity-ui-glyph (if collapsed 'folded 'expanded))
+               " ")
+             " " (gascity-run-stage-glyph state) " "
+             (gascity-ui-fit (or (plist-get group :label) "")
+                             gascity-run-stage--label-width)
+             " " (gascity-dashboard--dim
+                  (format "%d/%d" (plist-get group :done)
+                          (plist-get group :total)))
+             (if (eq state 'failed)
+                 (concat "  " (gascity-dashboard--dim "failed"))
+               ""))
+     nil
+     'gascity-run-stage key
+     'help-echo help
+     'beads-thing
+     (and foldable
+          (gascity-dashboard--thing
+           'fold thing
+           (lambda () (gascity-dashboard--flip :stage-collapsed thing)))))))
+
+(defun gascity-run--stage-lines (groups ctx)
+  "Return the rows of stage GROUPS in render context CTX.
+Each group emits its `gascity-run-stage-header-line' then, unless the
+stage is collapsed, its members through the existing
+`gascity-run--step-lines' at depth 1: columns, drawers, drain-member
+rows, RET and the step fold machinery are inherited, not duplicated."
+  (let ((lines nil)
+        (collapsed (plist-get (plist-get ctx :view) :stage-collapsed)))
+    (dolist (group groups)
+      (push (gascity-run-stage-header-line group ctx) lines)
+      (unless (member (concat "stage:" (plist-get group :key)) collapsed)
+        (dolist (node (plist-get group :anchors))
+          (dolist (line (gascity-run--step-lines node 1 ctx))
+            (push line lines)))))
+    (nreverse lines)))
+
 (defun gascity-run--step-lines (node depth ctx)
   "Return the lines of step NODE at DEPTH (and its children) in CTX."
   (let* ((view (plist-get ctx :view))
@@ -473,7 +582,9 @@ run's graph: each gets a row with its ladder, RET opens its run detail."
 (defun gascity-run-lines (ctx)
   "Return every run detail line for render context CTX.
 CTX keys: :run-id :now :loads (:beads) :index :sessions :socket :convoy
-:view (:collapsed :drawers :expanded :control)."
+:view (:collapsed :drawers :expanded :stage-collapsed :control).  A
+formula with a stage table renders its top-level anchors under stage
+headers; one without keeps the flat step rows (run-view-v2 §2)."
   (let* ((gascity-dashboard--view (plist-get ctx :view))
          (id (plist-get ctx :run-id))
          (index (plist-get ctx :index))
@@ -487,13 +598,34 @@ CTX keys: :run-id :now :loads (:beads) :index :sessions :socket :convoy
              (graph (gascity-runs-graph index id))
              (tree (gascity-run-annotate
                     (gascity-run-tree root graph control) root graph
-                    (plist-get run :ladder))))
+                    (plist-get run :ladder)))
+             (formula (gascity-runs--meta root 'gc.formula_name))
+             (groups (gascity-run-stage-groups tree formula))
+             (ctx (if groups
+                      (let ((failed (gascity-runs-failed-step index root)))
+                        (if failed
+                            (plist-put (copy-sequence ctx) :failed-step failed)
+                          ctx))
+                    ctx))
+             (body
+              (cond
+               (groups
+                ;; Control nodes of a mapped run are lifted out of the
+                ;; tree (most are nested) into one trailing group, so
+                ;; they never enter a formula stage's progress.
+                (append
+                 (gascity-run--stage-lines groups ctx)
+                 (and control
+                      (gascity-run--stage-lines
+                       (list (gascity-run--control-group tree)) ctx))))
+               (t (mapcan (lambda (n) (gascity-run--step-lines n 0 ctx)) tree))))
+             (summary (format "%s · %d beads" (plist-get run :progress)
+                              (length graph))))
         (append
          (gascity-run--header-lines run root ctx)
          (list "")
          (gascity-dashboard--section-lines
-          "steps" "Steps" (plist-get run :progress)
-          (mapcan (lambda (n) (gascity-run--step-lines n 0 ctx)) tree)
+          "steps" "Steps" summary body
           ctx :loads '(:beads) :label "bd list"
           :hint (if control "C hide control nodes" "C show control nodes")))))
      ((gascity-dashboard--data load)
@@ -524,6 +656,7 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
           (collapsed nil)
           (drawers nil)
           (expanded nil)
+          (stage-collapsed nil)
           (control nil))
   :render
   (let* ((beads-res (gascity-runs-use-beads refresh-tick))
@@ -553,7 +686,9 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
                                 (gascity-run--convoy-pair
                                  (gascity-dashboard--data convoy-load)))
                     :view (list :collapsed collapsed :drawers drawers
-                                :expanded expanded :control control))))
+                                :expanded expanded
+                                :stage-collapsed stage-collapsed
+                                :control control))))
     (vui-text (string-join (gascity-run-lines ctx) "\n"))))
 
 ;;; Commands
