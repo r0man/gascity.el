@@ -36,10 +36,22 @@
 ;; (and `gc.implementation.*_path'), each a thing whose `RET' visits it
 ;; on the city's host (`gascity-remote-localize-path', §8.3 R6).
 ;;
+;; A step's drawer is the step inspector (run-view-v2 §3): the step's
+;; ref, bead, status and outcome; its attempt and iteration; its worker
+;; with session liveness, lease and heartbeat; the run's and the step's
+;; artifacts with existence and age (each a thing `RET' visits); the
+;; three newest matching events; and the failure class and reason
+;; (`(none)' when the step and everything beneath it are healthy).  The
+;; events read starts only while a drawer is open, with the cockpit's
+;; key, so the store dedupes the two reads.  A remote city never stats a
+;; file on the render path (R2): its artifacts read `remote: not
+;; checked'.
+;;
 ;; Reads: the Runs view's shared run-beads entry (`gascity-runs-use-beads',
 ;; so opening a run from Runs costs no gc call), `session list' for the
-;; live assignees, `convoy status ID' for the input convoy.  All through
-;; the store; the render is pure (§8.3 R2).
+;; live assignees, `convoy status ID' for the input convoy, and
+;; `events --since' only while a drawer is open.  All through the store;
+;; the render is pure (§8.3 R2).
 
 ;;; Code:
 
@@ -50,6 +62,7 @@
 (require 'beads-thing)
 (require 'gascity-custom)
 (require 'gascity-ui)
+(require 'gascity-event)
 (require 'gascity-context)
 (require 'gascity-remote)
 (require 'gascity-store)
@@ -225,26 +238,49 @@ Open by default while busy (`gascity-run--busy-p'); a toggle in VIEW's
                          (plist-get view :expanded))))
     (if (gascity-run--busy-p node) (not toggled) toggled)))
 
+(defconst gascity-run--plan-key-rx
+  "\\`gc\\.\\(build\\|implementation\\)\\..*_path\\'"
+  "Metadata keys `gascity-run-plans' lists: the run's plan artifacts.")
+
+(defconst gascity-run--artifact-key-rx
+  (concat "\\`\\(?:gc\\.build\\..*_path"
+          "\\|gc\\.implementation\\..*_path"
+          "\\|gc\\.publish_artifact_path"
+          "\\|gc\\.close_source_anchor\\.summary_path"
+          "\\|code_review\\..*_path\\)\\'")
+  "Metadata keys the step inspector lists as an artifact.
+Pinned rather than `gc.*_path' so the per-step check script
+\(`gc.check_path') and the formula inputs (`gc.var.*_path') are never
+presented as artifacts.")
+
+(defun gascity-run--artifact-paths (bead regexp &optional default-work-dir)
+  "Return BEAD's metadata paths matching REGEXP as a list of (KEY . PATH).
+Each path appears once, in metadata order, and only when the metadata
+value is a non-empty string.  A relative path (some formulas record
+`plans/…/review-report.md') is joined to BEAD's `gc.work_dir', else to
+DEFAULT-WORK-DIR when that is absolute; joined as strings, no file name
+handler (R2)."
+  (let ((work-dir (or (gascity-run--meta bead 'gc.work_dir) default-work-dir))
+        (seen nil) (out nil))
+    (dolist (cell (alist-get 'metadata bead))
+      (let ((key (symbol-name (car cell))) (path (cdr cell)))
+        (when (and (string-match-p regexp key)
+                   (stringp path) (not (string-empty-p path)))
+          (when (and (not (string-prefix-p "/" path))
+                     (stringp work-dir) (string-prefix-p "/" work-dir))
+            (setq path (concat (file-name-as-directory work-dir) path)))
+          (unless (member path seen)
+            (push path seen)
+            (push (cons key path) out)))))
+    (nreverse out)))
+
 (defun gascity-run-plans (root)
   "Return the plan files of run ROOT: a list of (KEY . PATH), host-local.
 Every `gc.build.*_path' / `gc.implementation.*_path' metadata with a
 value, each path once, in metadata order.  A relative path (some
 formulas record `plans/…/review-report.md') is relative to the run's
 `gc.work_dir'; joined as strings, no file name handler (R2)."
-  (let ((seen nil) (out nil)
-        (work-dir (gascity-run--meta root 'gc.work_dir)))
-    (dolist (cell (alist-get 'metadata root))
-      (let ((key (symbol-name (car cell))) (path (cdr cell)))
-        (when (and (stringp path) (not (string-empty-p path))
-                   (not (string-prefix-p "/" path))
-                   (stringp work-dir) (string-prefix-p "/" work-dir))
-          (setq path (concat (file-name-as-directory work-dir) path)))
-        (when (and (string-match-p "\\`gc\\.\\(build\\|implementation\\)\\..*_path\\'" key)
-                   (stringp path) (not (string-empty-p path))
-                   (not (member path seen)))
-          (push path seen)
-          (push (cons key path) out))))
-    (nreverse out)))
+  (gascity-run--artifact-paths root gascity-run--plan-key-rx))
 
 (defun gascity-run--short-path (path)
   "Return host-local PATH home-abbreviated, middle elided past 48 columns."
@@ -341,35 +377,260 @@ formulas record `plans/…/review-report.md') is relative to the run's
           ((equal kind "drain") "drain")
           (t (let ((s (alist-get 'status bead))) (if (equal s "open") "" (or s "")))))))
 
-(defun gascity-run--step-drawer (step &optional iteration)
-  "Return the drawer lines of STEP and its latest ITERATION bead.
-All from the payload in hand; the iteration's status, assignee and
-failure are what the worker is on, so they come from it when present."
-  (let* ((bead (or iteration step))
-         (meta (alist-get 'metadata bead)))
-    (delq nil
-          (list (string-join
-                 (delq nil (list (alist-get 'status bead)
-                                 (and (alist-get 'gc.outcome meta)
-                                      (concat "outcome " (alist-get 'gc.outcome meta)))
-                                 (and (alist-get 'gc.attempt meta)
-                                      (format "attempt %s" (alist-get 'gc.attempt meta)))
-                                 (and (alist-get 'gc.kind meta)
-                                      (concat "kind " (alist-get 'gc.kind meta)))))
-                 " · ")
-                (and iteration
-                     (format "iteration %s (attempt %s) of step %s"
-                             (alist-get 'id iteration)
-                             (or (alist-get 'gc.attempt meta) "?")
-                             (alist-get 'id step)))
-                (and (alist-get 'gc.step_ref meta)
-                     (concat "ref      " (alist-get 'gc.step_ref meta)))
-                (and (alist-get 'assignee bead)
-                     (concat "assignee " (alist-get 'assignee bead)))
-                (and (alist-get 'gc.failure_reason meta)
-                     (concat "failure  " (alist-get 'gc.failure_reason meta)))
-                (and (alist-get 'title bead)
-                     (concat "title    " (alist-get 'title bead)))))))
+;;; Inspector (run-view-v2 §3)
+
+(defun gascity-run--root-bead (ctx)
+  "Return CTX's run root bead from its :index, or nil."
+  (seq-find (lambda (bead) (equal (alist-get 'id bead) (plist-get ctx :run-id)))
+            (plist-get (plist-get ctx :index) :roots)))
+
+(defun gascity-run--step-path (bead ctx)
+  "Return BEAD's formula-prefix-stripped step path in CTX, or nil."
+  (let ((root (gascity-run--root-bead ctx)))
+    (and root (gascity-dashboard--step-path
+               bead (gascity-runs--meta root 'gc.formula_name)))))
+
+(defun gascity-run--under-path-p (path ancestor)
+  "Return non-nil when step PATH is ANCESTOR or lies beneath it."
+  (and path ancestor
+       (or (equal path ancestor)
+           (string-prefix-p (concat ancestor ".") path))))
+
+(defun gascity-run--related-beads (step ctx)
+  "Return STEP and the graph beads at or beneath its step path in CTX."
+  (let* ((path (gascity-run--step-path step ctx))
+         (root (gascity-run--root-bead ctx))
+         (graph (and root (gascity-runs-graph (plist-get ctx :index)
+                                              (alist-get 'id root)))))
+    (append
+     (list step)
+     (seq-filter
+      (lambda (bead)
+        (and (not (equal (alist-get 'id bead) (alist-get 'id step)))
+             (gascity-run--under-path-p (gascity-run--step-path bead ctx) path)))
+      graph))))
+
+(defun gascity-run--failure-text (step iteration ctx)
+  "Return the inspector's failure text for STEP and ITERATION in CTX.
+The class and reason come from the step, its iteration or the nearest
+failed bead at or beneath its step path (`gascity-runs--failure-info'),
+so a failed review loop explains the anchor step above it; `(none)'
+when neither the step nor anything beneath it failed.  A healthy step
+still carries a close reason, so only failed beads are candidates."
+  (let* ((related (gascity-run--related-beads step ctx))
+         (failed (seq-filter
+                  (lambda (bead)
+                    (equal (gascity-runs--meta bead 'gc.outcome) "fail"))
+                  related))
+         (nearest (sort failed
+                        (lambda (a b)
+                          (< (length (or (gascity-run--step-path a ctx) ""))
+                             (length (or (gascity-run--step-path b ctx) ""))))))
+         (info (gascity-runs--failure-info
+                (append (and (equal (gascity-runs--meta step 'gc.outcome) "fail")
+                             (list step))
+                        (and iteration
+                             (equal (gascity-runs--meta iteration 'gc.outcome) "fail")
+                             (list iteration))
+                        nearest))))
+    (cond ((and (car info) (cdr info)) (format "%s: %s" (car info) (cdr info)))
+          ((car info) (car info))
+          ((cdr info) (cdr info))
+          (t "(none)"))))
+
+(defun gascity-run--local-path-p (path)
+  "Return non-nil when PATH can be stat'ed on the render path.
+A TRAMP-prefixed PATH and a remote city (`default-directory' over
+TRAMP) both count as remote, so the render never stats across the
+connection (R2)."
+  (and (stringp path)
+       (not (file-remote-p path))
+       (not (file-remote-p default-directory))))
+
+(defun gascity-run--human-size (bytes)
+  "Return BYTES as `512 B', `12 KB', `3.4 MB' or `1.2 GB'."
+  (let ((n (or bytes 0)))
+    (cond ((< n 1024) (format "%d B" n))
+          ((< n (* 1024 1024)) (format "%d KB" (/ n 1024)))
+          ((< n (* 1024 1024 1024))
+           (format "%.1f MB" (/ n (* 1024.0 1024.0))))
+          (t (format "%.1f GB" (/ n (* 1024.0 1024.0 1024.0)))))))
+
+(defun gascity-run--artifact-entry (path ctx)
+  "Return the inspector text of artifact PATH in CTX, or nil.
+The entry is a `gascity-run-file' thing, so RET visits it on the city's
+host.  A local file is annotated with its size and age; a remote city's
+file is never stat'ed on the render path (R2) and says so; a missing or
+unreadable file reads `missing', never signaling."
+  (let* ((remote (not (gascity-run--local-path-p path)))
+         (attrs (and (not remote) (ignore-errors (file-attributes path))))
+         (note (cond (remote "remote: not checked")
+                     ((not attrs) "missing")
+                     (t (format "%s, %s"
+                                (gascity-run--human-size
+                                 (file-attribute-size attrs))
+                                (gascity-ui-relative-time
+                                 (float-time
+                                  (file-attribute-modification-time attrs))
+                                 (plist-get ctx :now)))))))
+    (gascity-run--file-thing path (concat (file-name-nondirectory path)
+                                          " (" note ")"))))
+
+(defun gascity-run--artifact-lines (step iteration ctx)
+  "Return the inspector's artifact lines for STEP and ITERATION in CTX.
+The run root's plan artifacts come first (`run'), then the step bead's
+and its latest iteration's artifacts (`step').  A path listed twice is
+shown once."
+  (let* ((root (gascity-run--root-bead ctx))
+         (work-dir (and root (gascity-runs--meta root 'gc.work_dir)))
+         (run-paths (and root (gascity-run--artifact-paths
+                               root gascity-run--plan-key-rx)))
+         (step-paths (append
+                      (gascity-run--artifact-paths
+                       step gascity-run--artifact-key-rx work-dir)
+                      (and iteration
+                           (gascity-run--artifact-paths
+                            iteration gascity-run--artifact-key-rx work-dir))))
+         (seen nil))
+    (cl-labels ((entries (paths)
+                  (delq nil
+                        (mapcar
+                         (lambda (cell)
+                           (unless (member (cdr cell) seen)
+                             (push (cdr cell) seen)
+                             (gascity-run--artifact-entry (cdr cell) ctx)))
+                         paths))))
+      (delq nil
+            (list (let ((run (entries run-paths)))
+                    (and run (concat "artifacts run   " (string-join run " · "))))
+                  (let ((own (entries step-paths)))
+                    (and own (concat "artifacts step  " (string-join own " · ")))))))))
+
+(defun gascity-run--lease-text (bead ctx)
+  "Return BEAD's lease relative to CTX's :now, or nil."
+  (let ((time (gascity-ui-parse-time (alist-get 'lease_expires_at bead)))
+        (now (plist-get ctx :now)))
+    (when (and time now)
+      (let ((left (- time now)))
+        (if (>= left 0)
+            (format "lease %s left" (gascity-ui-duration left))
+          (format "lease expired %s ago" (gascity-ui-duration (- left))))))))
+
+(defun gascity-run--heartbeat-text (bead ctx)
+  "Return BEAD's heartbeat age relative to CTX's :now, or nil."
+  (let ((time (gascity-ui-parse-time (alist-get 'heartbeat_at bead)))
+        (now (plist-get ctx :now)))
+    (when (and time now)
+      (format "heartbeat %s ago" (gascity-ui-duration (- now time))))))
+
+(defun gascity-run--worker-line (step iteration ctx)
+  "Return the inspector's worker line for STEP and ITERATION in CTX.
+The iteration bead is the worker's own bead while it runs; liveness
+joins the assignee against CTX's :sessions (`●' live, `○' not), the
+agent name is the parsed one, and the lease and heartbeat come from
+the bead that records them.  `no session' is said when no live session
+matches."
+  (let* ((worker (or iteration step))
+         (bead (or iteration step))
+         (assignee (or (alist-get 'assignee bead)
+                       (alist-get 'assignee step)))
+         (session (gascity-dashboard--session-for-assignee
+                   assignee (plist-get ctx :sessions)))
+         (name (cond (session (alist-get 'agent_name session))
+                     (assignee (car (gascity-dashboard--parse-assignee
+                                     assignee)))))
+         (parts
+          (delq nil
+                (list assignee
+                      (and assignee
+                           (concat (gascity-ui-glyph (if session 'ok 'idle))
+                                   " " (gascity-runs-agent-name (or name ""))))
+                      (or (gascity-run--lease-text worker ctx)
+                          (gascity-run--lease-text step ctx))
+                      (or (gascity-run--heartbeat-text worker ctx)
+                          (gascity-run--heartbeat-text step ctx))
+                      (and assignee (not session) "no session")))))
+    (concat "worker   " (if parts (string-join parts "  ") "no session"))))
+
+(defun gascity-run--event-ids (step iteration ctx)
+  "Return the bead ids whose events belong to STEP's inspector row in CTX.
+The step, its latest ITERATION, and every graph bead at or beneath the
+step's step path."
+  (delq nil
+        (mapcar (lambda (bead) (alist-get 'id bead))
+                (append (gascity-run--related-beads step ctx)
+                        (and iteration (list iteration))))))
+
+(defun gascity-run--event-lines (step iteration ctx)
+  "Return the inspector's recent-event lines for STEP and ITERATION in CTX.
+The three newest events (`gascity-event-time') whose `gascity-event-bead'
+is the step, its iteration or a descendant.  A failed events load says
+`events unavailable'; a load without a match says `(no recent events)'.
+Never signals, and never reads gc on the render path."
+  (let* ((load (plist-get ctx :events))
+         (ids (gascity-run--event-ids step iteration ctx))
+         (events (gascity-dashboard--data load))
+         (matching
+          (and events
+               (seq-filter
+                (lambda (event)
+                  (let ((bead (gascity-event-bead event)))
+                    (and bead (member (alist-get 'id bead) ids))))
+                events)))
+         (newest (seq-take (sort (copy-sequence matching)
+                                 (lambda (a b) (> (gascity-event-time a)
+                                                 (gascity-event-time b))))
+                           3)))
+    (cond
+     ((and load (eq (plist-get load :state) 'error))
+      (list "events   events unavailable"))
+     (newest
+      (mapcar (lambda (event)
+                (format "events   %s %s  %s"
+                        (or (alist-get 'type event) "event")
+                        (or (alist-get 'id (gascity-event-bead event)) "")
+                        (gascity-ui-ago (alist-get 'ts event)
+                                        (plist-get ctx :now))))
+              newest))
+     (t (list "events   (no recent events)")))))
+
+(defun gascity-run--step-drawer (step iteration ctx)
+  "Return the inspector lines of STEP and its latest ITERATION bead in CTX.
+In order: the step's ref, bead, status and outcome; its attempt and
+iteration; its worker with session liveness, lease and heartbeat; the
+run's and the step's artifacts with existence and age; the three newest
+matching events; and the failure class and reason, `(none)' when the
+step is healthy.  A line appears only when the payload has the datum
+\(the explicit `no session' / no-event / `(none)' fallbacks aside), so a
+closed or session-less step renders cleanly.  Everything comes from the
+payload in hand; the only I/O is a local file stat."
+  (let* ((worker (or iteration step))
+         (step-meta (alist-get 'metadata step))
+         (meta (alist-get 'metadata worker))
+         (ref (or (alist-get 'gc.step_ref step-meta)
+                  (alist-get 'gc.step_ref meta)
+                  (alist-get 'title step)))
+         (outcome (alist-get 'gc.outcome step-meta))
+         (attempt (or (alist-get 'gc.attempt meta)
+                      (alist-get 'gc.attempt step-meta)))
+         (iteration-n (or (alist-get 'gc.iteration meta)
+                          (alist-get 'gc.iteration step-meta)))
+         (parts (delq nil
+                      (list (and attempt (format "%s" attempt))
+                            (and iteration-n (format "iteration %s" iteration-n))
+                            (and iteration
+                                 (concat "iteration bead "
+                                         (alist-get 'id iteration)))))))
+    (append
+     (list (concat "step     " (or ref "?")
+                   "  " (or (alist-get 'id step) "")
+                   "  " (or (alist-get 'status step) "")
+                   (if outcome (concat "  outcome " outcome) "")))
+     (and parts (list (concat "attempt  " (string-join parts " · "))))
+     (list (gascity-run--worker-line step iteration ctx))
+     (gascity-run--artifact-lines step iteration ctx)
+     (gascity-run--event-lines step iteration ctx)
+     (list (concat "failure  " (gascity-run--failure-text step iteration ctx))))))
 
 (defun gascity-run--member-lines (step depth ctx)
   "Return the rows of the member runs drain STEP at DEPTH fans out to.
@@ -574,7 +835,8 @@ rows, RET and the step fold machinery are inherited, not duplicated."
                 (mapcar (lambda (l) (concat (make-string (* 2 depth) ?\s) l))
                         (gascity-dashboard--drawer
                          (gascity-run--step-drawer (plist-get node :bead)
-                                                   (and iter (plist-get iter :bead))))))
+                                                   (and iter (plist-get iter :bead))
+                                                   ctx))))
            (and open
                 (mapcan (lambda (k) (gascity-run--step-lines k (1+ depth) ctx))
                         (plist-get node :children)))))))
@@ -661,8 +923,17 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
   :render
   (let* ((beads-res (gascity-runs-use-beads refresh-tick))
          (sessions-res (gascity-store-use '("session" "list") :tick refresh-tick))
+         ;; The inspector's recent events: read only while a drawer is
+         ;; open, with the cockpit's exact key (same window, line mode),
+         ;; so the store dedupes the two reads.
+         (events-res (gascity-store-use
+                      (and drawers
+                           (list "events" "--since"
+                                 (gascity-event-since-arg gascity-dashboard-window)))
+                      :tick refresh-tick :lines t))
          (last-beads (vui-use-ref nil))
          (last-sessions (vui-use-ref nil))
+         (last-events (vui-use-ref nil))
          (beads-load (gascity-ui-effective-load beads-res last-beads))
          (index (gascity-runs-index
                  (plist-get (gascity-dashboard--data beads-load) :beads)))
@@ -675,8 +946,10 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
          (last-convoy (vui-use-ref nil))
          (convoy-load (gascity-ui-effective-load convoy-res last-convoy))
          (sessions-load (gascity-ui-effective-load sessions-res last-sessions))
+         (events-load (gascity-ui-effective-load events-res last-events))
          (ctx (list :run-id run-id :now (float-time)
-                    :loads (list :beads beads-load)
+                    :loads (list :beads beads-load :events events-load)
+                    :events events-load
                     :index index
                     :sessions (append (alist-get 'sessions (gascity-dashboard--data
                                                             sessions-load))
