@@ -59,8 +59,10 @@
   "Every view as (NAME MAP), derived from `gascity-key-registry--views'.")
 
 (defconst gascity-generate-tables--extra-keys
-  '("S")
-  "Rendered keys the navigation registry does not model (the sling key).")
+  '("S" "I" "!")
+  "Rendered keys the navigation registry does not model.
+`S' is the sling key; `I' (inspect) and `!' (diagnose) are the run
+detail's local additions (run-view-v2 §3), bound in no other view.")
 
 (defconst gascity-generate-tables--keys
   (delete-dups

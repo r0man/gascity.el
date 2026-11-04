@@ -74,7 +74,7 @@ THUMB_COLORS=128  # a preview needs fewer colours
 # is kept for the single deliberate light capture, cockpit-light, which
 # pairs with cockpit-dark to demonstrate theming.
 read -r -d '' MANIFEST <<'EOF' || true
-ef-deuteranopia-dark  -dark   cockpit dispatch agents runs events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+ef-deuteranopia-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 ef-cyprus             -light  cockpit
 EOF
 
@@ -87,6 +87,7 @@ declare -A VIEW_SOURCES=(
   [dispatch]="lisp/gascity-dashboard.el lisp/gascity-action.el"
   [agents]="lisp/gascity-agents.el lisp/gascity-tabulated.el"
   [runs]="lisp/gascity-runs.el lisp/gascity-tabulated.el"
+  [run-detail]="lisp/gascity-run.el lisp/gascity-run-stage.el lisp/gascity-runs.el"
   [events]="lisp/gascity-events.el lisp/gascity-tabulated.el"
   [health]="lisp/gascity-health.el"
   [rig-dashboard]="lisp/gascity-rig.el"

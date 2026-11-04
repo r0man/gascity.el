@@ -821,6 +821,10 @@ omitted.  The semantic contract behind these tables is
 @tab @code{gascity-session-peek-at-point}
 @tab Show recent output of the session/agent at point without attaching.
 @item @code{run-detail}
+@tab @kbd{w}
+@tab @code{gascity-run-copy-id}
+@tab Copy the bead id at point to the kill ring (‘w’).
+@item @code{run-detail}
 @tab @kbd{i}
 @tab @code{gascity-runs-agent-detail}
 @tab Open the detail of the live worker at point (‘i’).
@@ -840,6 +844,14 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{run-detail}
+@tab @kbd{I}
+@tab @code{gascity-run-inspect}
+@tab Toggle the step inspector drawer for the step at point (‘I’).
+@item @code{run-detail}
+@tab @kbd{!}
+@tab @code{gascity-run-diagnose}
+@tab Jump to the run’s failed step and open its inspector (‘!’).
 @item @code{health}
 @tab @kbd{q}
 @tab @code{quit-window}
@@ -936,6 +948,10 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{S}
 @tab @code{gascity-sling-dispatch}
 @tab Sling a bead/text or a formula, in one menu (DESIGN-write-actions §10).
+@item @code{health}
+@tab @kbd{!}
+@tab @code{gascity-health-doctor}
+@tab Run ‘gc doctor’ in the background (‘!’); the view stays usable.
 @item @code{cities}
 @tab @kbd{q}
 @tab @code{gascity-tabulated-quit}

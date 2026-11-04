@@ -133,6 +133,41 @@ JSONL
 }
 
 # ---------------------------------------------------------------------------
+# Run graph
+# ---------------------------------------------------------------------------
+
+# One deterministic `build-basic' workflow graph, so the Runs view and the run
+# detail have real, reproducible data without a controller.  The root is
+# `in-progress' (the Runs view's Active section has no age window; a closed run
+# pinned to 2025 would be outside Failed's 24h window), eight anchors are done,
+# and the review loop's first iteration is closed failed: the run detail's
+# Review stage fails while the run is still active, which is exactly the
+# ga-g092a state.  Every id is role-addressed (`demo-run', `demo-<role>' step ids) and
+# every timestamp is pinned, so `capture.sh --verify' can assert the images are
+# byte-identical.
+seed_run_graph() {
+  local jsonl="$CITY/.gc/fixture-run.jsonl"
+  cat >"$jsonl" <<'JSONL'
+{"_type":"issue","id":"demo-run","title":"build-basic on demo-task-manual","description":"Deterministic fixture run for the Runs view and the run-detail screenshot.","status":"in_progress","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:21:00Z","started_at":"2025-01-01T00:00:00Z","metadata":{"gc.kind":"workflow","gc.formula_name":"build-basic","gc.formula_contract":"graph.v2","gc.root_store_ref":"rig:demo-rig"}}
+{"_type":"issue","id":"demo-prep","title":"Prepare worktree","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:01:00Z","updated_at":"2025-01-01T00:02:00Z","closed_at":"2025-01-01T00:02:00Z","close_reason":"worktree ready","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.prepare","gc.outcome":"pass","gc.attempt":"1"}}
+{"_type":"issue","id":"demo-reqs","title":"Requirements","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:02:00Z","updated_at":"2025-01-01T00:04:00Z","closed_at":"2025-01-01T00:04:00Z","close_reason":"requirements approved","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.requirements","gc.outcome":"pass","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-reqs","depends_on_id":"demo-prep","type":"blocks","created_at":"2025-01-01T00:02:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-plan","title":"Implementation plan","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:04:00Z","updated_at":"2025-01-01T00:06:00Z","closed_at":"2025-01-01T00:06:00Z","close_reason":"plan approved","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.plan","gc.outcome":"pass","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-plan","depends_on_id":"demo-reqs","type":"blocks","created_at":"2025-01-01T00:04:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-plrv","title":"Plan review","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:06:00Z","updated_at":"2025-01-01T00:08:00Z","closed_at":"2025-01-01T00:08:00Z","close_reason":"plan review approved","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.plan-review","gc.outcome":"pass","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-plrv","depends_on_id":"demo-plan","type":"blocks","created_at":"2025-01-01T00:06:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-dcmp","title":"Decompose into work items","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:08:00Z","updated_at":"2025-01-01T00:10:00Z","closed_at":"2025-01-01T00:10:00Z","close_reason":"three work items created","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.decompose","gc.outcome":"pass","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-dcmp","depends_on_id":"demo-plrv","type":"blocks","created_at":"2025-01-01T00:08:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-impl","title":"Implement work items","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.implementation-worker","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:10:00Z","updated_at":"2025-01-01T00:14:00Z","closed_at":"2025-01-01T00:14:00Z","close_reason":"all work items landed","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.implement","gc.outcome":"pass","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-impl","depends_on_id":"demo-dcmp","type":"blocks","created_at":"2025-01-01T00:10:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-isms","title":"Implement same session","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.implementation-worker","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:14:00Z","updated_at":"2025-01-01T00:15:00Z","closed_at":"2025-01-01T00:15:00Z","close_reason":"filled the gaps from the same session","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.implement-same-session","gc.outcome":"pass","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-isms","depends_on_id":"demo-impl","type":"blocks","created_at":"2025-01-01T00:14:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-sumi","title":"Summarize implementation","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.implementation-worker","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:15:00Z","updated_at":"2025-01-01T00:16:00Z","closed_at":"2025-01-01T00:16:00Z","close_reason":"implementation summary recorded","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.summarize-implementation","gc.outcome":"pass","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-sumi","depends_on_id":"demo-isms","type":"blocks","created_at":"2025-01-01T00:15:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-revw","title":"Review","status":"open","priority":2,"issue_type":"task","assignee":"demo-rig/gc.reviewer","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:16:00Z","updated_at":"2025-01-01T00:20:00Z","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.review","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-revw","depends_on_id":"demo-sumi","type":"blocks","created_at":"2025-01-01T00:16:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-rev1","title":"Review iteration 1","status":"closed","priority":2,"issue_type":"task","assignee":"demo-rig/gc.reviewer","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:16:00Z","updated_at":"2025-01-01T00:20:00Z","closed_at":"2025-01-01T00:20:00Z","close_reason":"two blocking findings: the render path stats a file and the header is not frozen","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"ralph","gc.step_ref":"review.iteration.1","gc.logical_bead_id":"demo-revw","gc.outcome":"fail","gc.failure_class":"code_review","gc.attempt":"1"},"dependencies":[{"issue_id":"demo-rev1","depends_on_id":"demo-revw","type":"blocks","created_at":"2025-01-01T00:16:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-finz","title":"Finalize","status":"open","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:16:00Z","updated_at":"2025-01-01T00:16:00Z","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.finalize"},"dependencies":[{"issue_id":"demo-finz","depends_on_id":"demo-revw","type":"blocks","created_at":"2025-01-01T00:16:00Z","created_by":"demo","metadata":"{}"}]}
+{"_type":"issue","id":"demo-publ","title":"Publish","status":"open","priority":2,"issue_type":"task","assignee":"demo-rig/gc.run-operator","owner":"demo","created_by":"demo","created_at":"2025-01-01T00:16:00Z","updated_at":"2025-01-01T00:16:00Z","metadata":{"gc.root_bead_id":"demo-run","gc.kind":"step","gc.step_ref":"build-basic.publish"},"dependencies":[{"issue_id":"demo-publ","depends_on_id":"demo-finz","type":"blocks","created_at":"2025-01-01T00:16:00Z","created_by":"demo","metadata":"{}"}]}
+JSONL
+
+  gc_fixture bd --rig "$FIXTURE_RIG_NAME" import "$jsonl" --quiet 1>&2
+  rm -f -- "$jsonl"
+}
+
+# ---------------------------------------------------------------------------
 # Orders
 # ---------------------------------------------------------------------------
 
@@ -222,6 +257,7 @@ main() {
   require_tool gc
 
   seed_beads
+  seed_run_graph
   seed_orders
   seed_events
   seed_usage

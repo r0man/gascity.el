@@ -423,8 +423,16 @@ don’t collide with view keys):
 | session detail | `c` → bead-dispatch (hook/history refs) · `R` reset · `U` undrain |
 | session list | `R` reset · `U` undrain |
 | runs | `F` follow → `gascity-run-show` on the run at point (the launch offer's persistent twin; ga-40tbg.4) |
+| run detail | `I` inspect (toggle the step inspector) · `w` copy id (step or iteration bead) · `!` diagnose the failed step (run-view-v2 §3) |
 | mail inbox | `r` read · `R` reply · `a` archive · `u` mark-unread · `c`→ `gascity-mail-dispatch` (adds send) |
 | (bead refs everywhere) | `S` sling/route shortcut (→ `gascity-sling-dispatch`) |
+
+The run detail's `w` is the one recorded reuse: its rows are bead refs, so
+`w` keeps the reserved key's cross-package **copy id** meaning rather than
+waking an agent.  That is an explicit exception (also in
+`docs/key-registry.md` and `lisp/test/gascity-consistency-test.el`), not a
+silent rebinding; `I` and `!` are unbound there before, and no parent map
+supplies them.
 
 In beads.el's own views `S` is delegated to beads.el's issue-seeded
 `beads-sling-for-issue` transient, and gascity splices a `[City]` group into

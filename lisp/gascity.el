@@ -75,6 +75,7 @@
 (require 'gascity-cities)
 (require 'gascity-agents)
 (require 'gascity-runs)
+(require 'gascity-run-stage)
 (require 'gascity-run)
 (require 'gascity-session)
 (require 'gascity-events)

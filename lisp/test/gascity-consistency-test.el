@@ -106,7 +106,8 @@ The cockpit's `s'/`R' decide by row (agent or rig).")
   "F1: each agent key's `a'-prefixed spelling in a view that can hold beads.")
 
 (defconst gascity-consistency--verb-families
-  '(("s" gascity-rig-suspend-at-point)
+  '(("w" gascity-run-copy-id)
+    ("s" gascity-rig-suspend-at-point)
     ("R" gascity-rig-restart-at-point gascity-mail-reply-at-point)
     ("d" gascity-rig-list-dired)
     ("t" gascity-runs-agent-tmux)
@@ -114,7 +115,9 @@ The cockpit's `s'/`R' decide by row (agent or rig).")
     ("v" gascity-runs-agent-peek))
   "Other members of an agent key's verb family, allowed in views without
 agent rows (§4.5: `s' suspends a rig too; `R' reply shares with the
-confirmed reset/restart; the run views reach a step's live worker).")
+confirmed reset/restart; the run views reach a step's live worker).
+The run detail's `w' copies the step's bead id, the cross-package
+bead-row meaning of the reserved key (run-view-v2 §3).")
 
 (defun gascity-consistency--map (view)
   "Return the keymap of VIEW."
