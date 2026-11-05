@@ -37,7 +37,12 @@
 ;; on the city's host (`gascity-remote-localize-path', §8.3 R6).
 ;;
 ;; A step's drawer is the step inspector (run-view-v2 §3): the step's
-;; ref, bead, status and outcome; its attempt and iteration; its worker
+;; ref, bead, status and outcome; its attempt and iteration; the
+;; stacked attempt history (run-view-v3 §A): one row per
+;; iteration/attempt bead linked by `gc.logical_bead_id' or a direct
+;; `….iteration.N' child path, oldest first, with its number, outcome,
+;; worker, relative time and failure class/reason (`(none)' for a
+;; healthy attempt; no heading when the step has none); its worker
 ;; with the session's liveness kept apart from the bead's claim lease
 ;; and heartbeat (a live session with a lapsed lease is not "gone");
 ;; the run's and the step's
@@ -435,10 +440,136 @@ still carries a close reason, so only failed beads are candidates."
                              (equal (gascity-runs--meta iteration 'gc.outcome) "fail")
                              (list iteration))
                         nearest))))
-    (cond ((and (car info) (cdr info)) (format "%s: %s" (car info) (cdr info)))
-          ((car info) (car info))
-          ((cdr info) (cdr info))
-          (t "(none)"))))
+    (gascity-run--failure-string info)))
+
+(defun gascity-run--failure-string (info)
+  "Return failure INFO (CLASS . REASON) as text, `(none)' when healthy.
+CLASS and REASON are joined `class: reason'; either alone is shown as
+is.  The step inspector and the attempt history share this shape."
+  (cond ((and (car info) (cdr info)) (format "%s: %s" (car info) (cdr info)))
+        ((car info) (car info))
+        ((cdr info) (cdr info))
+        (t "(none)")))
+
+;;; Attempt history (run-view-v3 §A, REQ-001)
+
+(defconst gascity-run--attempt-widths
+  '((number . 3) (outcome . 9) (worker . 18) (failure . 20))
+  "Fixed column widths of an attempt-history row.
+With the two-space indent, four separators and the nine-column time
+cell, a row is at most 65 columns -- inside `gascity-dashboard--width'
+at every drawer depth the step tree reaches.")
+
+(defun gascity-run--attempt-number (bead)
+  "Return BEAD's attempt number, or nil when it names none.
+`gc.attempt' wins; `gc.iteration' is the fallback for payloads that
+only number iterations.  A non-numeric value does not count."
+  (let ((raw (or (gascity-run--meta bead 'gc.attempt)
+                 (gascity-run--meta bead 'gc.iteration))))
+    (and (string-match-p "\\`[0-9]+\\'" (format "%s" raw))
+         (string-to-number (format "%s" raw)))))
+
+(defun gascity-run--iteration-number (bead)
+  "Return BEAD's numeric `gc.iteration', or 0 when absent or not numeric."
+  (let ((raw (gascity-run--meta bead 'gc.iteration)))
+    (if (and raw (string-match-p "\\`[0-9]+\\'" (format "%s" raw)))
+        (string-to-number (format "%s" raw))
+      0)))
+
+(defun gascity-run--attempt-path-p (bead step-path ctx)
+  "Return non-nil when BEAD is a direct iteration/attempt child of STEP-PATH.
+CTX identifies the run whose formula prefix the paths are read without;
+BEAD's own `gc.step_ref' decides.  Exactly one extra path segment is
+allowed, so a nested formula step below an iteration
+\(`step.iteration.1.review.acceptance-review') is not an attempt."
+  (let ((path (gascity-run--step-path bead ctx)))
+    (and path step-path
+         (string-prefix-p (concat step-path ".") path)
+         (string-match-p "\\`\\(?:iteration\\|attempt\\)\\.[0-9]+\\'"
+                         (substring path (1+ (length step-path)))))))
+
+(defun gascity-run--attempt-beads (step ctx)
+  "Return STEP's attempt beads in CTX, oldest first.
+A bead is an attempt when it is not STEP, has a numeric attempt
+\(`gc.attempt', else `gc.iteration'), and either names STEP in
+`gc.logical_bead_id' (the authoritative link, and the only one for a
+nested loop's iterations) or sits at a direct
+`STEP-PATH.iteration.N'/`STEP-PATH.attempt.N' child path (the fallback
+for older payloads without the logical id).  Rows are ordered by
+attempt, then iteration, then id.  Every bead comes from CTX's
+already-loaded run graph, so this reads nothing."
+  (let* ((step-id (alist-get 'id step))
+         (step-path (gascity-run--step-path step ctx))
+         (root (gascity-run--root-bead ctx))
+         (graph (and root (gascity-runs-graph (plist-get ctx :index)
+                                              (alist-get 'id root))))
+         (attempts
+          (seq-filter
+           (lambda (bead)
+             (and (not (equal (alist-get 'id bead) step-id))
+                  (gascity-run--attempt-number bead)
+                  (or (equal (gascity-run--meta bead 'gc.logical_bead_id) step-id)
+                      (gascity-run--attempt-path-p bead step-path ctx))))
+           graph)))
+    (sort (copy-sequence attempts)
+          (lambda (a b)
+            (let ((na (gascity-run--attempt-number a))
+                  (nb (gascity-run--attempt-number b))
+                  (ia (gascity-run--iteration-number a))
+                  (ib (gascity-run--iteration-number b)))
+              (cond ((/= na nb) (< na nb))
+                    ((/= ia ib) (< ia ib))
+                    (t (string< (alist-get 'id a) (alist-get 'id b)))))))))
+
+(defun gascity-run--attempt-line (bead ctx)
+  "Return the attempt-history row of BEAD in CTX.
+Columns: number, outcome (`gc.outcome', else status, else `(none)'),
+worker, relative time, and failure (`(none)' when healthy).  The
+worker carries `●'/`○' only when CTX has a live-session payload; the
+time is `closed_at', else `updated_at', relative to CTX's :now.  Only
+an attempt whose `gc.outcome' is fail names a class/reason; a healthy
+one reads `(none)' even when it carries a close reason."
+  (let* ((status (alist-get 'status bead))
+         (outcome (or (gascity-run--meta bead 'gc.outcome) status "(none)"))
+         (facts (gascity-runs--worker-facts
+                 bead (plist-get ctx :sessions) (plist-get ctx :socket)))
+         (session (plist-get facts :session))
+         (worker (concat (if (plist-get ctx :sessions)
+                             (concat (gascity-ui-glyph (if session 'ok 'idle)) " ")
+                           "")
+                         (plist-get facts :display)))
+         (time (if (equal status "closed")
+                   (alist-get 'closed_at bead)
+                 (alist-get 'updated_at bead)))
+         ;; A healthy attempt is `(none)' even though its close reason is
+         ;; set; only a failed attempt names a class and reason.
+         (failure (if (equal (gascity-run--meta bead 'gc.outcome) "fail")
+                     (gascity-run--failure-string
+                      (gascity-runs--failure-info (list bead)))
+                   "(none)")))
+    (concat "  "
+            (gascity-ui-fit (format "%d" (gascity-run--attempt-number bead))
+                            (alist-get 'number gascity-run--attempt-widths))
+            " "
+            (gascity-ui-fit outcome (alist-get 'outcome gascity-run--attempt-widths))
+            " "
+            (gascity-ui-fit worker (alist-get 'worker gascity-run--attempt-widths))
+            " "
+            (gascity-runs--time-cell time (plist-get ctx :now))
+            " "
+            (gascity-ui-truncate failure
+                                 (alist-get 'failure gascity-run--attempt-widths)))))
+
+(defun gascity-run--attempt-lines (step ctx)
+  "Return STEP's stacked attempt history for CTX, or nil.
+One dim `attempts' heading followed by one `gascity-run--attempt-line'
+per attempt, oldest first; nil (no heading) when STEP has none.  The
+facts come from CTX's run-beads index, so this reads nothing."
+  (let ((attempts (gascity-run--attempt-beads step ctx)))
+    (when attempts
+      (cons (gascity-dashboard--dim "attempts")
+            (mapcar (lambda (bead) (gascity-run--attempt-line bead ctx))
+                    attempts)))))
 
 (defun gascity-run--local-path-p (path)
   "Return non-nil when PATH can be stat'ed on the render path.
@@ -659,7 +790,9 @@ and never reads gc on the render path."
 (defun gascity-run--step-drawer (step iteration ctx)
   "Return the inspector lines of STEP and its latest ITERATION bead in CTX.
 In order: the step's ref, bead, status and outcome; its attempt and
-iteration; its worker with the session's liveness and, separately, the
+iteration; its stacked attempt history (one row per iteration/attempt
+bead, oldest first; no heading when there is none); its worker with
+the session's liveness and, separately, the
 bead's claim lease and heartbeat; the run's and the step's artifacts
 with existence and age; the three newest matching events; and the
 failure class and reason, `(none)' when the
@@ -697,6 +830,7 @@ payload in hand; the only I/O is a local file stat."
           (list (if iteration-id
                     (propertize attempt-line 'gascity-bead iteration-id)
                   attempt-line)))
+     (gascity-run--attempt-lines step ctx)
      (list (gascity-run--worker-line step iteration ctx))
      (gascity-run--artifact-lines step iteration ctx)
      (gascity-run--event-lines step iteration ctx)

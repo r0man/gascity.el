@@ -1294,30 +1294,33 @@ artifact says so without erroring, and check/input paths stay out."
                            "step     build-basic.requirements  hw-step  in_progress"))
             (should (equal (nth 1 lines)
                            "attempt  2 · iteration 1 · iteration bead hw-iter"))
-            (should (equal (nth 2 lines)
+            (should (equal (substring-no-properties (nth 2 lines)) "attempts"))
+            (should (equal (substring-no-properties (nth 3 lines))
+                           "  2   in_progr… ● requirements-pl…           (none)"))
+            (should (equal (nth 4 lines)
                            (concat "worker   gc__requirements-planner-ec-fl8o"
                                    "  ● requirements-planner-1"
                                    "  session live · active 20s ago"
                                    "  claim lease 3m left · heartbeat 30s ago")))
-            (should (equal (nth 3 lines)
+            (should (equal (nth 5 lines)
                            "artifacts run   requirements.md (12 KB, 3m)"))
-            (should (equal (nth 4 lines)
+            (should (equal (nth 6 lines)
                            "artifacts step  publish.md (500 B, 3m) · summary.md (missing)"))
             ;; The three newest matching events, newest first; older and
             ;; unrelated events are left out.
             (should (equal (mapcar (lambda (line) (nth 1 (split-string line)))
-                                   (seq-take (seq-drop lines 5) 3))
+                                   (seq-take (seq-drop lines 7) 3))
                            '("bead.updated" "bead.claimed" "bead.closed")))
             (should-not (string-match-p "bead\\.reopened" text))
-            (should (equal (nth 8 lines) "failure  (none)"))
-            (should (= (length lines) 9))
+            (should (equal (nth 10 lines) "failure  (none)"))
+            (should (= (length lines) 11))
             ;; The check script and the formula input are never artifacts.
             (should-not (string-match-p "nope\\." text))
             ;; The root plan is shown once, and RET visits the local file.
-            (should-not (string-match-p "requirements\\.md" (nth 4 lines)))
-            (let ((offset (string-match "requirements\\.md" (nth 3 lines))))
+            (should-not (string-match-p "requirements\\.md" (nth 6 lines)))
+            (let ((offset (string-match "requirements\\.md" (nth 5 lines))))
               (should (equal (get-text-property offset 'gascity-run-file
-                                                (nth 3 lines))
+                                                (nth 5 lines))
                              plan)))))
       (delete-directory tmp t))))
 
@@ -1551,6 +1554,186 @@ must not claim there are no recent events before it has read them."
     ;; A load that really has no matching event still says so.
     (should (equal (gascity-run--event-lines step iteration ready)
                    '("events   (no recent events)")))))
+
+;;; Attempt history (run-view-v3 §A, REQ-001)
+
+(defun gascity-runs-test--attempts-run (now)
+  "Return the beads of a synthetic review step with three attempts.
+Attempt 1 passed NOW-2h ago in a live run-operator-1 session, attempt 2
+failed `hard: control_dispatch_error' NOW-1h ago in a live
+implementer-1 session, and attempt 3 passed NOW-1m ago in a live
+implementer-2 session.  A nested formula step under attempt 2 and an
+unrelated step are not attempts.  NOW pins every timestamp."
+  (let ((ts (lambda (ago) (format-time-string "%FT%TZ" (- now ago) t))))
+    (list
+     `((id . "hw-attempts") (status . "in_progress") (issue_type . "task")
+       (created_at . ,(funcall ts 9000))
+       (metadata . ((gc.kind . "workflow")
+                    (gc.formula_name . "build-basic"))))
+     `((id . "hw-review") (status . "in_progress")
+       (updated_at . ,(funcall ts 30))
+       (metadata . ((gc.root_bead_id . "hw-attempts")
+                    (gc.step_ref . "build-basic.review")
+                    (gc.kind . "ralph")
+                    (gc.attempt . "3"))))
+     `((id . "hw-a1") (status . "closed")
+       (assignee . "gc__run-operator-ec-a1")
+       ;; A healthy attempt's close reason must not read as a failure.
+       (close_reason . "passed with notes")
+       (closed_at . ,(funcall ts 7200))
+       (metadata . ((gc.root_bead_id . "hw-attempts")
+                    (gc.step_ref . "review.iteration.1")
+                    (gc.logical_bead_id . "hw-review")
+                    (gc.attempt . "1")
+                    (gc.outcome . "pass"))))
+     `((id . "hw-a2") (status . "closed")
+       (assignee . "gc__implementer-1-ec-a2")
+       (closed_at . ,(funcall ts 3600))
+       (metadata . ((gc.root_bead_id . "hw-attempts")
+                    (gc.step_ref . "review.iteration.2")
+                    (gc.logical_bead_id . "hw-review")
+                    (gc.attempt . "2")
+                    (gc.outcome . "fail")
+                    (gc.failure_class . "hard")
+                    (gc.failure_reason . "control_dispatch_error"))))
+     `((id . "hw-a3") (status . "closed")
+       (assignee . "gc__implementer-2-ec-a3")
+       (closed_at . ,(funcall ts 60))
+       (metadata . ((gc.root_bead_id . "hw-attempts")
+                    (gc.step_ref . "review.iteration.3")
+                    (gc.logical_bead_id . "hw-review")
+                    (gc.attempt . "3")
+                    (gc.outcome . "pass"))))
+     ;; A nested formula step below an iteration has two extra path
+     ;; segments (`review.iteration.2.review.acceptance-review'), so it
+     ;; must never be mistaken for an attempt.
+     `((id . "hw-nested") (status . "closed")
+       (closed_at . ,(funcall ts 3500))
+       (metadata . ((gc.root_bead_id . "hw-attempts")
+                    (gc.step_ref . "review.iteration.2.review.acceptance-review")
+                    (gc.attempt . "1")
+                    (gc.outcome . "pass"))))
+     `((id . "hw-other") (status . "open")
+       (metadata . ((gc.root_bead_id . "hw-attempts")
+                    (gc.step_ref . "build-basic.prepare")))))))
+
+(defun gascity-runs-test--attempt-sessions ()
+  "Return the live `session list' rows, one per attempt worker."
+  [((id . "ec-a1")
+    (agent_name . "gascity.el/gc.run-operator-1")
+    (state . "active")
+    (session_name . "gc__run-operator-ec-a1"))
+   ((id . "ec-a2")
+    (agent_name . "gascity.el/gc.implementer-1")
+    (state . "active")
+    (session_name . "gc__implementer-1-ec-a2"))
+   ((id . "ec-a3")
+    (agent_name . "gascity.el/gc.implementer-2")
+    (state . "active")
+    (session_name . "gc__implementer-2-ec-a3"))])
+
+(ert-deftest gascity-test-run-attempt-history ()
+  "A step's drawer stacks one attempt row per iteration/attempt bead,
+oldest first: number, outcome, live worker, relative time and
+`class: reason' (`(none)' when healthy).  Nested formula steps below an
+iteration are not attempts, and no row exceeds the dashboard width."
+  (let* ((now (float (floor (float-time))))
+         (beads (gascity-runs-test--attempts-run now))
+         (step (seq-find (lambda (b) (equal (alist-get 'id b) "hw-review"))
+                         beads))
+         (ctx (gascity-runs-test--inspector-ctx
+               beads "hw-attempts" :now now
+               :sessions (gascity-runs-test--attempt-sessions)))
+         (attempts (gascity-run--attempt-beads step ctx))
+         (lines (gascity-run--attempt-lines step ctx))
+         (rows (mapcar #'substring-no-properties (cdr lines))))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) attempts)
+                   '("hw-a1" "hw-a2" "hw-a3")))
+    (should (equal (substring-no-properties (car lines)) "attempts"))
+    (should (equal rows
+                   '("  1   pass      ● run-operator-1          2h (none)"
+                     "  2   fail      ● implementer-1           1h hard: control_dispa…"
+                     "  3   pass      ● implementer-2           1m (none)")))
+    (should (seq-every-p (lambda (row) (<= (string-width row) 68)) rows))
+    ;; Without a live-session payload the rows name the assignee's role
+    ;; and carry no liveness glyph.
+    (let ((cold (gascity-run--attempt-lines
+                 step (gascity-runs-test--inspector-ctx
+                       beads "hw-attempts" :now now))))
+      (should-not (string-match-p "[●○]"
+                                  (gascity-runs-test--text cold))))))
+
+(ert-deftest gascity-test-run-attempt-history-drawer ()
+  "The drawer places the attempt block after its attempt line and before
+its worker, keeping the step line and collapsed row shape unchanged."
+  (let* ((now (float (floor (float-time))))
+         (beads (gascity-runs-test--attempts-run now))
+         (step (seq-find (lambda (b) (equal (alist-get 'id b) "hw-review"))
+                         beads))
+         (ctx (gascity-runs-test--inspector-ctx
+               beads "hw-attempts" :now now
+               :sessions (gascity-runs-test--attempt-sessions)))
+         (drawer (gascity-run--step-drawer step nil ctx))
+         (text (gascity-runs-test--text drawer)))
+    (should (equal (substring-no-properties (nth 0 drawer))
+                   "step     build-basic.review  hw-review  in_progress"))
+    ;; Step line, the step's own attempt line, then the stacked block.
+    (should (equal (substring-no-properties (nth 1 drawer)) "attempt  3"))
+    (should (equal
+             (mapcar #'substring-no-properties (seq-take (seq-drop drawer 2) 4))
+             '("attempts"
+               "  1   pass      ● run-operator-1          2h (none)"
+               "  2   fail      ● implementer-1           1h hard: control_dispa…"
+               "  3   pass      ● implementer-2           1m (none)")))
+    (should (string-prefix-p "worker   " (substring-no-properties
+                                          (nth 6 drawer))))
+    (should (string-prefix-p "failure  " (substring-no-properties
+                                          (car (last drawer)))))
+    (should (string-suffix-p "hard: control_dispatch_error" text))))
+
+(ert-deftest gascity-test-run-attempt-history-nested ()
+  "A nested loop's iteration is found by `gc.logical_bead_id' alone.
+The be-52m5 fixture's review step (be-mqhp) and its iteration be-wki0
+are unlinked once the iteration's `gc.step_ref' is absent, so only the
+logical link can find it; the review steps beneath the iteration are
+never attempts of the loop above them."
+  (let* ((beads (mapcar (lambda (b)
+                          (if (equal (alist-get 'id b) "be-wki0")
+                              (let ((copy (copy-tree b)))
+                                (setf (alist-get 'metadata copy)
+                                      (assq-delete-all
+                                       'gc.step_ref (alist-get 'metadata copy)))
+                                copy)
+                            b))
+                        (gascity-runs-test--fixture-beads)))
+         (step (seq-find (lambda (b) (equal (alist-get 'id b) "be-mqhp")) beads))
+         (ctx (gascity-runs-test--inspector-ctx beads "be-52m5"))
+         (attempts (gascity-run--attempt-beads step ctx)))
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) attempts)
+                   '("be-wki0")))
+    (should (string-match-p "1   skipped"
+                            (gascity-runs-test--text
+                             (gascity-run--attempt-lines step ctx))))
+    ;; The nested loop's own iteration is the loop's only attempt, not
+    ;; every review step beneath it.
+    (let* ((loop (seq-find (lambda (b) (equal (alist-get 'id b) "be-1bn")) beads))
+           (loop-ctx (gascity-runs-test--inspector-ctx beads "be-bn2")))
+      (should (equal (mapcar (lambda (b) (alist-get 'id b))
+                             (gascity-run--attempt-beads loop loop-ctx))
+                     '("be-5v6"))))))
+
+(ert-deftest gascity-test-run-attempt-history-empty ()
+  "A step with no iteration beads renders no attempt rows and no
+`attempts' heading; the rest of the drawer is unchanged."
+  (let* ((beads (gascity-runs-test--fixture-beads))
+         (step (seq-find (lambda (b) (equal (alist-get 'id b) "be-5aht")) beads))
+         (ctx (gascity-runs-test--inspector-ctx beads "be-52m5"))
+         (drawer (gascity-run--step-drawer step nil ctx)))
+    (should (null (gascity-run--attempt-beads step ctx)))
+    (should (null (gascity-run--attempt-lines step ctx)))
+    (should-not (string-match-p "attempts" (gascity-runs-test--text drawer)))
+    (should (string-prefix-p "step     build-basic.prepare  be-5aht  closed"
+                             (car drawer)))))
 
 ;;; Inspector actions (run-view-v2 §3)
 
