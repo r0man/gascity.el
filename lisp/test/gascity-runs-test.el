@@ -66,6 +66,31 @@
        bead))
    (gascity-runs-test--fixture-beads)))
 
+(defun gascity-runs-test--metadata-close-reason-beads (&optional top-level)
+  "Return the fixture whose failed review loop says why it failed only
+in its close reason.  By default the reason lives in `metadata', the
+shape `gc events' payload beads carry; with TOP-LEVEL, at the bead's
+top level, the `gc bd list' shape.  `gc.failure_reason' is absent."
+  (mapcar
+   (lambda (bead)
+     (if (equal (alist-get 'id bead) "be-1bn")
+         (let* ((copy (copy-tree bead))
+                (meta (append `((gc.failure_class . "control_dispatch_error")
+                                ,@(unless top-level
+                                    `((close_reason . ,gascity-runs-test--long-reason))))
+                              (assq-delete-all
+                               'close_reason
+                               (assq-delete-all
+                                'gc.failure_reason
+                                (assq-delete-all 'gc.failure_class
+                                                 (alist-get 'metadata copy)))))))
+           (setf (alist-get 'metadata copy) meta)
+           (if top-level
+               (append copy `((close_reason . ,gascity-runs-test--long-reason)))
+             copy))
+       bead))
+   (gascity-runs-test--fixture-beads)))
+
 (defun gascity-runs-test--active-beads ()
   "Return the fixture with be-52m5 turned into a live run.
 Its prepare step is done, requirements (and its iteration) in progress
@@ -434,6 +459,30 @@ reason in help-echo (REQ-003, plan §1)."
     (should pos)
     (should (equal (get-text-property pos 'help-echo line2)
                    gascity-runs-test--long-reason))))
+
+(ert-deftest gascity-test-runs-failed-card-metadata-close-reason ()
+  "A failed bead whose reason is only in `metadata.close_reason' (the
+real `gc events' payload shape) still fills the failed card's reason
+tail and `help-echo', exactly like the top-level `gc bd list' shape
+\(REQ-003; review R2/E9)."
+  (dolist (top-level '(nil t))
+    (let* ((beads (gascity-runs-test--metadata-close-reason-beads top-level))
+           (bead (seq-find (lambda (b) (equal (alist-get 'id b) "be-1bn")) beads))
+           (info (gascity-runs--failure-info (list bead)))
+           (graph (gascity-runs--failure (list bead)))
+           (ctx (gascity-runs-test--ctx beads :filters '(:window "36500d")))
+           (run (gascity-runs-test--by-id (gascity-runs-test--summaries beads)
+                                          "be-bn2"))
+           (card (car (gascity-runs--card run ctx)))
+           (line2 (nth 1 (split-string card "\n")))
+           (pos (string-match "the control dispatcher refused" line2)))
+      (should (equal (car info) "control_dispatch_error"))
+      (should (equal (cdr info) gascity-runs-test--long-reason))
+      (should (equal graph gascity-runs-test--long-reason))
+      (should (<= (string-width line2) gascity-dashboard--width))
+      (should pos)
+      (should (equal (get-text-property pos 'help-echo line2)
+                     gascity-runs-test--long-reason)))))
 
 (ert-deftest gascity-test-runs-active-run-worker ()
   "An active run's label is its active step; its worker is the live session."

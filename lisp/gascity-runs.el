@@ -220,6 +220,15 @@ is never idle."
       (or (alist-get 'closed_at root) (alist-get 'updated_at root))
     (alist-get 'created_at root)))
 
+(defun gascity-runs--close-reason (bead)
+  "Return BEAD's non-empty close reason, or nil.
+`gc events' payload beads keep it in `metadata', while the `gc bd list'
+shape puts it at the bead's top level; prefer the event shape and keep
+the top-level value as the fallback (review R2)."
+  (let ((reason (or (gascity-runs--meta bead 'close_reason)
+                    (alist-get 'close_reason bead))))
+    (and (stringp reason) (not (string-empty-p reason)) reason)))
+
 (defun gascity-runs--failure (graph)
   "Return why a run failed, from its GRAPH beads, or nil.
 The first failed bead's `gc.failure_reason', else its close reason."
@@ -227,8 +236,7 @@ The first failed bead's `gc.failure_reason', else its close reason."
                         graph)))
     (and bead
          (or (gascity-runs--meta bead 'gc.failure_reason)
-             (let ((reason (alist-get 'close_reason bead)))
-               (and (stringp reason) (not (string-empty-p reason)) reason))))))
+             (gascity-runs--close-reason bead)))))
 
 (defun gascity-runs--failure-info (beads)
   "Return (CLASS . REASON) from the first of BEADS that names one.
@@ -241,8 +249,7 @@ reason.  Either may be nil; nil when no bead names either."
       (setq reason
             (or reason
                 (gascity-runs--meta b 'gc.failure_reason)
-                (let ((r (alist-get 'close_reason b)))
-                  (and (stringp r) (not (string-empty-p r)) r)))))
+                (gascity-runs--close-reason b))))
     (and (or class reason) (cons class reason))))
 
 (defun gascity-runs--failed-beads-of-run (index root)
