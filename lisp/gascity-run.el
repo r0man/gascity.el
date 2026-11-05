@@ -84,6 +84,7 @@
 (require 'gascity-dashboard)
 (require 'gascity-runs)
 (require 'gascity-run-stage)
+(require 'url-util)
 
 (defconst gascity-run-buffer-name "*gascity-run: %s*"
   "Format of the run detail buffer name; %s is the run's root bead id.")
@@ -1306,6 +1307,55 @@ Works on a leaf row and on a fold row (where SPC keeps folding)."
       (user-error "No step here"))
     (gascity-dashboard--flip :drawers (concat "step:" id))))
 
+;;; Web handoff (run-view-v3 §C, REQ-004)
+
+(defun gascity-run-web-url (run-id city &optional base)
+  "Return the web dashboard URL of run RUN-ID in CITY, or nil.
+BASE defaults to `gascity-dashboard-url'.  A nil or empty BASE, CITY or
+RUN-ID yields nil: gascity never guesses a host.  Trailing slashes are
+trimmed from BASE, then the verified route
+`/city/<city>/runs/<run-id>' is appended with both segments
+percent-encoded.  No scope query is added: this builder cannot derive
+one, and the web app appends it only when the scope resolves."
+  (let ((base (or base gascity-dashboard-url))
+        (city (and city (string-trim city)))
+        (run-id (and run-id (string-trim run-id))))
+    (when (and (stringp base)
+               city (not (string-empty-p city))
+               run-id (not (string-empty-p run-id)))
+      (let ((base (string-trim-right (string-trim base) "/+")))
+        (and (not (string-empty-p base))
+             (concat base
+                     "/city/" (url-hexify-string city)
+                     "/runs/" (url-hexify-string run-id)))))))
+
+(defun gascity-run--web-url ()
+  "Return this buffer's run URL, or nil when the dashboard is unconfigured."
+  (unless gascity-run--current-run
+    (user-error "No run detail here"))
+  (gascity-run-web-url gascity-run--current-run gascity-run--city))
+
+(defun gascity-run-browse-url ()
+  "Open the current run in the configured web dashboard (`B').
+The URL is `gascity-run-web-url' for this run; without a configured
+`gascity-dashboard-url' nothing is opened and the echo area says how to
+configure it."
+  (interactive)
+  (let ((url (gascity-run--web-url)))
+    (if url
+        (progn (browse-url url) (message "%s" url))
+      (message "No dashboard URL configured; set gascity-dashboard-url"))))
+
+(defun gascity-run-copy-url ()
+  "Copy the current run's web dashboard URL (`Y').
+Uses the same URL as `B'; without a configured `gascity-dashboard-url'
+nothing is copied and the echo area says how to configure it."
+  (interactive)
+  (let ((url (gascity-run--web-url)))
+    (if url
+        (progn (kill-new url) (message "Copied %s" url))
+      (message "No dashboard URL configured; set gascity-dashboard-url"))))
+
 ;;; Diagnose (run-view-v2 §3, absorbs ga-32wpi)
 
 (defun gascity-run--stored-run ()
@@ -1491,6 +1541,8 @@ failed step is a `user-error'."
   "C"   #'gascity-run-toggle-control
   "I"   #'gascity-run-inspect
   "w"   #'gascity-run-copy-id
+  "B"   #'gascity-run-browse-url
+  "Y"   #'gascity-run-copy-url
   "!"   #'gascity-run-diagnose
   "i"   #'gascity-runs-agent-detail
   "v"   #'gascity-runs-agent-peek
@@ -1506,9 +1558,11 @@ bead, `C' shows the control nodes, and `I'
 toggles the inspector for any step row (fold rows included).
 
 `w' copies the step's bead id (the iteration id on the inspector's
-iteration line) and `!' reveals and diagnoses the run's failed step by
-expanding its stage and any folded loop above it, opening its inspector
-and echoing the failure class and reason.  The i, v and t keys reach a
+iteration line), `B' opens the current run in the configured web
+dashboard and `Y' copies that URL (`W' stays the live toggle).  `!'
+reveals and diagnoses the run's failed step by expanding its stage and
+any folded loop above it, opening its inspector and echoing the
+failure class and reason.  The i, v and t keys reach a
 step's live worker (detail, snapshot peek, live attach) from a row or
 from an inspector line.
 
