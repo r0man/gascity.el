@@ -787,7 +787,7 @@ the 78-column budget; cards keep their v2 shape (REQ-006)."
     (should (equal (plist-get done-facts :step) "build-basic.publish"))
     (should (equal (plist-get done-facts :failure) "-"))
     ;; Every history row is one v2 line plus a facts line; the facts line
-    ;; is exactly the 2+10+3+20+3+24+3+13 = 78 budget.
+    ;; is exactly the 2+12+3+21+3+22+3+12 = 78 budget.
     (let* ((lines (gascity-runs-lines ctx))
            (pos (cl-loop for line in lines
                          for i from 0
@@ -812,6 +812,52 @@ the 78-column budget; cards keep their v2 shape (REQ-006)."
         (when (string-match-p "^  [◆✕·] " line)
           (should (<= (string-width line) 78))))
       (should (= 78 (string-width facts-line))))))
+
+(ert-deftest gascity-test-runs-facts-line-budgets ()
+  "Each facts column budgets its value apart from its dim label (REQ-002).
+The labels shorten to stage/step/fail/work and the widths are data in
+`gascity-runs--facts-columns', giving the values 6/16/17/7 columns
+instead of the old 4/15/16/6 while the line stays 78 columns."
+  (let* ((facts (list :stage "Review"
+                      :step "build-basic.review"
+                      :failure "control_dispatch_error: final attempt 3: no poller"
+                      :worker "control"))
+         (line (gascity-runs--facts-line facts))
+         (budgets (mapcar (lambda (col)
+                            (- (nth 2 col) (1+ (length (nth 1 col)))))
+                          gascity-runs--facts-columns)))
+    ;; The column table is data: (KEY LABEL WIDTH), WIDTH including the
+    ;; label and its one trailing space.
+    (should (equal '((stage "stage" 12) (step "step" 21)
+                     (failure "fail" 22) (worker "work" 12))
+                   gascity-runs--facts-columns))
+    ;; Every value budget grew over the old 4/15/16/6.
+    (should (equal '(6 16 17 7) budgets))
+    (should (cl-every #'> budgets '(4 15 16 6)))
+    ;; The line is exactly 2 + 12 + 3 + 21 + 3 + 22 + 3 + 12 = 78.
+    (should (equal 78 (string-width line)))
+    (should (string-match-p "^  stage " line))
+    ;; `Review' fits whole; the step, failure and worker cells fit their
+    ;; own budgets; the separators are unchanged.
+    (should (string-match-p "stage Review " line))
+    (should (string-match-p "step build-basic\\.rev…" line))
+    (should (string-match-p "fail control_dispatch…" line))
+    (should (string-match-p " · work control" line))
+    ;; A cut value keeps its full text in help-echo.
+    (let ((pos (string-match "control_dispatch…" line)))
+      (should pos)
+      (should (equal (plist-get facts :failure)
+                     (get-text-property pos 'help-echo line))))
+    (let ((pos (string-match "build-basic\\.rev…" line)))
+      (should pos)
+      (should (equal (plist-get facts :step)
+                     (get-text-property pos 'help-echo line))))
+    ;; The worker delta face still applies on a changed row.
+    (let* ((changed (gascity-runs--facts-line facts t))
+           (pos (string-match "work control" changed))
+           (face (and pos (get-text-property (+ pos 5) 'face changed))))
+      (should pos)
+      (should (memq 'gascity-changed (if (listp face) face (list face)))))))
 
 (ert-deftest gascity-test-runs-render-loading-and-error ()
   "Before the read lands every section shows `…'; a failed read with no
