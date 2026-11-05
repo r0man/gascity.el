@@ -108,6 +108,18 @@ under requirements-planner-1, everything else open."
   "Return LINES (strings) as one plain string."
   (substring-no-properties (string-join lines "\n")))
 
+(cl-defun gascity-runs-test--header (beads id &key city convoy)
+  "Return the run detail header lines of run ID over BEADS.
+CITY names the buffer's city (default \"emacs-city\"); CONVOY is the
+\(CONVOY . PROGRESS\) pair the component would have read."
+  (let* ((index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (r) (equal (alist-get 'id r) id))
+                         (plist-get index :roots)))
+         (run (gascity-runs-summary index root))
+         (ctx (list :run-id id :now (float-time)
+                    :city (or city "emacs-city") :convoy convoy)))
+    (gascity-run--header-lines run root ctx)))
+
 (cl-defun gascity-runs-test--inspector-ctx (beads run-id &key now sessions events)
   "Return a run-detail context over BEADS for RUN-ID, as the inspector sees it.
 NOW, SESSIONS and EVENTS are the drawer's clock, live sessions and events
@@ -653,6 +665,7 @@ data shows the error line; the view never blanks."
                   ("j" . gascity-jump-prefix) ("?" . gascity-dispatch)))
     (should (eq (keymap-lookup gascity-runs-mode-map (car pair)) (cdr pair))))
   (dolist (pair '(("g" . gascity-run-refresh) ("RET" . gascity-run-activate)
+                  ("o" . gascity-run-open-artifact)
                   ("b" . gascity-run-root-bead) ("C" . gascity-run-toggle-control)
                   ("I" . gascity-run-inspect) ("w" . gascity-run-copy-id)
                   ("!" . gascity-run-diagnose)
@@ -900,8 +913,9 @@ active step's live worker; loops fold."
   (gascity-test-with-fixture-home
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
 				    (let ((text (buffer-string)))
-				      (should (string-match-p "^⬣ be-52m5  build-basic +beads.el · started 2h$" text))
-				      (should (string-match-p "^  formula  build-basic (graph.v2)   source ~/.gc/cache/…/build-basic.formula.toml$"
+				      (should (string-match-p "^  root     ⬣ be-52m5  build-basic +beads.el · started 2h$" text))
+				      (should (string-match-p "^  formula  build-basic  contract graph.v2$" text))
+				      (should (string-match-p "^           source ~/.gc/cache/…/build-basic.formula.toml$"
 							      (replace-regexp-in-string
 							       "/home/[^/]+/" "~/" text)))
 				      (should (string-match-p "^  plans    decomposition.md · factory-run.md" text))
@@ -967,6 +981,7 @@ the city's host; `b' opens the root; `i' reaches the live assignee."
                  (lambda (rig) (concat "/stores/" rig "/")))
                 ((symbol-function 'find-file)
                  (lambda (f &rest _) (setq visited f)))
+                ((symbol-function 'file-exists-p) (lambda (&rest _) t))
                 ((symbol-function 'gascity-polecat-detail-at-point)
                  (lambda () (interactive)
                    (setq detail (gascity-agent-name (gascity-agent-at-point))))))
@@ -1013,11 +1028,177 @@ or the delegation opens the bead in the city store and fails."
         (gascity-run-root-bead)
         (should (equal shown '("be-52m5" "/stores/beads.el/")))))))
 
+(ert-deftest gascity-test-run-artifact-open ()
+  "`o' and RET visit the header's plan and formula source and a step
+  drawer's artifact; each one carries the `gascity-run-file' property
+  (REQ-002)."
+  (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+    (let (visited)
+      (cl-letf (((symbol-function 'find-file)
+                 (lambda (f &rest _) (setq visited f)))
+                ((symbol-function 'file-exists-p) (lambda (&rest _) t)))
+        ;; The header's plans entry.
+        (goto-char (point-min))
+        (re-search-forward "^  plans")
+        (re-search-forward "requirements\\.md")
+        (backward-char 2)
+        (should (get-text-property (point) 'gascity-run-file))
+        (gascity-run-open-artifact)
+        (should (string-suffix-p "project-switch-scope/requirements.md" visited))
+        ;; `o' visits exactly what RET visits.
+        (setq visited nil)
+        (gascity-run-activate)
+        (should (string-suffix-p "project-switch-scope/requirements.md" visited))
+        ;; The header's formula source entry.
+        (setq visited nil)
+        (goto-char (point-min))
+        (re-search-forward "^           source")
+        (re-search-forward "build-basic\\.formula\\.toml")
+        (backward-char 2)
+        (should (get-text-property (point) 'gascity-run-file))
+        (gascity-run-open-artifact)
+        (should (string-suffix-p "build-basic.formula.toml" visited))
+        ;; A step drawer's artifact.
+        (setq visited nil)
+        (goto-char (point-min))
+        (re-search-forward "^    ⬣ requirements")
+        (gascity-thing-toggle)
+        (re-search-forward "│ artifacts run   ")
+        (re-search-forward "decomposition\\.md")
+        (backward-char 2)
+        (should (get-text-property (point) 'gascity-run-file))
+        (gascity-run-open-artifact)
+        (should (string-suffix-p "project-switch-scope/decomposition.md" visited)))
+      ;; A row that is not an artifact says so.
+      (goto-char (point-min))
+      (re-search-forward "^    ⬣ requirements")
+      (should-error (gascity-run-open-artifact) :type 'user-error))))
+
+(ert-deftest gascity-test-run-artifact-missing ()
+  "A local missing artifact is a clear `No such file' error and leaves
+  the buffer intact; a remote artifact is never stat'ed on the way to
+  the file-name handler (REQ-002)."
+  (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+    (let ((before (buffer-string)))
+      (goto-char (point-min))
+      (re-search-forward "^  plans")
+      (re-search-forward "requirements\\.md")
+      (backward-char 2)
+      (should (string-match-p
+               "No such file"
+               (condition-case err
+                   (progn (gascity-run-open-artifact) "")
+                 (user-error (error-message-string err)))))
+      (should (equal (buffer-string) before))
+      (should (get-text-property (point) 'gascity-run-file)))
+    ;; A remote path keeps the file-name handler's own error: no local stat.
+    (let ((default-directory "/ssh:host:/home/roman/emacs-city/") visited)
+      (cl-letf (((symbol-function 'find-file)
+                 (lambda (f &rest _) (setq visited f)))
+                ((symbol-function 'file-exists-p)
+                 (lambda (&rest _) (error "stat on a remote artifact"))))
+        (gascity-run-visit-file "/home/roman/workspace/beads.el/plans/x.md"))
+      (should (equal visited
+                     "/ssh:host:/home/roman/workspace/beads.el/plans/x.md")))))
+
+(ert-deftest gascity-test-run-header-provenance ()
+  "The header names the run's root, store/rig/city, scope, formula
+  \(name, contract, graph key, source) and convoy; an absent scope reads
+  `(none)' rather than an invented value (REQ-003)."
+  (gascity-test-with-fixture-home
+    (let* ((convoy (cons '((id . "be-93dg") (status . "closed") (title . "input"))
+                       '((closed . 7) (total . 7))))
+           (text (gascity-runs-test--text
+                  (gascity-runs-test--header
+                   (gascity-runs-test--active-beads) "be-52m5" :convoy convoy))))
+      (should (string-match-p
+               "\\`  root     ⬣ be-52m5  build-basic +beads.el · started 2h$" text))
+      (should (string-match-p "^  store    rig:beads.el   rig beads.el   city emacs-city$"
+                              text))
+      (should (string-match-p "^  scope    (none)$" text))
+      (should (string-match-p "^  formula  build-basic  contract graph.v2$" text))
+      (should (string-match-p
+               "^           key graphv2-root:be-93dg:build-basic:296b212076d7ae2e:default$"
+               text))
+      (should (string-match-p "^           source ~/.gc/cache/…/build-basic.formula.toml$"
+                              text))
+      (should (string-match-p "^  plans    decomposition.md · factory-run.md" text))
+      (should (string-match-p "^  convoy   be-93dg  closed 7/7  input$" text)))))
+
+(ert-deftest gascity-test-run-header-absent ()
+  "A root without optional provenance shows `(none)'/'city store' only
+  where the row exists for that fact: no key or source continuation, no
+  empty label, and nothing derived or invented (REQ-003)."
+  (gascity-test-with-fixture-home
+    (let* ((beads
+            (mapcar
+             (lambda (b)
+               (if (equal (alist-get 'id b) "be-52m5")
+                   (let ((meta (seq-remove
+                                (lambda (cell)
+                                  (memq (car cell)
+                                        '(gc.root_store_ref gc.var.rig_name
+                                          gc.graphv2_root_key gc.formula_source
+                                          gc.scope_ref)))
+                                (alist-get 'metadata b))))
+                     (cons (cons 'metadata meta)
+                           (seq-remove (lambda (cell) (eq (car cell) 'metadata)) b)))
+                 b))
+             (gascity-runs-test--active-beads)))
+           (text (gascity-runs-test--text
+                  (gascity-runs-test--header beads "be-52m5"))))
+      (should (string-match-p "^  store    city store   city emacs-city$" text))
+      (should (string-match-p "^  scope    (none)$" text))
+      (should (string-match-p "^  formula  build-basic  contract graph.v2$" text))
+      (should-not (string-match-p "^           key " text))
+      (should-not (string-match-p "^           source " text))
+      (should-not (string-match-p "graphv2-root" text))
+      (should-not (string-match-p "^  [a-z]+ +$" text))
+      (should-not (string-match-p "^  convoy " text)))))
+
+(ert-deftest gascity-test-run-header-width ()
+  "Every header row is at most 78 columns, including a real 59-column
+  graph key and a longer one that is truncated with `…' (REQ-003)."
+  (let* ((now (float-time))
+         (time (format-time-string "%FT%TZ" (- now 3600) t))
+         (key59 (concat "graphv2-root:" (make-string 46 ?a)))
+         (key70 "graphv2-root:ga-c4pou:do-work:7ec5a43679a84153:drain=ga-kuvhc:ga-kci2d")
+         (root
+          (lambda (key)
+            `((id . "hw-wide") (status . "closed") (closed_at . ,time)
+              (metadata . ((gc.formula_name . "build-basic")
+                           (gc.formula_contract . "graph.v2")
+                           (gc.graphv2_root_key . ,key)
+                           (gc.formula_source
+                            . ,(concat "/home/roman/workspace/"
+                                       (make-string 90 ?s)
+                                       "/build-basic.formula.toml"))
+                           (gc.scope_ref . ,(concat "stage." (make-string 80 ?s)))
+                           (gc.root_store_ref . "rig:a-rather-long-rig-name")
+                           (gc.var.rig_name . "a-rather-long-rig-name"))))))
+         (run (list :id "hw-wide" :formula "build-basic" :state 'done
+                    :outcome "pass" :rig "a-rather-long-rig-name" :time time)))
+    (should (= 59 (length key59)))
+    (dolist (key (list key59 key70))
+      (let ((lines (gascity-run--header-lines
+                    run (funcall root key)
+                    (list :now now :city "a-rather-long-city-name"))))
+        (ert-info ((format "key width %d" (length key)))
+          (dolist (line lines)
+            (ert-info ((format "row %S" (substring-no-properties line)))
+              (should (<= (string-width line) gascity-dashboard--width))))
+          (let ((key-line (seq-find (lambda (l) (string-match-p "^           key " l))
+                                    lines)))
+            (should key-line)
+            (if (= (length key) 59)
+                (should (string-match-p (concat "key " (regexp-quote key)) key-line))
+              (should (string-match-p "…" key-line)))))))))
+
 (ert-deftest gascity-test-run-detail-failed-run-opens-failure ()
   "A failed run's loop containing the failure starts expanded down to it."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
     (let ((text (buffer-string)))
-      (should (string-match-p "^✕ be-bn2  build-basic  fail" text))
+      (should (string-match-p "^  root     ✕ be-bn2  build-basic  fail" text))
       (should (string-match-p "^Steps  9/10 · 45 beads" text))
       (should (string-match-p "^  ▾ ✕ Review +0/1 +failed" text))
       (should (string-match-p "^    ▾ review +be-fkq +✕ loop" text))
@@ -1851,6 +2032,7 @@ properties, so RET/i/v/t resolve from the drawer without new commands."
                  (lambda (rig) (concat "/stores/" rig "/")))
                 ((symbol-function 'find-file)
                  (lambda (file &rest _) (setq visited file)))
+                ((symbol-function 'file-exists-p) (lambda (&rest _) t))
                 ((symbol-function 'gascity-polecat-detail-at-point)
                  (lambda () (interactive)
                    (setq detail (gascity-agent-name (gascity-agent-at-point))))))
