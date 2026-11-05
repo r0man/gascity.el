@@ -283,20 +283,84 @@ names itself: (ID . ID)."
   (and (equal (downcase (or (alist-get 'state session) "")) "active")
        (not (alist-get 'closed session))))
 
-(defun gascity-dashboard--session-for-assignee (assignee sessions)
-  "Return the live session in SESSIONS a bead ASSIGNEE refers to, or nil.
+(defun gascity-dashboard--session-for-assignee (assignee sessions &optional any)
+  "Return the session in SESSIONS a bead ASSIGNEE refers to, or nil.
 Joins on the tmux `session_name' (what gc assigns work to), then on the
 session `id' itself (gc claims a bead with its supervisor session id,
 `ec-wisp-qcz1lk', which is not the parseable `<role>-<handle>' form),
 then on the id parsed from the assignee's trailing handle, then on the
-qualified agent name."
+qualified agent name.  Only live sessions match unless ANY is non-nil:
+the cockpit's hook join also looks through a stalled agent's closed
+session row (plan section 4, plan-review F2)."
   (when (and (stringp assignee) (not (string-empty-p assignee)))
-    (let* ((live (seq-filter #'gascity-dashboard--live-session-p sessions))
+    (let* ((pool (or (and any sessions)
+                     (seq-filter #'gascity-dashboard--live-session-p sessions)))
            (id (cdr (gascity-dashboard--parse-assignee assignee)))
            (ids (delq nil (list assignee id))))
-      (or (seq-find (lambda (s) (equal (alist-get 'session_name s) assignee)) live)
-          (seq-find (lambda (s) (member (alist-get 'id s) ids)) live)
-          (seq-find (lambda (s) (equal (alist-get 'agent_name s) assignee)) live)))))
+      (or (seq-find (lambda (s) (equal (alist-get 'session_name s) assignee)) pool)
+          (seq-find (lambda (s) (member (alist-get 'id s) ids)) pool)
+          (seq-find (lambda (s) (equal (alist-get 'agent_name s) assignee)) pool)))))
+
+(defun gascity-dashboard--routed-to-agent-p (pool name)
+  "Return non-nil when routed-to POOL names agent NAME.
+A pool slot is the pool's qualified name with a `-N' ordinal: the pool
+`gascity.el/gc.review-synthesizer' names
+`gascity.el/gc.review-synthesizer-1'."
+  (and (stringp pool) (not (string-empty-p pool)) (stringp name)
+       (or (equal pool name) (string-prefix-p (concat pool "-") name))))
+
+(defun gascity-dashboard--real-time (ts)
+  "Return TS when it is a real timestamp, else nil.
+gc's 1970 epoch placeholder and malformed values count as absent, so a
+stall duration is never computed from them (plan section 4)."
+  (when (and ts (gascity-ui-parse-time ts) (not (gascity-ui-epoch-time-p ts)))
+    ts))
+
+(defun gascity-dashboard--agent-stall (agent)
+  "Return AGENT's stall evidence (:since :source :lease :heartbeat).
+The chain is the session's `last_active', its `created_at', the hooked
+bead's claim (`started_at' or `gc.claimed_at'), then the bead's
+`updated_at' and `created_at' (plan decision 1).  TS is the payload
+timestamp, nil when nothing real is available; :lease and :heartbeat
+read the hooked bead, then its metadata for older stores."
+  (let* ((session (plist-get agent :session))
+         (bead (plist-get agent :bead-data))
+         (meta (and bead (gascity-dashboard--meta bead)))
+         (claimed (and bead (gascity-dashboard--claimed-at bead)))
+         (claim-source (and bead
+                            (or (alist-get 'started_at bead)
+                                (alist-get 'gc.claimed_at meta))
+                            "claimed"))
+         (chain (list (cons (and session (alist-get 'last_active session))
+                            "last active")
+                      (cons (and session (alist-get 'created_at session))
+                            "created")
+                      ;; `gascity-dashboard--claimed-at' also falls back to
+                      ;; `updated_at'; the source labels keep claim and
+                      ;; update apart.
+                      (cons (and claim-source claimed) claim-source)
+                      (cons (and bead (alist-get 'updated_at bead)) "updated")
+                      (cons (and bead (alist-get 'created_at bead)) "created")))
+         (pick (seq-find (lambda (entry)
+                           (gascity-dashboard--real-time (car entry)))
+                         chain)))
+    (list :since (and pick (car pick))
+          :source (and pick (cdr pick))
+          :lease (or (gascity-dashboard--real-time
+                      (and bead (alist-get 'lease_expires_at bead)))
+                     (gascity-dashboard--real-time
+                      (alist-get 'gc.lease_expires_at meta)))
+          :heartbeat (or (gascity-dashboard--real-time
+                          (and bead (alist-get 'heartbeat_at bead)))
+                         (gascity-dashboard--real-time
+                          (alist-get 'gc.heartbeat_at meta))))))
+
+(defun gascity-dashboard--stall-age (stall now)
+  "Return the stall age of STALL at NOW: a duration string or `unknown'."
+  (let ((since (plist-get stall :since)))
+    (if since
+        (gascity-ui-duration (- now (gascity-ui-parse-time since)))
+      "unknown")))
 
 (defun gascity-dashboard--agent-object (name session socket &optional running rig)
   "Return the action `gascity-agent' for agent NAME.
@@ -328,22 +392,64 @@ status agent (the mayor and other named sessions — one list, §7.1).
 
 Each plist carries :name :rig :state (`stalled' `running' `idle'
 `stopped' `suspended') :provider :bead (the in-progress bead id) :title
-:active (last-active timestamp) :session :object (the action
-`gascity-agent')."
+:bead-data (that bead's raw alist) :active (last-active timestamp)
+:session :object (the action `gascity-agent').
+
+The hooked bead is joined in four widening steps, first match wins: the
+live session a bead's assignee names; any session row, live or closed;
+an assignee equal to the agent's qualified name; and the `gc.routed_to'
+pool naming one of the agent's slots (plan section 4, plan-review F2)."
   (let* ((live (seq-filter #'gascity-dashboard--live-session-p sessions))
          (by-name (make-hash-table :test 'equal))
          (seen (make-hash-table :test 'equal))
          (hooked (make-hash-table :test 'equal))
+         (used (make-hash-table :test 'equal))
+         (names (delete-dups
+                 (delq nil (append
+                            (mapcar (lambda (a) (alist-get 'qualified_name a))
+                                    (append (alist-get 'agents status) nil))
+                            (mapcar (lambda (s) (alist-get 'agent_name s))
+                                    live)))))
          (rows nil))
     (dolist (s live)
       (puthash (alist-get 'agent_name s) s by-name))
-    ;; The in-progress bead each live session works on.
-    (dolist (bead beads)
-      (when (equal (alist-get 'status bead) "in_progress")
-        (let ((s (gascity-dashboard--session-for-assignee
-                  (alist-get 'assignee bead) live)))
-          (when (and s (not (gethash (alist-get 'agent_name s) hooked)))
-            (puthash (alist-get 'agent_name s) bead hooked)))))
+    (cl-labels ((in-progress-p (bead)
+                  (equal (alist-get 'status bead) "in_progress"))
+                (hook (bead name)
+                  (when (and name (member name names)
+                             (not (gethash name hooked))
+                             (not (gethash (alist-get 'id bead) used)))
+                    (puthash name bead hooked)
+                    (puthash (alist-get 'id bead) t used)
+                    t)))
+      ;; (1) The in-progress bead each live session works on.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((s (gascity-dashboard--session-for-assignee
+                    (alist-get 'assignee bead) live)))
+            (when s (hook bead (alist-get 'agent_name s))))))
+      ;; (2) Any session row, live or closed: a stalled agent's last
+      ;; session is closed, and its id can still name the bead's assignee.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((s (gascity-dashboard--session-for-assignee
+                    (alist-get 'assignee bead) sessions t)))
+            (when s (hook bead (alist-get 'agent_name s))))))
+      ;; (3) The bead's assignee is the agent's qualified name.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((assignee (alist-get 'assignee bead)))
+            (when (stringp assignee) (hook bead assignee)))))
+      ;; (4) The bead is routed to a pool the agent is a slot of; the
+      ;; first free slot wins when the pool has several.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((pool (alist-get 'gc.routed_to (gascity-dashboard--meta bead))))
+            (when (stringp pool)
+              (seq-some (lambda (n)
+                          (and (gascity-dashboard--routed-to-agent-p pool n)
+                               (hook bead n)))
+                        names))))))
     (cl-flet ((row (name agent session)
                 (let* ((bead (gethash name hooked))
                        (running (if agent (alist-get 'running agent)
@@ -366,6 +472,7 @@ Each plist carries :name :rig :state (`stalled' `running' `idle'
                         :provider (and session (alist-get 'provider session))
                         :bead (and bead (alist-get 'id bead))
                         :title (and bead (alist-get 'title bead))
+                        :bead-data bead
                         :active active
                         :created (and session (alist-get 'created_at session))
                         :session session
@@ -768,11 +875,25 @@ escalated/held beads, unread mail, store health."
       ;; ■ stalled agents: gc says running, no live session.
       (dolist (a (plist-get ctx :agents))
         (when (eq (plist-get a :state) 'stalled)
-          (add :level 'fail :kind "agent" :id (concat "agent:" (plist-get a :name))
-               :text (format "%s  running, no live session" (plist-get a :name))
-               :right (or (plist-get a :rig) "city")
-               :drawer (lambda () (gascity-dashboard--agent-drawer a))
-               :props (list 'gascity-agent (plist-get a :object)))))
+          (let* ((name (plist-get a :name))
+                 (stall (gascity-dashboard--agent-stall a))
+                 (rig (gascity-dashboard--rig-of name))
+                 ;; 20 fitted name columns plus the whole reason; the honest
+                 ;; `unknown' token is longer than any duration, so the cell
+                 ;; grows for it instead of cutting the age (REQ-005).
+                 (text (concat (gascity-ui-fit name 20)
+                               "  running, no live session  "
+                               (gascity-dashboard--stall-age stall now))))
+            (add :level 'fail :kind "agent" :id (concat "agent:" name)
+                 ;; Fit the name, never the reason: the reason stays whole
+                 ;; and the age rides along as a token (REQ-005).
+                 :text text
+                 :width (max 51 (string-width text))
+                 ;; A rig-qualified name carries its rig; a city-scope
+                 ;; agent (mayor, bd.dog-1) keeps its scope.
+                 :right (and (null rig) (or (plist-get a :rig) "city"))
+                 :drawer (lambda () (gascity-dashboard--agent-drawer a))
+                 :props (list 'gascity-agent (plist-get a :object))))))
       ;; ■ in-progress work whose assignee session is gone or whose lease
       ;; has lapsed: the stall a run's own idle check cannot see when the
       ;; step still looks freshly claimed (ga-o7vtw).
@@ -1680,9 +1801,13 @@ no worker."
      ctx :loads '(:status :sessions) :label "status" :hint "j a all")))
 
 (defun gascity-dashboard--agent-row (agent ctx)
-  "Return the lines of AGENT's row (and drawer) in CTX."
+  "Return the lines of AGENT's row (and drawer) in CTX.
+A stalled agent's time slot says how long it has been stalled; every
+other state keeps the last-active time."
   (let* ((state (plist-get agent :state))
-         (name (plist-get agent :name)))
+         (name (plist-get agent :name))
+         (stall (and (eq state 'stalled)
+                     (gascity-dashboard--agent-stall agent))))
     (gascity-dashboard--object-row
      (concat "agent:" name)
      (concat "  " (gascity-ui-pending-glyph
@@ -1692,14 +1817,32 @@ no worker."
              " " (gascity-ui-fit (or (plist-get agent :provider) "") 4)
              " " (gascity-ui-fit (or (plist-get agent :bead) "") 9)
              " " (gascity-ui-fit (symbol-name (if (eq state 'running) 'active state)) 8)
-             (gascity-ui-time (plist-get agent :active) (plist-get ctx :now)))
+             ;; The state cell already says `stalled'; the slot says how
+             ;; long (plan section 4, plan-review R6).
+             (if stall
+                 (gascity-dashboard--dim
+                  (gascity-ui-truncate
+                   (gascity-dashboard--stall-age stall (plist-get ctx :now))
+                   15))
+               (gascity-ui-time (plist-get agent :active) (plist-get ctx :now))))
      nil
      (lambda () (gascity-dashboard--agent-drawer agent))
      'gascity-agent (plist-get agent :object))))
 
 (defun gascity-dashboard--agent-drawer (agent)
-  "Return AGENT's drawer lines: session, workdir, hooked bead, created."
-  (let ((session (plist-get agent :session)))
+  "Return AGENT's drawer lines: session, workdir, hooked bead, created.
+A stalled agent adds its stall age and source, the hooked bead's lease
+and heartbeat when it carries them, and keeps the explanation last
+\(REQ-005)."
+  (let* ((session (plist-get agent :session))
+         (now (float-time))
+         (stalled (eq (plist-get agent :state) 'stalled))
+         (stall (and stalled (gascity-dashboard--agent-stall agent)))
+         (since (and stall (plist-get stall :since)))
+         (source (and stall (plist-get stall :source)))
+         (lease (and stall (plist-get stall :lease)))
+         (heartbeat (and stall (plist-get stall :heartbeat)))
+         (left (and lease (- (gascity-ui-parse-time lease) now))))
     (delq nil
           (list (and session
                      (format "session %s · %s"
@@ -1713,6 +1856,27 @@ no worker."
                              (or (plist-get agent :title) "")))
                 (and (plist-get agent :created)
                      (concat "created " (gascity-ui-ago (plist-get agent :created))))
+                (and stalled
+                     (gascity-dashboard--drawer-value
+                      "stalled   "
+                      (format "%s (since %s, %s)"
+                              (gascity-dashboard--stall-age stall now)
+                              (if since
+                                  (propertize (gascity-ui-relative-time since now)
+                                              'help-echo since)
+                                "unknown")
+                              (or source "unknown"))))
+                (and lease
+                     (gascity-dashboard--drawer-value
+                      "lease     "
+                      (if (and left (<= left 0))
+                          (format "expired %s ago"
+                                  (gascity-ui-duration (abs left)))
+                        (format "expires in %s"
+                                (gascity-ui-duration (max 0 (or left 0)))))))
+                (and heartbeat
+                     (gascity-dashboard--drawer-value
+                      "heartbeat " (gascity-ui-ago heartbeat now)))
                 (and (not session)
                      (pcase (plist-get agent :state)
                        ('stalled "gc says running; no live session backs it")
