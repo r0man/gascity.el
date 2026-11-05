@@ -510,6 +510,24 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                   (gascity-dashboard--dim (alist-get 'id bead)))
           (plist-get facts :agent))))
 
+(defun gascity-runs--facts (runs ctx)
+  "Return the compared facts of RUNS in CTX: an alist RUN-ID → plist.
+The plist holds :state, :progress, :worker (the rendered worker cell,
+or nil) and :failed-step (the failed step's class, or nil).  Pure;
+run-view-v3 §D fingerprints the Runs cards with it."
+  (mapcar
+   (lambda (run)
+     (let ((worker (and (plist-get run :worker-bead)
+                        (gascity-runs--worker (plist-get run :worker-bead)
+                                              (plist-get ctx :sessions)
+                                              (plist-get ctx :socket)))))
+       (cons (plist-get run :id)
+             (list :state (plist-get run :state)
+                   :progress (plist-get run :progress)
+                   :worker (and worker (car worker))
+                   :failed-step (plist-get (plist-get run :failed-step) :class)))))
+   runs))
+
 (defun gascity-runs--nest (runs)
   "Return RUNS as a list of (RUN . DEPTH), each member under its parent.
 A member run (:parent) follows the run it drains for when that run is
@@ -537,14 +555,18 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
          (id (plist-get run :id))
          (state (plist-get run :state))
          (now (plist-get ctx :now))
+         (changed (and (plist-get ctx :deltas)
+                       (gethash id (plist-get ctx :deltas))))
          (worker (and (plist-get run :worker-bead)
                       (gascity-runs--worker (plist-get run :worker-bead)
                                             (plist-get ctx :sessions)
                                             (plist-get ctx :socket))))
+         (glyph (gascity-runs--state-glyph state))
+         (progress (gascity-ui-fit (plist-get run :progress) 6))
          (line1 (gascity-dashboard--row
                  (concat (if (zerop depth) "  "
                            (concat (make-string (* 4 depth) ?\s) "└ "))
-                         (gascity-runs--state-glyph state) " "
+                         (if changed (gascity-ui-changed glyph) glyph) " "
                          (gascity-ui-fit id 9) " "
                          (gascity-ui-truncate (plist-get run :formula) 40))
                  (concat (gascity-dashboard--dim
@@ -553,8 +575,10 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
          (tail (pcase state
                  ('active (if-let* ((failed (plist-get run :failed-step)))
                              (gascity-runs--failed-step-badge failed)
-                           (if worker (car worker)
-                             (gascity-dashboard--dim "no live worker"))))
+                           (cond ((not worker)
+                                  (gascity-dashboard--dim "no live worker"))
+                                 (changed (gascity-ui-changed (car worker)))
+                                 (t (car worker)))))
                  ('waiting (gascity-dashboard--dim "waiting"))
                  ('failed (gascity-dashboard--dim
                            (or (plist-get run :failure) "outcome: fail")))
@@ -564,7 +588,8 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                             (concat (gascity-dashboard--ladder-string
                                      (plist-get run :ladder))
                                     "  " (gascity-ui-fit (plist-get run :label) 14)
-                                    " " (gascity-ui-fit (plist-get run :progress) 6)
+                                    " " (if changed (gascity-ui-changed progress)
+                                            progress)
                                     " ")
                           (gascity-dashboard--dim "no steps  "))
                         tail))
@@ -583,15 +608,19 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
 
 (defun gascity-runs--history-row (run ctx)
   "Return the lines of RUN's one-line history row (and drawer) in CTX."
-  (let ((id (plist-get run :id)))
+  (let* ((id (plist-get run :id))
+         (changed (and (plist-get ctx :deltas)
+                       (gethash id (plist-get ctx :deltas))))
+         (glyph (gascity-runs--state-glyph (plist-get run :state)))
+         (progress (gascity-ui-fit (plist-get run :progress) 6)))
     (gascity-dashboard--object-row
      (concat "run:" id)
-     (concat "  " (gascity-runs--state-glyph (plist-get run :state)) " "
+     (concat "  " (if changed (gascity-ui-changed glyph) glyph) " "
              (gascity-ui-fit id 9) " "
              (gascity-ui-fit (plist-get run :formula) 13) " "
              (gascity-ui-fit (gascity-dashboard--ladder-string (plist-get run :ladder))
                              12)
-             " " (gascity-ui-fit (plist-get run :progress) 6)
+             " " (if changed (gascity-ui-changed progress) progress)
              " " (gascity-ui-fit (or (plist-get run :outcome) "") 8))
      (concat (gascity-dashboard--dim (gascity-ui-fit (or (plist-get run :rig) "city") 10))
              " " (gascity-runs--time-cell (plist-get run :time) (plist-get ctx :now)))
@@ -644,6 +673,10 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
          (show (lambda (s) (or (null state) (equal state s))))
          (history (or (plist-get view :history) (equal state "done")))
          (loaded (gascity-dashboard--data (plist-get (plist-get ctx :loads) :beads)))
+         ;; The freshness stamp takes the title's right column from the
+         ;; key hint: both together overflow the 78-column budget, and
+         ;; the hint is also in the mode docstring.
+         (stamp (gascity-ui-update-stamp (plist-get ctx :last-update)))
          (title (gascity-dashboard--row
                  (concat (propertize "Runs" 'face 'gascity-header) "  "
                          (propertize (or (plist-get ctx :city) "") 'face 'gascity-city)
@@ -652,7 +685,7 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
                                             (gascity-runs--count-line
                                              (plist-get parts :counts))))
                            ""))
-                 (gascity-dashboard--dim "H history  / filter")))
+                 (gascity-dashboard--dim (or stamp "H history  / filter"))))
          (window (or (plist-get filters :window) gascity-runs-failed-window))
          (failed (plist-get parts :failed))
          (closed (plist-get parts :closed))
@@ -744,13 +777,30 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
          (sessions-res (gascity-store-use '("session" "list") :tick refresh-tick))
          (last-beads (vui-use-ref nil))
          (last-sessions (vui-use-ref nil))
+         ;; Run-view-v3 §D: the compared facts of the last delivery, the
+         ;; ids they changed, and the delivery time of that change.
+         (previous-facts (vui-use-ref nil))
+         (changed-ids (vui-use-ref nil))
+         (last-update (vui-use-ref nil))
          (loads (list :beads (gascity-ui-effective-load beads-res last-beads)
                       :sessions (gascity-ui-effective-load sessions-res last-sessions)))
          (ctx (gascity-runs-context
                loads filters
                (list :collapsed collapsed :drawers drawers :expanded expanded
                      :history history :pages pages)
-               (float-time) gascity-runs--city)))
+               (float-time) gascity-runs--city))
+         (facts (gascity-runs--facts (plist-get ctx :runs) ctx))
+         (old (car previous-facts)))
+    ;; Keyed on facts, not on the refresh tick: a delivery that changes
+    ;; nothing visible leaves the sticky highlight and stamp untouched.
+    (unless (equal facts old)
+      (setcar changed-ids (and old (gascity-ui-changed-ids old facts)))
+      (setcar previous-facts facts)
+      (when old
+        (setcar last-update (plist-get beads-res :updated-at))))
+    (setq ctx (plist-put (plist-put ctx :deltas
+                                    (gascity-ui-delta-table (car changed-ids)))
+                         :last-update (car last-update)))
     (setq gascity-runs--formulas
           (delete-dups (mapcar (lambda (r) (plist-get r :formula))
                                (plist-get ctx :runs))))

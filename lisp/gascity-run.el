@@ -240,6 +240,21 @@ Open by default while busy (`gascity-run--busy-p'); a toggle in VIEW's
                          (plist-get view :expanded))))
     (if (gascity-run--busy-p node) (not toggled) toggled)))
 
+(defun gascity-run--worker (node ctx)
+  "Return (NAME . AGENT) for NODE's shown bead in CTX, or (nil . nil).
+NAME is the live session's agent name, else the parsed assignee; AGENT
+is the action `gascity-agent' of a live worker, else nil."
+  (let* ((iter (gascity-run--latest-iteration node))
+         (shown (if iter (plist-get iter :bead) (plist-get node :bead)))
+         (assignee (alist-get 'assignee shown))
+         (session (gascity-dashboard--session-for-assignee
+                   assignee (plist-get ctx :sessions)))
+         (who (cond (session (alist-get 'agent_name session))
+                    (assignee (car (gascity-dashboard--parse-assignee assignee)))))
+         (agent (and session (gascity-dashboard--agent-object
+                              who session (plist-get ctx :socket)))))
+    (cons who agent)))
+
 (defconst gascity-run--plan-key-rx
   "\\`gc\\.\\(build\\|implementation\\)\\..*_path\\'"
   "Metadata keys `gascity-run-plans' lists: the run's plan artifacts.")
@@ -846,13 +861,11 @@ rows, RET and the step fold machinery are inherited, not duplicated."
          (fold (gascity-run--fold-p node))
          (open (and fold (gascity-run--open-p node view)))
          (state (gascity-run--node-state node))
-         (assignee (alist-get 'assignee shown))
-         (session (gascity-dashboard--session-for-assignee
-                   assignee (plist-get ctx :sessions)))
-         (who (cond (session (alist-get 'agent_name session))
-                    (assignee (car (gascity-dashboard--parse-assignee assignee)))))
-         (agent (and session (gascity-dashboard--agent-object
-                              who session (plist-get ctx :socket))))
+         (worker (gascity-run--worker node ctx))
+         (who (car worker))
+         (agent (cdr worker))
+         (changed (and (plist-get ctx :deltas)
+                       (gethash id (plist-get ctx :deltas))))
          ;; Names keep their column while they fit; a long nested name
          ;; pushes its row's columns right rather than being cut.
          (name-width (max 10 (- 25 (* 2 depth))
@@ -861,6 +874,15 @@ rows, RET and the step fold machinery are inherited, not duplicated."
                                     (alist-get 'closed_at shown)
                                   (alist-get 'updated_at shown))
                                 (plist-get ctx :now)))
+         (detail (gascity-ui-fit
+                  (if fold
+                      (concat (gascity-ui-glyph
+                               (pcase state ('done 'done) ('active 'active)
+                                      ('failed 'failed) (_ 'pending)))
+                              " " (gascity-run--detail node))
+                    (gascity-run--detail node))
+                  9))
+         (detail (if changed (gascity-ui-changed detail) detail))
          (left (concat (make-string (+ 2 (* 2 depth)) ?\s)
                        (if fold
                            (gascity-ui-glyph (if open 'expanded 'folded))
@@ -871,22 +893,18 @@ rows, RET and the step fold machinery are inherited, not duplicated."
                        " " (gascity-ui-fit id 9)
                        ;; A fold row's first column is its fold marker,
                        ;; so its state glyph leads the detail column.
-                       " " (gascity-ui-fit
-                            (if fold
-                                (concat (gascity-ui-glyph
-                                         (pcase state ('done 'done) ('active 'active)
-                                                ('failed 'failed) (_ 'pending)))
-                                        " " (gascity-run--detail node))
-                              (gascity-run--detail node))
-                            9)))
+                       " " detail))
          ;; The worker gets what the row has left before the time.
          (left (if who
-                   (let ((mark (if session (concat (gascity-ui-glyph 'ok) " ") "")))
+                   (let* ((mark (if agent (concat (gascity-ui-glyph 'ok) " ") ""))
+                          (name (gascity-ui-truncate
+                                 (gascity-runs-agent-name who)
+                                 (max 8 (- gascity-dashboard--width 2
+                                           (string-width left)
+                                           (string-width mark)
+                                           (string-width time))))))
                      (concat left " " mark
-                             (gascity-ui-truncate
-                              (gascity-runs-agent-name who)
-                              (max 8 (- gascity-dashboard--width 2 (string-width left)
-                                        (string-width mark) (string-width time))))))
+                             (if changed (gascity-ui-changed name) name)))
                  left))
          (thing-id (concat (if fold "fold:" "step:") id))
          (drawer-id (concat "step:" id))
@@ -911,31 +929,71 @@ rows, RET and the step fold machinery are inherited, not duplicated."
                 (mapcan (lambda (k) (gascity-run--step-lines k (1+ depth) ctx))
                         (plist-get node :children)))))))
 
+(defun gascity-run--model (ctx)
+  "Return the annotated run model of CTX, or nil when the run is unknown.
+Keys: :root the run root bead, :run its `gascity-runs-summary', :graph
+its graph beads, :tree the annotated tree `gascity-run-lines' renders."
+  (let* ((index (plist-get ctx :index))
+         (id (plist-get ctx :run-id))
+         (root (seq-find (lambda (r) (equal (alist-get 'id r) id))
+                         (plist-get index :roots))))
+    (when root
+      (let* ((run (gascity-runs-summary index root))
+             (graph (gascity-runs-graph index id))
+             (tree (gascity-run-annotate
+                    (gascity-run-tree root graph
+                                      (plist-get (plist-get ctx :view) :control))
+                    root graph (plist-get run :ladder))))
+        (list :root root :run run :graph graph :tree tree)))))
+
+(defun gascity-run--facts (tree ctx)
+  "Return the compared facts of TREE in CTX: an alist STEP-ID → plist.
+The plist holds :state (the ladder state), :detail
+\(`gascity-run--detail'), :worker (the worker display name) and :attempt
+\(the shown bead's attempt, the latest iteration's when it has one).
+Pure: no read, no timer."
+  (let (facts)
+    (cl-labels ((walk (node)
+                  (let* ((iter (gascity-run--latest-iteration node))
+                         (shown (if iter (plist-get iter :bead)
+                                  (plist-get node :bead)))
+                         (who (car (gascity-run--worker node ctx))))
+                    (push (cons (alist-get 'id (plist-get node :bead))
+                                (list :state (gascity-run--node-state node)
+                                      :detail (gascity-run--detail node)
+                                      :worker (and who
+                                                   (gascity-runs-agent-name who))
+                                      :attempt (gascity-run--attempt shown)))
+                          facts))
+                  (mapc #'walk (plist-get node :children))))
+      (mapc #'walk tree))
+    (nreverse facts)))
+
 (defun gascity-run-lines (ctx)
   "Return every run detail line for render context CTX.
 CTX keys: :run-id :now :loads (:beads) :index :sessions :socket :convoy
 :events (the drawer's events load) :failed-step (the diagnosed failure)
-:view (:collapsed :drawers :expanded :stage-collapsed :control).  A
-formula with a stage table renders its top-level anchors under stage
-headers; one without keeps the flat step rows (run-view-v2 §2)."
+:deltas (a hash of changed step ids) :last-update (the delivery that
+last changed the facts) :view (:collapsed :drawers :expanded
+:stage-collapsed :control).  A formula with a stage table renders its
+top-level anchors under stage headers; one without keeps the flat step
+rows (run-view-v2 §2)."
   (let* ((gascity-dashboard--view (plist-get ctx :view))
          (id (plist-get ctx :run-id))
-         (index (plist-get ctx :index))
          (load (plist-get (plist-get ctx :loads) :beads))
-         (root (seq-find (lambda (r) (equal (alist-get 'id r) id))
-                         (plist-get index :roots))))
+         (model (gascity-run--model ctx)))
     (cond
-     (root
-      (let* ((run (gascity-runs-summary index root))
+     (model
+      (let* ((root (plist-get model :root))
+             (run (plist-get model :run))
+             (graph (plist-get model :graph))
+             (tree (plist-get model :tree))
              (control (plist-get (plist-get ctx :view) :control))
-             (graph (gascity-runs-graph index id))
-             (tree (gascity-run-annotate
-                    (gascity-run-tree root graph control) root graph
-                    (plist-get run :ladder)))
              (formula (gascity-runs--meta root 'gc.formula_name))
              (groups (gascity-run-stage-groups tree formula))
              (ctx (if groups
-                      (let ((failed (gascity-runs-failed-step index root)))
+                      (let ((failed (gascity-runs-failed-step
+                                     (plist-get ctx :index) root)))
                         (if failed
                             (plist-put (copy-sequence ctx) :failed-step failed)
                           ctx))
@@ -952,8 +1010,10 @@ headers; one without keeps the flat step rows (run-view-v2 §2)."
                       (gascity-run--stage-lines
                        (list (gascity-run--control-group tree)) ctx))))
                (t (mapcan (lambda (n) (gascity-run--step-lines n 0 ctx)) tree))))
-             (summary (format "%s · %d beads" (plist-get run :progress)
-                              (length graph))))
+             (summary (concat (format "%s · %d beads" (plist-get run :progress)
+                                      (length graph))
+                              (gascity-ui-updated-string
+                               (plist-get ctx :last-update)))))
         (append
          (gascity-run--header-lines run root ctx)
          (list "")
@@ -1005,6 +1065,11 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
          (last-beads (vui-use-ref nil))
          (last-sessions (vui-use-ref nil))
          (last-events (vui-use-ref nil))
+         ;; Run-view-v3 §D: the compared facts of the last delivery, the
+         ;; ids they changed, and the delivery time of that change.
+         (previous-facts (vui-use-ref nil))
+         (changed-ids (vui-use-ref nil))
+         (last-update (vui-use-ref nil))
          (beads-load (gascity-ui-effective-load beads-res last-beads))
          (index (gascity-runs-index
                  (plist-get (gascity-dashboard--data beads-load) :beads)))
@@ -1032,7 +1097,20 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
                     :view (list :collapsed collapsed :drawers drawers
                                 :expanded expanded
                                 :stage-collapsed stage-collapsed
-                                :control control))))
+                                :control control)))
+         (model (gascity-run--model ctx))
+         (facts (and model (gascity-run--facts (plist-get model :tree) ctx)))
+         (old (car previous-facts)))
+    ;; Keyed on facts, not on the refresh tick: a delivery that changes
+    ;; nothing visible leaves the sticky highlight and stamp untouched.
+    (unless (equal facts old)
+      (setcar changed-ids (and old (gascity-ui-changed-ids old facts)))
+      (setcar previous-facts facts)
+      (when old
+        (setcar last-update (plist-get beads-res :updated-at))))
+    (setq ctx (plist-put (plist-put ctx :deltas
+                                    (gascity-ui-delta-table (car changed-ids)))
+                         :last-update (car last-update)))
     (vui-text (string-join (gascity-run-lines ctx) "\n"))))
 
 ;;; Commands

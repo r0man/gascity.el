@@ -680,32 +680,39 @@ data shows the error line; the view never blanks."
 (defvar gascity-runs-test--events []
   "Events the serve stub answers for `gc events --since'.")
 
+(defvar gascity-runs-test--served nil
+  "Plist overriding the serve stub's answers: :beads and :sessions.
+A delivery test sets it between refreshes to change one fact.")
+
 (defun gascity-runs-test--serve (beads)
   "Return a canned `gascity-reader-read-async' serving BEADS for beads.el."
   (lambda (args callback &optional _errback &rest _)
-    (funcall
-     callback
-     (pcase args
-       (`("rig" "list") (gascity-runs-test--json "emacs-city.rig-list.json"))
-       (`("session" "list") gascity-runs-test--sessions)
-       (`("convoy" "status" ,id)
-        `((convoy . ((id . ,id) (status . "closed") (title . "input")))
-          (progress . ((closed . 7) (total . 7)))))
-       ;; The inspector's recent events: none by default, so a rendered
-       ;; drawer is deterministic.  A line-mode read's payload is
-       ;; (GOOD . BAD), exactly as `gascity-reader-read-async' delivers it.
-       (`("events" . ,_) (cons gascity-runs-test--events 0))
-       (`("bd" "list" . ,rest)
-        (if (member "beads.el" rest)
-            (vconcat (seq-filter
-                      (lambda (b)
-                        (if (member "gc.kind=workflow" rest)
-                            (gascity-dashboard--run-root-p b)
-                          (gascity-dashboard--root-of b)))
-                      beads))
-          []))
-       (_ (error "Unexpected read %S" args))))
-    nil))
+    (let ((beads (or (plist-get gascity-runs-test--served :beads) beads))
+          (sessions (or (plist-get gascity-runs-test--served :sessions)
+                        gascity-runs-test--sessions)))
+      (funcall
+       callback
+       (pcase args
+         (`("rig" "list") (gascity-runs-test--json "emacs-city.rig-list.json"))
+         (`("session" "list") sessions)
+         (`("convoy" "status" ,id)
+          `((convoy . ((id . ,id) (status . "closed") (title . "input")))
+            (progress . ((closed . 7) (total . 7)))))
+         ;; The inspector's recent events: none by default, so a rendered
+         ;; drawer is deterministic.  A line-mode read's payload is
+         ;; (GOOD . BAD), exactly as `gascity-reader-read-async' delivers it.
+         (`("events" . ,_) (cons gascity-runs-test--events 0))
+         (`("bd" "list" . ,rest)
+          (if (member "beads.el" rest)
+              (vconcat (seq-filter
+                        (lambda (b)
+                          (if (member "gc.kind=workflow" rest)
+                              (gascity-dashboard--run-root-p b)
+                            (gascity-dashboard--root-of b)))
+                        beads))
+            []))
+         (_ (error "Unexpected read %S" args))))
+      nil)))
 
 (defmacro gascity-runs-test--with-view (beads mount &rest body)
   "Mount MOUNT (a vui component form) over BEADS; run BODY in its buffer."
@@ -1743,6 +1750,147 @@ remote city touches no file: every read is served, the render is pure."
         (re-search-forward "^    ◆ prepare")
         (gascity-thing-toggle))
       (should (null gascity-test-render-guard-violations)))))
+
+;;; Live deltas and last update (run-view-v3 §D, REQ-005)
+
+(defun gascity-runs-test--changed-lines ()
+  "Return the buffer lines carrying the `gascity-changed' face."
+  (let (lines)
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((end (line-end-position))
+              (p (point))
+              (found nil))
+          (while (< p end)
+            (when (memq 'gascity-changed
+                        (ensure-list (get-text-property p 'face)))
+              (setq found t))
+            (setq p (1+ p)))
+          (when found
+            (push (buffer-substring-no-properties (point) end) lines)))
+        (forward-line 1)))
+    (nreverse lines)))
+
+(defun gascity-runs-test--stamp ()
+  "Return the buffer's `updated HH:MM:SS' stamp, or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward "updated [0-9][0-9]:[0-9][0-9]:[0-9][0-9]" nil t)
+      (match-string-no-properties 0))))
+
+(defun gascity-runs-test--sessions-with-agent (agent)
+  "Return a `session list' payload naming the requirements planner AGENT."
+  `((sessions . [((id . "ec-fl8o")
+                  (agent_name . ,agent)
+                  (state . "active")
+                  (session_name . "gc__requirements-planner-ec-fl8o")
+                  (work_dir . "/home/roman/workspace/beads.el"))])))
+
+(defun gascity-runs-test--close-step (beads step-ref)
+  "Return BEADS with the step STEP-REF closed as passed."
+  (mapcar (lambda (b)
+            (if (equal (alist-get 'gc.step_ref (alist-get 'metadata b)) step-ref)
+                (append `((status . "closed")
+                          (closed_at . ,(gascity-runs-test--ts 60))
+                          (metadata . ,(cons '(gc.outcome . "pass")
+                                             (alist-get 'metadata b))))
+                        b)
+              b))
+          beads))
+
+(ert-deftest gascity-test-run-delta-first-paint ()
+  "First paint marks no row and shows no `updated' stamp."
+  (let ((gascity-store-synchronous-delivery t)
+        (gascity-runs-test--served nil))
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (should-not (gascity-runs-test--changed-lines))
+      (should-not (gascity-runs-test--stamp)))))
+
+(ert-deftest gascity-test-run-delta-refresh ()
+  "A delivery that changes a worker marks exactly that row, stamps the
+section, and keeps point and folds."
+  (let ((gascity-store-synchronous-delivery t)
+        (gascity-runs-test--served nil))
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (goto-char (point-min))
+      (re-search-forward "^    ▸ review")
+      (gascity-thing-toggle)
+      (should (string-match-p "^    ▾ review" (buffer-string)))
+      (goto-char (point-min))
+      (re-search-forward "^    ⬣ requirements")
+      (let ((p (point)))
+        (setq gascity-runs-test--served
+              (list :sessions (gascity-runs-test--sessions-with-agent
+                               "beads.el/gc.requirements-planner-2")))
+        (gascity-run-refresh)
+        (let ((lines (gascity-runs-test--changed-lines)))
+          (should (= (length lines) 1))
+          (should (string-match-p "requirements" (car lines)))
+          (should (string-match-p "requirements-planner-2" (car lines))))
+        (should (gascity-runs-test--stamp))
+        (should (string-match-p "^    ▾ review" (buffer-string)))
+        (should (= (point) p))))))
+
+(ert-deftest gascity-test-run-delta-noop ()
+  "A second delivery with identical facts keeps the highlight and stamp."
+  (let ((gascity-store-synchronous-delivery t)
+        (gascity-runs-test--served nil))
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (setq gascity-runs-test--served
+            (list :sessions (gascity-runs-test--sessions-with-agent
+                             "beads.el/gc.requirements-planner-2")))
+      (gascity-run-refresh)
+      (let ((lines (gascity-runs-test--changed-lines))
+            (stamp (gascity-runs-test--stamp)))
+        (should (= (length lines) 1))
+        (should stamp)
+        ;; A no-op delivery: the same facts leave text and stamp untouched.
+        (gascity-run-refresh)
+        (should (equal (gascity-runs-test--changed-lines) lines))
+        (should (equal (gascity-runs-test--stamp) stamp))))))
+
+(ert-deftest gascity-test-run-delta-timestamp ()
+  "The stamp is the delivery's :updated-at; nil and 0 omit it."
+  (let* ((beads (gascity-runs-test--active-beads))
+         (base (gascity-runs-test--inspector-ctx beads "be-52m5"))
+         (stamped (gascity-runs-test--text
+                   (gascity-run-lines (plist-put (copy-sequence base)
+                                                 :last-update 1793882386))))
+         (none (gascity-runs-test--text
+                (gascity-run-lines (plist-put (copy-sequence base)
+                                              :last-update nil))))
+         (zero (gascity-runs-test--text
+                (gascity-run-lines (plist-put (copy-sequence base)
+                                              :last-update 0)))))
+    (should (string-match-p
+             (concat "^Steps +1/10 · 37 beads · updated "
+                     (format-time-string "%H:%M:%S" 1793882386))
+             stamped))
+    (should-not (string-match-p "updated" none))
+    (should-not (string-match-p "updated" zero))))
+
+(ert-deftest gascity-test-runs-delta ()
+  "First paint is clean; a changed progress highlights that card's cells."
+  (let ((gascity-store-synchronous-delivery t)
+        (gascity-runs-test--served nil))
+    (gascity-runs-test--with-view (gascity-runs-test--active-beads)
+        (progn (with-current-buffer buf (gascity-runs-mode))
+               (vui-component 'gascity-runs-app :initial-filters nil))
+      (should-not (gascity-runs-test--changed-lines))
+      (should-not (gascity-runs-test--stamp))
+      (setq gascity-runs-test--served
+            (list :beads (gascity-runs-test--close-step
+                          (gascity-runs-test--active-beads)
+                          "build-basic.plan")))
+      (gascity-runs-refresh)
+      (let ((lines (gascity-runs-test--changed-lines)))
+        ;; Both lines of the changed card: its state glyph and its
+        ;; progress/worker cells.
+        (should (= (length lines) 2))
+        (should (seq-some (lambda (l) (string-match-p "be-52m5" l)) lines))
+        (should (seq-some (lambda (l) (string-match-p "2/10" l)) lines)))
+      (should (gascity-runs-test--stamp)))))
 
 (provide 'gascity-runs-test)
 ;;; gascity-runs-test.el ends here
