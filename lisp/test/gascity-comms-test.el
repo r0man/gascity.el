@@ -246,6 +246,106 @@ and every value starts in one column."
     (should (seq-some (lambda (l) (string-match-p "\\`message +mayor\\'" l)) lines))
     (should (= 1 (length (delete-dups (mapcar col lines)))))))
 
+(defconst gascity-comms-test--closed-bead-event
+  '((type . "bead.closed") (seq . 91) (ts . "2026-11-03T09:15:00Z")
+    (actor . "controller") (subject . "ga-4odv8")
+    (session_id . "ec-wisp-0q964e") (run_id . "ga-pgmo0")
+    (payload
+     (session_id . "ec-wisp-0q964e")
+     (step_id . "do-work.prepare-worktree")
+     (bead . ((id . "ga-4odv8")
+              (title . "Events detail: bead close_reason and gc.failure_class")
+              (status . "closed")
+              (close_reason .
+               "environment repair required: the rig still has no git remote and the controller cannot dispatch its workflow")
+              (metadata .
+               ((gc.failure_class .
+                 "control_dispatch_error: the controller could not reach the rig's git remote after three dispatch attempts")
+                (gc.outcome . "fail")))))))
+  "An inline `bead.closed' event whose payload bead says why it ended.
+The captured fixtures carry neither `close_reason' at the bead level nor
+`gc.failure_class' in its metadata, so AC-4 builds the payload inline
+rather than claiming a fixture covers it (plan-review R5).")
+
+(defun gascity-comms-test--bead-of (event)
+  "Return the payload bead alist of EVENT."
+  (alist-get 'bead (alist-get 'payload event)))
+
+(defun gascity-comms-test--field-line (key lines)
+  "Return the drawer line of KEY in LINES, or nil."
+  (seq-find (lambda (line) (string-prefix-p (concat key " ") line)) lines))
+
+(defun gascity-comms-test--field-value (key line)
+  "Return the value part of the drawer LINE of KEY."
+  (when line
+    (substring-no-properties line
+                             (string-match "[^ ]" line (length key)))))
+
+(defun gascity-comms-test--field-value-start (key line)
+  "Return the buffer position where the value of KEY starts in LINE."
+  (string-match "[^ ]" line (length key)))
+
+(ert-deftest gascity-test-comms-event-drawer-close-reason-and-failure-class ()
+  "A `bead.closed' payload bead shows `close_reason' and
+`gc.failure_class', cut to the cockpit drawer with the full value in
+`help-echo' (REQ-004, AC-4)."
+  (let* ((event gascity-comms-test--closed-bead-event)
+         (bead (gascity-comms-test--bead-of event))
+         (lines (gascity-event-fields event))
+         (reason (alist-get 'close_reason bead))
+         (class (alist-get 'gc.failure_class (alist-get 'metadata bead)))
+         (reason-line (gascity-comms-test--field-line "close_reason" lines))
+         (class-line (gascity-comms-test--field-line "gc.failure_class" lines)))
+    (should reason-line)
+    (should class-line)
+    ;; The one-line bead summary survives; the why lines follow it.
+    (should (gascity-comms-test--field-line "bead" lines))
+    (should (< (seq-position lines (gascity-comms-test--field-line "bead" lines))
+               (seq-position lines reason-line)))
+    ;; Cut values end in an ellipsis and keep the whole text in help-echo.
+    (should (string-suffix-p "…" (substring-no-properties reason-line)))
+    (should (string-suffix-p "…" (substring-no-properties class-line)))
+    (should (equal (get-text-property
+                    (gascity-comms-test--field-value-start "close_reason" reason-line)
+                    'help-echo reason-line)
+                   reason))
+    (should (equal (get-text-property
+                    (gascity-comms-test--field-value-start "gc.failure_class" class-line)
+                    'help-echo class-line)
+                   class))
+    ;; Rendered in the cockpit drawer, every line fits the 78-column view
+    ;; (the 4-column `  │ ' prefix is inside that budget).
+    (dolist (line (gascity-dashboard--drawer lines))
+      (should (<= (string-width line) gascity-dashboard--width)))))
+
+(ert-deftest gascity-test-comms-event-drawer-no-why-lines-when-absent ()
+  "A payload bead without `close_reason'/`gc.failure_class' adds no line
+and no empty value (REQ-004, AC-4)."
+  (let* ((event (copy-tree gascity-comms-test--closed-bead-event))
+         (bead (gascity-comms-test--bead-of event)))
+    (setf (alist-get 'close_reason bead) nil)
+    (setf (alist-get 'metadata bead) nil)
+    (let ((lines (gascity-event-fields event)))
+      (should (gascity-comms-test--field-line "bead" lines))
+      (should-not (gascity-comms-test--field-line "close_reason" lines))
+      (should-not (gascity-comms-test--field-line "gc.failure_class" lines))
+      (should-not (seq-some #'string-empty-p lines))
+      (dolist (line lines)
+        (should (string-match-p "  [^ ]" line))))))
+
+(ert-deftest gascity-test-comms-event-drawer-why-key-once ()
+  "An event-level `close_reason' wins over the payload bead's: each key
+appears once (REQ-004, AC-4)."
+  (let* ((event (cons (cons 'close_reason "event-level reason")
+                      (copy-tree gascity-comms-test--closed-bead-event)))
+         (lines (gascity-event-fields event)))
+    (should (= 1 (seq-count (lambda (line) (string-prefix-p "close_reason " line))
+                            lines)))
+    (should (equal "event-level reason"
+                   (gascity-comms-test--field-value
+                    "close_reason"
+                    (gascity-comms-test--field-line "close_reason" lines))))))
+
 (ert-deftest gascity-test-comms-cockpit-churn-unfold-capped ()
   "SPC on a cockpit ×N row unfolds at most 20 events and a `… N more'
 line; RET on the row (or that line) opens Events narrowed to the group
