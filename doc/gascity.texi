@@ -2052,9 +2052,17 @@ The step's ref, bead id, status and @code{gc.outcome}.
 @item attempt
 The attempt number, iteration number and iteration bead, when present.
 @item worker
-The assignee and agent name, @samp{●} live or @samp{○} not, the lease
-remaining or expired, and the heartbeat age.  @samp{no session} means
-no live session matches the assignee.
+The assignee and agent name, @samp{●} live or @samp{○} not.  The
+session's own liveness and the bead's claim lease are separate facts:
+@samp{session live · active 20s ago} comes from the session row, while
+@samp{claim lease 3m left · heartbeat 30s ago} comes from the bead that
+records them.  A lapsed lease on a session still active after the
+deadline reads @samp{(Pi heartbeat gap)}---@command{gc bd heartbeat}
+renews a lease and Pi workers do not call it---not a dead worker; a
+session quiet past the deadline reads @samp{(stale claim)}, the same
+rule as the dashboard's @samp{Needs you} section.  @samp{assignee/session
+gone} means the assignee has no live session; @samp{no session} means
+there is no assignee at all.
 @item artifacts
 The run's plan files (@samp{artifacts run}), then the step's and its
 latest iteration's artifact paths (@samp{artifacts step}).  On a local

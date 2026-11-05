@@ -476,21 +476,39 @@ The rig column before it then lines up whatever the time's width."
   (let ((time (gascity-ui-time ts now)))
     (concat (make-string (max 0 (- 9 (string-width time))) ?\s) time)))
 
-(defun gascity-runs--worker (bead sessions socket)
-  "Return (TEXT . AGENT) for the worker of in-progress BEAD.
-TEXT is `● name  bead' (`○' when no live session), AGENT the action
-`gascity-agent' of a live worker, else nil.  SESSIONS are the raw
-`session list' rows, SOCKET the city's tmux socket."
+(defun gascity-runs--worker-facts (bead sessions socket)
+  "Return the live-worker facts of in-progress BEAD.
+A plist: :session (the raw live session row or nil), :display (the
+session's short agent name, else the assignee's parsed role),
+:agent (the action `gascity-agent' of a live worker, else nil) and
+:last-active (the session's last-active stamp).
+SESSIONS are the raw `session list' rows, SOCKET the tmux socket.
+Both the Runs card and the run inspector read these facts, so the two
+views join the same session and tell the same story as the cockpit's
+Needs-you rule (ga-o7vtw)."
   (let* ((session (gascity-dashboard--session-for-assignee
                    (alist-get 'assignee bead) sessions))
          (name (if session (alist-get 'agent_name session)
                  (or (car (gascity-dashboard--parse-assignee
                            (alist-get 'assignee bead)))
                      "unassigned"))))
+    (list :session session
+          :display (gascity-runs-agent-name name)
+          :agent (and session (gascity-dashboard--agent-object
+                               name session socket))
+          :last-active (and session (alist-get 'last_active session)))))
+
+(defun gascity-runs--worker (bead sessions socket)
+  "Return (TEXT . AGENT) for the worker of in-progress BEAD.
+TEXT is `● name  bead' (`○' when no live session), AGENT the action
+`gascity-agent' of a live worker, else nil.  SESSIONS are the raw
+`session list' rows, SOCKET the city's tmux socket."
+  (let* ((facts (gascity-runs--worker-facts bead sessions socket))
+         (session (plist-get facts :session)))
     (cons (concat (gascity-ui-glyph (if session 'ok 'idle)) " "
-                  (gascity-runs-agent-name name) "  "
+                  (plist-get facts :display) "  "
                   (gascity-dashboard--dim (alist-get 'id bead)))
-          (and session (gascity-dashboard--agent-object name session socket)))))
+          (plist-get facts :agent))))
 
 (defun gascity-runs--nest (runs)
   "Return RUNS as a list of (RUN . DEPTH), each member under its parent.

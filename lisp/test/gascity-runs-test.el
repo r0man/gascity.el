@@ -119,6 +119,19 @@ load; EVENTS is an `gascity-ui-effective-load' plist."
         :index (gascity-runs-test--index beads)
         :sessions sessions :socket nil :convoy nil :view nil))
 
+(defun gascity-runs-test--worker-session (id now &optional active-ago)
+  "Return a live `session list' row for ID at NOW.
+ACTIVE-AGO is how many seconds before NOW the session was last active
+\(default 20).  The agent is the requirements planner the inspector
+fixture assigns to its step."
+  `((id . ,id)
+    (agent_name . "beads.el/gc.requirements-planner-1")
+    (state . "active")
+    (last_active . ,(format-time-string
+                     "%FT%TZ" (- now (or active-ago 20)) t))
+    (session_name . "gc__requirements-planner-ec-fl8o")
+    (work_dir . "/home/roman/workspace/beads.el")))
+
 ;;; Model: ladder, states, failure (§3.2)
 
 (ert-deftest gascity-test-runs-summary-from-real-graphs ()
@@ -1272,7 +1285,8 @@ artifact says so without erroring, and check/input paths stay out."
                                (funcall event "order.fired" 10 "hw-other")))
                  (ctx (gascity-runs-test--inspector-ctx
                        beads "hw-live" :now now
-                       :sessions (alist-get 'sessions gascity-runs-test--sessions)
+                       :sessions (vector (gascity-runs-test--worker-session
+                                          "ec-fl8o" now 20))
                        :events (list :state 'ready :data (cons events 0))))
                  (lines (gascity-run--step-drawer step iteration ctx))
                  (text (gascity-runs-test--text lines)))
@@ -1283,7 +1297,8 @@ artifact says so without erroring, and check/input paths stay out."
             (should (equal (nth 2 lines)
                            (concat "worker   gc__requirements-planner-ec-fl8o"
                                    "  ● requirements-planner-1"
-                                   "  lease 3m left  heartbeat 30s ago")))
+                                   "  session live · active 20s ago"
+                                   "  claim lease 3m left · heartbeat 30s ago")))
             (should (equal (nth 3 lines)
                            "artifacts run   requirements.md (12 KB, 3m)"))
             (should (equal (nth 4 lines)
@@ -1373,13 +1388,21 @@ stage groups, and the inspector still renders without signaling."
           (kill-buffer buf))))))
 
 (ert-deftest gascity-test-run-inspector-remote-artifacts ()
-  "Under a TRAMP city the inspector never stats an artifact and says so."
+  "Under a TRAMP city the inspector never stats an artifact, and still
+labels the worker's session and claim facts apart."
   (let* ((now (float (floor (float-time))))
          (beads (gascity-runs-test--inspector-run
                  "/home/roman/workspace/beads.el" now))
-         (step (nth 1 beads))
+         (step (append `((lease_expires_at .
+                          ,(format-time-string "%FT%TZ" (- now 240) t))
+                         (heartbeat_at .
+                          ,(format-time-string "%FT%TZ" (- now 540) t)))
+                       (nth 1 beads)))
          (iteration (nth 2 beads))
-         (ctx (gascity-runs-test--inspector-ctx beads "hw-live" :now now))
+         (ctx (gascity-runs-test--inspector-ctx
+               beads "hw-live" :now now
+               :sessions (vector (gascity-runs-test--worker-session
+                                  "ec-fl8o" now 20))))
          (calls nil)
          (default-directory "/ssh:host:/home/roman/emacs-city/"))
     (cl-letf (((symbol-function 'file-attributes)
@@ -1393,7 +1416,79 @@ stage groups, and the inspector still renders without signaling."
                                 text))
         (should (string-match-p "publish\\.md (remote: not checked)" text))
         (should (string-match-p "summary\\.md (remote: not checked)" text))
+        (should (string-match-p "session live · active 20s ago" text))
+        (should (string-match-p
+                 "claim lease lapsed 4m ago · heartbeat 9m ago (Pi heartbeat gap)"
+                 text))
         (should-not calls)))))
+
+(ert-deftest gascity-test-run-inspector-live-session-lapsed-lease ()
+  "A live worker whose claim lease lapsed is not reported dead.
+The session row is the liveness fact (`session live · active 20s ago');
+the lapsed lease is the bead's claim fact, and because the session was
+active after the deadline it reads as the Pi heartbeat gap (ga-p2lfj)
+the cockpit leaves unflagged (ga-o7vtw)."
+  (let* ((now (float (floor (float-time))))
+         (step `((id . "hw-step") (status . "in_progress")
+                 (assignee . "gc__requirements-planner-ec-fl8o")
+                 (lease_expires_at .
+                  ,(format-time-string "%FT%TZ" (- now 240) t))
+                 (heartbeat_at .
+                  ,(format-time-string "%FT%TZ" (- now 540) t))))
+         (ctx (gascity-runs-test--inspector-ctx
+               (list step) "hw-step" :now now
+               :sessions (vector (gascity-runs-test--worker-session
+                                  "ec-fl8o" now 20))))
+         (line (substring-no-properties
+                (gascity-run--worker-line step nil ctx))))
+    (should (equal line
+                   (concat "worker   gc__requirements-planner-ec-fl8o"
+                           "  ● requirements-planner-1"
+                           "  session live · active 20s ago"
+                           "  claim lease lapsed 4m ago · heartbeat 9m ago"
+                           " (Pi heartbeat gap)")))
+    (should-not (string-match-p "assignee/session gone" line))))
+
+(ert-deftest gascity-test-run-inspector-live-session-stale-claim ()
+  "A live session silent past the claim deadline reads stale, exactly as
+the cockpit's Needs you rule reads the same pair (ga-o7vtw)."
+  (let* ((now (float (floor (float-time))))
+         (step `((id . "hw-step") (status . "in_progress")
+                 (assignee . "gc__requirements-planner-ec-fl8o")
+                 (lease_expires_at .
+                  ,(format-time-string "%FT%TZ" (- now 240) t))
+                 (heartbeat_at .
+                  ,(format-time-string "%FT%TZ" (- now 540) t))))
+         (ctx (gascity-runs-test--inspector-ctx
+               (list step) "hw-step" :now now
+               :sessions (vector (gascity-runs-test--worker-session
+                                  "ec-fl8o" now 900))))
+         (line (substring-no-properties
+                (gascity-run--worker-line step nil ctx))))
+    (should (string-match-p "session live · active 15m ago" line))
+    (should (string-match-p "claim lease lapsed 4m ago" line))
+    (should (string-match-p "(stale claim)" line))
+    (should-not (string-match-p "Pi heartbeat gap" line))))
+
+(ert-deftest gascity-test-run-inspector-dead-session-lapsed-lease ()
+  "With no live session, a lapsed lease says the assignee is gone and
+keeps the lease age, rather than implying a live-but-lapsed claim."
+  (let* ((now (float (floor (float-time))))
+         (step `((id . "hw-step") (status . "in_progress")
+                 (assignee . "mockup-builder-1")
+                 (lease_expires_at .
+                  ,(format-time-string "%FT%TZ" (- now 300) t))
+                 (heartbeat_at .
+                  ,(format-time-string "%FT%TZ" (- now 540) t))))
+         (ctx (gascity-runs-test--inspector-ctx
+               (list step) "hw-step" :now now))
+         (line (substring-no-properties
+                (gascity-run--worker-line step nil ctx))))
+    (should (equal line
+                   (concat "worker   mockup-builder-1  ○ mockup-builder-1"
+                           "  assignee/session gone"
+                           "  claim lease lapsed 5m ago · heartbeat 9m ago")))
+    (should-not (string-match-p "session live" line))))
 
 (ert-deftest gascity-test-run-inspector-events-render-from-line-payload ()
   "An open drawer renders the newest matching events from the store's

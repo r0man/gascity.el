@@ -4,7 +4,22 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
-### The run detail groups its steps into lifecycle stages
+### The run inspector separates session liveness from a claim lease
+
+A live worker's step inspector used to read `lease expired 4m ago
+heartbeat 9m ago`, which looked like a dead assignee even though the
+session was still active.  The claim lease is bead metadata, not session
+liveness, and Pi workers do not currently run `gc bd heartbeat`, so an
+active claim's lease lapses while it works.  The worker line now names
+the two facts apart: `session live · active 20s ago` from the session
+row, and `claim lease 3m left · heartbeat 30s ago` from the bead.  A
+lapsed lease on a session active after the deadline reads `(Pi heartbeat
+gap)`, never a dead worker; a session quiet past the deadline reads
+`(stale claim)`, the same rule as the cockpit's Needs you; with no live
+session it reads `assignee/session gone` and the lease age.  The root
+cause is tracked in ga-p2lfj and the cockpit rule in ga-o7vtw; this
+change is UI only (ga-v8hah).
+
 
 A run whose formula has a stage table (the `mol-*` review, design and bug
 flows, and `build-base`/`build-basic`) now renders its top-level steps

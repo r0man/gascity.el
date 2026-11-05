@@ -38,7 +38,9 @@
 ;;
 ;; A step's drawer is the step inspector (run-view-v2 §3): the step's
 ;; ref, bead, status and outcome; its attempt and iteration; its worker
-;; with session liveness, lease and heartbeat; the run's and the step's
+;; with the session's liveness kept apart from the bead's claim lease
+;; and heartbeat (a live session with a lapsed lease is not "gone");
+;; the run's and the step's
 ;; artifacts with existence and age (each a thing `RET' visits); the
 ;; three newest matching events; and the failure class and reason
 ;; (`(none)' when the step and everything beneath it are healthy).  The
@@ -506,56 +508,106 @@ shown once."
                   (let ((own (entries step-paths)))
                     (and own (concat "artifacts step  " (string-join own " · ")))))))))
 
-(defun gascity-run--lease-text (bead ctx)
-  "Return BEAD's lease relative to CTX's :now, or nil."
-  (let ((time (gascity-ui-parse-time (alist-get 'lease_expires_at bead)))
-        (now (plist-get ctx :now)))
-    (when (and time now)
-      (let ((left (- time now)))
-        (if (>= left 0)
-            (format "lease %s left" (gascity-ui-duration left))
-          (format "lease expired %s ago" (gascity-ui-duration (- left))))))))
+(defun gascity-run--lease-time (worker step)
+  "Return the claim-lease expiry of WORKER, else STEP, or nil."
+  (or (gascity-ui-parse-time (alist-get 'lease_expires_at worker))
+      (gascity-ui-parse-time (alist-get 'lease_expires_at step))))
 
-(defun gascity-run--heartbeat-text (bead ctx)
-  "Return BEAD's heartbeat age relative to CTX's :now, or nil."
-  (let ((time (gascity-ui-parse-time (alist-get 'heartbeat_at bead)))
-        (now (plist-get ctx :now)))
-    (when (and time now)
-      (format "heartbeat %s ago" (gascity-ui-duration (- now time))))))
+(defun gascity-run--heartbeat-time (worker step)
+  "Return the claim heartbeat of WORKER, else STEP, or nil."
+  (or (gascity-ui-parse-time (alist-get 'heartbeat_at worker))
+      (gascity-ui-parse-time (alist-get 'heartbeat_at step))))
+
+(defun gascity-run--session-text (facts ctx)
+  "Return the session-liveness fact of worker FACTS at CTX, or nil.
+The fact comes from the session row, not the bead: `session live ·
+active 20s ago' when the row carries a real last-active stamp, else
+`session live'.  No live session yields nil; the caller says
+`assignee/session gone' instead."
+  (when (plist-get facts :session)
+    (let* ((last (plist-get facts :last-active))
+           (ago (and last (not (gascity-ui-epoch-time-p last))
+                     (gascity-ui-ago last (plist-get ctx :now)))))
+      (concat "session live"
+              (and ago (not (string-empty-p ago))
+                   (concat " · active " ago))))))
+
+(defun gascity-run--claim-note (session lease ctx)
+  "Return the note qualifying a lapsed claim LEASE for SESSION at CTX.
+Only a lapsed lease with a live session gets a note; with no session
+the line already says `assignee/session gone'.  The cockpit's
+stale-work rule (ga-o7vtw) treats a lapsed lease as the stall only
+when the live session cannot show activity after the deadline.  The
+inspector says the same: a session active after the deadline is the
+Pi worker's missing `gc bd heartbeat' (ga-p2lfj), not a dead worker;
+a quiet one is a stale claim."
+  (let ((now (plist-get ctx :now)))
+    (when (and lease now session (<= lease now))
+      (gascity-dashboard--dim
+       (if (gascity-dashboard--session-active-after-p session lease)
+           "(Pi heartbeat gap)"
+         "(stale claim)")))))
+
+(defun gascity-run--claim-text (worker step session ctx)
+  "Return WORKER's (else STEP's) claim fact at CTX, or nil.
+The bead's claim lease and heartbeat are kept apart from session
+liveness: `claim lease 3m left · heartbeat 30s ago' while the lease
+holds, `claim lease lapsed 4m ago …' once it does not.  A lapsed
+claim on a live SESSION is qualified by `gascity-run--claim-note'."
+  (let* ((lease (gascity-run--lease-time worker step))
+         (heartbeat (gascity-run--heartbeat-time worker step))
+         (now (plist-get ctx :now))
+         (parts nil))
+    (when lease
+      (push (if (>= (- lease (or now 0)) 0)
+                (format "claim lease %s left"
+                        (gascity-ui-duration (- lease now)))
+              (format "claim lease lapsed %s ago"
+                      (gascity-ui-duration (- now lease))))
+            parts))
+    (when heartbeat
+      (push (format "heartbeat %s ago"
+                    (gascity-ui-duration (- (or now 0) heartbeat)))
+            parts))
+    (let* ((text (and parts (string-join (nreverse parts) " · ")))
+           (note (gascity-run--claim-note session lease ctx)))
+      (cond ((and text note) (concat text " " note))
+            (text text)
+            (note note)))))
 
 (defun gascity-run--worker-line (step iteration ctx)
   "Return the inspector's worker line for STEP and ITERATION in CTX.
-The iteration bead is the worker's own bead while it runs; liveness
-joins the assignee against CTX's :sessions (`●' live, `○' not), the
-agent name is the parsed one, and the lease and heartbeat come from
-the bead that records them.  `no session' is said when no live session
-matches.  The line carries the live worker as its `gascity-agent'
-property, so v, i and t resolve from the drawer as from the row."
+The iteration bead is the worker's own bead while it runs.  The line
+keeps two facts apart: the session's liveness (`session live · active
+20s ago', from CTX's :sessions `●', or `○' with no live session) and
+the bead's claim lease and heartbeat (from the bead that records them).
+`assignee/session gone' is said when no live session matches an
+assignee; a lapsed claim on a live session is a heartbeat gap, never
+a dead worker.  The line carries the live worker as its
+`gascity-agent' property, so v, i and t resolve from the drawer as
+from the row."
   (let* ((worker (or iteration step))
          (bead (or iteration step))
          (assignee (or (alist-get 'assignee bead)
                        (alist-get 'assignee step)))
-         (session (gascity-dashboard--session-for-assignee
-                   assignee (plist-get ctx :sessions)))
-         (name (cond (session (alist-get 'agent_name session))
-                     (assignee (car (gascity-dashboard--parse-assignee
-                                     assignee)))))
-         (agent (and session
-                     (gascity-dashboard--agent-object
-                      (or name "") session (plist-get ctx :socket))))
+         (facts (gascity-runs--worker-facts
+                 (if (alist-get 'assignee bead) bead step)
+                 (plist-get ctx :sessions) (plist-get ctx :socket)))
+         (session (plist-get facts :session))
          (parts
           (delq nil
                 (list assignee
                       (and assignee
                            (concat (gascity-ui-glyph (if session 'ok 'idle))
-                                   " " (gascity-runs-agent-name (or name ""))))
-                      (or (gascity-run--lease-text worker ctx)
-                          (gascity-run--lease-text step ctx))
-                      (or (gascity-run--heartbeat-text worker ctx)
-                          (gascity-run--heartbeat-text step ctx))
-                      (and assignee (not session) "no session"))))
+                                   " " (plist-get facts :display)))
+                      (if session
+                          (gascity-run--session-text facts ctx)
+                        (and assignee "assignee/session gone"))
+                      (gascity-run--claim-text worker step session ctx))))
          (line (concat "worker   " (if parts (string-join parts "  ") "no session"))))
-    (if agent (propertize line 'gascity-agent agent) line)))
+    (if (plist-get facts :agent)
+        (propertize line 'gascity-agent (plist-get facts :agent))
+      line)))
 
 (defun gascity-run--event-ids (step iteration ctx)
   "Return the bead ids whose events belong to STEP's inspector row in CTX.
@@ -607,9 +659,10 @@ and never reads gc on the render path."
 (defun gascity-run--step-drawer (step iteration ctx)
   "Return the inspector lines of STEP and its latest ITERATION bead in CTX.
 In order: the step's ref, bead, status and outcome; its attempt and
-iteration; its worker with session liveness, lease and heartbeat; the
-run's and the step's artifacts with existence and age; the three newest
-matching events; and the failure class and reason, `(none)' when the
+iteration; its worker with the session's liveness and, separately, the
+bead's claim lease and heartbeat; the run's and the step's artifacts
+with existence and age; the three newest matching events; and the
+failure class and reason, `(none)' when the
 step is healthy.  A line appears only when the payload has the datum
 \(the explicit `no session' / no-event / `(none)' fallbacks aside), so a
 closed or session-less step renders cleanly.  Everything comes from the
