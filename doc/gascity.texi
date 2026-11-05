@@ -1897,7 +1897,7 @@ expands into beads; its ladder is a series of @dfn{steps}
 Waiting and Failed:
 
 @example
-Runs  emacs-city   1 active · 0 waiting · 51 done · 11 failed
+Runs  emacs-city   1 active · 0 waiting · 51 done · 11 failed (all time)
 
 Active  1
   ⬣ be-52m5  build-basic                              beads.el   2h
@@ -1906,6 +1906,7 @@ Active  1
 Failed  1 · last 24h
   ✕ be-bn2   build-basic                              beads.el   2h
      ◆◆◆◆◆◆◆✕◆◆  review         9/10   control_dispatch_error
+  stage Rev… · step build-basic.re… · failure control_dispatc… · worker contr…
 @end example
 
 @shot{runs-dark, The Runs view (ef-deuteranopia-dark)}
@@ -1920,12 +1921,31 @@ store.  The cockpit's Moving section uses the same ladder, so the two
 always agree.  A drain member run's card nests under its parent's in
 Active (@samp{└}, indented), and the section counts it as a sub-run.
 
-The summary line counts every run all-time.  The Failed section is
-windowed to @code{gascity-runs-failed-window} (24 hours by default) and
-says so; a failure older than the window is not lost, it stays in the
+The summary line counts every run all-time and says so (@samp{(all
+time)}); only the Failed section is windowed, to
+@code{gascity-runs-failed-window} (24 hours by default), and its header
+reads @samp{last 24h}.  The window is a @emph{display} filter, never a
+deletion: a failure older than the window is not lost, it stays in the
 Closed history, whose count is the summary's done plus failed.  So a
 failed run is always in the Closed archive, even once the Failed window
-has moved past it.
+has moved past it.  The Closed history's header states its own time
+basis too, @samp{all time} or @samp{last @var{window}} when @kbd{/ -W}
+narrows it, and its count is the number of rows that basis renders.
+
+The summary counts and the section contents come from the same
+rig/formula-filtered run list, so a filter changes both together.
+
+Every history row is followed by a dim @dfn{facts line} naming the
+run's @samp{stage}, @samp{step}, @samp{failure} and @samp{worker} in
+four columns that add up to the view's 78 columns.  The facts line
+belongs to the same run as the row above it: point, @key{TAB} and
+@key{RET} behave the same on either line, so a history row can be
+opened or folded from its facts line.  Each value is fitted to its
+column, and a value that had to be cut carries its full text in its
+help-echo.  The step is the failed step for an active or failed run
+and the last ladder step for a closed one; the stage is that step's
+lifecycle label (or the step name when the formula has no stage
+table); and a fact the run does not carry reads @samp{-}.
 
 @table @kbd
 @item @key{RET}
@@ -1965,8 +1985,12 @@ Detail, peek and attach for the run's worker at point.
 @file{*gascity-run:@: ID*}:
 
 @example
-⬣ be-52m5  build-basic                                   beads.el · started 2h
-  formula  build-basic (graph.v2)   source ~/.gc/cache/@dots{}/build-basic.formula.toml
+  root     ⬣ be-52m5  build-basic                        beads.el · started 2h
+  store    rig:beads.el   rig beads.el   city emacs-city
+  scope    (none)
+  formula  build-basic  contract graph.v2
+           key graphv2-root:be-52m5:build-basic:296b212076d7ae2e:default
+           source ~/.gc/cache/@dots{}/build-basic.formula.toml
   plans    requirements.md · implementation-plan.md · review-report.md
   convoy   be-93dg  closed 7/7  input
 
@@ -1997,8 +2021,36 @@ plain iterations shows its latest one inline (@samp{iter N}); any other
 step with children is a fold row, open while something beneath it is
 active or failed.  Under a drain step, its member runs are listed
 with their ladders (@samp{└ ⬣ bs-0c3f  do-work  ◆⬣·  implement 1/3});
-@key{RET} on one opens that run's detail.  The @samp{plans} line lists
-the run's plan files; @key{RET} on one visits it, on the city's host.
+@key{RET} on one opens that run's detail; @kbd{I}, @kbd{w} and @kbd{!}
+act on the member instead of reporting @samp{No step here}: @kbd{I}
+opens an in-place member drawer (the member's root, formula, progress,
+worker and failure), @kbd{w} copies the member's root bead id, and
+@kbd{!} echoes the member's own failed step, class and reason without
+moving point.  @key{RET} still drills into the member's run detail.
+
+Above the steps, the header names the run's provenance, one labelled
+row per fact, all read from the run root's own metadata: @samp{root}
+(the run bead, its formula, its @code{gc.outcome} when it has one, and
+the rig with the start or close time right-aligned), @samp{store}
+(@code{gc.root_store_ref}, plus @code{gc.var.rig_name} and the
+buffer's city), @samp{scope} (@code{gc.scope_ref}, else
+@samp{(none)}), and @samp{formula} (the name and
+@code{gc.formula_contract}, with @code{gc.graphv2_root_key} and the
+formula source on aligned continuation lines).  Nothing is derived or
+invented: an absent optional fact is omitted, or reads @samp{(none)}
+where the row exists for it.
+
+Every path in the header --- each @samp{plans} entry and the
+@samp{source} line --- is a file thing: @key{RET} visits it on the
+city's host, and @kbd{o} (@code{gascity-run-open-artifact}) does the
+same explicitly, reporting @samp{No artifact at point} when point is
+not on a path.  A stage header has no artifact of its own (no formula
+stage metadata carries one), so artifact actions on a stage are the
+step rows' inside it: each step's inspector lists the run's and the
+step's artifacts, and @key{RET} or @kbd{o} visits them there.  On a
+local city a missing file is a clear user error, not a broken buffer;
+a remote city reads @samp{remote: not checked} and never stats or
+connects on render.
 
 When the run's formula has a stage table --- the @code{mol-*} review,
 design and bug flows, and @code{build-base}/@code{build-basic} ---
@@ -2037,6 +2089,9 @@ row, opens the @dfn{step inspector}, a drawer under the row:
 @example
     │ step     build-basic.requirements  be-fy7m  in_progress
     │ attempt  1 · iteration bead be-bcb5
+    │ attempts
+    │   1 fail      ○ req-planner-1     2m 14s timeout: no heartbeat
+    │   2 pass      ● req-planner-2     1m 02s (none)
     │ worker   gc__requirements-planner-ec-fl8o  ● requirements-planner-1
     │ artifacts run   decomposition.md (missing) · @dots{}
     │ events   (no recent events)
@@ -2051,6 +2106,20 @@ The inspector's lines are:
 The step's ref, bead id, status and @code{gc.outcome}.
 @item attempt
 The attempt number, iteration number and iteration bead, when present.
+@item attempts
+The step's @dfn{attempt history}: one row per iteration or attempt
+bead, oldest first, under a dim @samp{attempts} heading.  A bead is an
+attempt when it names the step in @code{gc.logical_bead_id} or sits at
+a direct @samp{@var{step}.iteration.@var{N}} or
+@samp{@var{step}.attempt.@var{N}} child path, and every fact comes
+from the run's already-loaded bead
+graph --- the drawer reads nothing.  The columns are the attempt
+number, its outcome (@code{gc.outcome}, else status, else
+@samp{(none)}), its worker, its relative time and its failure class
+and reason; a healthy attempt reads @samp{(none)}, even when it
+carries a close reason.  There is no heading at all when a step has no
+attempt beads, and the collapsed row keeps its @samp{iter
+@var{N}} summary.
 @item worker
 The assignee and agent name, @samp{●} live or @samp{○} not.  The
 session's own liveness and the bead's claim lease are separate facts:
@@ -2083,24 +2152,40 @@ descendant, or @samp{(none)} for a healthy step.
 @fnindex gascity-run-activate
 Open the bead, artifact or worker at point, on a row or an inspector
 line.
+@item o
+Visit the artifact at point explicitly
+(@code{gascity-run-open-artifact}); the same as @key{RET} on a path,
+and @samp{No artifact at point} elsewhere.
 @item b
 @fnindex gascity-run-root-bead
 Open the root bead in beads.el.
 @item C
 @fnindex gascity-run-toggle-control
 Show or hide control nodes (spec, scope check, finalize).
+@item T
+Toggle the @code{needs}-aware step tree
+(@code{gascity-run-toggle-tree}; see below).
 @item I
 @fnindex gascity-run-inspect
-Toggle the step inspector for the row at point, fold rows included.
+Toggle the inspector for the row at point, fold rows included.  On a
+drain-member row it is the member's own in-place drawer.
 @item w
 @fnindex gascity-run-copy-id
-Copy the bead id at point: the step's id, or the iteration's id on the
-inspector's iteration line.
+Copy the bead id at point: the step's id, the iteration's id on the
+inspector's iteration line, or a drain member's root id on its row.
 @item !
 @fnindex gascity-run-diagnose
 Reveal the run's failed step (expanding its stage and any folded loop
 above it), open its inspector, and echo @samp{✕ ref  class: reason}.
 With no failed step it reports a user error instead of failing quietly.
+On a drain-member row it diagnoses that member instead, leaving point
+and the buffer alone.
+@item B
+Open the run in the configured web dashboard
+(@code{gascity-run-browse-url}; see below).
+@item Y
+Copy the run's web dashboard URL (@code{gascity-run-copy-url}; see
+below).
 @item i
 @itemx v
 @itemx t
@@ -2111,6 +2196,83 @@ live log attach, @kbd{v} the snapshot peek.
 @fnindex gascity-run-refresh
 Reload, keeping point, folds and drawers.
 @end table
+
+@noindent
+@kbd{B} opens the run in the web dashboard and @kbd{Y} copies the same
+URL.  Both build @samp{/city/@var{city}/runs/@var{id}} under
+@code{gascity-dashboard-url} (with the base's trailing slashes trimmed
+and both segments percent-encoded, and no fabricated scope query) and
+do nothing else when the option is @code{nil}: the echo area says
+@samp{No dashboard URL configured; set gascity-dashboard-url}, because
+gascity never guesses a host.  @kbd{W} is not shadowed by any of this:
+it stays the cross-view live toggle in every view, this one included.
+
+@kbd{T} toggles the @dfn{needs tree}, which renders the step
+@code{needs} relationships as indentation.  The flat, stage-grouped
+layout is the default and is restored byte-for-byte when the tree is
+toggled back.  The edges are the graph beads' @code{blocks}
+dependencies, normalized to step paths; a bead with no such edge falls
+back to a formula step-ref @code{needs} list.  Each stage's members
+keep the stage header and progress and are reordered into the global
+pre-order, indented by the number of their ancestors that are also
+members of the same stage (at most four steps).  A member whose parent
+lives in another stage is not over-indented; its detail column carries
+a dim @samp{↳ needs @var{parent}} note instead.  A formula without
+edge data falls back to the flat layout, and an edge that closes a
+cycle is cut and marked with a dim @samp{(cycle)}; a malformed or
+cyclic graph never hides a step and never errors the render.  The
+toggle is view state: it re-renders from the loaded payload (no new
+@command{gc} read) and survives @kbd{g}.
+
+After a live delivery, the facts that changed since the previous
+render are highlighted with the @code{gascity-changed} face (for a
+step: its ladder state, detail, worker and attempt; for a Runs card:
+its state, progress, worker and failed step), and the section summary
+carries the delivery's @samp{updated HH:MM:SS}.  The first paint after
+opening marks nothing.  Both the highlight and the stamp are
+@dfn{sticky}: they advance only when a displayed fact changes, so a
+refresh that changes nothing leaves the buffer visually unchanged ---
+including the stamp.  The comparison is over the rendered facts, not
+the refresh tick, and collapse state and point survive the repaint.
+
+@subheading Run detail commands
+
+These are the explicit names behind the new keys, for
+@code{describe-key} and for users who prefer @kbd{M-x}.
+
+@deffn {Command} gascity-run-open-artifact
+@fnindex gascity-run-open-artifact
+@kindex o
+Visit the artifact at point: a header @samp{plans} or @samp{source}
+entry, or a step inspector's artifact line.  Requires the
+@code{gascity-run-file} property at point and otherwise reports
+@samp{No artifact at point}; @key{RET} on the same line does the same
+thing.
+@end deffn
+
+@deffn {Command} gascity-run-browse-url
+@fnindex gascity-run-browse-url
+@kindex B
+Open the current run in the configured web dashboard via
+@code{browse-url}, echoing the URL.  Without a configured
+@code{gascity-dashboard-url} nothing is opened and the echo area says
+how to configure it.
+@end deffn
+
+@deffn {Command} gascity-run-copy-url
+@fnindex gascity-run-copy-url
+@kindex Y
+Copy the current run's web dashboard URL to the kill ring; same URL
+and same unconfigured message as @code{gascity-run-browse-url}.
+@end deffn
+
+@deffn {Command} gascity-run-toggle-tree
+@fnindex gascity-run-toggle-tree
+@kindex T
+Toggle the @code{needs}-aware step tree.  A boolean view state, not a
+fold list, so toggling back restores the flat layout exactly; a
+formula without edge data keeps the flat layout either way.
+@end deffn
 
 @noindent
 Opening a run from the Runs view costs no @command{gc} call: both share
@@ -4686,7 +4848,20 @@ Closed runs per history page of the Runs view (default 20).
 @vindex gascity-runs-failed-window
 @defopt gascity-runs-failed-window
 How far back the Runs view's Failed section looks (default
-@code{"24h"}); @kbd{/ -W} overrides it.
+@code{"24h"}); @kbd{/ -W} overrides it.  The summary counts and the
+Closed history are all-time unless the window filter is set.
+@end defopt
+
+@vindex gascity-dashboard-url
+@defopt gascity-dashboard-url
+Base URL of the city's Gas City web dashboard, such as
+@code{http://127.0.0.1:8372}, with or without a trailing slash.  The
+run detail's @kbd{B} and @kbd{Y} build a run URL from it
+(@code{gascity-run-web-url}), of the form
+@samp{/city/@var{city}/runs/@var{id}}; @code{nil} (the default) means
+not configured, and then the keys only say so.  gascity never guesses
+a host and never probes one: this is configuration only, so no
+@command{gc}, TRAMP or network call is made to derive the base.
 @end defopt
 
 @vindex gascity-dashboard-url
