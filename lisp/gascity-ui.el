@@ -326,6 +326,45 @@ nothing is hidden (D4: never hide silently)."
       (propertize (format "(%s hidden)" (string-join parts " · "))
                   'face 'gascity-dim))))
 
+;;; Live deltas and the update stamp (run-view-v3 §D, REQ-005)
+
+(defun gascity-ui-changed (text)
+  "Return TEXT with the `gascity-changed' face added to its own faces.
+Alignment is unaffected: properties add no columns."
+  (let ((s (copy-sequence (or text ""))))
+    (add-face-text-property 0 (length s) 'gascity-changed t s)
+    s))
+
+(defun gascity-ui-changed-ids (previous facts)
+  "Return the keys whose values differ between alists PREVIOUS and FACTS.
+A key absent from PREVIOUS is new, hence changed."
+  (let (ids)
+    (dolist (cell facts)
+      (unless (equal (cdr cell) (cdr (assoc (car cell) previous)))
+        (push (car cell) ids)))
+    (nreverse ids)))
+
+(defun gascity-ui-delta-table (ids)
+  "Return a hash table of the changed IDS, for the render context."
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (id ids table)
+      (puthash id t table))))
+
+(defun gascity-ui-update-stamp (at)
+  "Return `updated HH:MM:SS' for delivery time AT, or nil.
+AT is a store snapshot's `:updated-at' in seconds; nil or 0 yields nil
+rather than formatting a nil time (run-view-v3 §D)."
+  (and (numberp at) (> at 0)
+       (format "updated %s" (format-time-string "%H:%M:%S" at))))
+
+(defun gascity-ui-updated-string (at)
+  "Return ` · updated HH:MM:SS' for delivery time AT, else the empty string.
+AT as for `gascity-ui-update-stamp'; the separator lets a section
+summary append the stamp without a second format."
+  (if-let* ((stamp (gascity-ui-update-stamp at)))
+      (concat " · " (propertize stamp 'face 'gascity-dim))
+    ""))
+
 ;;; Section states (§6.1)
 
 (defun gascity-ui-section-header (title summary &rest props)

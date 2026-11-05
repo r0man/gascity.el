@@ -230,5 +230,10 @@ as hours (gc's durations have no `d' unit)."
   "Face for secondary, de-emphasized text."
   :group 'gascity-faces)
 
+(defface gascity-changed
+  '((t :inherit warning))
+  "Face for a run or step cell changed by the last live delivery."
+  :group 'gascity-faces)
+
 (provide 'gascity-custom)
 ;;; gascity-custom.el ends here
