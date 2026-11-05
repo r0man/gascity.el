@@ -899,28 +899,79 @@ payload in hand; the only I/O is a local file stat."
      (gascity-run--event-lines step iteration ctx)
      (list (concat "failure  " (gascity-run--failure-text step iteration ctx))))))
 
+(defun gascity-run--member-drawer (member index ctx)
+  "Return the inline drawer lines of drain-member run MEMBER.
+INDEX is the run index and CTX the render context.  The lines carry the
+member's summary (root, formula, progress, time, rig), its live worker,
+its own failure (the failed step of the member's graph, else the failed
+beads) and a dim `RET run' hint.  Everything comes from the loaded
+index, so opening or refreshing the drawer reads nothing."
+  (let* ((run (gascity-runs-summary index member))
+         (root (plist-get run :root))
+         (state (plist-get run :state))
+         (failed (and root (gascity-runs-failed-step index root)))
+         (info (or (and failed
+                        (or (plist-get failed :class)
+                            (plist-get failed :reason))
+                        (cons (plist-get failed :class)
+                              (plist-get failed :reason)))
+                   (and root
+                        (gascity-runs--failure-info
+                         (gascity-runs--failed-beads-of-run index root)))))
+         (worker (and (plist-get run :worker-bead)
+                      (gascity-runs--worker (plist-get run :worker-bead)
+                                            (plist-get ctx :sessions)
+                                            (plist-get ctx :socket)))))
+    (list
+     (concat "root     " (plist-get run :id) "  "
+             (gascity-runs--state-glyph state) " "
+             (or (and state (symbol-name state)) "?"))
+     (concat "formula  " (or (plist-get run :formula) "-")
+             "  " (or (plist-get run :progress) "-")
+             "  " (gascity-ui-time (plist-get run :time) (plist-get ctx :now))
+             "  " (or (plist-get run :rig) "city"))
+     (concat "worker   " (if worker (car worker) "no live worker"))
+     (concat "failure  "
+             (if info (gascity-runs--failure-text info) "(none)"))
+     (gascity-dashboard--dim "RET run"))))
+
 (defun gascity-run--member-lines (step depth ctx)
-  "Return the rows of the member runs drain STEP at DEPTH fans out to.
-A drain step stays open while its member runs (roots naming it in
+  "Return the rows (and open drawers) of the members drain STEP fans out to.
+The rows are indented at DEPTH (the step's own tree depth), so a
+member sits under its drain step.  A drain step stays open while its
+member runs (roots naming it in
 `gc.drain_control_id', the :drains of CTX's :index) work outside this
-run's graph: each gets a row with its ladder, RET opens its run detail."
+run's graph: each gets a row with its ladder, RET opens its run detail.
+The row carries the member's root id in `gascity-bead' (so `w' copies
+it) and `I' toggles the member's own `member:<id>' drawer."
   (let ((index (plist-get ctx :index)))
-    (mapcar
+    (mapcan
      (lambda (member)
        (let* ((run (gascity-runs-summary index member))
-              (id (plist-get run :id)))
-         (gascity-dashboard--row
-          (concat (make-string (+ 4 (* 2 depth)) ?\s) "└ "
-                  (gascity-runs--state-glyph (plist-get run :state)) " "
-                  (gascity-ui-fit id 9) " "
-                  (gascity-ui-fit (plist-get run :formula) 10) " "
-                  (gascity-dashboard--ladder-string (plist-get run :ladder)) "  "
-                  (gascity-ui-fit (plist-get run :label) 14) " "
-                  (plist-get run :progress))
-          (gascity-dashboard--dim "RET run")
-          'gascity-run-member id
-          'gascity-run-member-rig (plist-get run :rig)
-          'beads-thing (gascity-dashboard--thing 'row (concat "sub:" id)))))
+              (id (plist-get run :id))
+              (drawer-id (concat "member:" id))
+              (indent (make-string (+ 4 (* 2 depth)) ?\s)))
+         (cons
+          (gascity-dashboard--row
+           (concat indent "└ "
+                   (gascity-runs--state-glyph (plist-get run :state)) " "
+                   (gascity-ui-fit id 9) " "
+                   (gascity-ui-fit (plist-get run :formula) 10) " "
+                   (gascity-dashboard--ladder-string (plist-get run :ladder)) "  "
+                   (gascity-ui-fit (plist-get run :label) 14) " "
+                   (plist-get run :progress))
+           (gascity-dashboard--dim "RET run")
+           'gascity-run-member id
+           'gascity-run-member-rig (plist-get run :rig)
+           'gascity-bead id
+           'beads-thing
+           (gascity-dashboard--thing
+            'row drawer-id
+            (lambda () (gascity-dashboard--flip :drawers drawer-id))))
+          (and (gascity-dashboard--drawer-open-p drawer-id)
+               (mapcar (lambda (line) (concat indent line))
+                       (gascity-dashboard--drawer
+                        (gascity-run--member-drawer member index ctx)))))))
      (reverse (gethash (alist-get 'id step) (plist-get index :drains))))))
 
 ;;; Stage groups (run-view-v2 §2)
@@ -1366,7 +1417,8 @@ how `re-search-forward' leaves point after matching a whole line."
 (defun gascity-run-copy-id ()
   "Copy the bead id at point to the kill ring (`w').
 On a step row that is the step's bead; on the inspector's iteration
-line it is the iteration bead's id."
+line it is the iteration bead's id; on a `└ …' drain-member row it is
+the member's root id."
   (interactive)
   (let ((id (gascity-run--property-at-point 'gascity-bead)))
     (unless (and (stringp id) (not (string-empty-p id)))
@@ -1375,15 +1427,22 @@ line it is the iteration bead's id."
     (message "Copied %s" id)))
 
 (defun gascity-run-inspect ()
-  "Toggle the step inspector drawer for the step at point (`I').
-Works on a leaf row and on a fold row (where SPC keeps folding)."
+  "Toggle the inspector drawer for the row at point (`I').
+On a `└ …' drain-member row the drawer is the member's own summary,
+keyed `member:<id>', so a member row is never reported as no step.  On
+a step it opens the step inspector; works on a leaf row and on a fold
+row (where SPC keeps folding)."
   (interactive)
-  (let* ((thing (gascity-run--property-at-point 'beads-thing))
+  (let* ((member (gascity-run--property-at-point 'gascity-run-member))
+         (thing (gascity-run--property-at-point 'beads-thing))
          (id (gascity-run--property-at-point 'gascity-bead)))
-    (unless (and (stringp id)
-                 (memq (plist-get thing :kind) '(row fold)))
-      (user-error "No step here"))
-    (gascity-dashboard--flip :drawers (concat "step:" id))))
+    (cond
+     ((and (stringp member) (not (string-empty-p member)))
+      (gascity-dashboard--flip :drawers (concat "member:" member)))
+     ((and (stringp id)
+           (memq (plist-get thing :kind) '(row fold)))
+      (gascity-dashboard--flip :drawers (concat "step:" id)))
+     (t (user-error "No step here")))))
 
 ;;; Web handoff (run-view-v3 §C, REQ-004)
 
@@ -1436,12 +1495,16 @@ nothing is copied and the echo area says how to configure it."
 
 ;;; Diagnose (run-view-v2 §3, absorbs ga-32wpi)
 
-(defun gascity-run--stored-run ()
-  "Return (INDEX . ROOT) for this buffer's run from the store, or nil.
+(defun gascity-run--stored-index ()
+  "Return the run index from the store peek, or nil.
 The run-beads payload the detail rendered is read from the store: the
 command never spawns gc, so `!' stays non-blocking."
-  (let* ((beads (plist-get (gascity-store-peek gascity-runs-read-key) :beads))
-         (index (and beads (gascity-runs-index beads)))
+  (let ((beads (plist-get (gascity-store-peek gascity-runs-read-key) :beads)))
+    (and beads (gascity-runs-index beads))))
+
+(defun gascity-run--stored-run ()
+  "Return (INDEX . ROOT) for this buffer's run from the store, or nil."
+  (let* ((index (gascity-run--stored-index))
          (id gascity-run--current-run)
          (root (and index
                     (seq-find (lambda (bead)
@@ -1539,14 +1602,34 @@ fold thing counts as the step's row."
                   (reason (format "  %s" reason))
                   (t "")))))
 
-(defun gascity-run-diagnose ()
-  "Jump to the run's failed step and open its inspector (`!').
+(defun gascity-run--diagnose-member (member)
+  "Echo the diagnosis of the drain-member run MEMBER (`!').
+The member's own graph supplies the failed step; a healthy member is a
+clear `user-error'.  Point and the buffer are left alone: the member's
+steps are a separate graph, and RET is what drills in."
+  (let* ((index (gascity-run--stored-index))
+         (root (and index
+                    (seq-find (lambda (bead)
+                                (equal (alist-get 'id bead) member))
+                              (plist-get index :roots))))
+         (failed (and root (gascity-runs-failed-step index root))))
+    (unless index
+      (user-error "Run data is not loaded"))
+    (unless root
+      (user-error "Member run is not loaded"))
+    (unless failed
+      (user-error "Member run has no failed step"))
+    (message "%s" (truncate-string-to-width
+                    (gascity-run--diagnose-message failed)
+                    (max 20 (- (frame-width) 2)) nil nil "…"))))
+
+(defun gascity-run--diagnose-run ()
+  "Jump to this buffer's run failed step and open its inspector (`!').
 Expands the failed step's stage and the folded loops above the actual
 failure, opens the step's drawer, moves point to its row and echoes
 `✕ REF  CLASS: REASON' truncated to the echo area.  When the row cannot
 be located, point lands on the containing stage header instead.  No
 failed step is a `user-error'."
-  (interactive)
   (unless gascity-run--current-run
     (user-error "No run detail here"))
   (let* ((stored (gascity-run--stored-run))
@@ -1607,6 +1690,19 @@ failed step is a `user-error'."
                       (gascity-run--diagnose-message failed)
                       (max 20 (- (frame-width) 2)) nil nil "…")))))
 
+(defun gascity-run-diagnose ()
+  "Diagnose the run (or drain-member run) at point (`!').
+On a `└ …' member row, echo the member's own failed step, class and
+reason without moving point or opening another buffer; a healthy member
+is a clear `user-error'.  Elsewhere jump to the run's failed step and
+open its inspector, as `gascity-run--diagnose-run' documents.  The
+member's steps are a separate graph, so RET still drills in."
+  (interactive)
+  (let ((member (gascity-run--property-at-point 'gascity-run-member)))
+    (if (and (stringp member) (not (string-empty-p member)))
+        (gascity-run--diagnose-member member)
+      (gascity-run--diagnose-run))))
+
 ;;; Mode
 
 (defvar-keymap gascity-run-mode-map
@@ -1635,14 +1731,20 @@ artifact (`o' visits the artifact at point explicitly), `b' the root
 bead, `C' shows the control nodes, and `I'
 toggles the inspector for any step row (fold rows included).
 
-`w' copies the step's bead id (the iteration id on the inspector's
-iteration line), `B' opens the current run in the configured web
-dashboard and `Y' copies that URL (`W' stays the live toggle).  `!'
-reveals and diagnoses the run's failed step by expanding its stage and
-any folded loop above it, opening its inspector and echoing the
-failure class and reason.  The i, v and t keys reach a
-step's live worker (detail, snapshot peek, live attach) from a row or
-from an inspector line.
+On a `└ …' drain-member row, `I' opens an in-place member drawer (the
+member's root, formula, progress, worker and failure), `w' copies the
+member's root bead id and `!' echoes the member's own failed step,
+class and reason without moving point or opening a buffer; a healthy
+member says so.  RET still drills into the member's run detail.
+
+Elsewhere `w' copies the step's bead id (the iteration id on the
+inspector's iteration line), `B' opens the current run in the
+configured web dashboard and `Y' copies that URL (`W' stays the live
+toggle), and `!' reveals and diagnoses the run's failed step by
+expanding its stage and any folded loop above it, opening its
+inspector and echoing the failure class and reason.  The i, v and t
+keys reach a step's live worker (detail, snapshot peek, live attach)
+from a row or from an inspector line.
 
 \\{gascity-run-mode-map}"
   :interactive nil
