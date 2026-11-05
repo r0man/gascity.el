@@ -1426,6 +1426,159 @@ other stages alone, and survives a refresh with point on the header."
       (should (string-match-p "^  ◆ implement +be-3rij +iter 1" text))
       (should (string-match-p "^  ◆ close-source-anchor +be-j571 +pass" text)))))
 
+(defun gascity-runs-test--needs-and-forest (beads run)
+  "Return (TREE NEEDS FOREST) for RUN over BEADS, as the detail builds it."
+  (let* ((index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (r) (equal (alist-get 'id r) run))
+                         (plist-get index :roots)))
+         (graph (gascity-runs-graph index run))
+         (formula (gascity-runs--meta root 'gc.formula_name))
+         (tree (gascity-run-tree root graph))
+         (needs (gascity-run--needs-map graph formula)))
+    (list tree needs (gascity-run--needs-forest tree needs))))
+
+(ert-deftest gascity-test-run-needs-forest ()
+  "The build-basic graph becomes a needs forest: the prepare → requirements →
+plan → plan-review → decompose chain, implement's branch point below it, and
+the review → finalize → publish component in deterministic tree order."
+  (let* ((pairs (gascity-runs-test--needs-and-forest
+                 (gascity-runs-test--fixture-beads) "be-bn2"))
+         (needs (nth 1 pairs))
+         (forest (nth 2 pairs)))
+    (should (equal (mapcar (lambda (cell)
+                             (cons (plist-get (car cell) :name) (cdr cell)))
+                           forest)
+                   '(("prepare" . 0) ("requirements" . 1) ("plan" . 2)
+                     ("plan-review" . 3) ("decompose" . 4)
+                     ("implement" . 5) ("summarize-implementation" . 6)
+                     ("review" . 0) ("finalize" . 1) ("publish" . 2))))
+    ;; The map records prerequisite step paths, including implement's
+    ;; blocks edge to decompose (never the out-of-graph drain members).
+    (should (equal (gethash "plan-review" needs) '("plan")))
+    (should (equal (gethash "decompose" needs)
+                   '("plan-review" "decompose.iteration.1")))
+    (should (equal (gethash "implement" needs) '("decompose")))))
+
+(ert-deftest gascity-test-run-needs-cycle ()
+  "A cyclic component renders every node once, terminates, and marks the
+node that would close the cycle with a dim `(cycle)' help-echo."
+  (let* ((a (list :bead '((id . "cyc-a")) :path "a" :name "a" :children nil))
+         (b (list :bead '((id . "cyc-b")) :path "b" :name "b" :children nil))
+         (needs (make-hash-table :test 'equal)))
+    (puthash "a" '("b") needs)
+    (puthash "b" '("a") needs)
+    (let* ((forest (gascity-run--needs-forest (list a b) needs))
+           (notes (delq nil (mapcar (lambda (cell)
+                                      (plist-get (car cell) :needs-note))
+                                    forest))))
+      (should (equal (mapcar (lambda (cell)
+                               (cons (plist-get (car cell) :path) (cdr cell)))
+                             forest)
+                     '(("a" . 0) ("b" . 1))))
+      (should (= 1 (length notes)))
+      (should (string-match-p "(cycle)" (car notes)))
+      (should (equal (get-text-property 0 'help-echo (car notes))
+                     "dependency cycle closes here"))
+      (should (equal (get-text-property 0 'face (car notes)) 'gascity-dim)))))
+
+(ert-deftest gascity-test-run-needs-needs-field ()
+  "A `needs' string list is normalized as a formula step ref, not passed to
+`gascity-dashboard--step-path' as if it were a bead id."
+  (let* ((prep `((id . "nf-prep")
+                 (status . "closed")
+                 (metadata . ((gc.step_ref . "build-basic.prepare")))))
+         (req `((id . "nf-req")
+                (status . "open")
+                (needs . ["build-basic.prepare"])
+                (metadata . ((gc.step_ref . "build-basic.requirements")))))
+         (needs (gascity-run--needs-map (list prep req) "build-basic")))
+    (should (equal (gethash "requirements" needs) '("prepare")))
+    (should-not (gethash "build-basic.prepare" needs))
+    (should-not (gethash "build-basic.requirements" needs))))
+
+(ert-deftest gascity-test-run-needs-flat-fallback ()
+  "A formula with no graph edge data renders the v2 layout byte-identically
+whether or not the tree state is on."
+  (let* ((root `((id . "hw-unk") (status . "in_progress")
+                 (issue_type . "task")
+                 (metadata . ((gc.kind . "workflow")
+                              (gc.formula_name . "mystery")))))
+         (step `((id . "hw-one") (status . "closed")
+                 (issue_type . "task")
+                 (metadata . ((gc.root_bead_id . "hw-unk")
+                              (gc.step_ref . "mystery.one")
+                              (gc.outcome . "pass")))))
+         (ctx (list :run-id "hw-unk" :now (float-time)
+                    :loads (list :beads (gascity-runs-test--load
+                                         (list :beads (list root step))))
+                    :index (gascity-runs-test--index (list root step))
+                    :sessions nil :socket nil :convoy nil
+                    :view '(:collapsed nil :drawers nil :expanded nil
+                            :stage-collapsed nil :control nil))))
+    (let ((flat (gascity-runs-test--text
+                 (gascity-run-lines
+                  (plist-put (copy-sequence ctx) :view
+                             (plist-put (copy-sequence (plist-get ctx :view))
+                                        :tree nil)))))
+          (tree (gascity-runs-test--text
+                 (gascity-run-lines
+                  (plist-put (copy-sequence ctx) :view
+                             (plist-put (copy-sequence (plist-get ctx :view))
+                                        :tree t))))))
+      (should (string-match-p "^  ◆ one +hw-one +pass" flat))
+      (should (equal flat tree)))))
+
+(ert-deftest gascity-test-run-needs-toggle ()
+  "`T' re-renders the stage groups as a needs-indented tree with
+`↳ needs <parent>' on cross-stage rows, keeps the flat v2 rows byte-for-byte
+when toggled back, and survives a fold and `!'."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (let ((flat (buffer-string)))
+      (should-not (string-match-p "↳ needs" flat))
+      (gascity-run-toggle-tree)
+      (let ((tree (buffer-string)))
+        ;; Stage headers and progress are unchanged.
+        (should (string-match-p "^  ▾ ◆ Intake +5/5$" tree))
+        (should (string-match-p "^  ▾ ✕ Review +0/1 +failed$" tree))
+        ;; Members follow the global forest pre-order, indented by
+        ;; same-stage ancestors: prepare→requirements→plan→plan-review→
+        ;; decompose, each one level deeper, capped at four.
+        (should (string-match-p "^    ◆ prepare +be-e29" tree))
+        (should (string-match-p "^      ◆ requirements +be-yam" tree))
+        (should (string-match-p "^        ◆ plan +be-cu3" tree))
+        (should (string-match-p "^          ◆ plan-review +be-ah8" tree))
+        (should (string-match-p "^            ◆ decompose +be-9z3" tree))
+        ;; implement's parent lives in Intake, so it is not over-indented;
+        ;; the cross-stage edge is named in its detail column.
+        (should (string-match-p "^    ▸ implement +be-jxy .*↳ needs decompose"
+                                tree))
+        (should (string-match-p "^      ◆ summarize-implementation +be-a27"
+                                tree))
+        ;; Independent component: review → finalize → publish.
+        (should (string-match-p "^    ▾ review +be-fkq" tree))
+        (should (string-match-p "^    ◆ finalize +be-hqx .*↳ needs review"
+                                tree))
+        (should (string-match-p "^      ◆ publish +be-gez" tree))
+        ;; Every step row (including the indented tree rows) fits the
+        ;; cockpit width.
+        (dolist (line (split-string tree "\n"))
+          (when (get-text-property 0 'gascity-bead line)
+            (should (<= (string-width (substring-no-properties line)) 78)))))
+      ;; Toggled back, the v2 rows are restored byte-for-byte.
+      (gascity-run-toggle-tree)
+      (should (equal (buffer-string) flat))
+      ;; A fold set in tree mode survives the toggle; `!' keeps the tree.
+      (gascity-run-toggle-tree)
+      (goto-char (point-min))
+      (re-search-forward "^    ▾ review ")
+      (gascity-thing-toggle)
+      (should (string-match-p "^    ▸ review +be-fkq" (buffer-string)))
+      (gascity-run-toggle-tree)
+      (should (string-match-p "^    ▸ review +be-fkq" (buffer-string)))
+      (gascity-run-toggle-tree)
+      (gascity-run-diagnose)
+      (should (string-match-p "↳ needs decompose" (buffer-string))))))
+
 (ert-deftest gascity-test-run-detail-cold-store ()
   "A pending store keeps the run header and the Steps section, shows no
 stage groups, and never signals."
