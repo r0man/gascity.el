@@ -703,6 +703,14 @@ already-loaded run graph, so this reads nothing."
                     ((/= ia ib) (< ia ib))
                     (t (string< (alist-get 'id a) (alist-get 'id b)))))))))
 
+(defun gascity-run--failure-line (text)
+  "Return the drawer's `failure  ' line for TEXT.
+The line is fitted to `gascity-dashboard--drawer-width' -- the drawer
+prefix takes the rest of `gascity-dashboard--width' -- and the full text
+rides in `help-echo' when it had to be cut.  Every drawer failure --
+step inspector and drain member -- goes through here (REQ-003)."
+  (gascity-dashboard--drawer-value "failure  " text))
+
 (defun gascity-run--attempt-line (bead ctx)
   "Return the attempt-history row of BEAD in CTX.
 Columns: number, outcome (`gc.outcome', else status, else `(none)'),
@@ -1016,7 +1024,8 @@ payload in hand; the only I/O is a local file stat."
      (list (gascity-run--worker-line step iteration ctx))
      (gascity-run--artifact-lines step iteration ctx)
      (gascity-run--event-lines step iteration ctx)
-     (list (concat "failure  " (gascity-run--failure-text step iteration ctx))))))
+     (list (gascity-run--failure-line
+            (gascity-run--failure-text step iteration ctx))))))
 
 (defun gascity-run--member-drawer (member index ctx)
   "Return the inline drawer lines of drain-member run MEMBER.
@@ -1042,7 +1051,7 @@ index, so opening or refreshing the drawer reads nothing."
              "  " (gascity-ui-time (plist-get run :time) (plist-get ctx :now))
              "  " (or (plist-get run :rig) "city"))
      (concat "worker   " (if worker (car worker) "no live worker"))
-     (concat "failure  " (gascity-ui-failure-text info))
+     (gascity-run--failure-line (gascity-ui-failure-text info))
      (gascity-dashboard--dim "RET run"))))
 
 (defun gascity-run--member-lines (step depth ctx)

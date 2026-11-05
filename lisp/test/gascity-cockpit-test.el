@@ -189,6 +189,28 @@ RUN-BEADS is the Runs view's composite read (run roots and graph beads)."
 
 ;;; Needs you — one test per source (§7.1)
 
+(defconst gascity-cockpit-test--long-agent-name
+  "gascity.el/gc.implementation-review-synthesizer-1"
+  "A rig-qualified agent name longer than 45 columns (AC-5).")
+
+(cl-defun gascity-cockpit-test--stalled-context (&key name sessions beads)
+  "Return a cockpit context carrying one stalled status agent NAME.
+NAME defaults to `gascity-cockpit-test--long-agent-name'; SESSIONS and
+BEADS are the canned payloads its hook join reads."
+  (let ((name (or name gascity-cockpit-test--long-agent-name)))
+    (gascity-cockpit-test--ctx
+     :status `((agents . [((qualified_name . ,name) (running . t))]))
+     :sessions sessions
+     :beads beads)))
+
+(defun gascity-cockpit-test--help-echos (line)
+  "Return the distinct `help-echo' values carried by LINE."
+  (let (out)
+    (dotimes (i (length line))
+      (let ((echo (get-text-property i 'help-echo line)))
+        (when echo (push echo out))))
+    (delete-dups (nreverse out))))
+
 (ert-deftest gascity-test-cockpit-needs-you-stalled-agent ()
   "■ agent: gc status says running, no live session backs it."
   (let* ((status '((agents . [((qualified_name . "beads.el/worker")
@@ -199,6 +221,137 @@ RUN-BEADS is the Runs view's composite read (run roots and graph beads)."
     (should (string-match-p "beads.el/worker" (plist-get (car items) :text)))
     (should (gascity-agent-p (plist-get (plist-get (car items) :props)
                                         'gascity-agent)))))
+
+;;; Stalled-agent stall age, lease and heartbeat (REQ-005, AC-5)
+
+(ert-deftest gascity-test-cockpit-stalled-agent-keeps-reason-and-age ()
+  "AC-5(a): a stalled agent with a 45+ column qualified name keeps the
+whole reason in its Needs-you row and carries a stall age.
+The agent is `gc status' running with no live session; its in-progress
+bead names a dead session id, so the widened hook join (plan section 4,
+plan-review F2) is what supplies the age."
+  (let* ((name gascity-cockpit-test--long-agent-name)
+         (sessions (list `((id . "ec-wisp-0ijca4") (agent_name . ,name)
+                           (state . "closed"))))
+         (bead `((id . "ga-stall") (status . "in_progress")
+                 (title . "Review the cockpit batch")
+                 (assignee . "ec-wisp-0ijca4")
+                 (started_at . ,(gascity-cockpit-test--ts 1800))))
+         (ctx (gascity-cockpit-test--stalled-context
+               :name name :sessions sessions :beads (list bead)))
+         (agents (plist-get ctx :agents)))
+    (should (= 1 (length agents)))
+    (let ((agent (car agents)))
+      (should (eq (plist-get agent :state) 'stalled))
+      (should (equal (plist-get agent :bead) "ga-stall"))
+      (should (equal (alist-get 'id (plist-get agent :bead-data)) "ga-stall")))
+    (let* ((items (gascity-dashboard--needs-you ctx))
+           (item (seq-find (lambda (i) (equal (plist-get i :kind) "agent"))
+                           items)))
+      (should item)
+      (should (string-match-p "running, no live session" (plist-get item :text)))
+      (should (string-match-p "30m" (plist-get item :text)))
+      ;; Rig-qualified: the qualified name carries the rig, so no right cell.
+      (should-not (plist-get item :right)))
+    (let ((text (gascity-cockpit-test--text
+                 (let ((gascity-dashboard--view nil))
+                   (gascity-dashboard--agents-lines ctx)))))
+      (should (string-match-p "stalled +30m" text)))))
+
+(ert-deftest gascity-test-cockpit-stalled-agent-drawer-stall-lease-heartbeat ()
+  "AC-5(b): the stalled agent's drawer carries the stall duration and its
+source, plus the lease and heartbeat the hooked bead carries."
+  (let* ((name gascity-cockpit-test--long-agent-name)
+         (started (gascity-cockpit-test--ts 1800))
+         (lease (gascity-cockpit-test--ts -360))
+         (heartbeat (gascity-cockpit-test--ts 120))
+         (bead `((id . "ga-stall") (status . "in_progress")
+                 (title . "Review the cockpit batch")
+                 (assignee . ,name)
+                 (started_at . ,started)
+                 (lease_expires_at . ,lease)
+                 (heartbeat_at . ,heartbeat)))
+         (ctx (gascity-cockpit-test--stalled-context :name name
+                                                     :beads (list bead)))
+         (agent (car (plist-get ctx :agents)))
+         (lines (gascity-dashboard--agent-drawer agent))
+         (text (gascity-cockpit-test--text lines)))
+    (should (eq (plist-get agent :state) 'stalled))
+    (should (string-match-p "stalled +30m (since 30m, claimed)" text))
+    (should (string-match-p "lease +expires in 5m" text))
+    (should (string-match-p "heartbeat 2m ago" text))
+    ;; The ISO timestamp rides in help-echo on the stalled line.
+    (let ((line (seq-find (lambda (l) (string-match-p "stalled +30m" l)) lines)))
+      (should (member started (gascity-cockpit-test--help-echos line))))))
+
+(ert-deftest gascity-test-cockpit-stalled-agent-all-unknown-renders-unknown ()
+  "AC-5(c): with nothing but gc's 1970 placeholders, every stall value
+renders `unknown', never `0s' or an epoch date."
+  (let* ((name "gascity.el/gc.orphan-worker")
+         (epoch "1970-01-01T00:00:00Z")
+         (bead `((id . "ga-epoch") (status . "in_progress")
+                 (assignee . ,name)
+                 (started_at . ,epoch) (updated_at . ,epoch)
+                 (created_at . ,epoch)))
+         (ctx (gascity-cockpit-test--stalled-context :name name
+                                                     :beads (list bead)))
+         (agent (car (plist-get ctx :agents)))
+         (item (seq-find (lambda (i) (equal (plist-get i :kind) "agent"))
+                         (gascity-dashboard--needs-you ctx)))
+         (text (gascity-cockpit-test--text
+                (gascity-dashboard--agent-drawer agent))))
+    (should (= 1 (length (plist-get ctx :agents))))
+    (should (eq (plist-get agent :state) 'stalled))
+    (should (string-match-p "unknown" (plist-get item :text)))
+    (should-not (string-match-p "0s" (plist-get item :text)))
+    ;; The rendered rows keep the whole token: the Needs-you cell grows for
+    ;; `unknown' rather than truncating the age to `unkn…'.
+    (let ((rendered (gascity-cockpit-test--text
+                     (let ((gascity-dashboard--view nil))
+                       (append (gascity-dashboard--needs-you-lines ctx)
+                               (gascity-dashboard--agents-lines ctx))))))
+      (should (string-match-p "running, no live session  unknown" rendered))
+      (should-not (string-match-p "unkn…" rendered))
+      (should-not (string-match-p "1970" rendered)))
+    (should (string-match-p "stalled +unknown" text))
+    (should (string-match-p "stalled +unknown (since unknown, unknown)" text))
+    (should-not (string-match-p "1970" text))))
+
+(ert-deftest gascity-test-cockpit-stalled-agent-renders-under-78-columns ()
+  "AC-5(d): the Needs-you item and the Agents row stay within 78 columns
+even for a 45+ column qualified name."
+  (let* ((name gascity-cockpit-test--long-agent-name)
+         (bead `((id . "ga-stall") (status . "in_progress")
+                 (title . "Review the cockpit batch")
+                 (assignee . ,name)
+                 (started_at . ,(gascity-cockpit-test--ts 1800))))
+         (ctx (gascity-cockpit-test--stalled-context :name name
+                                                     :beads (list bead)))
+         (lines (let ((gascity-dashboard--view nil))
+                  (append (gascity-dashboard--needs-you-lines ctx)
+                          (gascity-dashboard--agents-lines ctx)))))
+    (should (> (length name) 45))
+    (should (seq-some (lambda (l) (string-match-p "running, no live session" l))
+                      lines))
+    (dolist (line lines)
+      (should (<= (string-width line) gascity-dashboard--width)))))
+
+(ert-deftest gascity-test-cockpit-stalled-agent-joins-routed-to-pool ()
+  "The weakest join step hooks a bead routed to the agent's pool slot.
+With two slots, the first one already holding a bead, the routed bead
+goes to the free slot."
+  (let* ((one "gascity.el/gc.review-synthesizer-1")
+         (two "gascity.el/gc.review-synthesizer-2")
+         (status `((agents . [((qualified_name . ,one) (running . t))
+                              ((qualified_name . ,two) (running . t))])))
+         (own `((id . "ga-own") (status . "in_progress") (assignee . ,one)))
+         (routed `((id . "ga-routed") (status . "in_progress")
+                   (metadata . ((gc.routed_to . "gascity.el/gc.review-synthesizer")))))
+         (agents (gascity-dashboard--agents status nil (list own routed)
+                                            nil (float-time))))
+    (should (equal (mapcar (lambda (a) (plist-get a :bead)) agents)
+                   '("ga-own" "ga-routed")))
+    (should (seq-every-p (lambda (a) (eq (plist-get a :state) 'stalled)) agents))))
 
 (ert-deftest gascity-test-cockpit-needs-you-session-timeout ()
   "■ session: a cold-start timeout not followed by a wake of that session.
@@ -308,6 +461,211 @@ steps alone it would read idle while its members work."
                  (gascity-cockpit-test--ctx :events (list event event)))))
     (should (equal (gascity-cockpit-test--kinds items) '((fail "run"))))
     (should (string-match-p "be-j2b build-basic  failed" (plist-get (car items) :text)))))
+
+;;; Needs you — failed-run drawer and row budget (REQ-001)
+
+(cl-defun gascity-cockpit-test--failed-run (&key (id "hw-y10")
+                                                 (formula "gstack-work")
+                                                 (class "control_dispatch_error")
+                                                 (reason "environment repair required"))
+  "Return a failed run closed in the event window.
+A plist (:id :formula :class :reason :root :step :event): ROOT is the
+closed root bead, STEP its failed top-level step bead (class, step ref
+and REASON) and EVENT the `bead.closed' event carrying ROOT.  CLASS and
+REASON may be nil to model a failure that names neither."
+  (let* ((root-meta (append `((gc.kind . "workflow")
+                              (gc.outcome . "fail")
+                              (gc.formula_name . ,formula))
+                            (and class `((gc.failure_class . ,class)))))
+         (step-meta (append `((gc.root_bead_id . ,id)
+                              (gc.step_ref . ,(concat formula ".review"))
+                              (gc.outcome . "fail"))
+                            (and class `((gc.failure_class . ,class)))
+                            (and reason `((gc.failure_reason . ,reason)))))
+         (root `((id . ,id) (status . "closed")
+                 (closed_at . "2026-09-24T22:17:42+02:00")
+                 (metadata . ,root-meta)))
+         (step `((id . ,(concat id "-review")) (status . "closed")
+                 (metadata . ,step-meta))))
+    (list :id id :formula formula :class class :reason reason
+          :root root :step step
+          :event `((type . "bead.closed") (seq . 9)
+                   (ts . "2026-09-24T22:17:42+02:00")
+                   (payload . ((bead . ,root)))))))
+
+(defun gascity-cockpit-test--needs-you-failed-item (ctx)
+  "Return the failed-run Needs you item of CTX, or nil."
+  (seq-find (lambda (i) (equal (plist-get i :kind) "run"))
+            (gascity-dashboard--needs-you ctx)))
+
+(defun gascity-cockpit-test--rendered-row (ctx id)
+  "Return the single Needs you row of CTX that names ID."
+  (seq-find (lambda (line)
+              (string-match-p (regexp-quote id) (substring-no-properties line)))
+            (gascity-dashboard--needs-you-lines ctx)))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-drawer ()
+  "A failed run's drawer names class, failed step and the first reason
+line, keeps the full multi-line reason in help-echo, and hints RET/b.
+The row's right column carries the class (REQ-001, AC-1)."
+  (require 'gascity-runs)
+  (let* ((run (gascity-cockpit-test--failed-run
+               :reason (concat "environment repair required\n"
+                               "rig still has no git remote")))
+         (ctx (gascity-cockpit-test--ctx
+               :events (list (plist-get run :event))
+               :run-beads (list (plist-get run :root) (plist-get run :step))))
+         (item (gascity-cockpit-test--needs-you-failed-item ctx))
+         (drawer (and item (gascity-dashboard--needs-you-drawer item)))
+         (text (and drawer (gascity-cockpit-test--text drawer)))
+         (reason-line (and drawer
+                           (seq-find (lambda (line)
+                                       (string-prefix-p "reason" (substring-no-properties line)))
+                                     drawer))))
+    (should item)
+    ;; The right cell is the class, cut to 20 columns with the full class
+    ;; in help-echo (Decisions 3).
+    (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                   "control_dispatch_error"))
+    (should (string-prefix-p "control_dispatch_" (plist-get item :right)))
+    (should (string-match-p (regexp-quote (plist-get run :id)) text))
+    (should (string-match-p "run      hw-y10  gstack-work" text))
+    (should (string-match-p "class    control_dispatch_error" text))
+    (should (string-match-p "step     gstack-work.review" text))
+    (should (string-match-p "reason   environment repair required" text))
+    ;; Only the first line is drawn; the whole reason rides in help-echo
+    ;; on the value, which one drawer-value boundary bounds (review R3).
+    (should-not (string-match-p "no git remote" text))
+    (should (equal (get-text-property
+                    (string-match "environment repair required" reason-line)
+                    'help-echo reason-line)
+                   (plist-get run :reason)))
+    (should (string-match-p "RET run detail" text))
+    (should (string-match-p "b root bead" text))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-row-budget ()
+  "The rendered failed-run row never exceeds the 78-column cockpit.
+The class is truncated to 20 columns (full text in help-echo) and the
+left cell gives back exactly what the right cell takes (REQ-001, AC-1)."
+  (require 'gascity-runs)
+  (let* ((run (gascity-cockpit-test--failed-run))
+         (ctx (gascity-cockpit-test--ctx
+               :events (list (plist-get run :event))
+               :run-beads (list (plist-get run :root) (plist-get run :step))))
+         (item (gascity-cockpit-test--needs-you-failed-item ctx))
+         (row (gascity-cockpit-test--rendered-row ctx "hw-y10")))
+    (should row)
+    (should (<= (string-width (substring-no-properties row)) 78))
+    ;; The rendered row itself, not only the plist, carries the class.
+    (should (string-match-p "control_dispatch"
+                            (substring-no-properties row)))
+    (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                   "control_dispatch_error"))
+    ;; A long rig (no class) is the fallback right cell, budgeted the same.
+    (let* ((plain (gascity-cockpit-test--failed-run :class nil))
+           (ctx (gascity-cockpit-test--ctx :events (list (plist-get plain :event))))
+           (ctx (plist-put ctx :rig-prefixes
+                           '(("hello-world-gstack-verylongrig" . "hw"))))
+           (item (gascity-cockpit-test--needs-you-failed-item ctx))
+           (row (gascity-cockpit-test--rendered-row ctx "hw-y10")))
+      (should row)
+      (should (<= (string-width (substring-no-properties row)) 78))
+      (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                     "hello-world-gstack-verylongrig")))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-event-fallback ()
+  "Without the Runs read the event bead still names class, step, reason."
+  (let* ((reason "environment repair required\nsecond line detail")
+         (event `((type . "bead.closed") (seq . 9)
+                  (ts . "2026-09-24T22:17:42+02:00")
+                  (payload . ((bead . ((id . "hw-y11") (status . "closed")
+                                       (metadata . ((gc.kind . "workflow")
+                                                    (gc.outcome . "fail")
+                                                    (gc.formula_name . "gstack-work")
+                                                    (gc.failure_class . "control_dispatch_error")
+                                                    (gc.failure_reason . ,reason)
+                                                    (gc.step_ref . "gstack-work.review")))))))))
+         (item (gascity-cockpit-test--needs-you-failed-item
+                (gascity-cockpit-test--ctx :events (list event))))
+         (drawer (and item (gascity-dashboard--needs-you-drawer item)))
+         (text (and drawer (gascity-cockpit-test--text drawer)))
+         (reason-line (and drawer
+                           (seq-find (lambda (line)
+                                       (string-prefix-p "reason" (substring-no-properties line)))
+                                     drawer))))
+    (should item)
+    (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                   "control_dispatch_error"))
+    (should (string-match-p "class    control_dispatch_error" text))
+    (should (string-match-p "step     gstack-work.review" text))
+    (should (string-match-p "reason   environment repair required" text))
+    (should (equal (get-text-property
+                    (string-match "environment repair required" reason-line)
+                    'help-echo reason-line)
+                   reason))
+    (should (string-match-p "RET run detail" text))
+    (should (string-match-p "b root bead" text))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-close-reason ()
+  "A bead with no gc.failure_reason falls back to its close_reason."
+  (let* ((event `((type . "bead.closed") (seq . 9)
+                  (ts . "2026-09-24T22:17:42+02:00")
+                  (payload . ((bead . ((id . "hw-y12") (status . "closed")
+                                       (close_reason . "environment repair required")
+                                       (metadata . ((gc.kind . "workflow")
+                                                    (gc.outcome . "fail")
+                                                    (gc.formula_name . "gstack-work")))))))))
+         (drawer (gascity-dashboard--needs-you-drawer
+                  (gascity-cockpit-test--needs-you-failed-item
+                   (gascity-cockpit-test--ctx :events (list event))))))
+    (should (seq-some (lambda (line)
+                        (string-match-p "reason   environment repair required"
+                                        (substring-no-properties line)))
+                      drawer))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-close-reason-metadata ()
+  "A bead whose reason is only in `metadata.close_reason' -- the shape a
+real `gc events' payload bead carries -- still draws the reason line.
+The top-level `gc bd list' shape is the fallback (REQ-001, review R2)."
+  (dolist (shape '(metadata top-level))
+    (let* ((reason "environment repair required: no git remote")
+           (bead (append `((id . "hw-y13") (status . "closed"))
+                         (if (eq shape 'metadata)
+                             `((metadata . ((gc.kind . "workflow")
+                                            (gc.outcome . "fail")
+                                            (gc.formula_name . "gstack-work")
+                                            (close_reason . ,reason))))
+                           `((close_reason . ,reason)
+                             (metadata . ((gc.kind . "workflow")
+                                          (gc.outcome . "fail")
+                                          (gc.formula_name . "gstack-work")))))))
+           (event `((type . "bead.closed") (seq . 9)
+                    (ts . "2026-09-24T22:17:42+02:00")
+                    (payload . ((bead . ,bead)))))
+           (drawer (gascity-dashboard--needs-you-drawer
+                    (gascity-cockpit-test--needs-you-failed-item
+                     (gascity-cockpit-test--ctx :events (list event))))))
+      (should (seq-some (lambda (line)
+                          (string-match-p (concat "reason   " (regexp-quote reason))
+                                          (substring-no-properties line)))
+                        drawer)))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-minimal-drawer ()
+  "A failed event naming no class or reason still draws the run and the
+hint line, never the old `run  <row text>' fallback (REQ-001, AC-1)."
+  (let* ((run (gascity-cockpit-test--failed-run :class nil :reason nil))
+         (ctx (gascity-cockpit-test--ctx :events (list (plist-get run :event))))
+         (item (gascity-cockpit-test--needs-you-failed-item ctx))
+         (drawer (and item (gascity-dashboard--needs-you-drawer item))))
+    (should item)
+    (should (= (length drawer) 2))
+    (should (string-match-p "run      hw-y10  gstack-work"
+                            (substring-no-properties (car drawer))))
+    (should (string-match-p "RET run detail  b root bead"
+                            (substring-no-properties (cadr drawer))))
+    ;; Never the old `run  <row text>' fallback.
+    (should-not (member (format "run  %s" (plist-get item :text))
+                        (mapcar #'substring-no-properties drawer)))))
 
 (ert-deftest gascity-test-cockpit-needs-you-active-run-failed-step ()
   "■ run: an active run whose ladder has a failed step is a Needs-you

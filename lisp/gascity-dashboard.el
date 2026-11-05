@@ -90,6 +90,10 @@
 (declare-function gascity-runs-last-activity "gascity-runs")
 (declare-function gascity-runs-parent-id "gascity-runs")
 (declare-function gascity-runs-failed-step "gascity-runs")
+(declare-function gascity-runs-summary "gascity-runs")
+(declare-function gascity-runs--close-reason "gascity-runs")
+(declare-function gascity-runs--failure-info "gascity-runs")
+(declare-function gascity-runs--run-failure "gascity-runs")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -168,6 +172,27 @@ The same entry as `gascity-runs-read-key', read by `gascity-runs-read-beads'.")
 
 (defconst gascity-dashboard--width 78
   "Column where right-aligned cockpit hints end.")
+
+(defconst gascity-dashboard--drawer-width (- gascity-dashboard--width 4)
+  "Columns available inside a drawer line (the `  │ ' prefix is 4).")
+
+(defun gascity-dashboard--drawer-value (prefix value &optional full)
+  "Return PREFIX followed by VALUE cut to `gascity-dashboard--drawer-width'.
+FULL (default VALUE) rides in `help-echo' when VALUE is cut, so the
+complete text stays available from a rendered drawer line; a caller
+that shows one line of a multi-line reason passes the whole text.
+This is the one place a drawer value is bounded: fit once, never
+re-fit an already-cut string."
+  (let* ((value (or value ""))
+         (full (or full value))
+         (budget (max 0 (- gascity-dashboard--drawer-width
+                           (string-width prefix))))
+         (cut (gascity-ui-truncate value budget)))
+    (concat prefix
+            (cond ((zerop budget) "")
+                  ((or (not (equal cut value)) (not (equal full value)))
+                   (propertize cut 'help-echo full))
+                  (t cut)))))
 
 (defvar gascity-dashboard--view nil
   "The root view state while a cockpit renders (dynamically bound).
@@ -258,20 +283,84 @@ names itself: (ID . ID)."
   (and (equal (downcase (or (alist-get 'state session) "")) "active")
        (not (alist-get 'closed session))))
 
-(defun gascity-dashboard--session-for-assignee (assignee sessions)
-  "Return the live session in SESSIONS a bead ASSIGNEE refers to, or nil.
+(defun gascity-dashboard--session-for-assignee (assignee sessions &optional any)
+  "Return the session in SESSIONS a bead ASSIGNEE refers to, or nil.
 Joins on the tmux `session_name' (what gc assigns work to), then on the
 session `id' itself (gc claims a bead with its supervisor session id,
 `ec-wisp-qcz1lk', which is not the parseable `<role>-<handle>' form),
 then on the id parsed from the assignee's trailing handle, then on the
-qualified agent name."
+qualified agent name.  Only live sessions match unless ANY is non-nil:
+the cockpit's hook join also looks through a stalled agent's closed
+session row (plan section 4, plan-review F2)."
   (when (and (stringp assignee) (not (string-empty-p assignee)))
-    (let* ((live (seq-filter #'gascity-dashboard--live-session-p sessions))
+    (let* ((pool (or (and any sessions)
+                     (seq-filter #'gascity-dashboard--live-session-p sessions)))
            (id (cdr (gascity-dashboard--parse-assignee assignee)))
            (ids (delq nil (list assignee id))))
-      (or (seq-find (lambda (s) (equal (alist-get 'session_name s) assignee)) live)
-          (seq-find (lambda (s) (member (alist-get 'id s) ids)) live)
-          (seq-find (lambda (s) (equal (alist-get 'agent_name s) assignee)) live)))))
+      (or (seq-find (lambda (s) (equal (alist-get 'session_name s) assignee)) pool)
+          (seq-find (lambda (s) (member (alist-get 'id s) ids)) pool)
+          (seq-find (lambda (s) (equal (alist-get 'agent_name s) assignee)) pool)))))
+
+(defun gascity-dashboard--routed-to-agent-p (pool name)
+  "Return non-nil when routed-to POOL names agent NAME.
+A pool slot is the pool's qualified name with a `-N' ordinal: the pool
+`gascity.el/gc.review-synthesizer' names
+`gascity.el/gc.review-synthesizer-1'."
+  (and (stringp pool) (not (string-empty-p pool)) (stringp name)
+       (or (equal pool name) (string-prefix-p (concat pool "-") name))))
+
+(defun gascity-dashboard--real-time (ts)
+  "Return TS when it is a real timestamp, else nil.
+gc's 1970 epoch placeholder and malformed values count as absent, so a
+stall duration is never computed from them (plan section 4)."
+  (when (and ts (gascity-ui-parse-time ts) (not (gascity-ui-epoch-time-p ts)))
+    ts))
+
+(defun gascity-dashboard--agent-stall (agent)
+  "Return AGENT's stall evidence (:since :source :lease :heartbeat).
+The chain is the session's `last_active', its `created_at', the hooked
+bead's claim (`started_at' or `gc.claimed_at'), then the bead's
+`updated_at' and `created_at' (plan decision 1).  TS is the payload
+timestamp, nil when nothing real is available; :lease and :heartbeat
+read the hooked bead, then its metadata for older stores."
+  (let* ((session (plist-get agent :session))
+         (bead (plist-get agent :bead-data))
+         (meta (and bead (gascity-dashboard--meta bead)))
+         (claimed (and bead (gascity-dashboard--claimed-at bead)))
+         (claim-source (and bead
+                            (or (alist-get 'started_at bead)
+                                (alist-get 'gc.claimed_at meta))
+                            "claimed"))
+         (chain (list (cons (and session (alist-get 'last_active session))
+                            "last active")
+                      (cons (and session (alist-get 'created_at session))
+                            "created")
+                      ;; `gascity-dashboard--claimed-at' also falls back to
+                      ;; `updated_at'; the source labels keep claim and
+                      ;; update apart.
+                      (cons (and claim-source claimed) claim-source)
+                      (cons (and bead (alist-get 'updated_at bead)) "updated")
+                      (cons (and bead (alist-get 'created_at bead)) "created")))
+         (pick (seq-find (lambda (entry)
+                           (gascity-dashboard--real-time (car entry)))
+                         chain)))
+    (list :since (and pick (car pick))
+          :source (and pick (cdr pick))
+          :lease (or (gascity-dashboard--real-time
+                      (and bead (alist-get 'lease_expires_at bead)))
+                     (gascity-dashboard--real-time
+                      (alist-get 'gc.lease_expires_at meta)))
+          :heartbeat (or (gascity-dashboard--real-time
+                          (and bead (alist-get 'heartbeat_at bead)))
+                         (gascity-dashboard--real-time
+                          (alist-get 'gc.heartbeat_at meta))))))
+
+(defun gascity-dashboard--stall-age (stall now)
+  "Return the stall age of STALL at NOW: a duration string or `unknown'."
+  (let ((since (plist-get stall :since)))
+    (if since
+        (gascity-ui-duration (- now (gascity-ui-parse-time since)))
+      "unknown")))
 
 (defun gascity-dashboard--agent-object (name session socket &optional running rig)
   "Return the action `gascity-agent' for agent NAME.
@@ -303,22 +392,64 @@ status agent (the mayor and other named sessions — one list, §7.1).
 
 Each plist carries :name :rig :state (`stalled' `running' `idle'
 `stopped' `suspended') :provider :bead (the in-progress bead id) :title
-:active (last-active timestamp) :session :object (the action
-`gascity-agent')."
+:bead-data (that bead's raw alist) :active (last-active timestamp)
+:session :object (the action `gascity-agent').
+
+The hooked bead is joined in four widening steps, first match wins: the
+live session a bead's assignee names; any session row, live or closed;
+an assignee equal to the agent's qualified name; and the `gc.routed_to'
+pool naming one of the agent's slots (plan section 4, plan-review F2)."
   (let* ((live (seq-filter #'gascity-dashboard--live-session-p sessions))
          (by-name (make-hash-table :test 'equal))
          (seen (make-hash-table :test 'equal))
          (hooked (make-hash-table :test 'equal))
+         (used (make-hash-table :test 'equal))
+         (names (delete-dups
+                 (delq nil (append
+                            (mapcar (lambda (a) (alist-get 'qualified_name a))
+                                    (append (alist-get 'agents status) nil))
+                            (mapcar (lambda (s) (alist-get 'agent_name s))
+                                    live)))))
          (rows nil))
     (dolist (s live)
       (puthash (alist-get 'agent_name s) s by-name))
-    ;; The in-progress bead each live session works on.
-    (dolist (bead beads)
-      (when (equal (alist-get 'status bead) "in_progress")
-        (let ((s (gascity-dashboard--session-for-assignee
-                  (alist-get 'assignee bead) live)))
-          (when (and s (not (gethash (alist-get 'agent_name s) hooked)))
-            (puthash (alist-get 'agent_name s) bead hooked)))))
+    (cl-labels ((in-progress-p (bead)
+                  (equal (alist-get 'status bead) "in_progress"))
+                (hook (bead name)
+                  (when (and name (member name names)
+                             (not (gethash name hooked))
+                             (not (gethash (alist-get 'id bead) used)))
+                    (puthash name bead hooked)
+                    (puthash (alist-get 'id bead) t used)
+                    t)))
+      ;; (1) The in-progress bead each live session works on.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((s (gascity-dashboard--session-for-assignee
+                    (alist-get 'assignee bead) live)))
+            (when s (hook bead (alist-get 'agent_name s))))))
+      ;; (2) Any session row, live or closed: a stalled agent's last
+      ;; session is closed, and its id can still name the bead's assignee.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((s (gascity-dashboard--session-for-assignee
+                    (alist-get 'assignee bead) sessions t)))
+            (when s (hook bead (alist-get 'agent_name s))))))
+      ;; (3) The bead's assignee is the agent's qualified name.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((assignee (alist-get 'assignee bead)))
+            (when (stringp assignee) (hook bead assignee)))))
+      ;; (4) The bead is routed to a pool the agent is a slot of; the
+      ;; first free slot wins when the pool has several.
+      (dolist (bead beads)
+        (when (in-progress-p bead)
+          (let ((pool (alist-get 'gc.routed_to (gascity-dashboard--meta bead))))
+            (when (stringp pool)
+              (seq-some (lambda (n)
+                          (and (gascity-dashboard--routed-to-agent-p pool n)
+                               (hook bead n)))
+                        names))))))
     (cl-flet ((row (name agent session)
                 (let* ((bead (gethash name hooked))
                        (running (if agent (alist-get 'running agent)
@@ -341,6 +472,7 @@ Each plist carries :name :rig :state (`stalled' `running' `idle'
                         :provider (and session (alist-get 'provider session))
                         :bead (and bead (alist-get 'id bead))
                         :title (and bead (alist-get 'title bead))
+                        :bead-data bead
                         :active active
                         :created (and session (alist-get 'created_at session))
                         :session session
@@ -743,11 +875,25 @@ escalated/held beads, unread mail, store health."
       ;; ■ stalled agents: gc says running, no live session.
       (dolist (a (plist-get ctx :agents))
         (when (eq (plist-get a :state) 'stalled)
-          (add :level 'fail :kind "agent" :id (concat "agent:" (plist-get a :name))
-               :text (format "%s  running, no live session" (plist-get a :name))
-               :right (or (plist-get a :rig) "city")
-               :drawer (lambda () (gascity-dashboard--agent-drawer a))
-               :props (list 'gascity-agent (plist-get a :object)))))
+          (let* ((name (plist-get a :name))
+                 (stall (gascity-dashboard--agent-stall a))
+                 (rig (gascity-dashboard--rig-of name))
+                 ;; 20 fitted name columns plus the whole reason; the honest
+                 ;; `unknown' token is longer than any duration, so the cell
+                 ;; grows for it instead of cutting the age (REQ-005).
+                 (text (concat (gascity-ui-fit name 20)
+                               "  running, no live session  "
+                               (gascity-dashboard--stall-age stall now))))
+            (add :level 'fail :kind "agent" :id (concat "agent:" name)
+                 ;; Fit the name, never the reason: the reason stays whole
+                 ;; and the age rides along as a token (REQ-005).
+                 :text text
+                 :width (max 51 (string-width text))
+                 ;; A rig-qualified name carries its rig; a city-scope
+                 ;; agent (mayor, bd.dog-1) keeps its scope.
+                 :right (and (null rig) (or (plist-get a :rig) "city"))
+                 :drawer (lambda () (gascity-dashboard--agent-drawer a))
+                 :props (list 'gascity-agent (plist-get a :object))))))
       ;; ■ in-progress work whose assignee session is gone or whose lease
       ;; has lapsed: the stall a run's own idle check cannot see when the
       ;; step still looks freshly claimed (ga-o7vtw).
@@ -862,6 +1008,8 @@ escalated/held beads, unread mail, store health."
                      :drawer (lambda ()
                                (gascity-dashboard--failed-step-drawer root step))))))))
       ;; ■ runs that failed in the window (root closed, gc.outcome fail).
+      ;; The row carries the failure class (the rig moves to the drawer)
+      ;; and the drawer explains the failure (REQ-001).
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
           (let* ((bead (gascity-event-bead e))
@@ -872,14 +1020,27 @@ escalated/held beads, unread mail, store health."
                        (equal (alist-get 'gc.outcome meta) "fail")
                        (not (gethash id seen)))
               (puthash id t seen)
-              (add :level 'fail :kind "run" :id (concat "failed:" id)
-                   :text (format "%s %s  failed" id
-                                 (or (alist-get 'gc.formula_name meta) ""))
-                   :right (or (gascity-dashboard--store-of-id id ctx) "")
-                   :time (alist-get 'ts e)
-                   :props (list 'gascity-bead id
-                                'gascity-run-rig
-                                (or (gascity-dashboard--store-of-id id ctx) "")))))))
+              (let* ((detail (gascity-dashboard--failed-run-detail bead run-index))
+                     (rig (gascity-dashboard--store-of-id id ctx))
+                     ;; Class first, then the rig, then the city.  The
+                     ;; class is cut to 20 columns with the full text in
+                     ;; `help-echo' (Decisions 3).
+                     (right (gascity-ui-truncate
+                             (or (plist-get detail :class) rig "city") 20)))
+                (add :level 'fail :kind "run" :id (concat "failed:" id)
+                     :text (format "%s %s  failed" id
+                                   (or (alist-get 'gc.formula_name meta) ""))
+                     ;; `gascity-ui-right-align' never clips, so the left
+                     ;; cell gives back what the right cell takes:
+                     ;; 18 + WIDTH + 2 + RIGHT = 78 (Decisions 3).
+                     :width (max 20 (- 58 (string-width right)))
+                     :right right
+                     :time (alist-get 'ts e)
+                     :drawer (lambda ()
+                               (gascity-dashboard--failed-run-drawer
+                                bead run-index))
+                     :props (list 'gascity-bead id
+                                  'gascity-run-rig (or rig ""))))))))
       ;; ▲ beads reopened after their assignee died.
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
@@ -1370,6 +1531,57 @@ failure class, reason and member run (ga-g092a)."
                                (concat "  " (plist-get step :member-ref))
                              ""))))))
 
+(defun gascity-dashboard--failed-run-detail (bead index)
+  "Return (:class CLASS :ref REF :reason REASON :full FULL) for failed run BEAD.
+INDEX is the Runs index, or nil before that read lands.  The failed
+step is consulted first (its class, ref and reason), then the run's own
+failure, then the event bead itself (`gc.failure_class'/
+`gc.failure_reason', falling back to its close reason).  REASON is the
+first line of the failure reason -- what a drawer can show in one row
+-- and FULL is the complete text, for `help-echo'."
+  (let* ((step (and index bead (gascity-runs-failed-step index bead)))
+         (run (and index bead (gascity-runs-summary index bead)))
+         (info (or (and step
+                        (or (plist-get step :class) (plist-get step :reason))
+                        (cons (plist-get step :class) (plist-get step :reason)))
+                   (and run (gascity-runs--run-failure run index bead))
+                   (gascity-runs--failure-info (list bead))))
+         (meta (gascity-dashboard--meta bead))
+         (class (or (car-safe info)
+                    (alist-get 'gc.failure_class meta)))
+         (reason (or (cdr-safe info)
+                     (alist-get 'gc.failure_reason meta)
+                     (gascity-runs--close-reason bead)))
+         (ref (or (plist-get step :ref)
+                  (alist-get 'gc.step_ref meta))))
+    (list :class class :ref ref
+          :reason (gascity-ui-first-line reason)
+          :full reason)))
+
+(defun gascity-dashboard--failed-run-drawer (bead index)
+  "Return the drawer lines of failed run BEAD in INDEX (REQ-001).
+The run id and formula, the failure class, the failed step ref and the
+first line of the reason (the full reason in `help-echo'), then the
+RET/b hint.  Always the run line and the hint, even when the failure
+names no class or reason.  Pure over the cockpit context: no gc read."
+  (let* ((detail (gascity-dashboard--failed-run-detail bead index))
+         (meta (gascity-dashboard--meta bead))
+         (class (plist-get detail :class))
+         (ref (plist-get detail :ref))
+         (reason (plist-get detail :reason))
+         (full (plist-get detail :full)))
+    (delq nil
+          (list (gascity-dashboard--drawer-value
+                 "run      " (format "%s  %s" (alist-get 'id bead)
+                                      (or (alist-get 'gc.formula_name meta) "")))
+                (and class
+                     (gascity-dashboard--drawer-value "class    " class))
+                (and ref
+                     (gascity-dashboard--drawer-value "step     " ref))
+                (and reason
+                     (gascity-dashboard--drawer-value "reason   " reason full))
+                (gascity-dashboard--dim "RET run detail  b root bead")))))
+
 (defun gascity-dashboard--needs-you-drawer (item)
   "Return the drawer lines of a Needs you ITEM."
   (let ((event (plist-get (plist-get item :props) 'gascity-dashboard-event)))
@@ -1589,9 +1801,13 @@ no worker."
      ctx :loads '(:status :sessions) :label "status" :hint "j a all")))
 
 (defun gascity-dashboard--agent-row (agent ctx)
-  "Return the lines of AGENT's row (and drawer) in CTX."
+  "Return the lines of AGENT's row (and drawer) in CTX.
+A stalled agent's time slot says how long it has been stalled; every
+other state keeps the last-active time."
   (let* ((state (plist-get agent :state))
-         (name (plist-get agent :name)))
+         (name (plist-get agent :name))
+         (stall (and (eq state 'stalled)
+                     (gascity-dashboard--agent-stall agent))))
     (gascity-dashboard--object-row
      (concat "agent:" name)
      (concat "  " (gascity-ui-pending-glyph
@@ -1601,14 +1817,32 @@ no worker."
              " " (gascity-ui-fit (or (plist-get agent :provider) "") 4)
              " " (gascity-ui-fit (or (plist-get agent :bead) "") 9)
              " " (gascity-ui-fit (symbol-name (if (eq state 'running) 'active state)) 8)
-             (gascity-ui-time (plist-get agent :active) (plist-get ctx :now)))
+             ;; The state cell already says `stalled'; the slot says how
+             ;; long (plan section 4, plan-review R6).
+             (if stall
+                 (gascity-dashboard--dim
+                  (gascity-ui-truncate
+                   (gascity-dashboard--stall-age stall (plist-get ctx :now))
+                   15))
+               (gascity-ui-time (plist-get agent :active) (plist-get ctx :now))))
      nil
      (lambda () (gascity-dashboard--agent-drawer agent))
      'gascity-agent (plist-get agent :object))))
 
 (defun gascity-dashboard--agent-drawer (agent)
-  "Return AGENT's drawer lines: session, workdir, hooked bead, created."
-  (let ((session (plist-get agent :session)))
+  "Return AGENT's drawer lines: session, workdir, hooked bead, created.
+A stalled agent adds its stall age and source, the hooked bead's lease
+and heartbeat when it carries them, and keeps the explanation last
+\(REQ-005)."
+  (let* ((session (plist-get agent :session))
+         (now (float-time))
+         (stalled (eq (plist-get agent :state) 'stalled))
+         (stall (and stalled (gascity-dashboard--agent-stall agent)))
+         (since (and stall (plist-get stall :since)))
+         (source (and stall (plist-get stall :source)))
+         (lease (and stall (plist-get stall :lease)))
+         (heartbeat (and stall (plist-get stall :heartbeat)))
+         (left (and lease (- (gascity-ui-parse-time lease) now))))
     (delq nil
           (list (and session
                      (format "session %s · %s"
@@ -1622,6 +1856,27 @@ no worker."
                              (or (plist-get agent :title) "")))
                 (and (plist-get agent :created)
                      (concat "created " (gascity-ui-ago (plist-get agent :created))))
+                (and stalled
+                     (gascity-dashboard--drawer-value
+                      "stalled   "
+                      (format "%s (since %s, %s)"
+                              (gascity-dashboard--stall-age stall now)
+                              (if since
+                                  (propertize (gascity-ui-relative-time since now)
+                                              'help-echo since)
+                                "unknown")
+                              (or source "unknown"))))
+                (and lease
+                     (gascity-dashboard--drawer-value
+                      "lease     "
+                      (if (and left (<= left 0))
+                          (format "expired %s ago"
+                                  (gascity-ui-duration (abs left)))
+                        (format "expires in %s"
+                                (gascity-ui-duration (max 0 (or left 0)))))))
+                (and heartbeat
+                     (gascity-dashboard--drawer-value
+                      "heartbeat " (gascity-ui-ago heartbeat now)))
                 (and (not session)
                      (pcase (plist-get agent :state)
                        ('stalled "gc says running; no live session backs it")

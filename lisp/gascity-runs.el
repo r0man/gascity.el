@@ -220,6 +220,15 @@ is never idle."
       (or (alist-get 'closed_at root) (alist-get 'updated_at root))
     (alist-get 'created_at root)))
 
+(defun gascity-runs--close-reason (bead)
+  "Return BEAD's non-empty close reason, or nil.
+`gc events' payload beads keep it in `metadata', while the `gc bd list'
+shape puts it at the bead's top level; prefer the event shape and keep
+the top-level value as the fallback (review R2)."
+  (let ((reason (or (gascity-runs--meta bead 'close_reason)
+                    (alist-get 'close_reason bead))))
+    (and (stringp reason) (not (string-empty-p reason)) reason)))
+
 (defun gascity-runs--failure (graph)
   "Return why a run failed, from its GRAPH beads, or nil.
 The first failed bead's `gc.failure_reason', else its close reason."
@@ -227,8 +236,7 @@ The first failed bead's `gc.failure_reason', else its close reason."
                         graph)))
     (and bead
          (or (gascity-runs--meta bead 'gc.failure_reason)
-             (let ((reason (alist-get 'close_reason bead)))
-               (and (stringp reason) (not (string-empty-p reason)) reason))))))
+             (gascity-runs--close-reason bead)))))
 
 (defun gascity-runs--failure-info (beads)
   "Return (CLASS . REASON) from the first of BEADS that names one.
@@ -241,8 +249,7 @@ reason.  Either may be nil; nil when no bead names either."
       (setq reason
             (or reason
                 (gascity-runs--meta b 'gc.failure_reason)
-                (let ((r (alist-get 'close_reason b)))
-                  (and (stringp r) (not (string-empty-p r)) r)))))
+                (gascity-runs--close-reason b))))
     (and (or class reason) (cons class reason))))
 
 (defun gascity-runs--failed-beads-of-run (index root)
@@ -585,16 +592,24 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                  ('failed (gascity-dashboard--dim
                            (or (plist-get run :failure) "outcome: fail")))
                  (_ (gascity-dashboard--dim (or (plist-get run :outcome) "")))))
-         (line2 (concat (make-string (+ 5 (* 4 depth)) ?\s)
-                        (if (plist-get run :ladder)
-                            (concat (gascity-dashboard--ladder-string
-                                     (plist-get run :ladder))
-                                    "  " (gascity-ui-fit (plist-get run :label) 14)
-                                    " " (if changed (gascity-ui-changed progress)
-                                            progress)
-                                    " ")
-                          (gascity-dashboard--dim "no steps  "))
-                        tail))
+         (prefix (concat (make-string (+ 5 (* 4 depth)) ?\s)
+                         (if (plist-get run :ladder)
+                             (concat (gascity-dashboard--ladder-string
+                                      (plist-get run :ladder))
+                                     "  " (gascity-ui-fit (plist-get run :label) 14)
+                                     " " (if changed (gascity-ui-changed progress)
+                                             progress)
+                                     " ")
+                           (gascity-dashboard--dim "no steps  "))))
+         ;; Only the Failed card's failure-reason tail is unbounded; fit it
+         ;; against the width the prefix leaves.  A deep member card's
+         ;; prefix can already fill the view, so clamp the budget at 0.
+         (line2 (concat prefix
+                        (if (eq state 'failed)
+                            (gascity-ui-truncate
+                             tail (max 0 (- gascity-dashboard--width
+                                            (string-width prefix))))
+                          tail)))
          (drawer-id (concat "run:" id)))
     (cons (apply #'gascity-dashboard--line (concat line1 "\n" line2)
                  'beads-thing (gascity-dashboard--thing
@@ -669,29 +684,44 @@ worker an active run reports.  A fact the run does not carry is `-'."
           :failure (gascity-ui-failure-text info "-")
           :worker (or worker "-"))))
 
+(defconst gascity-runs--facts-columns
+  '((stage "stage" 12) (step "step" 21) (failure "fail" 22) (worker "work" 12))
+  "The four facts columns of a history row: (KEY LABEL WIDTH).
+WIDTH includes the dim LABEL and its one trailing space, so the value
+budgets are 6/16/17/7 columns: `Review' fits whole, and a long
+`FORMULA.STEP' or failure reason cuts later than it used to.  With the
+two-column indent and three ` · ' separators the line is
+`2 + 12 + 3 + 21 + 3 + 22 + 3 + 12 = 78' columns, the view width
+\(REQ-002).")
+
 (defun gascity-runs--facts-line (facts &optional changed)
   "Return the dim four-column facts line of FACTS.
-The columns are stage 10, step 20, failure 24 and worker 13 columns,
-each width including its dim label, so the line is
-`2 + 10 + 3 + 20 + 3 + 24 + 3 + 13 = 78' columns, the view width.
-Every value is fitted (padded or `…'-truncated) into its column, so
-no history row can overflow.  When CHANGED, the worker value keeps the
-`gascity-changed' face: the delta promise covers the worker cell on
-both of the card's lines (run-view-v3 §D, REQ-005)."
-  (let ((cell (lambda (label value width &optional changedp)
-                (gascity-ui-fit
-                 (concat (gascity-dashboard--dim (concat label " "))
-                         (let ((text (gascity-dashboard--dim (or value "-"))))
-                           (if changedp (gascity-ui-changed text) text)))
-                 width))))
-    (concat "  "
-            (funcall cell "stage" (plist-get facts :stage) 10)
-            " · "
-            (funcall cell "step" (plist-get facts :step) 20)
-            " · "
-            (funcall cell "failure" (plist-get facts :failure) 24)
-            " · "
-            (funcall cell "worker" (plist-get facts :worker) 13 changed))))
+The columns are `gascity-runs--facts-columns': stage 12, step 21, fail 22
+and work 12 columns, each width including its dim label, so the line is
+`2 + 12 + 3 + 21 + 3 + 22 + 3 + 12 = 78' columns, the view width.  Each
+value is budgeted separately from its label (6/16/17/7 columns) and
+fitted (padded or `…'-truncated) inside that budget, keeping the full
+text in `help-echo' when cut, so no history row can overflow.  When
+CHANGED, the worker value keeps the `gascity-changed' face: the delta
+promise covers the worker cell on both of the card's lines
+\(run-view-v3 §D, REQ-005)."
+  (let ((cell (lambda (column)
+                (let* ((key (nth 0 column))
+                       (label (nth 1 column))
+                       (width (nth 2 column))
+                       (text (gascity-ui-fit
+                              (gascity-dashboard--dim
+                               (or (plist-get facts
+                                              (intern (concat ":"
+                                                              (symbol-name key))))
+                                   "-"))
+                              (- width (1+ (length label))))))
+                  (when (and changed (eq key 'worker))
+                    (setq text (gascity-ui-changed text)))
+                  (gascity-ui-fit
+                   (concat (gascity-dashboard--dim (concat label " ")) text)
+                   width)))))
+    (concat "  " (mapconcat cell gascity-runs--facts-columns " · "))))
 
 (defun gascity-runs--history-row (run ctx)
   "Return the lines of RUN's one-line history row (and drawer) in CTX.
