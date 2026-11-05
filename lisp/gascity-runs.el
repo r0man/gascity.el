@@ -585,16 +585,24 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                  ('failed (gascity-dashboard--dim
                            (or (plist-get run :failure) "outcome: fail")))
                  (_ (gascity-dashboard--dim (or (plist-get run :outcome) "")))))
-         (line2 (concat (make-string (+ 5 (* 4 depth)) ?\s)
-                        (if (plist-get run :ladder)
-                            (concat (gascity-dashboard--ladder-string
-                                     (plist-get run :ladder))
-                                    "  " (gascity-ui-fit (plist-get run :label) 14)
-                                    " " (if changed (gascity-ui-changed progress)
-                                            progress)
-                                    " ")
-                          (gascity-dashboard--dim "no steps  "))
-                        tail))
+         (prefix (concat (make-string (+ 5 (* 4 depth)) ?\s)
+                         (if (plist-get run :ladder)
+                             (concat (gascity-dashboard--ladder-string
+                                      (plist-get run :ladder))
+                                     "  " (gascity-ui-fit (plist-get run :label) 14)
+                                     " " (if changed (gascity-ui-changed progress)
+                                             progress)
+                                     " ")
+                           (gascity-dashboard--dim "no steps  "))))
+         ;; Only the Failed card's failure-reason tail is unbounded; fit it
+         ;; against the width the prefix leaves.  A deep member card's
+         ;; prefix can already fill the view, so clamp the budget at 0.
+         (line2 (concat prefix
+                        (if (eq state 'failed)
+                            (gascity-ui-truncate
+                             tail (max 0 (- gascity-dashboard--width
+                                            (string-width prefix))))
+                          tail)))
          (drawer-id (concat "run:" id)))
     (cons (apply #'gascity-dashboard--line (concat line1 "\n" line2)
                  'beads-thing (gascity-dashboard--thing
