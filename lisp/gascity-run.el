@@ -9,8 +9,12 @@
 ;; The run detail (plans/dashboard-v3 §7.7), `*gascity-run: ID*', the
 ;; drill-in behind a run row of the cockpit and the Runs view:
 ;;
-;;   ⬣ be-52m5  build-basic                       beads.el · started 2h
-;;     formula  build-basic (graph.v2)   source ~/.gc/cache/…/build-basic.formula.toml
+;;   root     ⬣ be-52m5  build-basic                beads.el · started 2h
+;;     store    rig:beads.el   rig beads.el   city emacs-city
+;;     scope    (none)
+;;     formula  build-basic  contract graph.v2
+;;              key graphv2-root:be-93dg:build-basic:296b212076d7ae2e:default
+;;              source ~/.gc/cache/…/build-basic.formula.toml
 ;;     plans    requirements.md · implementation-plan.md · review-report.md
 ;;     convoy   be-93dg  open 0/1  project-switch-scope
 ;;
@@ -34,7 +38,10 @@
 ;;
 ;; The `plans' line lists the run root's `gc.build.*_path' plan files
 ;; (and `gc.implementation.*_path'), each a thing whose `RET' visits it
-;; on the city's host (`gascity-remote-localize-path', §8.3 R6).
+;; on the city's host (`gascity-remote-localize-path', §8.3 R6); `o'
+;; visits the artifact at point explicitly.  The header's provenance
+;; rows name the run's store, rig, city and scope, and the formula's
+;; graph key and source (run-view-v3 §B).
 ;;
 ;; A step's drawer is the step inspector (run-view-v2 §3): the step's
 ;; ref, bead, status and outcome; its attempt and iteration; its worker
@@ -301,10 +308,26 @@ formulas record `plans/…/review-report.md') is relative to the run's
               'help-echo path
               'beads-thing (gascity-dashboard--thing 'file path)))
 
+(defun gascity-run--label (label)
+  "Return LABEL in the dim face, padded to the header's 9-column field."
+  (gascity-dashboard--dim (format "%-9s" label)))
+
 (defun gascity-run--header-lines (run root ctx)
-  "Return the header lines of RUN (a summary) with ROOT in CTX."
+  "Return the header lines of RUN (a summary) with ROOT in CTX.
+The first row is the run's `root' (glyph, id, formula and outcome, with
+the right-aligned rig and started/closed time); the labelled rows below
+give its provenance (store with rig and city, scope), its formula
+\(name and contract, with the graph key and formula source on aligned
+continuation lines) and v2's plans and convoy rows.  An absent optional
+fact renders `(none)' only where the row exists for it; nothing is
+derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
   (let* ((now (plist-get ctx :now))
          (state (plist-get run :state))
+         (store (gascity-run--meta root 'gc.root_store_ref))
+         (rig (gascity-run--meta root 'gc.var.rig_name))
+         (city (plist-get ctx :city))
+         (scope (gascity-run--meta root 'gc.scope_ref))
+         (key (gascity-run--meta root 'gc.graphv2_root_key))
          (source (gascity-run--meta root 'gc.formula_source))
          (contract (gascity-run--meta root 'gc.formula_contract))
          (plans (gascity-run-plans root))
@@ -312,7 +335,8 @@ formulas record `plans/…/review-report.md') is relative to the run's
          (lines
           (list
            (gascity-dashboard--row
-            (concat (gascity-runs--state-glyph state) " "
+            (concat "  " (gascity-run--label "root")
+                    (gascity-runs--state-glyph state) " "
                     (propertize (plist-get run :id) 'face 'gascity-header) "  "
                     (plist-get run :formula)
                     (if (plist-get run :outcome)
@@ -324,14 +348,37 @@ formulas record `plans/…/review-report.md') is relative to the run's
                      (gascity-ui-time (plist-get run :time) now)))
             'gascity-bead (plist-get run :id)
             'beads-thing (gascity-dashboard--thing 'row "root"))
-           (concat "  " (gascity-dashboard--dim "formula  ")
-                   (plist-get run :formula)
-                   (if contract (gascity-dashboard--dim (format " (%s)" contract)) "")
-                   (if source
-                       (concat "   " (gascity-dashboard--dim "source ")
-                               (gascity-run--file-thing
-                                source (gascity-run--short-path source)))
-                     "")))))
+           (gascity-ui-truncate
+            (concat "  " (gascity-run--label "store")
+                    (or store "city store")
+                    (if rig (concat "   " (gascity-dashboard--dim "rig ") rig) "")
+                    (if city
+                        (concat "   " (gascity-dashboard--dim "city ") city)
+                      ""))
+            gascity-dashboard--width)
+           (gascity-ui-truncate
+            (concat "  " (gascity-run--label "scope") (or scope "(none)"))
+            gascity-dashboard--width)
+           (gascity-ui-truncate
+            (concat "  " (gascity-run--label "formula")
+                    (plist-get run :formula)
+                    (if contract
+                        (concat "  " (gascity-dashboard--dim "contract ") contract)
+                      ""))
+            gascity-dashboard--width))))
+    (when key
+      (setq lines
+            (append lines
+                    (list (concat "           " (gascity-dashboard--dim "key ")
+                                  (gascity-ui-truncate key 63))))))
+    (when source
+      (setq lines
+            (append lines
+                    (list (concat "           " (gascity-dashboard--dim "source ")
+                                  (gascity-run--file-thing
+                                   source
+                                   (gascity-ui-truncate
+                                    (gascity-run--short-path source) 60)))))))
     (when plans
       (let ((row (concat "  " (gascity-dashboard--dim "plans    ")))
             (width 0))
@@ -1025,6 +1072,7 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
                     :sessions (append (alist-get 'sessions (gascity-dashboard--data
                                                             sessions-load))
                                       nil)
+                    :city city
                     :socket (and city (gascity-resolve-tmux-socket city 'no-probe))
                     :convoy (or (and convoy (cons convoy (alist-get 'progress convoy)))
                                 (gascity-run--convoy-pair
@@ -1044,8 +1092,25 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
     (user-error "No run detail to refresh here")))
 
 (defun gascity-run-visit-file (path)
-  "Visit host-local PATH on the city's host (a plan file, the formula)."
+  "Visit host-local PATH on the city's host (a plan file, the formula).
+A local missing file is a clear `user-error' instead of a raw
+`file-missing'; a remote path keeps the file-name handler's own error
+and is never stat'ed here (a remote city never stats on render, R2)."
+  (when (and (gascity-run--local-path-p path) (not (file-exists-p path)))
+    (user-error "No such file: %s" path))
   (find-file (gascity-remote-localize-path path)))
+
+(defun gascity-run-open-artifact ()
+  "Visit the artifact at point (`o').
+An artifact is a line or label carrying the `gascity-run-file' property:
+the header's plan and formula-source entries and a step drawer's
+artifacts.  RET does the same; `o' makes the action explicit and says
+so when point is not on an artifact (run-view-v3 §B, REQ-002)."
+  (interactive)
+  (let ((file (gascity-run--property-at-point 'gascity-run-file)))
+    (unless (and (stringp file) (not (string-empty-p file)))
+      (user-error "No artifact at point"))
+    (gascity-run-visit-file file)))
 
 (defun gascity-run-activate ()
   "Act on the thing at point: open a step's bead, visit a plan file.
@@ -1287,6 +1352,7 @@ failed step is a `user-error'."
   :parent gascity-section-mode-map
   "g"   #'gascity-run-refresh
   "RET" #'gascity-run-activate
+  "o"   #'gascity-run-open-artifact
   "b"   #'gascity-run-root-bead
   "C"   #'gascity-run-toggle-control
   "I"   #'gascity-run-inspect
@@ -1301,7 +1367,8 @@ failed step is a `user-error'."
 
 TAB/S-TAB move between steps, SPC folds a stage or a loop or opens a
 step's inspector drawer, RET opens the step's bead or visits an
-artifact, `b' the root bead, `C' shows the control nodes, and `I'
+artifact (`o' visits the artifact at point explicitly), `b' the root
+bead, `C' shows the control nodes, and `I'
 toggles the inspector for any step row (fold rows included).
 
 `w' copies the step's bead id (the iteration id on the inspector's
