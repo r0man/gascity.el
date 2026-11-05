@@ -399,6 +399,77 @@ the id is its trailing `ec-…' handle."
     (should-not (gascity-dashboard--needs-you
                  (gascity-cockpit-test--ctx :beads (list root step))))))
 
+(ert-deftest gascity-test-cockpit-needs-you-idle-run-live-worker-not-idle ()
+  "ec-elkm5.3: a run whose step beads look stale is not idle while its
+worker session is live.  The idle check joins the live `session list'
+row instead of trusting the step bead's `updated_at' alone; the Runs
+read's graph carries the worker step the work read dropped."
+  (let* ((root `((id . "bs-1h871x") (status . "in_progress")
+                 (title . "build-basic")
+                 (updated_at . ,(gascity-cockpit-test--ts 7200))
+                 (metadata . ((gc.kind . "workflow")
+                              (gc.formula_name . "build-basic")))
+                 (gascity-rig . "burningswell-cl")))
+         (step `((id . "bs-step") (status . "in_progress")
+                 (assignee . "ec-busy")
+                 (updated_at . ,(gascity-cockpit-test--ts 7200))
+                 (metadata . ((gc.root_bead_id . "bs-1h871x")))
+                 (gascity-rig . "burningswell-cl")))
+         (sessions (list `((id . "ec-busy")
+                           (agent_name . "burningswell-cl/gc.worker-1")
+                           (state . "active")
+                           (last_active . ,(gascity-cockpit-test--ts 5))
+                           (session_name . "gc__worker-ec-busy"))))
+         (ctx (gascity-cockpit-test--ctx :beads (list root step)
+                                         :sessions sessions)))
+    ;; Without the live session the same run is idle (the control).
+    (should (equal (gascity-cockpit-test--idle-runs (list root step))
+                   '("bs-1h871x")))
+    ;; The live worker keeps it out of Needs you.
+    (should-not (gascity-dashboard--needs-you ctx))
+    ;; The worker step may live only in the Runs read's graph.
+    (let ((ctx (gascity-cockpit-test--ctx :beads (list root)
+                                          :sessions sessions
+                                          :run-beads (list root step))))
+      (should-not (gascity-dashboard--needs-you ctx)))))
+
+(ert-deftest gascity-test-cockpit-needs-you-idle-run-drawer ()
+  "ec-elkm5.4: the idle-run drawer names the reason, the last activity
+and the worker liveness, then the next action -- the failed-run drawer
+standard (ga-shl0s) rather than repeating the row."
+  (let* ((root `((id . "be-52m5") (status . "in_progress")
+                 (title . "build-basic")
+                 (updated_at . ,(gascity-cockpit-test--ts 7200))
+                 (metadata . ((gc.kind . "workflow")
+                              (gc.formula_name . "build-basic")))
+                 (gascity-rig . "beads.el")))
+         (step `((id . "be-bcb5") (status . "in_progress")
+                 (assignee . "gl-wisp-gone")
+                 (updated_at . ,(gascity-cockpit-test--ts 2520))
+                 (metadata . ((gc.root_bead_id . "be-52m5")))
+                 (gascity-rig . "beads.el")))
+         (item (seq-find (lambda (i) (equal (plist-get i :id) "run:be-52m5"))
+                         (gascity-dashboard--needs-you
+                          (gascity-cockpit-test--ctx :beads (list root step)))))
+         (drawer (and item (gascity-dashboard--needs-you-drawer item)))
+         (text (and drawer (gascity-cockpit-test--text drawer))))
+    (should item)
+    (should (plist-get item :drawer))
+    (should (string-match-p "run      be-52m5  build-basic" text))
+    (should (string-match-p "idle     42m" text))
+    (should (string-match-p "last     step be-bcb5 updated 42m ago" text))
+    (should (string-match-p
+             "reason   no step or live worker activity within 30m" text))
+    (should (string-match-p "worker   gl-wisp-gone  no live session" text))
+    (should (string-match-p "RET run detail  b root bead" text))
+    ;; Never the old `run  <row text>' fallback.
+    (should-not (member (format "run  %s" (plist-get item :text))
+                        (mapcar #'substring-no-properties drawer)))
+    (dolist (line drawer)
+      (should (<= (string-width (substring-no-properties line))
+                  gascity-dashboard--drawer-width)))
+    (should-not (string-match-p "1970" text))))
+
 ;; A drain step stays open while its member runs work outside the
 ;; parent's graph (burningswell's bs-8jif: `implement' bs-q2el drains
 ;; into bs-0c3f, whose worker step moves).
@@ -421,10 +492,10 @@ everything else two hours ago."
                               (gc.step_ref . "do-work.implement"))))))
     (cons parent (list parent drain member step))))
 
-(defun gascity-cockpit-test--idle-runs (beads &optional run-beads)
+(defun gascity-cockpit-test--idle-runs (beads &optional run-beads sessions)
   "Return the ids of the runs Needs you flags idle over work BEADS."
   (setq gascity-runs--index-cache (cons nil nil))
-  (let ((ctx (gascity-cockpit-test--ctx :beads beads)))
+  (let ((ctx (gascity-cockpit-test--ctx :beads beads :sessions sessions)))
     (when run-beads (setq ctx (plist-put ctx :run-beads run-beads)))
     (delq nil (mapcar (lambda (i) (and (equal (plist-get i :kind) "run")
                                        (car (split-string (plist-get i :text)))))
@@ -444,11 +515,68 @@ everything else two hours ago."
     (should (equal (sort (gascity-cockpit-test--idle-runs beads beads) #'string<)
                    '("bs-0c3f" "bs-8jif")))))
 
+(ert-deftest gascity-test-cockpit-needs-you-drain-member-live-worker-not-idle ()
+  "A live member worker keeps the drain parent out of the idle section.
+The parent's own step beads are quiet; the live session is on the
+member run's step, which `gascity-runs-last-activity' already counts as
+parent activity, so the idle rule must agree (ec-elkm5.3)."
+  (require 'gascity-runs)
+  (let* ((beads (cdr (gascity-cockpit-test--drain-run 7200)))
+         (sessions (list `((id . "ec-member")
+                           (agent_name . "burningswell-cl/gc.worker-2")
+                           (state . "active")
+                           (session_name . "gc__worker-ec-member")))))
+    ;; `setf (alist-get …)' on a missing key rebinds STEP; mutate the
+    ;; run's last bead in place instead.
+    (push (cons 'assignee "ec-member") (car (last beads)))
+    (should-not (gascity-cockpit-test--idle-runs beads beads sessions))))
+
 (ert-deftest gascity-test-cockpit-needs-you-drain-parent-waits-for-runs-read ()
   "Before the Runs read lands a draining run is not judged: on its own
 steps alone it would read idle while its members work."
   (let ((beads (cdr (gascity-cockpit-test--drain-run 60))))
     (should-not (member "bs-8jif" (gascity-cockpit-test--idle-runs beads)))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-runs-window ()
+  "ec-elkm5.2: a failed run inside the Runs view's failed window (24h)
+is in Needs you too, even when its close event is outside the cockpit's
+2h events read; the event copy is the same row, never a second one."
+  (require 'gascity-runs)
+  (let* ((closed (gascity-cockpit-test--ts (* 18 3600)))
+         (root `((id . "bs-1h871x") (status . "closed")
+                 (closed_at . ,closed)
+                 (metadata . ((gc.kind . "workflow") (gc.outcome . "fail")
+                              (gc.formula_name . "build-basic")
+                              (gc.failure_class . "control_dispatch_error")))
+                 (gascity-rig . "burningswell-cl")))
+         (ctx (gascity-cockpit-test--ctx :run-beads (list root)))
+         (items (gascity-dashboard--needs-you ctx)))
+    (should (equal (gascity-cockpit-test--kinds items) '((fail "run"))))
+    (should (string-match-p "bs-1h871x build-basic  failed"
+                            (plist-get (car items) :text)))
+    (should (equal (plist-get (car items) :id) "failed:bs-1h871x"))
+    ;; The class is in the right cell; the run rig is still the fallback.
+    (should (string-match-p "control_dispatch" (plist-get (car items) :right)))
+    ;; The event read (2h) carrying the same bead is the same item.
+    (let* ((event `((type . "bead.closed") (seq . 9) (ts . ,closed)
+                    (payload . ((bead . ,root)))))
+           (items (gascity-dashboard--needs-you
+                   (gascity-cockpit-test--ctx :events (list event)
+                                              :run-beads (list root)))))
+      (should (= 1 (length items)))
+      (should (equal (plist-get (car items) :id) "failed:bs-1h871x")))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-outside-runs-window ()
+  "A failed run older than the Runs failed window stays out of Needs you.
+Needs you reads the same window as the Runs view (`gascity-runs-failed-window')."
+  (require 'gascity-runs)
+  (let* ((root `((id . "bs-old") (status . "closed")
+                 (closed_at . ,(gascity-cockpit-test--ts (* 30 3600)))
+                 (metadata . ((gc.kind . "workflow") (gc.outcome . "fail")
+                              (gc.formula_name . "build-basic")))
+                 (gascity-rig . "burningswell-cl"))))
+    (should-not (gascity-dashboard--needs-you
+                 (gascity-cockpit-test--ctx :run-beads (list root))))))
 
 (ert-deftest gascity-test-cockpit-needs-you-failed-run ()
   "■ run failed: a workflow root closed with gc.outcome fail in the window."

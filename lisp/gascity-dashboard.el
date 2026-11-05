@@ -89,11 +89,17 @@
 (declare-function gascity-runs-ladder "gascity-runs")
 (declare-function gascity-runs-last-activity "gascity-runs")
 (declare-function gascity-runs-parent-id "gascity-runs")
+(declare-function gascity-runs-graph "gascity-runs")
 (declare-function gascity-runs-failed-step "gascity-runs")
 (declare-function gascity-runs-summary "gascity-runs")
+(declare-function gascity-runs-state "gascity-runs")
+(declare-function gascity-runs-window-seconds "gascity-runs")
 (declare-function gascity-runs--close-reason "gascity-runs")
 (declare-function gascity-runs--failure-info "gascity-runs")
 (declare-function gascity-runs--run-failure "gascity-runs")
+(declare-function gascity-runs--time "gascity-runs")
+(declare-function gascity-runs--within-p "gascity-runs")
+(defvar gascity-runs-failed-window)
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -544,6 +550,127 @@ rendering `Steps 0/0' while its latch shows up as a run of its own."
           (> (or (gascity-ui-parse-time (alist-get 'updated_at a)) 0)
              (or (gascity-ui-parse-time (alist-get 'updated_at b)) 0)))))
 
+(defun gascity-dashboard--live-worker-of (beads sessions)
+  "Return the live session working one of BEADS, or nil.
+BEADS are a run's beads (its in-progress steps and, when the Runs read
+is in hand, every graph bead); SESSIONS the raw `session list' rows.
+An in-progress bead whose assignee joins a live session is proved work,
+not an idle run (ec-elkm5.3)."
+  (seq-some (lambda (bead)
+              (and (equal (alist-get 'status bead) "in_progress")
+                   (stringp (alist-get 'assignee bead))
+                   (gascity-dashboard--session-for-assignee
+                    (alist-get 'assignee bead) sessions)))
+            beads))
+
+(defun gascity-dashboard--drain-members (index beads)
+  "Return the member run roots of the drain steps among BEADS in INDEX."
+  (let ((drains (plist-get index :drains)))
+    (seq-mapcat (lambda (b) (gethash (alist-get 'id b) drains)) beads)))
+
+(defun gascity-dashboard--run-live-worker (root beads index sessions
+                                                &optional seen)
+  "Return a live session working run ROOT, its BEADS, or a drain member.
+BEADS are ROOT's own beads (the work read plus the Runs graph); INDEX
+is the Runs index (nil before it lands), SESSIONS the raw `session
+list' rows.  An open drain step's member runs work outside ROOT's
+graph, so a live worker there keeps ROOT out of the idle section too.
+SEEN guards a cyclic drain graph."
+  (let ((id (alist-get 'id root)))
+    (unless (member id seen)
+      (or (gascity-dashboard--live-worker-of beads sessions)
+          (when index
+            (let ((seen (cons id seen)))
+              (seq-some
+               (lambda (member)
+                 (and (equal (alist-get 'status member) "in_progress")
+                      (gascity-dashboard--run-live-worker
+                       member (gascity-runs-graph index (alist-get 'id member))
+                       index sessions seen)))
+               (gascity-dashboard--drain-members
+                index (gascity-runs-graph index id)))))))))
+
+(defun gascity-dashboard--run-idle-evidence (root steps index)
+  "Return (:time TIME :text TEXT) for run ROOT's latest activity.
+STEPS are the run's beads (the work read plus, when INDEX is in hand,
+the Runs graph); INDEX is the Runs index, whose
+`gascity-runs-last-activity' also covers in-progress drain members.
+TIME is 0 when nothing carries a real timestamp.  TEXT names where TIME
+came from (`run updated', `step ID updated', `drain member activity'),
+so the idle drawer states evidence instead of inventing it."
+  (let* ((root-time (or (gascity-ui-parse-time (alist-get 'updated_at root))
+                        0))
+         (in-progress (seq-filter
+                       (lambda (b)
+                         (equal (alist-get 'status b) "in_progress"))
+                       steps))
+         (step (car (sort (copy-sequence in-progress)
+                          (lambda (a b)
+                            (> (or (gascity-ui-parse-time
+                                    (alist-get 'updated_at a)) 0)
+                               (or (gascity-ui-parse-time
+                                    (alist-get 'updated_at b)) 0))))))
+         (step-time (or (and step (gascity-ui-parse-time
+                                   (alist-get 'updated_at step)))
+                        0))
+         (member-time (or (and index (gascity-runs-last-activity index root))
+                          0))
+         (time root-time)
+         (text "run updated"))
+    (when (> step-time time)
+      (setq time step-time
+            text (format "step %s updated" (or (alist-get 'id step) "?"))))
+    (when (> member-time (max root-time step-time))
+      (setq time member-time
+            text "drain member activity"))
+    (list :time time :text text)))
+
+(defun gascity-dashboard--idle-run-drawer (root steps index now idle)
+  "Return the drawer lines of idle run ROOT.
+STEPS are the run's beads (graph beads included when INDEX is in hand),
+NOW the render time and IDLE its seconds without activity.  The lines
+state the reason, the last activity and the worker's liveness, then the
+next action -- the failed-run drawer standard (ga-shl0s), and only
+evidence the payload carries (ec-elkm5.4)."
+  (let* ((evidence (gascity-dashboard--run-idle-evidence root steps index))
+         (last (plist-get evidence :time))
+         (busy (seq-filter (lambda (b)
+                             (equal (alist-get 'status b) "in_progress"))
+                           steps))
+         (worker (car (sort (copy-sequence busy)
+                            (lambda (a b)
+                              (> (or (gascity-ui-parse-time
+                                      (alist-get 'updated_at a)) 0)
+                                 (or (gascity-ui-parse-time
+                                      (alist-get 'updated_at b)) 0))))))
+         (who (and worker (alist-get 'assignee worker))))
+    (delq nil
+          (list
+           (gascity-dashboard--drawer-value
+            "run      " (format "%s  %s"
+                                 (alist-get 'id root)
+                                 (or (alist-get 'gc.formula_name
+                                                (gascity-dashboard--meta root))
+                                     (alist-get 'title root) "")))
+           (gascity-dashboard--drawer-value
+            "idle     " (format "%s  (threshold %s)"
+                                 (gascity-ui-duration idle)
+                                 (gascity-ui-duration
+                                  gascity-dashboard-run-idle-threshold)))
+           (and (> last 0)
+                (gascity-dashboard--drawer-value
+                 "last     " (format "%s %s ago" (plist-get evidence :text)
+                                     (gascity-ui-duration (max 0 (- now last))))))
+           (gascity-dashboard--drawer-value
+            "reason   " (format "no step or live worker activity within %s"
+                                (gascity-ui-duration
+                                 gascity-dashboard-run-idle-threshold)))
+           (gascity-dashboard--drawer-value
+            "worker   " (cond ((null worker) "no in-progress step")
+                              ((not (stringp who)) "unassigned step")
+                              (t (format "%s  no live session" who))))
+           (gascity-dashboard--dim "RET run detail  b root bead")))))
+
 (defconst gascity-dashboard--control-kinds
   '("spec" "scope-check" "workflow-finalize")
   "Step `gc.kind' values that are control nodes, not ladder steps.")
@@ -863,10 +990,12 @@ Each item is a plist (:level fail|watch :kind KIND :id ID :text TEXT
 :right RIGHT :time TS :props PROPS), PROPS being the at-point text
 properties of its row.  Sources, in priority order: stalled agents,
 in-progress work whose holder is gone or lease lapsed, crashed/timed-out
-sessions not woken since, idle runs, failed runs, reopened beads,
+sessions not woken since, idle runs (no step activity and no live
+worker), failed runs (the Runs view's failed window), reopened beads,
 escalated/held beads, unread mail, store health."
   (let* ((now (plist-get ctx :now))
          (events (plist-get ctx :events))
+         (sessions (plist-get ctx :sessions))
          (beads (plist-get ctx :beads))
          (run-beads (plist-get ctx :run-beads))
          (run-index (and run-beads (gascity-runs-index run-beads)))
@@ -952,28 +1081,29 @@ escalated/held beads, unread mail, store health."
       ;; (`gascity-runs-last-activity' over the Runs view's index).  A
       ;; run with an open drain step waits for that index: judged on
       ;; its own steps alone it would look idle while its members work.
+      ;; A live worker session keeps a run out of this section however
+      ;; stale its step beads look (ec-elkm5.3): the worker's liveness,
+      ;; not the bead's `updated_at', is the authority.
       (dolist (root (gascity-dashboard--active-runs beads))
         (let* ((id (alist-get 'id root))
+               (graph (and run-index (gascity-runs-graph run-index id)))
                (steps (seq-filter (lambda (b)
                                     (and (equal (gascity-dashboard--root-of b) id)
                                          (not (equal (alist-get 'status b) "closed"))))
                                   beads))
+               (all-steps (append steps graph))
                (draining (seq-some (lambda (b) (equal (alist-get 'gc.kind
                                                                  (gascity-dashboard--meta b))
                                                       "drain"))
                                    steps))
-               (last (apply #'max
-                            (or (gascity-ui-parse-time (alist-get 'updated_at root)) 0)
-                            (if run-index (gascity-runs-last-activity run-index root) 0)
-                            (mapcar (lambda (b)
-                                      (if (equal (alist-get 'status b) "in_progress")
-                                          (or (gascity-ui-parse-time
-                                               (alist-get 'updated_at b))
-                                              0)
-                                        0))
-                                    steps)))
-               (idle (- now last)))
-          (when (and (> last 0) (> idle gascity-dashboard-run-idle-threshold)
+               (evidence (gascity-dashboard--run-idle-evidence
+                          root all-steps run-index))
+               (last (plist-get evidence :time))
+               (idle (- now last))
+               (worker (gascity-dashboard--run-live-worker
+                        root all-steps run-index sessions)))
+          (when (and (not worker)
+                     (> last 0) (> idle gascity-dashboard-run-idle-threshold)
                      (or run-index (not draining)))
             (add :level 'fail :kind "run" :id (concat "run:" id)
                  :text (format "%s %s  idle %s" id
@@ -982,8 +1112,12 @@ escalated/held beads, unread mail, store health."
                                    (alist-get 'title root) "")
                                (gascity-ui-duration idle))
                  :right (or (alist-get 'gascity-rig root) "city")
+                 :drawer (lambda ()
+                           (gascity-dashboard--idle-run-drawer
+                            root all-steps run-index now idle))
                  :props (list 'gascity-bead id
-                              'gascity-run-rig (or (alist-get 'gascity-rig root) ""))))))
+                              'gascity-run-rig
+                              (or (alist-get 'gascity-rig root) ""))))))
       ;; ■ active runs with a failed step: the root is still in
       ;; progress (a drain step failed, or a nested step failed) yet
       ;; the run reads `active' everywhere else (ga-g092a).  The Runs
@@ -1007,10 +1141,22 @@ escalated/held beads, unread mail, store health."
                                   (or (alist-get 'gascity-rig root) ""))
                      :drawer (lambda ()
                                (gascity-dashboard--failed-step-drawer root step))))))))
-      ;; ■ runs that failed in the window (root closed, gc.outcome fail).
-      ;; The row carries the failure class (the rig moves to the drawer)
-      ;; and the drawer explains the failure (REQ-001).
+      ;; ■ runs that failed in the Runs view's failed window.  That read
+      ;; is the source (one window, one deduction: a run in the Runs
+      ;; Failed section is here too, and vice versa); the 2h events read
+      ;; is only the fallback before the Runs read lands, so a run is
+      ;; never counted twice (ec-elkm5.2).  The row carries the failure
+      ;; class (the rig moves to the drawer) and the drawer explains the
+      ;; failure (REQ-001).
       (let ((seen (make-hash-table :test 'equal)))
+        (when run-index
+          (let ((window (gascity-runs-window-seconds
+                         gascity-runs-failed-window)))
+            (dolist (root (gascity-dashboard--failed-run-roots
+                           run-index window now))
+              (puthash (alist-get 'id root) t seen)
+              (apply #'add (gascity-dashboard--failed-run-item
+                            root ctx run-index (gascity-runs--time root))))))
         (dolist (e (reverse events))
           (let* ((bead (gascity-event-bead e))
                  (meta (and bead (gascity-dashboard--meta bead)))
@@ -1020,27 +1166,8 @@ escalated/held beads, unread mail, store health."
                        (equal (alist-get 'gc.outcome meta) "fail")
                        (not (gethash id seen)))
               (puthash id t seen)
-              (let* ((detail (gascity-dashboard--failed-run-detail bead run-index))
-                     (rig (gascity-dashboard--store-of-id id ctx))
-                     ;; Class first, then the rig, then the city.  The
-                     ;; class is cut to 20 columns with the full text in
-                     ;; `help-echo' (Decisions 3).
-                     (right (gascity-ui-truncate
-                             (or (plist-get detail :class) rig "city") 20)))
-                (add :level 'fail :kind "run" :id (concat "failed:" id)
-                     :text (format "%s %s  failed" id
-                                   (or (alist-get 'gc.formula_name meta) ""))
-                     ;; `gascity-ui-right-align' never clips, so the left
-                     ;; cell gives back what the right cell takes:
-                     ;; 18 + WIDTH + 2 + RIGHT = 78 (Decisions 3).
-                     :width (max 20 (- 58 (string-width right)))
-                     :right right
-                     :time (alist-get 'ts e)
-                     :drawer (lambda ()
-                               (gascity-dashboard--failed-run-drawer
-                                bead run-index))
-                     :props (list 'gascity-bead id
-                                  'gascity-run-rig (or rig ""))))))))
+              (apply #'add (gascity-dashboard--failed-run-item
+                            bead ctx run-index (alist-get 'ts e)))))))
       ;; ▲ beads reopened after their assignee died.
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
@@ -1581,6 +1708,49 @@ names no class or reason.  Pure over the cockpit context: no gc read."
                 (and reason
                      (gascity-dashboard--drawer-value "reason   " reason full))
                 (gascity-dashboard--dim "RET run detail  b root bead")))))
+
+(defun gascity-dashboard--failed-run-roots (index window now)
+  "Return INDEX's run roots failed within WINDOW seconds of NOW.
+WINDOW nil means no bound.  The roots come oldest first, so the
+Needs-you list (newest first after its `nreverse') reads like the Runs
+Failed section.  This is the Runs view's deduction: a failed run the
+Runs Failed section shows is in Needs you too, never a second source
+with its own window (ec-elkm5.2)."
+  (sort (seq-filter
+         (lambda (root)
+           (and (eq (gascity-runs-state root) 'failed)
+                (gascity-runs--within-p
+                 (list :time (gascity-runs--time root)) window now)))
+         (plist-get index :roots))
+        (lambda (a b)
+          (< (or (gascity-ui-parse-time (gascity-runs--time a)) 0)
+             (or (gascity-ui-parse-time (gascity-runs--time b)) 0)))))
+
+(defun gascity-dashboard--failed-run-item (bead ctx index time)
+  "Return the Needs you item of failed run BEAD (its root) at TIME.
+INDEX is the Runs index (nil before it lands); CTX supplies the rig
+when BEAD carries none.  The row carries the failure class, the drawer
+explains it (REQ-001)."
+  (let* ((id (alist-get 'id bead))
+         (meta (gascity-dashboard--meta bead))
+         (detail (gascity-dashboard--failed-run-detail bead index))
+         (rig (or (alist-get 'gascity-rig bead)
+                  (gascity-dashboard--store-of-id id ctx)))
+         ;; Class first, then the rig, then the city.  The class is cut to
+         ;; 20 columns with the full text in `help-echo' (Decisions 3).
+         (right (gascity-ui-truncate
+                 (or (plist-get detail :class) rig "city") 20)))
+    (list :level 'fail :kind "run" :id (concat "failed:" id)
+          :text (format "%s %s  failed" id
+                        (or (alist-get 'gc.formula_name meta) ""))
+          ;; `gascity-ui-right-align' never clips, so the left cell gives
+          ;; back what the right cell takes: 18 + WIDTH + 2 + RIGHT = 78.
+          :width (max 20 (- 58 (string-width right)))
+          :right right
+          :time time
+          :drawer (lambda () (gascity-dashboard--failed-run-drawer bead index))
+          :props (list 'gascity-bead id
+                       'gascity-run-rig (or rig "")))))
 
 (defun gascity-dashboard--needs-you-drawer (item)
   "Return the drawer lines of a Needs you ITEM."
