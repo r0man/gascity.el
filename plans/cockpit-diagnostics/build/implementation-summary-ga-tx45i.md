@@ -43,7 +43,7 @@ trace:
       hash: "git:b3733a9"
       title: "Trial-integration revision of the event drawer fields (W4)"
     - path: docs/qa/2026-11-05-cockpit-diagnostics.md
-      hash: "sha256:0454373a5e8d18a7cf8b32b80ffa77f8238ec6aa198ea7669f1aeb2fe5de0ea1"
+      hash: "sha256:54d65fb2a143d443917d30b9dbefbb9a686f961271b57a05d0eed15242136d71"
       title: "Acceptance pass report (this pass)"
   coverage:
     - id: REQ-001

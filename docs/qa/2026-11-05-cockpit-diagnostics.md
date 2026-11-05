@@ -273,7 +273,13 @@ scripts/gate.sh && scripts/lint.sh && make -C doc
 TMPDIR=/tmp/ga-tx45i doc/screenshots/fixture.sh --create
 TMPDIR=/tmp/ga-tx45i doc/screenshots/fixture.sh --seed
 
-# interactive
+# interactive; w7-init.el:
+#   ;;; -*- lexical-binding: t; -*-
+#   (add-to-list 'load-path ".../worktrees/ga-tx45i-integration/lisp")
+#   (add-to-list 'load-path ".../beads.el/lisp")
+#   (add-to-list 'load-path ".../beads.el/.eldev/31.1/packages/vui-1.4.0")
+#   (setq default-directory "/tmp/ga-tx45i/gascity-fixture/")
+#   (require 'gascity)
 tmux new-session -d -s gce-w7 -x 120 -y 40 \
   'cd /tmp/ga-tx45i/gascity-fixture && emacs -nw -Q -l /tmp/ga-tx45i/w7-init.el'
 # then M-x gascity-dashboard, j r, H (history), SPC/RET on rows
