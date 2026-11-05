@@ -91,6 +91,7 @@
 (declare-function gascity-runs-parent-id "gascity-runs")
 (declare-function gascity-runs-failed-step "gascity-runs")
 (declare-function gascity-runs-summary "gascity-runs")
+(declare-function gascity-runs--close-reason "gascity-runs")
 (declare-function gascity-runs--failure-info "gascity-runs")
 (declare-function gascity-runs--run-failure "gascity-runs")
 (declare-function gascity-session-nudge-at-point "gascity-action")
@@ -1429,10 +1430,7 @@ first line of the failure reason -- what a drawer can show in one row
                     (alist-get 'gc.failure_class meta)))
          (reason (or (cdr-safe info)
                      (alist-get 'gc.failure_reason meta)
-                     (let ((close (alist-get 'close_reason bead)))
-                       (and (stringp close)
-                            (not (string-empty-p close))
-                            close))))
+                     (gascity-runs--close-reason bead)))
          (ref (or (plist-get step :ref)
                   (alist-get 'gc.step_ref meta))))
     (list :class class :ref ref
@@ -1447,27 +1445,20 @@ RET/b hint.  Always the run line and the hint, even when the failure
 names no class or reason.  Pure over the cockpit context: no gc read."
   (let* ((detail (gascity-dashboard--failed-run-detail bead index))
          (meta (gascity-dashboard--meta bead))
-         (width (- gascity-dashboard--width 4))
          (class (plist-get detail :class))
          (ref (plist-get detail :ref))
          (reason (plist-get detail :reason))
-         (full (plist-get detail :full))
-         (prefix "reason   "))
+         (full (plist-get detail :full)))
     (delq nil
-          (list (gascity-ui-truncate
-                 (format "run      %s  %s" (alist-get 'id bead)
-                         (or (alist-get 'gc.formula_name meta) ""))
-                 width)
+          (list (gascity-dashboard--drawer-value
+                 "run      " (format "%s  %s" (alist-get 'id bead)
+                                      (or (alist-get 'gc.formula_name meta) "")))
                 (and class
-                     (gascity-ui-truncate (format "class    %s" class) width))
+                     (gascity-dashboard--drawer-value "class    " class))
                 (and ref
-                     (gascity-ui-truncate (format "step     %s" ref) width))
+                     (gascity-dashboard--drawer-value "step     " ref))
                 (and reason
-                     (let* ((budget (max 0 (- width (string-width prefix))))
-                            (line (concat prefix (gascity-ui-truncate reason budget))))
-                       (if (and full (not (equal reason full)))
-                           (propertize line 'help-echo full)
-                         line)))
+                     (gascity-dashboard--drawer-value "reason   " reason full))
                 (gascity-dashboard--dim "RET run detail  b root bead")))))
 
 (defun gascity-dashboard--needs-you-drawer (item)

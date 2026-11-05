@@ -380,9 +380,12 @@ The row's right column carries the class (REQ-001, AC-1)."
     (should (string-match-p "class    control_dispatch_error" text))
     (should (string-match-p "step     gstack-work.review" text))
     (should (string-match-p "reason   environment repair required" text))
-    ;; Only the first line is drawn; the whole reason rides in help-echo.
+    ;; Only the first line is drawn; the whole reason rides in help-echo
+    ;; on the value, which one drawer-value boundary bounds (review R3).
     (should-not (string-match-p "no git remote" text))
-    (should (equal (get-text-property 0 'help-echo reason-line)
+    (should (equal (get-text-property
+                    (string-match "environment repair required" reason-line)
+                    'help-echo reason-line)
                    (plist-get run :reason)))
     (should (string-match-p "RET run detail" text))
     (should (string-match-p "b root bead" text))))
@@ -400,6 +403,9 @@ left cell gives back exactly what the right cell takes (REQ-001, AC-1)."
          (row (gascity-cockpit-test--rendered-row ctx "hw-y10")))
     (should row)
     (should (<= (string-width (substring-no-properties row)) 78))
+    ;; The rendered row itself, not only the plist, carries the class.
+    (should (string-match-p "control_dispatch"
+                            (substring-no-properties row)))
     (should (equal (get-text-property 0 'help-echo (plist-get item :right))
                    "control_dispatch_error"))
     ;; A long rig (no class) is the fallback right cell, budgeted the same.
@@ -440,7 +446,10 @@ left cell gives back exactly what the right cell takes (REQ-001, AC-1)."
     (should (string-match-p "class    control_dispatch_error" text))
     (should (string-match-p "step     gstack-work.review" text))
     (should (string-match-p "reason   environment repair required" text))
-    (should (equal (get-text-property 0 'help-echo reason-line) reason))
+    (should (equal (get-text-property
+                    (string-match "environment repair required" reason-line)
+                    'help-echo reason-line)
+                   reason))
     (should (string-match-p "RET run detail" text))
     (should (string-match-p "b root bead" text))))
 
@@ -460,6 +469,33 @@ left cell gives back exactly what the right cell takes (REQ-001, AC-1)."
                         (string-match-p "reason   environment repair required"
                                         (substring-no-properties line)))
                       drawer))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-close-reason-metadata ()
+  "A bead whose reason is only in `metadata.close_reason' -- the shape a
+real `gc events' payload bead carries -- still draws the reason line.
+The top-level `gc bd list' shape is the fallback (REQ-001, review R2)."
+  (dolist (shape '(metadata top-level))
+    (let* ((reason "environment repair required: no git remote")
+           (bead (append `((id . "hw-y13") (status . "closed"))
+                         (if (eq shape 'metadata)
+                             `((metadata . ((gc.kind . "workflow")
+                                            (gc.outcome . "fail")
+                                            (gc.formula_name . "gstack-work")
+                                            (close_reason . ,reason))))
+                           `((close_reason . ,reason)
+                             (metadata . ((gc.kind . "workflow")
+                                          (gc.outcome . "fail")
+                                          (gc.formula_name . "gstack-work")))))))
+           (event `((type . "bead.closed") (seq . 9)
+                    (ts . "2026-09-24T22:17:42+02:00")
+                    (payload . ((bead . ,bead)))))
+           (drawer (gascity-dashboard--needs-you-drawer
+                    (gascity-cockpit-test--needs-you-failed-item
+                     (gascity-cockpit-test--ctx :events (list event))))))
+      (should (seq-some (lambda (line)
+                          (string-match-p (concat "reason   " (regexp-quote reason))
+                                          (substring-no-properties line)))
+                        drawer)))))
 
 (ert-deftest gascity-test-cockpit-needs-you-failed-run-minimal-drawer ()
   "A failed event naming no class or reason still draws the run and the
