@@ -4,6 +4,89 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### The run detail's header names the run's provenance
+
+The header now labels every fact it holds instead of printing one
+unlabelled formula line: a `root` row (the run bead, its formula and
+`gc.outcome`, with the rig and start/close time), a `store` row
+(`gc.root_store_ref`, the rig and the city), a `scope` row
+(`gc.scope_ref`, else `(none)`) and a `formula` row (name and
+`gc.formula_contract`, with the graph root key and the formula source
+on aligned continuation lines).  Nothing is derived: an absent optional
+fact is omitted or reads `(none)` where the row exists for it
+(ga-kci2d).
+
+### `o` opens the artifact at point
+
+The run detail's new `o` key visits the artifact or plan path at point
+--- the header's `plans` and `source` entries and a step inspector's
+artifact lines --- exactly as `RET` does, and says `No artifact at
+point` elsewhere.  A missing local file is now a clear user error
+instead of Emacs's raw `file-missing`, and a remote city still reads
+`remote: not checked` without statting on render (ga-kci2d).
+
+### The step inspector stacks attempt history
+
+Expanding a step whose beads carry iterations or attempts now lists
+one row per attempt, oldest first, under an `attempts` heading: the
+attempt number, outcome, worker, relative time and failure class and
+reason (`(none)` for a healthy attempt).  Every row comes from the
+run's already-loaded bead graph, so the drawer reads no `gc` the step
+did not already need; the collapsed row keeps its `iter N` summary
+(ga-n6qh5).
+
+### `B`/`Y`: open or copy the run's web dashboard URL
+
+The run detail binds `B` to open the current run in the configured web
+dashboard and `Y` to copy that URL.  The new user option
+`gascity-dashboard-url` supplies the base (`/city/<city>/runs/<id>` is
+appended to it); it is `nil` by default, and then both keys only say
+`No dashboard URL configured; set gascity-dashboard-url` --- gascity
+never guesses or probes a host.  `W` stays the cross-view live toggle
+(ga-obuvt).
+
+### Changed run facts are highlighted, with a last-update stamp
+
+A live delivery now highlights the steps and Runs cards whose visible
+facts changed since the previous render (state, progress, worker,
+failed step) and stamps the view's summary with the delivery's
+`updated HH:MM:SS`.  The first paint marks nothing, and both the
+highlight and the stamp are sticky: a refresh that changes no fact
+leaves the buffer visually unchanged.  Collapse state and point
+survive the repaint (ga-grkql).
+
+### The Runs view states its time basis and adds history columns
+
+The summary count line now ends `(all time)`, only the Failed section
+is windowed (`last 24h`), and the Closed history header states its own
+basis (`all time`, or `last <window>` when filtered).  Every history
+row gains a second dim facts line with `stage`, `step`, `failure` and
+`worker` columns inside the existing 78-column budget; both lines
+belong to the same run, so point, `TAB` and `RET` behave the same on
+either (ga-28pbg).
+
+### `I`/`w`/`!` work on drain-member run rows
+
+A `└ …` drain-member row is a run of its own: `I` opens an in-place
+member drawer (root, formula, progress, worker, failure, `RET run`
+hint), `w` copies the member's root bead id, and `!` echoes the
+member's own failed step, class and reason without moving point or
+leaving the buffer.  A healthy member says so, and `RET` still drills
+into the member's run detail.  Everything comes from the loaded index,
+so no `gc` read is added (ga-28pbg).
+
+### `T` renders the step `needs` tree
+
+The run detail's new `T` toggles a `needs`-aware step tree: the flat,
+stage-grouped layout stays the default and returns byte-for-byte, while
+the tree reorders and indents each stage's members by their `blocks`
+dependencies (falling back to formula step-ref `needs` lists).  A
+parent in another stage is shown as a dim `↳ needs <parent>` note
+instead of extra indentation, a cycle is cut and marked `(cycle)`, and
+a formula without edge data falls back to the flat layout.  The toggle
+re-renders from the loaded payload, so it adds no `gc` read and
+survives `g` (ga-x9qb9).
+
 ### The run inspector separates session liveness from a claim lease
 
 A live worker's step inspector used to read `lease expired 4m ago
