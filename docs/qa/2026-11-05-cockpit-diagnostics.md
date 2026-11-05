@@ -18,7 +18,42 @@
   live `emacs-city` (`/home/roman/emacs-city`) read-only; remote acceptance
   city `bright-lights` over TRAMP (`/ssh:localhost:~/bright-lights`)
 
-## Verdict
+## Verdict (review iteration 2 — PASS)
+
+**Acceptance PASSED on the integrated tree after the review-fix pass.** The
+three iteration-1 blockers are resolved and re-verified:
+
+1. **The batch is integrated.** The review-fix integration tree merges W1 →
+   W2 → W3 → W4 → W5 → W6 → W7 on top of `4ed9d40` (W1's fixes in `0d4064c`
+   and `3d0734b`, W3's in `4b65597`, W5's in `e73fabb`). The whole-package
+   gate is green: `Ran 981 tests, 981 results as expected, 0 unexpected`,
+   byte-compile clean with warnings as errors.
+2. **W6 is delivered and verified.** `doc/gascity.texi` carries the new
+   facts-line example (`stage Review · step build-basic.rev… · fail
+   control_dispatch… · work control`), `NEWS.md` has the batch entry, and
+   `make -C doc` builds. The committed cockpit/runs/run-detail images were
+   regenerated from this merge set and
+   `doc/screenshots/capture.sh --verify cockpit,runs,run-detail` reports
+   **byte-identical** (isolation OK, 44 non-selected images untouched).
+3. **REQ-004's `close_reason` half now works on real payloads.**
+   `gascity-event--bead-why-fields` reads `metadata.close_reason` first with
+   the top-level value as the fallback. Live Events drawer on `emacs-city`
+   (`type=bead.closed`, `SPC` on `ec-wisp-5vl90a`):
+
+   ```
+   16:54       bead.closed                      ec-wisp-5vl90a   │ type       bead.closed
+                                                                  │ ts         2026-11-05T16:54:34…
+                                                                  │ bead       ec-wisp-5vl90a order:order-tracki…
+                                                                  │ close_reason  order dispatch completed: trackin…
+   ```
+
+The five REQ-001..REQ-005 behaviours were re-exercised through a live
+non-graphical Emacs in tmux on the integrated tree (fixture city,
+`emacs-city`, and `bright-lights` over TRAMP); see "Review-fix re-run"
+below. The iteration-1 FAILED verdict is retained as the historical record
+of what was wrong.
+
+## Verdict (iteration 1 — superseded, FAILED)
 
 **Acceptance FAILED — the finished batch cannot be accepted yet.** Three
 blocking facts, in order of severity:
@@ -290,3 +325,108 @@ tmux new-session -d -s gce-w7 -x 120 -y 40 \
 GC_HOME=$HOME/.gc gc events --city /home/roman/emacs-city --since 24h \
   | python3 -c 'import json,sys; ...count payload.bead.close_reason vs metadata.close_reason...'
 ```
+
+## Review-fix re-run (review iteration 2)
+
+Re-run on 2026-11-05 after the review-fix pass (bead `ga-ivpx9`). The tree is
+`worktrees/ga-tx45i-integration`, rebuilt from `4ed9d40` by merging, in the
+documented order, the fixed item tips: W1 `3d0734b` (whose `0d4064c` adds the
+metadata `close_reason` fallback), W2 `e06de5a`, W3 `4b65597` (rebased on W1,
+drawer routed through `gascity-dashboard--drawer-value`), W4 `feaaf0b`,
+W5 `e73fabb`, W6 `56909e9`, W7 (this report). Every merge was an auto-merge;
+no conflict.
+
+### Automated gates (integrated tree)
+
+| Command | Result |
+| --- | --- |
+| `scripts/gate.sh` | **PASS** — `make` clean (warnings as errors); `make check` "Ran 981 tests, 981 results as expected, 0 unexpected" (42 s) |
+| `scripts/lint.sh` | **PASS** — checkdoc/re clean; `package-lint is not installed; skipping package metadata checks` (CI installs it; M5) |
+| `make -C doc` | **PASS** — the W6 manual/NEWS changes build (`doc/gascity.info`) |
+| `doc/screenshots/capture.sh --verify cockpit,runs,run-detail` | **PASS** — "verify: byte-identical for 4 image(s)", coverage ok, isolation ok (44 non-selected images byte-identical) |
+
+New coverage in this pass: `gascity-test-runs-failed-card-metadata-close-reason`
+(metadata-only and top-level-only close reason for the Failed card and its
+`help-echo`, plus `gascity-runs--failure`/`--failure-info`),
+`gascity-test-comms-event-drawer-close-reason-top-level-fallback` (metadata
+precedence and the bd-list fallback), and
+`gascity-test-cockpit-needs-you-failed-run-close-reason-metadata` (drawer
+reason from the event shape). The AC-1 rendered-row test now asserts the
+class on the rendered row, not only on the item plist.
+
+### Interactive acceptance (fresh tmux + `emacs -nw -Q`)
+
+Fixture city `/tmp/ga-fix-accept/gascity-fixture` (isolated `TMPDIR`), the
+integrated `lisp/` on `load-path`:
+
+```
+Needs you  5
+  ■ run      demo-run build-basic  idle 673d                          demo-rig
+  ■ run      demo-run ✕ build-basic.review                         code_review
+  │ run      demo-run  build-basic
+  │ step     review  build-basic.review
+  │ class    code_review
+  │ reason   two blocking findings: the render path stats a file and the header is not frozen
+```
+
+The failed-step drawer renders run, step, class and the first reason line on
+the fixed tree (REQ-001's active-run render site).
+
+`bright-lights` over TRAMP (`/ssh:localhost:~/bright-lights`), Activity
+window widened to 24h through `/` → `-W` → `24h`, then `SPC` on `hw-cz23`:
+
+```
+Needs you  3
+  ■ run      hw-cz23 build-basic  failed                            23h   hard
+  │ run      hw-cz23  build-basic
+  │ class    hard
+  │ step     build-basic.review
+  │ reason   control_dispatch_error
+  │ RET run detail  b root bead
+```
+
+All five REQ-001 drawer elements render after the R3 collapse onto
+`gascity-dashboard--drawer-value`, and the remote cockpit still renders
+identically to the local one.
+
+`emacs-city`, Runs view (`j r`, then `H`):
+
+```
+Closed  316 · all time
+  ✕ ga-4hdav  do-work       ◆✕✕          1/3    fail      gascity.el       38m
+  stage imple… · step do-work.impleme… · fail acceptance_failu… · work -
+```
+
+The facts line is exactly 78 columns with the new per-column budgets
+(REQ-002/AC-2), and the Failed card above it keeps its cut reason plus the
+full text in `help-echo` (REQ-003; asserted by
+`gascity-test-runs-failed-card-fits-failure-reason`).
+
+`emacs-city`, Events view (`j e`, `/` → `-t` → `bead.closed`, `SPC`):
+
+```
+16:54       bead.closed                      ec-wisp-5vl90a  │ bead          ec-wisp-5vl90a order:order-tracki…
+                                                                │ close_reason  order dispatch completed: trackin…
+```
+
+`close_reason` now renders from the real payload's
+`bead.metadata.close_reason` — the iteration-1 blocker (REQ-004/AC-4).
+
+Stalled agents (REQ-005/AC-5) still have no live instance in any city at pass
+time; the behaviour rests on the five `gascity-test-cockpit-stalled-agent-*`
+ERT tests, as in iteration 1. `help-echo` is still asserted as a text property
+(ERT) rather than observed as a rendered tooltip; the live pass shows the cut
+text and the drawer contents.
+
+### Evidence hygiene recorded by the review
+
+- W1/W3 first-verification commands re-run with the explicit
+  `EMACSLOADPATH=beads.el/lisp:…/vui-1.4.0` + `-L lisp -L lisp/test` form
+  (M1).
+- W4's reconstructed red run was recorded by the test-evidence review (5/5
+  fail on base `af17537`); no code change (M2).
+- `package-lint` remains unavailable locally (CI installs it) (M5).
+- `runs-dark` still cannot show the facts line because the fixture has no
+  history row; the manual example is the evidence (M6).
+- The committed images were captured from this merge set and `--verify`
+  reproduces them byte-for-byte (M7).
