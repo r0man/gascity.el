@@ -63,8 +63,15 @@ not wake, and records that reuse as the sanctioned exception in
 `docs/DESIGN-write-actions.md` §10 and in
 `lisp/test/gascity-consistency-test.el`.  Its other new keys are local
 additions, unbound in the run detail before and supplied by no parent map:
-`I` (`gascity-run-inspect`, toggle the step inspector) and `!`
-(`gascity-run-diagnose`, reveal and diagnose the failed step).  `i`, `v`
+`I` (`gascity-run-inspect`, toggle the step inspector; on a `└ …`
+drain-member row, its own member drawer), `!` (`gascity-run-diagnose`,
+reveal and diagnose the failed step; on a member row, that member's own
+failed step), `o` (`gascity-run-open-artifact`, visit the artifact at
+point), `B` (`gascity-run-browse-url`, open the run in the configured
+web dashboard), `Y` (`gascity-run-copy-url`, copy that URL) and `T`
+(`gascity-run-toggle-tree`, toggle the `needs`-aware step tree).  `T`
+is not the live toggle: `W` stays the cross-view live toggle, bound by
+the section mode and never shadowed in the run detail.  `i`, `v`
 and `t` stay the agent aliases (`gascity-runs-agent-detail`,
 `-peek`, `-tmux`) and work from the inspector's worker line.
 

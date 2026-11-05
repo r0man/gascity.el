@@ -18,6 +18,9 @@
 (require 'cl-lib)
 (require 'gascity)
 (require 'gascity-test-helpers)
+;; The zero-spawn guard below renders a run detail, so it uses the Runs
+;; fixtures and mounting helper.
+(require 'gascity-runs-test)
 
 (defconst gascity-test-store--remote "/mock::/tmp/store-city/"
   "A remote-looking city directory; no connection is ever made to it.")
@@ -1306,6 +1309,100 @@ exceptions (city start/stop) are exempt by name."
              "\\`\\*\\(gc-\\(mail\\|peek\\|sling\\)\\|gascity-mail-thread\\)"
              (buffer-name b))
         (kill-buffer b)))))
+
+;;; Zero-spawn run-detail actions (run-view-v3 REQ-009, review R3)
+
+(defun gascity-test-store--position-with (prop)
+  "Return the first buffer position carrying a non-empty text property PROP."
+  (save-excursion
+    (goto-char (point-min))
+    (let (found)
+      (while (and (not found) (not (eobp)))
+        (let ((value (get-text-property (point) prop)))
+          (if (and value (not (and (stringp value) (string-empty-p value))))
+              (setq found (point))
+            (forward-char 1))))
+      found)))
+
+(ert-deftest gascity-test-run-detail-actions-are-io-free ()
+  "The run detail's local verbs act with zero gc traffic.
+With `gascity-reader-run', `-read' and `-run-async' armed and any store
+fetch or process spawn counted, a rendered failed-run buffer answers
+`w', `I', `!', `T', `o', `B' and `Y' without a run/bead read, gc action
+or gc process (REQ-009; review R3 pins AC1's `no new gc read' beyond the
+render guard).  Opening the inspector issues only its pre-existing
+recent-events drawer read.  The two intended host actions, the browser
+and the artifact visit, are stubbed and recorded."
+  (gascity-test-with-fixture-home
+    (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+      (let ((serve (symbol-function 'gascity-reader-read-async))
+            (read-args nil)
+            (spawns nil)
+            (gascity-dashboard-url "http://127.0.0.1:9/"))
+        (cl-letf (((symbol-function 'gascity-reader-read-async)
+                   (lambda (&rest args)
+                     (push (car args) read-args)
+                     (apply serve args)))
+                  ((symbol-function 'gascity-reader-run)
+                   (lambda (args) (push (list 'sync-run args) spawns)
+                     (error "synchronous gc run: %S" args)))
+                  ((symbol-function 'gascity-reader-read)
+                   (lambda (args) (push (list 'sync-read args) spawns)
+                     (error "synchronous gc read: %S" args)))
+                  ((symbol-function 'gascity-reader-run-async)
+                   (lambda (&rest args) (push (list 'action args) spawns)
+                     (error "async gc action: %S" args)))
+                  ((symbol-function 'process-file)
+                   (lambda (prog &rest _) (push (list 'process-file prog) spawns)
+                     (error "process-file %s" prog)))
+                  ((symbol-function 'call-process)
+                   (lambda (prog &rest _) (push (list 'call-process prog) spawns)
+                     (error "call-process %s" prog)))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest _) (push (list 'make-process) spawns)
+                     (error "make-process")))
+                  ((symbol-function 'gascity-store-fetch)
+                   (lambda (&rest args) (push (list 'fetch args) spawns) nil))
+                  ((symbol-function 'browse-url)
+                   (lambda (url &rest _) (push (list 'browse url) spawns)))
+                  ((symbol-function 'find-file)
+                   (lambda (path &rest _) (push (list 'find-file path) spawns)))
+                  ((symbol-function 'file-exists-p) (lambda (&rest _) t))
+                  ((symbol-function 'kill-new) #'ignore))
+          ;; `B'/`Y' need the buffer's run and city, as the mode sets them.
+          (setq gascity-run--current-run "be-bn2"
+                gascity-run--city "emacs-city")
+          ;; `w': copy the step's bead id at point.
+          (goto-char (point-min))
+          (should (re-search-forward "^    ◆ prepare" nil t))
+          (gascity-run-copy-id)
+          ;; `I': the step inspector drawer (a re-render, not a re-read).
+          (goto-char (point-min))
+          (re-search-forward "^    ◆ prepare" nil t)
+          (gascity-run-inspect)
+          ;; `!': diagnose the run's failed step, expanding to it.
+          (goto-char (point-min))
+          (gascity-run-diagnose)
+          ;; `T': the needs tree and back to the flat v2 layout.
+          (gascity-run-toggle-tree)
+          (gascity-run-toggle-tree)
+          ;; `o': the first artifact line.
+          (let ((at (gascity-test-store--position-with 'gascity-run-file)))
+            (should at)
+            (goto-char at)
+            (gascity-run-open-artifact))
+          ;; `B' and `Y': the configured web dashboard URL.
+          (gascity-run-browse-url)
+          (gascity-run-copy-url)
+          ;; Opening the inspector loads its recent events: that is the v2
+          ;; drawer read, and the only read any of the verbs issues.  No
+          ;; run/bead list, session, convoy or attempt-history read.
+          (should (= (length read-args) 1))
+          (should (equal (car (car read-args)) "events"))
+          ;; Exactly the two intended host actions, nothing from gc.
+          (should (equal (mapcar #'car spawns) '(browse find-file)))
+          (should (equal (nth 1 (assq 'browse spawns))
+                         "http://127.0.0.1:9/city/emacs-city/runs/be-bn2")))))))
 
 (provide 'gascity-store-test)
 ;;; gascity-store-test.el ends here
