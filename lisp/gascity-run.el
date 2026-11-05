@@ -113,6 +113,134 @@
                when (gethash prefix table) do (throw 'found prefix))
       nil)))
 
+(defun gascity-run--needs-map (graph formula)
+  "Return a hash of step path → ordered list of needed step paths.
+GRAPH is the run's graph beads and FORMULA its formula name.  The
+canonical edges are each bead's `blocks' dependencies, mapped through
+the same `gascity-dashboard--step-path' table the tree uses, so an
+iteration or nested bead normalizes to its step path.  When a bead has
+no blocks edges but a `needs' list, that list is a compatibility
+fallback of formula step refs (`build-basic.prepare'), not bead ids:
+the FORMULA prefix is stripped and the result used directly.  Edges to
+a path the graph does not contain, and self-edges, are dropped."
+  (let ((by-id (make-hash-table :test 'equal))
+        (by-path (make-hash-table :test 'equal))
+        (needs (make-hash-table :test 'equal))
+        (paths nil))
+    (dolist (bead graph)
+      (let ((path (gascity-dashboard--step-path bead formula)))
+        (when path
+          (unless (gethash path by-path)
+            (push path paths))
+          (puthash (alist-get 'id bead) path by-id)
+          (puthash path bead by-path))))
+    (dolist (path (nreverse paths))
+      (let* ((bead (gethash path by-path))
+             (blocks (delq nil
+                           (mapcar (lambda (dep)
+                                     (and (equal (alist-get 'type dep) "blocks")
+                                          (let ((id (alist-get 'depends_on_id dep)))
+                                            (and id (gethash id by-id)))))
+                                   (append (alist-get 'dependencies bead) nil))))
+             (fallback (unless blocks
+                         (delq nil
+                               (mapcar (lambda (need)
+                                         (when (stringp need)
+                                           (if (and (stringp formula)
+                                                    (string-prefix-p
+                                                     (concat formula ".") need))
+                                               (substring need (1+ (length formula)))
+                                             need)))
+                                       (append (alist-get 'needs bead) nil)))))
+             (deps (delete-dups (append blocks fallback))))
+        (setq deps (seq-filter (lambda (dep)
+                                 (and dep (not (equal dep path))))
+                               deps))
+        (when deps
+          (puthash path deps needs))))
+    needs))
+
+(defun gascity-run--needs-forest (tree needs)
+  "Return TREE as a list of (NODE . DEPTH) in deterministic needs order.
+TREE is the run's top-level step nodes and NEEDS the hash from
+`gascity-run--needs-map'.  A node's parent is the first needed path
+that is present; roots are nodes with no present parent, and children
+follow their parent's tree order.  A component with no root (a cycle)
+is seeded with its first node in tree order, and the node that would
+close the cycle is marked with a dim `(cycle)' help-echo.  Every
+unvisited node is appended afterwards, so a malformed graph never
+hides a step.  Nil when there are no present edges (the flat v2
+layout), and never an error."
+  (let ((nodes (seq-filter (lambda (node) (plist-get node :path)) tree)))
+    (when (and needs (> (hash-table-count needs) 0) nodes)
+      (let* ((present (make-hash-table :test 'equal))
+             (cells (make-hash-table :test 'equal))
+             (parent (make-hash-table :test 'equal))
+             (children (make-hash-table :test 'equal))
+             (visited (make-hash-table :test 'equal))
+             (emitted (make-hash-table :test 'equal))
+             (linked nil)
+             (out nil))
+        ;; A copied node keeps the forest free of render-time mutation of
+        ;; the annotated tree (only the cycle marker ever writes).
+        (dolist (node nodes)
+          (puthash (plist-get node :path) (copy-sequence node) cells))
+        (dolist (node nodes)
+          (puthash (plist-get node :path) t present))
+        (dolist (node nodes)
+          (let* ((path (plist-get node :path))
+                 (needed (gethash path needs))
+                 (found (seq-find (lambda (p)
+                                    (and (not (equal p path))
+                                         (gethash p present)))
+                                  needed)))
+            (when found
+              (setq linked t)
+              (puthash path found parent)
+              (puthash found (append (gethash found children) (list path))
+                       children))))
+        (cl-labels
+            ((mark-cycle (path)
+               (let ((node (gethash path emitted)))
+                 (when node
+                   (plist-put node :needs-note
+                              (propertize (gascity-dashboard--dim "(cycle)")
+                                          'help-echo
+                                          "dependency cycle closes here")))))
+             (emit (path depth trail)
+               (let ((node (gethash path cells)))
+                 (push (cons node depth) out)
+                 (puthash path node emitted)
+                 (puthash path t visited)
+                 (dolist (kid (gethash path children))
+                   (cond ((member kid trail) (mark-cycle kid))
+                         ((gethash kid visited) nil)
+                         (t (emit kid (1+ depth) (cons path trail))))))))
+          (dolist (node nodes)
+            (let ((path (plist-get node :path)))
+              (unless (gethash path parent)
+                (emit path 0 (list path)))))
+          (dolist (node nodes)
+            (let ((path (plist-get node :path)))
+              (unless (gethash path visited)
+                (emit path 0 (list path))))))
+        (and linked (nreverse out))))))
+
+(defun gascity-run--forest-parents (forest)
+  "Return a hash step path → parent step path from FOREST's pre-order."
+  (let ((parents (make-hash-table :test 'equal))
+        (stack nil))
+    (dolist (cell forest)
+      (let* ((node (car cell))
+             (depth (cdr cell))
+             (path (plist-get node :path)))
+        (while (and stack (>= (car (car stack)) depth))
+          (pop stack))
+        (when (and stack path)
+          (puthash path (plist-get (cdr (car stack)) :path) parents))
+        (push (cons depth node) stack)))
+    parents))
+
 (defun gascity-run-tree (root graph &optional show-control)
   "Return the step tree of run ROOT from its GRAPH beads.
 A list of top-level nodes; a node is a plist (:bead :path :name
@@ -834,6 +962,81 @@ rows, RET and the step fold machinery are inherited, not duplicated."
             (push line lines)))))
     (nreverse lines)))
 
+(defun gascity-run--forest-stage-depth (path parents stage-of stage)
+  "Return PATH's indent depth within STAGE from PARENTS and STAGE-OF.
+One for a top-level member, plus one per ancestor that is also a member
+of STAGE, capped at four indentation steps."
+  (let ((n 0)
+        (seen nil)
+        (cur (gethash path parents)))
+    (while (and cur (not (member cur seen)))
+      (when (equal (gethash cur stage-of) stage)
+        (setq n (1+ n)))
+      (setq seen (cons cur seen))
+      (setq cur (gethash cur parents)))
+    (1+ (min n 4))))
+
+(defun gascity-run--tree-stage-lines (groups forest ctx)
+  "Return the stage GROUPS rows reordered by the needs FOREST.
+Stage headers and progress stay exactly as `gascity-run--stage-lines'
+renders them; each stage's members follow the global forest pre-order,
+indented by the number of ancestors that are also members of the same
+stage (capped at four).  A member whose parent belongs to another stage
+is not over-indented; its detail column instead carries a dim
+`↳ needs <parent>' note, handed to the row renderer on the node.
+CTX is the render context."
+  (let* ((parents (gascity-run--forest-parents forest))
+         (stage-of (make-hash-table :test 'equal))
+         (by-path (make-hash-table :test 'equal))
+         (collapsed (plist-get (plist-get ctx :view) :stage-collapsed))
+         (lines nil))
+    (dolist (cell forest)
+      (let ((path (plist-get (car cell) :path)))
+        (when path (puthash path (car cell) by-path))))
+    (dolist (group groups)
+      (dolist (node (plist-get group :anchors))
+        (let ((path (plist-get node :path)))
+          (when path
+            (puthash path (plist-get group :key) stage-of)))))
+    (dolist (group groups)
+      (push (gascity-run-stage-header-line group ctx) lines)
+      (unless (member (concat "stage:" (plist-get group :key)) collapsed)
+        (let ((stage (plist-get group :key)))
+          (dolist (cell forest)
+            (let* ((node (car cell))
+                   (path (plist-get node :path)))
+              (when (and path (equal (gethash path stage-of) stage))
+                (let* ((parent-path (gethash path parents))
+                       (parent (and parent-path (gethash parent-path by-path)))
+                       (cross (and parent parent-path
+                                   (not (equal (gethash parent-path stage-of)
+                                               stage))))
+                       (shown (if cross (copy-sequence node) node)))
+                  (when cross
+                    (plist-put shown :needs-note
+                               (gascity-dashboard--dim
+                                (format "↳ needs %s"
+                                        (or (plist-get parent :name)
+                                            parent-path)))))
+                  (setq lines
+                        (append (nreverse
+                                 (gascity-run--step-lines
+                                  shown
+                                  (gascity-run--forest-stage-depth
+                                   path parents stage-of stage)
+                                  ctx))
+                                lines)))))))))
+    (nreverse lines)))
+
+(defun gascity-run--tree-flat-lines (forest ctx)
+  "Return the rows of FOREST for a formula without a stage table.
+The whole forest renders in pre-order with the existing two-space
+indentation; every row machinery is inherited from
+`gascity-run--step-lines'.  CTX is the render context."
+  (mapcan (lambda (cell)
+            (gascity-run--step-lines (car cell) (cdr cell) ctx))
+          forest))
+
 (defun gascity-run--step-lines (node depth ctx)
   "Return the lines of step NODE at DEPTH (and its children) in CTX."
   (let* ((view (plist-get ctx :view))
@@ -853,10 +1056,16 @@ rows, RET and the step fold machinery are inherited, not duplicated."
                     (assignee (car (gascity-dashboard--parse-assignee assignee)))))
          (agent (and session (gascity-dashboard--agent-object
                               who session (plist-get ctx :socket))))
+         ;; A tree note (`↳ needs PARENT', `(cycle)') takes its room
+         ;; from the name column, so the row keeps the same width.
+         (note (plist-get node :needs-note))
          ;; Names keep their column while they fit; a long nested name
          ;; pushes its row's columns right rather than being cut.
          (name-width (max 10 (- 25 (* 2 depth))
                           (min 30 (string-width (or (plist-get node :name) "")))))
+         (name-width (if note
+                         (max 10 (- name-width (1+ (string-width note))))
+                       name-width))
          (time (gascity-ui-time (if (equal (alist-get 'status shown) "closed")
                                     (alist-get 'closed_at shown)
                                   (alist-get 'updated_at shown))
@@ -878,7 +1087,8 @@ rows, RET and the step fold machinery are inherited, not duplicated."
                                                 ('failed 'failed) (_ 'pending)))
                                         " " (gascity-run--detail node))
                               (gascity-run--detail node))
-                            9)))
+                            9)
+                       (if note (concat " " note) "")))
          ;; The worker gets what the row has left before the time.
          (left (if who
                    (let ((mark (if session (concat (gascity-ui-glyph 'ok) " ") "")))
@@ -934,6 +1144,9 @@ headers; one without keeps the flat step rows (run-view-v2 §2)."
                     (plist-get run :ladder)))
              (formula (gascity-runs--meta root 'gc.formula_name))
              (groups (gascity-run-stage-groups tree formula))
+             (tree-view (plist-get (plist-get ctx :view) :tree))
+             (needs (and tree-view (gascity-run--needs-map graph formula)))
+             (forest (and needs (gascity-run--needs-forest tree needs)))
              (ctx (if groups
                       (let ((failed (gascity-runs-failed-step index root)))
                         (if failed
@@ -942,6 +1155,14 @@ headers; one without keeps the flat step rows (run-view-v2 §2)."
                     ctx))
              (body
               (cond
+               ((and groups forest)
+                ;; The needs forest only orders and indents each stage's
+                ;; members; headers and progress are untouched.
+                (append
+                 (gascity-run--tree-stage-lines groups forest ctx)
+                 (and control
+                      (gascity-run--stage-lines
+                       (list (gascity-run--control-group tree)) ctx))))
                (groups
                 ;; Control nodes of a mapped run are lifted out of the
                 ;; tree (most are nested) into one trailing group, so
@@ -951,6 +1172,7 @@ headers; one without keeps the flat step rows (run-view-v2 §2)."
                  (and control
                       (gascity-run--stage-lines
                        (list (gascity-run--control-group tree)) ctx))))
+               (forest (gascity-run--tree-flat-lines forest ctx))
                (t (mapcan (lambda (n) (gascity-run--step-lines n 0 ctx)) tree))))
              (summary (format "%s · %d beads" (plist-get run :progress)
                               (length graph))))
@@ -990,6 +1212,7 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
           (drawers nil)
           (expanded nil)
           (stage-collapsed nil)
+          (tree nil)
           (control nil))
   :render
   (let* ((beads-res (gascity-runs-use-beads refresh-tick))
@@ -1032,6 +1255,7 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
                     :view (list :collapsed collapsed :drawers drawers
                                 :expanded expanded
                                 :stage-collapsed stage-collapsed
+                                :tree tree
                                 :control control))))
     (vui-text (string-join (gascity-run-lines ctx) "\n"))))
 
@@ -1076,6 +1300,16 @@ On a drain step's member run, open that run's detail.  RET never folds
   "Show or hide the control nodes (spec, scope check, finalize) (`C')."
   (interactive)
   (gascity-dashboard--set-state :control (not (gascity-dashboard--state :control))))
+
+(defun gascity-run-toggle-tree ()
+  "Toggle the needs-aware step tree (`T').
+The flat dependency-ordered/stage-grouped v2 layout is the default and
+is restored byte-for-byte when toggled back.  A boolean root state,
+not `gascity-dashboard--flip' (which toggles list membership); it
+re-renders with no re-read and survives refresh and `!'.  A formula
+without edge data falls back to the flat layout unchanged."
+  (interactive)
+  (gascity-dashboard--set-state :tree (not (gascity-dashboard--state :tree))))
 
 (defun gascity-run--property-at-point (prop)
   "Return text property PROP at point, or at the last character of the line.
@@ -1289,6 +1523,7 @@ failed step is a `user-error'."
   "RET" #'gascity-run-activate
   "b"   #'gascity-run-root-bead
   "C"   #'gascity-run-toggle-control
+  "T"   #'gascity-run-toggle-tree
   "I"   #'gascity-run-inspect
   "w"   #'gascity-run-copy-id
   "!"   #'gascity-run-diagnose
@@ -1301,8 +1536,9 @@ failed step is a `user-error'."
 
 TAB/S-TAB move between steps, SPC folds a stage or a loop or opens a
 step's inspector drawer, RET opens the step's bead or visits an
-artifact, `b' the root bead, `C' shows the control nodes, and `I'
-toggles the inspector for any step row (fold rows included).
+artifact, `b' the root bead, `C' shows the control nodes, `T' toggles
+the needs-aware tree, and `I' toggles the inspector for any step row,
+fold rows included.
 
 `w' copies the step's bead id (the iteration id on the inspector's
 iteration line) and `!' reveals and diagnoses the run's failed step by
