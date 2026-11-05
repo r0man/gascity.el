@@ -631,16 +631,7 @@ still carries a close reason, so only failed beads are candidates."
                              (equal (gascity-runs--meta iteration 'gc.outcome) "fail")
                              (list iteration))
                         nearest))))
-    (gascity-run--failure-string info)))
-
-(defun gascity-run--failure-string (info)
-  "Return failure INFO (CLASS . REASON) as text, `(none)' when healthy.
-CLASS and REASON are joined `class: reason'; either alone is shown as
-is.  The step inspector and the attempt history share this shape."
-  (cond ((and (car info) (cdr info)) (format "%s: %s" (car info) (cdr info)))
-        ((car info) (car info))
-        ((cdr info) (cdr info))
-        (t "(none)")))
+    (gascity-ui-failure-text info)))
 
 ;;; Attempt history (run-view-v3 §A, REQ-001)
 
@@ -735,7 +726,7 @@ one reads `(none)' even when it carries a close reason."
          ;; A healthy attempt is `(none)' even though its close reason is
          ;; set; only a failed attempt names a class and reason.
          (failure (if (equal (gascity-run--meta bead 'gc.outcome) "fail")
-                     (gascity-run--failure-string
+                     (gascity-ui-failure-text
                       (gascity-runs--failure-info (list bead)))
                    "(none)")))
     (concat "  "
@@ -1037,15 +1028,7 @@ index, so opening or refreshing the drawer reads nothing."
   (let* ((run (gascity-runs-summary index member))
          (root (plist-get run :root))
          (state (plist-get run :state))
-         (failed (and root (gascity-runs-failed-step index root)))
-         (info (or (and failed
-                        (or (plist-get failed :class)
-                            (plist-get failed :reason))
-                        (cons (plist-get failed :class)
-                              (plist-get failed :reason)))
-                   (and root
-                        (gascity-runs--failure-info
-                         (gascity-runs--failed-beads-of-run index root)))))
+         (info (gascity-runs--run-failure run index root))
          (worker (and (plist-get run :worker-bead)
                       (gascity-runs--worker (plist-get run :worker-bead)
                                             (plist-get ctx :sessions)
@@ -1059,8 +1042,7 @@ index, so opening or refreshing the drawer reads nothing."
              "  " (gascity-ui-time (plist-get run :time) (plist-get ctx :now))
              "  " (or (plist-get run :rig) "city"))
      (concat "worker   " (if worker (car worker) "no live worker"))
-     (concat "failure  "
-             (if info (gascity-runs--failure-text info) "(none)"))
+     (concat "failure  " (gascity-ui-failure-text info))
      (gascity-dashboard--dim "RET run"))))
 
 (defun gascity-run--member-lines (step depth ctx)
@@ -1557,18 +1539,10 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
                                 :tree tree
                                 :control control)))
          (model (gascity-run--model ctx))
-         (facts (and model (gascity-run--facts (plist-get model :tree) ctx)))
-         (old (car previous-facts)))
-    ;; Keyed on facts, not on the refresh tick: a delivery that changes
-    ;; nothing visible leaves the sticky highlight and stamp untouched.
-    (unless (equal facts old)
-      (setcar changed-ids (and old (gascity-ui-changed-ids old facts)))
-      (setcar previous-facts facts)
-      (when old
-        (setcar last-update (plist-get beads-res :updated-at))))
-    (setq ctx (plist-put (plist-put ctx :deltas
-                                    (gascity-ui-delta-table (car changed-ids)))
-                         :last-update (car last-update)))
+         (facts (and model (gascity-run--facts (plist-get model :tree) ctx))))
+    (setq ctx (gascity-ui-apply-delta
+               ctx previous-facts changed-ids last-update facts
+               (plist-get beads-res :updated-at)))
     (vui-text (string-join (gascity-run-lines ctx) "\n"))))
 
 ;;; Commands

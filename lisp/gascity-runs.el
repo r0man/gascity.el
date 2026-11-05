@@ -619,14 +619,22 @@ FORMULA without a stage table has no label."
        (nth 1 stage)))
    (gascity-run-stage-for-formula formula)))
 
-(defun gascity-runs--failure-text (info)
-  "Return the `CLASS: REASON' text of INFO, a (CLASS . REASON) pair."
-  (let ((class (car-safe info))
-        (reason (cdr-safe info)))
-    (cond ((and class reason) (concat class ": " reason))
-          (class class)
-          (reason reason)
-          (t "-"))))
+(defun gascity-runs--run-failure (run index root)
+  "Return the (CLASS . REASON) failure of RUN, or nil.
+Only an active or failed RUN has one.  INDEX is the run index and ROOT
+its root bead.  The failed step is consulted first (its class and
+reason), then the run's failed beads, so the Runs facts line and a
+drain member's drawer derive one answer (run-view-v3 R5)."
+  (when (memq (plist-get run :state) '(active failed))
+    (let ((failed (and root (gascity-runs-failed-step index root))))
+      (or (and failed
+               (or (plist-get failed :class)
+                   (plist-get failed :reason))
+               (cons (plist-get failed :class)
+                     (plist-get failed :reason)))
+          (and root
+               (gascity-runs--failure-info
+                (gascity-runs--failed-beads-of-run index root)))))))
 
 (defun gascity-runs--row-facts (run index)
   "Return the history facts of RUN (a summary plist) from INDEX.
@@ -651,21 +659,14 @@ worker an active run reports.  A fact the run does not carry is `-'."
                   (and name (plist-get run :formula)
                        (concat (plist-get run :formula) "." name))
                   name "-"))
-         (info (and (memq state '(active failed))
-                    (or (and (or (plist-get failed :class)
-                                 (plist-get failed :reason))
-                             (cons (plist-get failed :class)
-                                   (plist-get failed :reason)))
-                        (and index root
-                             (gascity-runs--failure-info
-                              (gascity-runs--failed-beads-of-run index root))))))
+         (info (gascity-runs--run-failure run index root))
          (worker (and (plist-get run :worker-bead)
                       (plist-get (gascity-runs--worker-facts
                                   (plist-get run :worker-bead) nil nil)
                                  :display))))
     (list :stage stage
           :step ref
-          :failure (if info (gascity-runs--failure-text info) "-")
+          :failure (gascity-ui-failure-text info "-")
           :worker (or worker "-"))))
 
 (defun gascity-runs--facts-line (facts &optional changed)
@@ -923,18 +924,10 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
                (list :collapsed collapsed :drawers drawers :expanded expanded
                      :history history :pages pages)
                (float-time) gascity-runs--city))
-         (facts (gascity-runs--facts (plist-get ctx :runs) ctx))
-         (old (car previous-facts)))
-    ;; Keyed on facts, not on the refresh tick: a delivery that changes
-    ;; nothing visible leaves the sticky highlight and stamp untouched.
-    (unless (equal facts old)
-      (setcar changed-ids (and old (gascity-ui-changed-ids old facts)))
-      (setcar previous-facts facts)
-      (when old
-        (setcar last-update (plist-get beads-res :updated-at))))
-    (setq ctx (plist-put (plist-put ctx :deltas
-                                    (gascity-ui-delta-table (car changed-ids)))
-                         :last-update (car last-update)))
+         (facts (gascity-runs--facts (plist-get ctx :runs) ctx)))
+    (setq ctx (gascity-ui-apply-delta
+               ctx previous-facts changed-ids last-update facts
+               (plist-get beads-res :updated-at)))
     (setq gascity-runs--formulas
           (delete-dups (mapcar (lambda (r) (plist-get r :formula))
                                (plist-get ctx :runs))))
