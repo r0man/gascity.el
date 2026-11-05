@@ -211,8 +211,30 @@ quarter hour) unless FILTERS unfold it (`:unfold')."
         (format "%s %s" (alist-get 'id bead) (or (alist-get 'title bead) ""))
       subject)))
 
-(defun gascity-event--value (value)
-  "Return VALUE as one short display line (no elisp printed forms)."
+;; The cockpit's drawer helpers live in `gascity-dashboard', which loads
+;; after this file; declaring them here lets the value budget read them at
+;; render time without a load-order cycle.
+(defvar gascity-dashboard--drawer-width)
+(defvar gascity-dashboard--width)
+
+(defun gascity-event--drawer-value-width (key-width)
+  "Return the value budget of a drawer line whose key column is KEY-WIDTH.
+The cockpit wraps an event drawer in its 4-column `  │ ' prefix, so a
+`key  value' line must fit `gascity-dashboard--drawer-width' (falling
+back to the 78-column cockpit minus that prefix while the drawer helper
+is not loaded).  A value is never narrower than 20 nor wider than 60
+columns."
+  (let ((inner (cond ((boundp 'gascity-dashboard--drawer-width)
+                      gascity-dashboard--drawer-width)
+                     ((boundp 'gascity-dashboard--width)
+                      (- gascity-dashboard--width 4))
+                     (t 74))))
+    (max 20 (min 60 (- inner 2 key-width)))))
+
+(defun gascity-event--value (value &optional width)
+  "Return VALUE as one short display line (no elisp printed forms).
+WIDTH is the column budget (default 60); a cut value keeps its full
+text in `help-echo'."
   (let ((text (cond ((stringp value) value)
                     ((numberp value) (number-to-string value))
                     ((eq value t) "true")
@@ -222,16 +244,36 @@ quarter hour) unless FILTERS unfold it (`:unfold')."
                     ((and (consp value) (consp (car value)))
                      (format "{%d fields}" (length value)))
                     (t (format "%s" value)))))
-    (truncate-string-to-width (replace-regexp-in-string "\n" " " text)
-                              60 nil nil "…")))
+    (gascity-ui-truncate (replace-regexp-in-string "\n" " " text)
+                         (or width 60))))
+
+(defun gascity-event--bead-why-fields (bead)
+  "Return why BEAD ended, as drawer pairs: `close_reason' then failure class.
+Each is present only when it is a non-empty string: the bead's
+`close_reason' and its metadata `gc.failure_class' (REQ-004).
+`gc events' payload beads carry the reason in `metadata', while the
+`gc bd list' shape puts it at the bead's top level; prefer the event
+shape and keep the top-level value as the fallback."
+  (let* ((metadata (alist-get 'metadata bead))
+         (reason (or (alist-get 'close_reason metadata)
+                     (alist-get 'close_reason bead)))
+         (class (alist-get 'gc.failure_class metadata)))
+    (delq nil
+          (list (and (stringp reason) (not (string-blank-p reason))
+                     (cons 'close_reason reason))
+                (and (stringp class) (not (string-blank-p class))
+                     (cons 'gc.failure_class class))))))
 
 (defun gascity-event-fields (event)
   "Return EVENT's fields beyond time, type, seq and ok as `key value' lines.
 The inline drawer of an event row (§5.4).  The payload's fields are
 listed with the event's own (`routed_to  …'), each key once (a payload
 `message' repeating the event's is dropped); a payload bead is one
-line (id, title, status), not the whole bead.  Keys share one column;
-values are cut at 60 columns and the drawer at 12 lines."
+line (id, title, status), followed by its `close_reason' and metadata
+`gc.failure_class' when it carries them, not the whole bead.  Keys
+share one column; values are cut to fit the cockpit drawer (at most 60
+columns) with their full text in `help-echo', and the drawer at 12
+lines."
   (let (pairs)
     (dolist (field event)
       (let ((key (car field)) (v (cdr field)))
@@ -239,13 +281,15 @@ values are cut at 60 columns and the drawer at 12 lines."
           (if (and (eq key 'payload) (consp v) (consp (car v)))
               (dolist (pf v)
                 (when (cdr pf)
-                  (push (if (and (eq (car pf) 'bead) (consp (cdr pf)))
-                            (let ((b (cdr pf)))
-                              (cons 'bead (format "%s %s (%s)" (alist-get 'id b)
+                  (if (and (eq (car pf) 'bead) (consp (cdr pf)))
+                      (let ((b (cdr pf)))
+                        (push (cons 'bead (format "%s %s (%s)" (alist-get 'id b)
                                                   (or (alist-get 'title b) "")
-                                                  (or (alist-get 'status b) "?"))))
-                          pf)
-                        pairs)))
+                                                  (or (alist-get 'status b) "?")))
+                              pairs)
+                        (dolist (why (gascity-event--bead-why-fields b))
+                          (push why pairs)))
+                    (push pf pairs))))
             (push (cons key v) pairs)))))
     (setq pairs (nreverse pairs))
     ;; Each key once: the event's own field wins over a payload one.
@@ -258,7 +302,8 @@ values are cut at 60 columns and the drawer at 12 lines."
     (let ((width (apply #'max 0 (mapcar (lambda (p) (length (symbol-name (car p)))) pairs))))
       (mapcar (lambda (p)
                 (format "%s  %s" (string-pad (symbol-name (car p)) width)
-                        (gascity-event--value (cdr p))))
+                        (gascity-event--value
+                         (cdr p) (gascity-event--drawer-value-width width))))
               pairs))))
 
 (provide 'gascity-event)
