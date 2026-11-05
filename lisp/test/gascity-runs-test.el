@@ -1714,6 +1714,83 @@ properties, so RET/i/v/t resolve from the drawer without new commands."
             (gascity-runs-agent-tmux))
           (should (equal attached "gc__requirements-planner-ec-fl8o")))))))
 
+;;; Web handoff (run-view-v3 §C, REQ-004)
+
+(ert-deftest gascity-test-run-web-url ()
+  "The run's web URL is the verified route under the configured base.
+Trailing slashes are trimmed, both path segments are percent-encoded,
+and no scope query is fabricated: the web app appends it only when the
+scope resolves."
+  (should (equal (gascity-run-web-url "be-52m5" "emacs-city"
+                                      "http://127.0.0.1:8372")
+                 "http://127.0.0.1:8372/city/emacs-city/runs/be-52m5"))
+  ;; A trailing slash (or several) never doubles the separator.
+  (should (equal (gascity-run-web-url "be-52m5" "emacs-city"
+                                      "http://127.0.0.1:8372//")
+                 "http://127.0.0.1:8372/city/emacs-city/runs/be-52m5"))
+  ;; Both segments are URL-hexified, so a space or slash cannot escape
+  ;; its path segment.
+  (should (equal (gascity-run-web-url "be 52/5" "emacs city"
+                                      "http://127.0.0.1:8372")
+                 "http://127.0.0.1:8372/city/emacs%20city/runs/be%2052%2F5"))
+  ;; The base defaults to the defcustom.
+  (let ((gascity-dashboard-url "http://127.0.0.1:8372"))
+    (let ((url (gascity-run-web-url "be-52m5" "emacs-city")))
+      (should (equal url
+                     "http://127.0.0.1:8372/city/emacs-city/runs/be-52m5"))
+      (should-not (string-match-p "\\?" url)))))
+
+(ert-deftest gascity-test-run-web-url-browse-and-copy ()
+  "`B' opens the run in the browser and `Y' copies the same URL."
+  (let ((gascity-dashboard-url "http://127.0.0.1:8372")
+        (browsed nil) (copied nil) (shown nil))
+    (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+      (setq gascity-run--city "emacs-city")
+      (cl-letf (((symbol-function 'browse-url)
+                 (lambda (url &rest _) (setq browsed url)))
+                ((symbol-function 'kill-new)
+                 (lambda (string &optional _replace) (setq copied string)))
+                ((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (setq shown (apply #'format format-string args)))))
+        (gascity-run-browse-url)
+        (should (equal browsed
+                       "http://127.0.0.1:8372/city/emacs-city/runs/be-bn2"))
+        (should (equal shown browsed))
+        (setq browsed nil)
+        (gascity-run-copy-url)
+        (should-not browsed)
+        (should (equal copied
+                       "http://127.0.0.1:8372/city/emacs-city/runs/be-bn2"))
+        (should (equal shown (concat "Copied " copied)))))))
+
+(ert-deftest gascity-test-run-web-url-absent ()
+  "With no configured dashboard the builder is nil and `B'/`Y' only say
+how to configure it: nothing is browsed and nothing is copied."
+  (let ((gascity-dashboard-url nil))
+    (should-not (gascity-run-web-url "be-52m5" "emacs-city"))
+    (should-not (gascity-run-web-url "be-52m5" "emacs-city" ""))
+    (should-not (gascity-run-web-url "be-52m5" "emacs-city" "//"))
+    (should-not (gascity-run-web-url nil "emacs-city" "http://127.0.0.1:8372"))
+    (should-not (gascity-run-web-url "be-52m5" "" "http://127.0.0.1:8372")))
+  (let ((browsed nil) (copied nil) (messages nil))
+    (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+      (setq gascity-run--city "emacs-city")
+      (cl-letf (((symbol-function 'browse-url)
+                 (lambda (&rest _) (setq browsed t)))
+                ((symbol-function 'kill-new)
+                 (lambda (&rest _) (setq copied t)))
+                ((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (push (apply #'format format-string args) messages))))
+        (gascity-run-browse-url)
+        (gascity-run-copy-url)
+        (should-not browsed)
+        (should-not copied)
+        (should (equal messages
+                       '("No dashboard URL configured; set gascity-dashboard-url"
+                         "No dashboard URL configured; set gascity-dashboard-url")))))))
+
 ;;; Render guard (§8.3 R2, §8.4)
 
 (ert-deftest gascity-test-runs-render-remote-is-io-free ()

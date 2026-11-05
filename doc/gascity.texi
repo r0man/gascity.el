@@ -4689,6 +4689,14 @@ How far back the Runs view's Failed section looks (default
 @code{"24h"}); @kbd{/ -W} overrides it.
 @end defopt
 
+@vindex gascity-dashboard-url
+@defopt gascity-dashboard-url
+Base URL of the city's web dashboard, such as
+@code{http://127.0.0.1:8372}, used by the run detail's web handoff;
+@code{nil} (default) means not configured and gascity never guesses a
+host.
+@end defopt
+
 @subheading Sling and formulas
 
 @vindex gascity-sling-var-readers

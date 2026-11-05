@@ -34,6 +34,9 @@ are in @ref{Customization and Theming}; this table only enumerates them.
 @item @code{gascity-dashboard-section-rows}
 @tab @code{5}
 @tab @code{natnum}
+@item @code{gascity-dashboard-url}
+@tab @code{nil}
+@tab @code{choice}
 @item @code{gascity-dashboard-window}
 @tab @code{"2h"}
 @tab @code{string}

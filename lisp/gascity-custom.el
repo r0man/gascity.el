@@ -141,6 +141,18 @@ the default tmux server (no -L flag)."
 (define-obsolete-variable-alias 'gascity-terminal-status-interval
   'beads-terminal-tmux-status-interval "0.2.0")
 
+;;; Dashboard (run-view-v3 §C)
+
+(defcustom gascity-dashboard-url nil
+  "Base URL of the Gas City web dashboard for the current city.
+A supervisor/dashboard base such as \"http://127.0.0.1:8372\", with or
+without a trailing slash.  The run detail's `B' and `Y' keys build a
+run URL from it (`gascity-run-web-url'); nil means not configured and
+they only say so: gascity never guesses a host."
+  :type '(choice (const :tag "Not configured" nil)
+                 (string :tag "Base URL"))
+  :group 'gascity)
+
 ;;; Events and mail (dashboard-v3 §7.8, §7.9)
 
 (defcustom gascity-event-levels
