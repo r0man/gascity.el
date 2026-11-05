@@ -90,6 +90,10 @@
 (declare-function gascity-runs-last-activity "gascity-runs")
 (declare-function gascity-runs-parent-id "gascity-runs")
 (declare-function gascity-runs-failed-step "gascity-runs")
+(declare-function gascity-runs-summary "gascity-runs")
+(declare-function gascity-runs--close-reason "gascity-runs")
+(declare-function gascity-runs--failure-info "gascity-runs")
+(declare-function gascity-runs--run-failure "gascity-runs")
 (declare-function gascity-session-nudge-at-point "gascity-action")
 (declare-function gascity-session-suspend-at-point "gascity-action")
 (declare-function gascity-session-kill-at-point "gascity-action")
@@ -883,6 +887,8 @@ escalated/held beads, unread mail, store health."
                      :drawer (lambda ()
                                (gascity-dashboard--failed-step-drawer root step))))))))
       ;; ■ runs that failed in the window (root closed, gc.outcome fail).
+      ;; The row carries the failure class (the rig moves to the drawer)
+      ;; and the drawer explains the failure (REQ-001).
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
           (let* ((bead (gascity-event-bead e))
@@ -893,14 +899,27 @@ escalated/held beads, unread mail, store health."
                        (equal (alist-get 'gc.outcome meta) "fail")
                        (not (gethash id seen)))
               (puthash id t seen)
-              (add :level 'fail :kind "run" :id (concat "failed:" id)
-                   :text (format "%s %s  failed" id
-                                 (or (alist-get 'gc.formula_name meta) ""))
-                   :right (or (gascity-dashboard--store-of-id id ctx) "")
-                   :time (alist-get 'ts e)
-                   :props (list 'gascity-bead id
-                                'gascity-run-rig
-                                (or (gascity-dashboard--store-of-id id ctx) "")))))))
+              (let* ((detail (gascity-dashboard--failed-run-detail bead run-index))
+                     (rig (gascity-dashboard--store-of-id id ctx))
+                     ;; Class first, then the rig, then the city.  The
+                     ;; class is cut to 20 columns with the full text in
+                     ;; `help-echo' (Decisions 3).
+                     (right (gascity-ui-truncate
+                             (or (plist-get detail :class) rig "city") 20)))
+                (add :level 'fail :kind "run" :id (concat "failed:" id)
+                     :text (format "%s %s  failed" id
+                                   (or (alist-get 'gc.formula_name meta) ""))
+                     ;; `gascity-ui-right-align' never clips, so the left
+                     ;; cell gives back what the right cell takes:
+                     ;; 18 + WIDTH + 2 + RIGHT = 78 (Decisions 3).
+                     :width (max 20 (- 58 (string-width right)))
+                     :right right
+                     :time (alist-get 'ts e)
+                     :drawer (lambda ()
+                               (gascity-dashboard--failed-run-drawer
+                                bead run-index))
+                     :props (list 'gascity-bead id
+                                  'gascity-run-rig (or rig ""))))))))
       ;; ▲ beads reopened after their assignee died.
       (let ((seen (make-hash-table :test 'equal)))
         (dolist (e (reverse events))
@@ -1390,6 +1409,57 @@ failure class, reason and member run (ga-g092a)."
                            (if (plist-get step :member-ref)
                                (concat "  " (plist-get step :member-ref))
                              ""))))))
+
+(defun gascity-dashboard--failed-run-detail (bead index)
+  "Return (:class CLASS :ref REF :reason REASON :full FULL) for failed run BEAD.
+INDEX is the Runs index, or nil before that read lands.  The failed
+step is consulted first (its class, ref and reason), then the run's own
+failure, then the event bead itself (`gc.failure_class'/
+`gc.failure_reason', falling back to its close reason).  REASON is the
+first line of the failure reason -- what a drawer can show in one row
+-- and FULL is the complete text, for `help-echo'."
+  (let* ((step (and index bead (gascity-runs-failed-step index bead)))
+         (run (and index bead (gascity-runs-summary index bead)))
+         (info (or (and step
+                        (or (plist-get step :class) (plist-get step :reason))
+                        (cons (plist-get step :class) (plist-get step :reason)))
+                   (and run (gascity-runs--run-failure run index bead))
+                   (gascity-runs--failure-info (list bead))))
+         (meta (gascity-dashboard--meta bead))
+         (class (or (car-safe info)
+                    (alist-get 'gc.failure_class meta)))
+         (reason (or (cdr-safe info)
+                     (alist-get 'gc.failure_reason meta)
+                     (gascity-runs--close-reason bead)))
+         (ref (or (plist-get step :ref)
+                  (alist-get 'gc.step_ref meta))))
+    (list :class class :ref ref
+          :reason (gascity-ui-first-line reason)
+          :full reason)))
+
+(defun gascity-dashboard--failed-run-drawer (bead index)
+  "Return the drawer lines of failed run BEAD in INDEX (REQ-001).
+The run id and formula, the failure class, the failed step ref and the
+first line of the reason (the full reason in `help-echo'), then the
+RET/b hint.  Always the run line and the hint, even when the failure
+names no class or reason.  Pure over the cockpit context: no gc read."
+  (let* ((detail (gascity-dashboard--failed-run-detail bead index))
+         (meta (gascity-dashboard--meta bead))
+         (class (plist-get detail :class))
+         (ref (plist-get detail :ref))
+         (reason (plist-get detail :reason))
+         (full (plist-get detail :full)))
+    (delq nil
+          (list (gascity-dashboard--drawer-value
+                 "run      " (format "%s  %s" (alist-get 'id bead)
+                                      (or (alist-get 'gc.formula_name meta) "")))
+                (and class
+                     (gascity-dashboard--drawer-value "class    " class))
+                (and ref
+                     (gascity-dashboard--drawer-value "step     " ref))
+                (and reason
+                     (gascity-dashboard--drawer-value "reason   " reason full))
+                (gascity-dashboard--dim "RET run detail  b root bead")))))
 
 (defun gascity-dashboard--needs-you-drawer (item)
   "Return the drawer lines of a Needs you ITEM."
