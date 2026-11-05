@@ -852,6 +852,22 @@ omitted.  The semantic contract behind these tables is
 @tab @kbd{!}
 @tab @code{gascity-run-diagnose}
 @tab Diagnose the run (or drain-member run) at point (‘!’).
+@item @code{run-detail}
+@tab @kbd{o}
+@tab @code{gascity-run-open-artifact}
+@tab Visit the artifact at point (‘o’).
+@item @code{run-detail}
+@tab @kbd{B}
+@tab @code{gascity-run-browse-url}
+@tab Open the current run in the configured web dashboard (‘B’).
+@item @code{run-detail}
+@tab @kbd{Y}
+@tab @code{gascity-run-copy-url}
+@tab Copy the current run’s web dashboard URL (‘Y’).
+@item @code{run-detail}
+@tab @kbd{T}
+@tab @code{gascity-run-toggle-tree}
+@tab Toggle the needs-aware step tree (‘T’).
 @item @code{health}
 @tab @kbd{q}
 @tab @code{quit-window}
