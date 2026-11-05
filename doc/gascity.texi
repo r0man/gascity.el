@@ -1035,15 +1035,19 @@ beads, unread mail and the beads store's size (@samp{◐} when
 
 @table @asis
 @item Needs you
-Stalled agents (running without a live session), in-progress work whose
-assignee has no live session or whose lease has lapsed with no session
-activity since (the row names the bead, assignee, age since claim and
-lease, its right column the run, and its drawer the step), sessions that
-crashed or timed out and were not woken since, runs with no step
-progress for @code{gascity-dashboard-run-idle-threshold} seconds, runs
-that failed, beads reopened after their assignee died, beads labelled
-@samp{gc:escalation} or @samp{hold:*}, unread mail and store-health
-warnings --- @samp{■} before @samp{▲}.
+Stalled agents (running without a live session; the row gives the stall
+age, and the drawer that age with the timestamp it counts from, plus
+the hooked bead's lease expiry and heartbeat when @command{gc} reports
+them), in-progress work whose assignee has no live session or whose
+lease has lapsed with no session activity since (the row names the
+bead, assignee, age since claim and lease, its right column the run,
+and its drawer the step), sessions that crashed or timed out and were
+not woken since, runs with no step progress for
+@code{gascity-dashboard-run-idle-threshold} seconds, runs that failed
+(the row's right column carries the failure class, and its drawer the
+class, the failed step and the reason), beads reopened after their
+assignee died, beads labelled @samp{gc:escalation} or @samp{hold:*},
+unread mail and store-health warnings --- @samp{■} before @samp{▲}.
 @item Moving
 Active runs with their step ladder (@samp{◆} done, @samp{⬣} active,
 @samp{·} pending, @samp{✕} failed) and their live workers; in-progress
@@ -1906,19 +1910,21 @@ Active  1
 Failed  1 · last 24h
   ✕ be-bn2   build-basic                              beads.el   2h
      ◆◆◆◆◆◆◆✕◆◆  review         9/10   control_dispatch_error
-  stage Rev… · step build-basic.re… · failure control_dispatc… · worker contr…
+  stage Review · step build-basic.rev… · fail control_dispatch… · work control
 @end example
 
 @shot{runs-dark, The Runs view (ef-deuteranopia-dark)}
 
 @noindent
 A card's second line is the step ladder (@pxref{Visual language}), the
-active step, progress, and the worker on it.  @command{gc} has no run
-summary (@pxref{Capability Gaps}), so a run is derived from its bead
-graph: the root bead of kind @code{workflow} and every bead that names
-it as @code{gc.root_bead_id}, read from the city store and every rig
-store.  The cockpit's Moving section uses the same ladder, so the two
-always agree.  A drain member run's card nests under its parent's in
+active step, progress, and the worker on it; on a failed card the last
+cell is the run's failure reason instead, cut to the width the rest of
+the line leaves it, with the full text in its help-echo.  @command{gc}
+has no run summary (@pxref{Capability Gaps}), so a run is derived from
+its bead graph: the root bead of kind @code{workflow} and every bead
+that names it as @code{gc.root_bead_id}, read from the city store and
+every rig store.  The cockpit's Moving section uses the same ladder, so
+the two always agree.  A drain member run's card nests under its parent's in
 Active (@samp{└}, indented), and the section counts it as a sub-run.
 
 The summary line counts every run all-time and says so (@samp{(all
@@ -1936,13 +1942,15 @@ The summary counts and the section contents come from the same
 rig/formula-filtered run list, so a filter changes both together.
 
 Every history row is followed by a dim @dfn{facts line} naming the
-run's @samp{stage}, @samp{step}, @samp{failure} and @samp{worker} in
-four columns that add up to the view's 78 columns.  The facts line
-belongs to the same run as the row above it: point, @key{TAB} and
-@key{RET} behave the same on either line, so a history row can be
-opened or folded from its facts line.  Each value is fitted to its
-column, and a value that had to be cut carries its full text in its
-help-echo.  The step is the failed step for an active or failed run
+run's @samp{stage}, @samp{step}, @samp{fail} and @samp{work} in four
+columns that are 12, 21, 22 and 12 columns wide including the label, so
+the line is always 78 columns --- the view's width.  Each column
+budgets its value separately from its label (6, 16, 17 and 7 columns)
+and pads or cuts it inside that budget; a value that had to be cut
+carries its full text in its help-echo.  The facts line belongs to the
+same run as the row above it: point, @key{TAB} and @key{RET} behave the
+same on either line, so a history row can be opened or folded from its
+facts line.  The step is the failed step for an active or failed run
 and the last ladder step for a closed one; the stage is that step's
 lifecycle label (or the step name when the formula has no stage
 table); and a fact the run does not carry reads @samp{-}.
@@ -2144,7 +2152,8 @@ The three newest events for the step, its iteration or a descendant;
 when the events read failed.
 @item failure
 The failure class and reason from the step or its nearest failed
-descendant, or @samp{(none)} for a healthy step.
+descendant, or @samp{(none)} for a healthy step.  A long reason is cut
+to the drawer's width, its full text in the line's help-echo.
 @end table
 
 @table @kbd
