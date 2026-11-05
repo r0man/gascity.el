@@ -4,6 +4,38 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### Cockpit and run diagnostics
+
+A failed run in the cockpit's Needs you section now explains its
+failure on the spot: the row's right column carries the failure class
+(cut to 20 columns, full text in help-echo), and the drawer names the
+class, the failed step and the first line of the reason, with the full
+reason in help-echo and the `RET run detail`/`b root bead` hints; the
+rig moves to the drawer (ga-shl0s).
+
+The Runs history facts line budgets each of its four values separately
+from its dim label (`stage` 6, `step` 16, `fail` 17, `work` 7 columns),
+so a stage reads `Review` instead of `Rev…` and every cell keeps its
+full text in help-echo when cut; the line stays exactly 78 columns
+(ga-v67dq).
+
+Long `gc.failure_reason`/`close_reason` text in a Runs failed card, the
+run-detail step and drain-member drawers, and the cockpit's failed-run
+drawer is now cut to the width the line leaves with the full reason in
+help-echo, instead of running off the window edge (ga-wjlx6).
+
+The Events detail for a `bead.closed` (or `bead.updated`) payload now
+lists the bead's `close_reason` and `gc.failure_class` as their own
+`key value` lines, fitted to the drawer width with the full value in
+help-echo, and never repeats a key already shown for the event
+(ga-th2e2).
+
+A stalled agent's cockpit row now says how long it has been stalled,
+and its drawer adds the timestamp that age counts from plus the hooked
+bead's lease expiry and heartbeat when `gc` reports them; the reason
+(`running, no live session`) is never squeezed out by a long qualified
+name, and an unknown timestamp reads `unknown` (ga-vinoi).
+
 ### The run detail's header names the run's provenance
 
 The header now labels every fact it holds instead of printing one
