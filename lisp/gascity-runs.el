@@ -669,29 +669,44 @@ worker an active run reports.  A fact the run does not carry is `-'."
           :failure (gascity-ui-failure-text info "-")
           :worker (or worker "-"))))
 
+(defconst gascity-runs--facts-columns
+  '((stage "stage" 12) (step "step" 21) (failure "fail" 22) (worker "work" 12))
+  "The four facts columns of a history row: (KEY LABEL WIDTH).
+WIDTH includes the dim LABEL and its one trailing space, so the value
+budgets are 6/16/17/7 columns: `Review' fits whole, and a long
+`FORMULA.STEP' or failure reason cuts later than it used to.  With the
+two-column indent and three ` · ' separators the line is
+`2 + 12 + 3 + 21 + 3 + 22 + 3 + 12 = 78' columns, the view width
+\(REQ-002).")
+
 (defun gascity-runs--facts-line (facts &optional changed)
   "Return the dim four-column facts line of FACTS.
-The columns are stage 10, step 20, failure 24 and worker 13 columns,
-each width including its dim label, so the line is
-`2 + 10 + 3 + 20 + 3 + 24 + 3 + 13 = 78' columns, the view width.
-Every value is fitted (padded or `…'-truncated) into its column, so
-no history row can overflow.  When CHANGED, the worker value keeps the
-`gascity-changed' face: the delta promise covers the worker cell on
-both of the card's lines (run-view-v3 §D, REQ-005)."
-  (let ((cell (lambda (label value width &optional changedp)
-                (gascity-ui-fit
-                 (concat (gascity-dashboard--dim (concat label " "))
-                         (let ((text (gascity-dashboard--dim (or value "-"))))
-                           (if changedp (gascity-ui-changed text) text)))
-                 width))))
-    (concat "  "
-            (funcall cell "stage" (plist-get facts :stage) 10)
-            " · "
-            (funcall cell "step" (plist-get facts :step) 20)
-            " · "
-            (funcall cell "failure" (plist-get facts :failure) 24)
-            " · "
-            (funcall cell "worker" (plist-get facts :worker) 13 changed))))
+The columns are `gascity-runs--facts-columns': stage 12, step 21, fail 22
+and work 12 columns, each width including its dim label, so the line is
+`2 + 12 + 3 + 21 + 3 + 22 + 3 + 12 = 78' columns, the view width.  Each
+value is budgeted separately from its label (6/16/17/7 columns) and
+fitted (padded or `…'-truncated) inside that budget, keeping the full
+text in `help-echo' when cut, so no history row can overflow.  When
+CHANGED, the worker value keeps the `gascity-changed' face: the delta
+promise covers the worker cell on both of the card's lines
+\(run-view-v3 §D, REQ-005)."
+  (let ((cell (lambda (column)
+                (let* ((key (nth 0 column))
+                       (label (nth 1 column))
+                       (width (nth 2 column))
+                       (text (gascity-ui-fit
+                              (gascity-dashboard--dim
+                               (or (plist-get facts
+                                              (intern (concat ":"
+                                                              (symbol-name key))))
+                                   "-"))
+                              (- width (1+ (length label))))))
+                  (when (and changed (eq key 'worker))
+                    (setq text (gascity-ui-changed text)))
+                  (gascity-ui-fit
+                   (concat (gascity-dashboard--dim (concat label " ")) text)
+                   width)))))
+    (concat "  " (mapconcat cell gascity-runs--facts-columns " · "))))
 
 (defun gascity-runs--history-row (run ctx)
   "Return the lines of RUN's one-line history row (and drawer) in CTX.
