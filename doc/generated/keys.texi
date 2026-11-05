@@ -847,11 +847,11 @@ omitted.  The semantic contract behind these tables is
 @item @code{run-detail}
 @tab @kbd{I}
 @tab @code{gascity-run-inspect}
-@tab Toggle the step inspector drawer for the step at point (‘I’).
+@tab Toggle the inspector drawer for the row at point (‘I’).
 @item @code{run-detail}
 @tab @kbd{!}
 @tab @code{gascity-run-diagnose}
-@tab Jump to the run’s failed step and open its inspector (‘!’).
+@tab Diagnose the run (or drain-member run) at point (‘!’).
 @item @code{health}
 @tab @kbd{q}
 @tab @code{quit-window}

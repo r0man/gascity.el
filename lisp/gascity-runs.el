@@ -9,7 +9,7 @@
 ;; The Runs view (plans/dashboard-v3 §7.6), `*gascity-runs: CITY*': the
 ;; city's graph.v2 workflow runs as two-line cards,
 ;;
-;;   Runs  emacs-city   1 active · 0 waiting · 51 done · 11 failed
+;;   Runs  emacs-city   1 active · 0 waiting · 51 done · 11 failed (all time)
 ;;
 ;;   Active  1
 ;;     ⬣ be-52m5  build-basic                              beads.el   2h
@@ -20,7 +20,8 @@
 ;;        ◆◆◆◆◆◆◆✕◆◆  review         9/10   control_dispatch_error
 ;;
 ;; and, on `H', the history of closed runs, newest first, 20 per page
-;; (`+' shows the next page).  `RET' opens a run's detail
+;; (`+' shows the next page), each with a dim stage/step/failure/worker
+;; facts line.  `RET' opens a run's detail
 ;; (gascity-run.el), `b' its root bead in beads.el, `SPC' opens the
 ;; card's drawer (the full step ladder), `/' filters by rig, formula,
 ;; state and window (§5.5), each change applied at once.
@@ -52,6 +53,7 @@
 (require 'gascity-store)
 (require 'gascity-section)
 (require 'gascity-dashboard)
+(require 'gascity-run-stage)
 
 (declare-function gascity-run-show "gascity-run")
 (declare-function gascity-polecat-detail-at-point "gascity-session")
@@ -581,27 +583,134 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                 (or (gascity-dashboard--run-drawer (plist-get run :ladder))
                     (list (gascity-dashboard--dim "no steps yet"))))))))
 
+(defun gascity-runs--stage-label (formula anchor)
+  "Return the lifecycle stage label of ANCHOR in FORMULA, or nil.
+ANCHOR is the prefix-stripped step name (`gascity-run-stage-anchor');
+FORMULA without a stage table has no label."
+  (seq-some
+   (lambda (stage)
+     (when (member anchor
+                   (mapcar #'gascity-run-stage-anchor (nth 2 stage)))
+       (nth 1 stage)))
+   (gascity-run-stage-for-formula formula)))
+
+(defun gascity-runs--failure-text (info)
+  "Return the `CLASS: REASON' text of INFO, a (CLASS . REASON) pair."
+  (let ((class (car-safe info))
+        (reason (cdr-safe info)))
+    (cond ((and class reason) (concat class ": " reason))
+          (class class)
+          (reason reason)
+          (t "-"))))
+
+(defun gascity-runs--row-facts (run index)
+  "Return the history facts of RUN (a summary plist) from INDEX.
+A plist (:stage :step :failure :worker), every value a string.  The
+step is the run's failed step for active and failed runs, else its
+last ladder step; the stage is that step's lifecycle label (the step
+name when the formula has no stage table); the step reads
+`FORMULA.STEP', or the failed step's own ref; the failure comes from
+the failed step or the run's failed beads; the worker is the live
+worker an active run reports.  A fact the run does not carry is `-'."
+  (let* ((state (plist-get run :state))
+         (root (plist-get run :root))
+         (failed (and (memq state '(active failed)) index root
+                      (gascity-runs-failed-step index root)))
+         (step (or failed (car (last (plist-get run :ladder)))))
+         (name (plist-get step :name))
+         (stage (or (gascity-runs--stage-label
+                     (plist-get run :formula)
+                     (gascity-run-stage-anchor name))
+                    name "-"))
+         (ref (or (plist-get step :ref)
+                  (and name (plist-get run :formula)
+                       (concat (plist-get run :formula) "." name))
+                  name "-"))
+         (info (and (memq state '(active failed))
+                    (or (and (or (plist-get failed :class)
+                                 (plist-get failed :reason))
+                             (cons (plist-get failed :class)
+                                   (plist-get failed :reason)))
+                        (and index root
+                             (gascity-runs--failure-info
+                              (gascity-runs--failed-beads-of-run index root))))))
+         (worker (and (plist-get run :worker-bead)
+                      (plist-get (gascity-runs--worker-facts
+                                  (plist-get run :worker-bead) nil nil)
+                                 :display))))
+    (list :stage stage
+          :step ref
+          :failure (if info (gascity-runs--failure-text info) "-")
+          :worker (or worker "-"))))
+
+(defun gascity-runs--facts-line (facts)
+  "Return the dim four-column facts line of FACTS.
+The columns are stage 10, step 20, failure 24 and worker 13 columns,
+each width including its dim label, so the line is
+`2 + 10 + 3 + 20 + 3 + 24 + 3 + 13 = 78' columns, the view width.
+Every value is fitted (padded or `…'-truncated) into its column, so
+no history row can overflow."
+  (let ((cell (lambda (label value width)
+                (gascity-ui-fit
+                 (concat (gascity-dashboard--dim (concat label " "))
+                         (or value "-"))
+                 width))))
+    (gascity-dashboard--dim
+     (concat "  "
+             (funcall cell "stage" (plist-get facts :stage) 10)
+             " · "
+             (funcall cell "step" (plist-get facts :step) 20)
+             " · "
+             (funcall cell "failure" (plist-get facts :failure) 24)
+             " · "
+             (funcall cell "worker" (plist-get facts :worker) 13)))))
+
 (defun gascity-runs--history-row (run ctx)
-  "Return the lines of RUN's one-line history row (and drawer) in CTX."
-  (let ((id (plist-get run :id)))
-    (gascity-dashboard--object-row
-     (concat "run:" id)
-     (concat "  " (gascity-runs--state-glyph (plist-get run :state)) " "
-             (gascity-ui-fit id 9) " "
-             (gascity-ui-fit (plist-get run :formula) 13) " "
-             (gascity-ui-fit (gascity-dashboard--ladder-string (plist-get run :ladder))
-                             12)
-             " " (gascity-ui-fit (plist-get run :progress) 6)
-             " " (gascity-ui-fit (or (plist-get run :outcome) "") 8))
-     (concat (gascity-dashboard--dim (gascity-ui-fit (or (plist-get run :rig) "city") 10))
-             " " (gascity-runs--time-cell (plist-get run :time) (plist-get ctx :now)))
-     (lambda () (gascity-dashboard--run-drawer (plist-get run :ladder)))
-     'gascity-bead id
-     'gascity-run-rig (or (plist-get run :rig) ""))))
+  "Return the lines of RUN's one-line history row (and drawer) in CTX.
+The v2 row is followed by a dim four-column facts line
+\(`gascity-runs--facts-line'); both belong to the same object and
+drawer thing, so TAB/SPC/RET behave the same on either line."
+  (let* ((id (plist-get run :id))
+         (object (concat "run:" id))
+         (thing (gascity-dashboard--thing
+                 'row object
+                 (lambda () (gascity-dashboard--flip :drawers object))))
+         (props (list 'beads-thing thing
+                      'gascity-bead id
+                      'gascity-run-rig (or (plist-get run :rig) "")))
+         (row (apply #'gascity-dashboard--row
+                     (concat "  " (gascity-runs--state-glyph
+                                    (plist-get run :state))
+                             " " (gascity-ui-fit id 9) " "
+                             (gascity-ui-fit (plist-get run :formula) 13) " "
+                             (gascity-ui-fit
+                              (gascity-dashboard--ladder-string
+                               (plist-get run :ladder))
+                              12)
+                             " " (gascity-ui-fit (plist-get run :progress) 6)
+                             " " (gascity-ui-fit (or (plist-get run :outcome) "") 8))
+                     (concat (gascity-dashboard--dim
+                              (gascity-ui-fit (or (plist-get run :rig) "city") 10))
+                             " " (gascity-runs--time-cell
+                                  (plist-get run :time) (plist-get ctx :now)))
+                     props))
+         (facts (apply #'gascity-dashboard--line
+                       (gascity-runs--facts-line
+                        (gascity-runs--row-facts run (plist-get ctx :index)))
+                       props)))
+    (append
+     (list row facts)
+     (and (gascity-dashboard--drawer-open-p object)
+          (gascity-dashboard--drawer
+           (gascity-dashboard--run-drawer (plist-get run :ladder)))))))
 
 (defun gascity-runs--count-line (counts)
-  "Return `1 active · 0 waiting · 51 done · 11 failed' for COUNTS."
-  (mapconcat (lambda (c) (format "%d %s" (cdr c) (car c))) counts " · "))
+  "Return `1 active · 0 waiting · 51 done · 11 failed (all time)' for COUNTS.
+The counts are all-time: the same rig/formula-filtered run list the
+sections render, unlike the Failed section's `last <window>' and the
+windowed Closed history."
+  (concat (mapconcat (lambda (c) (format "%d %s" (cdr c) (car c))) counts " · ")
+          " (all time)"))
 
 (defun gascity-runs--filter-summary (filters)
   "Return the dim description of the active FILTERS, or nil."
@@ -630,6 +739,17 @@ top-level runs (in progress before waiting) and their sub-runs."
      (mapcan (lambda (n) (gascity-runs--card (car n) ctx (cdr n))) nest)
      ctx :loads '(:beads) :label "bd list")))
 
+(defun gascity-runs--title-hint (left)
+  "Return the right-aligned key hint for title LEFT, or nil.
+The full `H history  / filter' when it fits the view width, else the
+compact `H  /', so the all-time count line and the hint never push the
+title past `gascity-dashboard--width'."
+  (let ((width (string-width left))
+        (full (gascity-dashboard--dim "H history  / filter"))
+        (short (gascity-dashboard--dim "H  /")))
+    (cond ((<= (+ width 2 (string-width full)) gascity-dashboard--width) full)
+          ((<= (+ width 2 (string-width short)) gascity-dashboard--width) short))))
+
 (defun gascity-runs-lines (ctx)
   "Return every Runs view line for render context CTX.
 CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
@@ -644,15 +764,16 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
          (show (lambda (s) (or (null state) (equal state s))))
          (history (or (plist-get view :history) (equal state "done")))
          (loaded (gascity-dashboard--data (plist-get (plist-get ctx :loads) :beads)))
+         (heading
+          (concat (propertize "Runs" 'face 'gascity-header) "  "
+                  (propertize (or (plist-get ctx :city) "") 'face 'gascity-city)
+                  (if loaded
+                      (concat "   " (gascity-dashboard--dim
+                                     (gascity-runs--count-line
+                                      (plist-get parts :counts))))
+                    "")))
          (title (gascity-dashboard--row
-                 (concat (propertize "Runs" 'face 'gascity-header) "  "
-                         (propertize (or (plist-get ctx :city) "") 'face 'gascity-city)
-                         (if loaded
-                             (concat "   " (gascity-dashboard--dim
-                                            (gascity-runs--count-line
-                                             (plist-get parts :counts))))
-                           ""))
-                 (gascity-dashboard--dim "H history  / filter")))
+                 heading (gascity-runs--title-hint heading)))
          (window (or (plist-get filters :window) gascity-runs-failed-window))
          (failed (plist-get parts :failed))
          (closed (plist-get parts :closed))
@@ -686,11 +807,10 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
             (append lines (list "")
                     (gascity-dashboard--section-lines
                      "history" "Closed"
-                     (and closed
-                          (concat (number-to-string (length closed))
-                                  (if (plist-get filters :window)
-                                      (concat " · last " (plist-get filters :window))
-                                    "")))
+                     (concat (number-to-string (length closed))
+                             (if (plist-get filters :window)
+                                 (concat " · last " (plist-get filters :window))
+                               " · all time"))
                      (append
                       (mapcan (lambda (r) (gascity-runs--history-row r ctx))
                               (seq-take closed shown))

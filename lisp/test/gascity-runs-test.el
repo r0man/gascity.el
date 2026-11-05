@@ -482,7 +482,7 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
                                       :filters '(:window "36500d")))
          (text (gascity-runs-test--text (gascity-runs-lines ctx))))
     (should (string-match-p
-             "^Runs  emacs-city   1 active · 0 waiting · 1 done · 1 failed +H history  / filter$"
+             "^Runs  emacs-city   1 active · 0 waiting · 1 done · 1 failed (all time) +H  /$"
              text))
     (should (string-match-p "^Active  1$" text))
     (should (string-match-p "^  ⬣ be-52m5 +build-basic +beads.el +2h$" text))
@@ -586,7 +586,7 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
                                            (split-string text "\n")))))
     (should-not (string-match-p "^Closed" (funcall render nil)))
     (let ((text (funcall render '(:history t :pages 1))))
-      (should (string-match-p "^Closed  45$" text))
+      (should (string-match-p "^Closed  45 · all time$" text))
       (should (= (funcall rows text) 20))
       (should (string-match-p "^  ◆ ga-h00 " text))
       (should (string-match-p "^  … 25 more +\\+ more$" text)))
@@ -600,7 +600,7 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
     (let ((text (gascity-runs-test--text
                  (gascity-runs-lines (gascity-runs-test--ctx
                                       beads :filters '(:state "done"))))))
-      (should (string-match-p "^Closed  45$" text))
+      (should (string-match-p "^Closed  45 · all time$" text))
       (should-not (string-match-p "^Active\\|^Failed" text))
       (should (string-match-p "filter  state done" text)))))
 
@@ -621,9 +621,95 @@ is never simultaneously `failed' in the header and under `Done'."
     (should (string-match-p "^Failed  none · last 24h$" text))
     ;; The all-time failed run is not lost: it is in the Closed history,
     ;; whose count reconciles with the header (2 done + 1 failed).
-    (should (string-match-p "^Closed  3$" text))
+    (should (string-match-p "^Closed  3 · all time$" text))
     (should (string-match-p "^  ✕ be-bn2\\b" text))
     (should-not (string-match-p "^Done" text))))
+
+(ert-deftest gascity-test-runs-count-labels ()
+  "Header counts say all-time, Failed stays `last <window>', and Closed
+names its basis (REQ-006).  A failed run older than the window still
+counts in the header but is not in the Failed section."
+  (let* ((beads (gascity-runs-test--fixture-beads))
+         ;; Two days on: be-bn2's failure is outside the 24h Failed window.
+         (now (gascity-ui-parse-time "2026-09-27T20:00:00Z"))
+         (text (gascity-runs-test--text
+                (gascity-runs-lines
+                 (gascity-runs-test--ctx beads :now now :view '(:history t))))))
+    (should (string-match-p
+             "^Runs  emacs-city   0 active · 0 waiting · 2 done · 1 failed (all time) +H  /$"
+             text))
+    (should (string-match-p "^Failed  none · last 24h$" text))
+    (should (string-match-p "^Closed  3 · all time$" text))
+    ;; The all-time label never pushes the title past the view width: the
+    ;; hint falls back to `H  /'.
+    (should (<= (string-width (car (gascity-runs-lines
+                                    (gascity-runs-test--ctx
+                                     beads :now now :view '(:history t)))))
+                78))
+    ;; A window filter labels both windowed sections.
+    (let ((filtered (gascity-runs-test--text
+                     (gascity-runs-lines
+                      (gascity-runs-test--ctx beads :now now
+                                              :filters '(:window "7d")
+                                              :view '(:history t))))))
+      (should (string-match-p "^Failed  1 · last 7d$" filtered))
+      (should (string-match-p "^Closed  3 · last 7d$" filtered))))
+  ;; Inside the window the two bases still read as documented.
+  (let* ((beads (gascity-runs-test--fixture-beads))
+         (now (gascity-ui-parse-time "2026-09-25T20:00:00Z"))
+         (text (gascity-runs-test--text
+                (gascity-runs-lines
+                 (gascity-runs-test--ctx beads :now now :view '(:history t))))))
+    (should (string-match-p "^Failed  1 · last 24h$" text))
+    (should (string-match-p "^Closed  3 · all time$" text))))
+
+(ert-deftest gascity-test-runs-history-columns ()
+  "History rows gain a dim stage/step/failure/worker facts line within
+the 78-column budget; cards keep their v2 shape (REQ-006)."
+  (let* ((beads (gascity-runs-test--fixture-beads))
+         (now (gascity-ui-parse-time "2026-09-27T20:00:00Z"))
+         (ctx (gascity-runs-test--ctx beads :now now :view '(:history t)))
+         (index (plist-get ctx :index))
+         (failed (gascity-runs-test--by-id (plist-get ctx :runs) "be-bn2"))
+         (done (gascity-runs-test--by-id (plist-get ctx :runs) "be-52m5"))
+         (facts (gascity-runs--row-facts failed index))
+         (done-facts (gascity-runs--row-facts done index)))
+    ;; The pure facts: stage label, formula.step, failure class/reason.
+    (should (equal (plist-get facts :stage) "Review"))
+    (should (equal (plist-get facts :step) "build-basic.review"))
+    (should (equal (plist-get facts :failure)
+                   "hard: control_dispatch_error"))
+    (should (equal (plist-get facts :worker) "-"))
+    ;; A done run falls back to its last ladder step and has no failure.
+    (should (equal (plist-get done-facts :stage) "Finalization"))
+    (should (equal (plist-get done-facts :step) "build-basic.publish"))
+    (should (equal (plist-get done-facts :failure) "-"))
+    ;; Every history row is one v2 line plus a facts line; the facts line
+    ;; is exactly the 2+10+3+20+3+24+3+13 = 78 budget.
+    (let* ((lines (gascity-runs-lines ctx))
+           (pos (cl-loop for line in lines
+                         for i from 0
+                         when (string-match-p "^  ✕ be-bn2\\b" line)
+                         return i))
+           (row (nth pos lines))
+           (facts-line (nth (1+ pos) lines)))
+      (should (integerp pos))
+      (should (string-match-p "^  stage " facts-line))
+      (should (= 78 (string-width facts-line)))
+      (should (<= (string-width row) 78))
+      ;; The facts line is part of the row's object and drawer thing.
+      (should (eq (plist-get (get-text-property 0 'beads-thing facts-line) :kind)
+                  'row))
+      (should (eq (get-text-property 0 'beads-thing facts-line)
+                  (get-text-property 0 'beads-thing row)))
+      (should (equal (get-text-property 0 'gascity-bead facts-line) "be-bn2"))
+      (should (equal (get-text-property 0 'gascity-run-rig facts-line)
+                     "beads.el"))
+      ;; Every history row and facts line stays within the view width.
+      (dolist (line (gascity-runs-lines ctx))
+        (when (string-match-p "^  [◆✕·] " line)
+          (should (<= (string-width line) 78))))
+      (should (= 78 (string-width facts-line))))))
 
 (ert-deftest gascity-test-runs-render-loading-and-error ()
   "Before the read lands every section shows `…'; a failed read with no
@@ -775,7 +861,7 @@ ladder drawer, folds a section; RET opens the run detail with its rig."
     (should-error (gascity-runs-follow) :type 'user-error)
     ;; `H' adds the history; SPC on a header folds it.
     (gascity-runs-history)
-    (should (string-match-p "^Closed  2$" (buffer-string)))
+    (should (string-match-p "^Closed  2 · all time$" (buffer-string)))
     (goto-char (point-min))
     (re-search-forward "^Failed")
     (beginning-of-line)
@@ -1551,6 +1637,119 @@ must not claim there are no recent events before it has read them."
     ;; A load that really has no matching event still says so.
     (should (equal (gascity-run--event-lines step iteration ready)
                    '("events   (no recent events)")))))
+
+;;; Member rows (run-view-v3 §E2, REQ-007)
+
+(defun gascity-runs-test--member-beads (state)
+  "Return the fixture with its drain-member run be-qrpg in STATE.
+STATE `live' makes be-qrpg and its implement step in progress;
+`failed' closes be-qrpg and fails its implement step with class
+`hard' and reason `member_failed'; `done' leaves the fixture alone."
+  (mapcar
+   (lambda (bead)
+     (let ((id (alist-get 'id bead))
+           (meta (alist-get 'metadata bead)))
+       (pcase (cons state id)
+         (`(live . "be-qrpg")
+          (append `((status . "in_progress")
+                    (metadata . ,(cons '(gc.outcome . nil) meta)))
+                  bead))
+         (`(live . "be-3rij")
+          (append `((status . "in_progress")
+                    (assignee . "gc__implementation-worker-ec-7a34")
+                    (updated_at . ,(gascity-runs-test--ts 60))
+                    (metadata . ,(cons '(gc.outcome . nil) meta)))
+                  bead))
+         (`(failed . "be-qrpg")
+          (append `((status . "closed")
+                    (metadata . ,(cons '(gc.outcome . "fail") meta)))
+                  bead))
+         (`(failed . "be-3rij")
+          (append `((status . "closed")
+                    (metadata . ,(append '((gc.outcome . "fail")
+                                           (gc.failure_class . "hard")
+                                           (gc.failure_reason . "member_failed"))
+                                         meta)))
+                  bead))
+         (`(failed . "be-ab44")
+          ;; The step's latest iteration is what the ladder reads, so it
+          ;; must fail too for the member to read failed.
+          (append `((status . "closed")
+                    (metadata . ,(append '((gc.outcome . "fail")
+                                           (gc.failure_class . "hard")
+                                           (gc.failure_reason . "member_failed"))
+                                         meta)))
+                  bead))
+         (_ bead))))
+   (gascity-runs-test--fixture-beads)))
+
+(ert-deftest gascity-test-run-member-inspect ()
+  "`I' on a `└ …' drain-member row opens the member's own drawer, for a
+live and a closed member, instead of reporting \"No step here\"."
+  (dolist (state '(live done))
+    (gascity-runs-test--with-detail (gascity-runs-test--member-beads state)
+        "be-bn2"
+      (goto-char (point-min))
+      (should (re-search-forward "└ .*be-qrpg" nil t))
+      (gascity-run-inspect)
+      (let ((text (buffer-string)))
+        (should (string-match-p "│ root     be-qrpg" text))
+        (should (string-match-p "│ formula  do-work  [0-9]+/[0-9]+" text))
+        (should (string-match-p "│ failure  " text))
+        (should (string-match-p "│ RET run" text)))
+      ;; Toggling again closes it.
+      (gascity-run-inspect)
+      (should-not (string-match-p "│ root     be-qrpg" (buffer-string)))
+      ;; RET still drills into the member's run detail.
+      (let (opened)
+        (cl-letf (((symbol-function 'gascity-run-show)
+                   (lambda (run &optional _convoy rig)
+                     (setq opened (list run rig)))))
+          (gascity-run-activate))
+        (should (equal (car opened) "be-qrpg"))
+        (should (equal (cadr opened) "beads.el"))))))
+
+(ert-deftest gascity-test-run-member-copy ()
+  "`w' on a `└ …' member row copies the member's root bead id."
+  (dolist (state '(live done))
+    (gascity-runs-test--with-detail (gascity-runs-test--member-beads state)
+        "be-bn2"
+      (let (copied)
+        (cl-letf (((symbol-function 'kill-new)
+                   (lambda (s &optional _replace) (setq copied s))))
+          (goto-char (point-min))
+          (should (re-search-forward "└ .*be-qrpg" nil t))
+          (gascity-run-copy-id)
+          (should (equal copied "be-qrpg")))))))
+
+(ert-deftest gascity-test-run-member-diagnose ()
+  "`!' on a member row echoes the member's own failed step and class;
+a healthy member is a clear user-error.  Point and the buffer stay put
+in both cases."
+  (gascity-runs-test--with-detail (gascity-runs-test--member-beads 'failed)
+      "be-bn2"
+    (goto-char (point-min))
+    (should (re-search-forward "└ .*be-qrpg" nil t))
+    (let ((pos (point)) (text (buffer-string)) (shown nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (setq shown (apply #'format format-string args)))))
+        (gascity-run-diagnose))
+      (should (string-match-p "do-work\\.implement" shown))
+      (should (string-match-p "hard: member_failed" shown))
+      (should (= (point) pos))
+      (should (equal (buffer-string) text)))))
+
+(ert-deftest gascity-test-run-member-diagnose-healthy ()
+  "`!' on a healthy member row says there is no failed step, without
+opening a buffer or moving point."
+  (gascity-runs-test--with-detail (gascity-runs-test--member-beads 'live)
+      "be-bn2"
+    (goto-char (point-min))
+    (should (re-search-forward "└ .*be-qrpg" nil t))
+    (let ((pos (point)))
+      (should-error (gascity-run-diagnose) :type 'user-error)
+      (should (= (point) pos)))))
 
 ;;; Inspector actions (run-view-v2 §3)
 
