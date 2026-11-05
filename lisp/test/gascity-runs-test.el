@@ -43,6 +43,54 @@
   "Return an ISO timestamp SECONDS-AGO seconds before now (UTC)."
   (format-time-string "%FT%TZ" (- (float-time) seconds-ago) t))
 
+(defconst gascity-runs-test--long-reason
+  (concat "the control dispatcher refused the implementation step because "
+          "the rig still has no git remote and the controller could not "
+          "create the worktree from the remote default branch")
+  "A failure reason longer than the 78-column view width.")
+
+(defun gascity-runs-test--long-failure-beads ()
+  "Return the fixture whose failed review loop carries a long reason."
+  (mapcar
+   (lambda (bead)
+     (if (equal (alist-get 'id bead) "be-1bn")
+         (let ((copy (copy-tree bead)))
+           (setf (alist-get 'metadata copy)
+                 (append `((gc.failure_class . "control_dispatch_error")
+                           (gc.failure_reason . ,gascity-runs-test--long-reason))
+                         (assq-delete-all
+                          'gc.failure_reason
+                          (assq-delete-all 'gc.failure_class
+                                           (alist-get 'metadata copy)))))
+           copy)
+       bead))
+   (gascity-runs-test--fixture-beads)))
+
+(defun gascity-runs-test--metadata-close-reason-beads (&optional top-level)
+  "Return the fixture whose failed review loop says why it failed only
+in its close reason.  By default the reason lives in `metadata', the
+shape `gc events' payload beads carry; with TOP-LEVEL, at the bead's
+top level, the `gc bd list' shape.  `gc.failure_reason' is absent."
+  (mapcar
+   (lambda (bead)
+     (if (equal (alist-get 'id bead) "be-1bn")
+         (let* ((copy (copy-tree bead))
+                (meta (append `((gc.failure_class . "control_dispatch_error")
+                                ,@(unless top-level
+                                    `((close_reason . ,gascity-runs-test--long-reason))))
+                              (assq-delete-all
+                               'close_reason
+                               (assq-delete-all
+                                'gc.failure_reason
+                                (assq-delete-all 'gc.failure_class
+                                                 (alist-get 'metadata copy)))))))
+           (setf (alist-get 'metadata copy) meta)
+           (if top-level
+               (append copy `((close_reason . ,gascity-runs-test--long-reason)))
+             copy))
+       bead))
+   (gascity-runs-test--fixture-beads)))
+
 (defun gascity-runs-test--active-beads ()
   "Return the fixture with be-52m5 turned into a live run.
 Its prepare step is done, requirements (and its iteration) in progress
@@ -393,6 +441,48 @@ summary, not just the ladder glyph (ga-g092a)."
     (should (string-match-p
              "◆✕·  implement +1/3 +✕ build-basic.implement +environment_missing_origin"
              text))))
+
+(ert-deftest gascity-test-runs-failed-card-fits-failure-reason ()
+  "A failed card's second line fits the view width and keeps the full
+reason in help-echo (REQ-003, plan §1)."
+  (let* ((beads (gascity-runs-test--long-failure-beads))
+         (ctx (gascity-runs-test--ctx beads :filters '(:window "36500d")))
+         (run (gascity-runs-test--by-id (gascity-runs-test--summaries beads)
+                                        "be-bn2"))
+         (card (car (gascity-runs--card run ctx)))
+         (lines (split-string card "\n"))
+         (line2 (nth 1 lines))
+         (pos (string-match "the control dispatcher refused" line2)))
+    (should (= (length lines) 2))
+    (should (<= (string-width line2) gascity-dashboard--width))
+    (should (string-suffix-p "…" (substring-no-properties line2)))
+    (should pos)
+    (should (equal (get-text-property pos 'help-echo line2)
+                   gascity-runs-test--long-reason))))
+
+(ert-deftest gascity-test-runs-failed-card-metadata-close-reason ()
+  "A failed bead whose reason is only in `metadata.close_reason' (the
+real `gc events' payload shape) still fills the failed card's reason
+tail and `help-echo', exactly like the top-level `gc bd list' shape
+\(REQ-003; review R2/E9)."
+  (dolist (top-level '(nil t))
+    (let* ((beads (gascity-runs-test--metadata-close-reason-beads top-level))
+           (bead (seq-find (lambda (b) (equal (alist-get 'id b) "be-1bn")) beads))
+           (info (gascity-runs--failure-info (list bead)))
+           (graph (gascity-runs--failure (list bead)))
+           (ctx (gascity-runs-test--ctx beads :filters '(:window "36500d")))
+           (run (gascity-runs-test--by-id (gascity-runs-test--summaries beads)
+                                          "be-bn2"))
+           (card (car (gascity-runs--card run ctx)))
+           (line2 (nth 1 (split-string card "\n")))
+           (pos (string-match "the control dispatcher refused" line2)))
+      (should (equal (car info) "control_dispatch_error"))
+      (should (equal (cdr info) gascity-runs-test--long-reason))
+      (should (equal graph gascity-runs-test--long-reason))
+      (should (<= (string-width line2) gascity-dashboard--width))
+      (should pos)
+      (should (equal (get-text-property pos 'help-echo line2)
+                     gascity-runs-test--long-reason)))))
 
 (ert-deftest gascity-test-runs-active-run-worker ()
   "An active run's label is its active step; its worker is the live session."
@@ -2118,6 +2208,22 @@ its worker, keeping the step line and collapsed row shape unchanged."
                                           (car (last drawer)))))
     (should (string-suffix-p "hard: control_dispatch_error" text))))
 
+(ert-deftest gascity-test-run-attempt-failure-help-echo ()
+  "An attempt row's failure cell keeps its 20 columns, and the full
+class/reason rides in help-echo when it is cut (REQ-003 regression)."
+  (let* ((now (float (floor (float-time))))
+         (beads (gascity-runs-test--attempts-run now))
+         (attempt (seq-find (lambda (b) (equal (alist-get 'id b) "hw-a2")) beads))
+         (ctx (gascity-runs-test--inspector-ctx
+               beads "hw-attempts" :now now
+               :sessions (gascity-runs-test--attempt-sessions)))
+         (line (gascity-run--attempt-line attempt ctx))
+         (cell (substring line (string-match "hard:" line))))
+    (should (= (string-width (substring-no-properties cell))
+               (alist-get 'failure gascity-run--attempt-widths)))
+    (should (equal (get-text-property 0 'help-echo cell)
+                   "hard: control_dispatch_error"))))
+
 (ert-deftest gascity-test-run-attempt-history-nested ()
   "A nested loop's iteration is found by `gc.logical_bead_id' alone.
 The be-52m5 fixture's review step (be-mqhp) and its iteration be-wki0
@@ -2206,6 +2312,59 @@ STATE `live' makes be-qrpg and its implement step in progress;
                   bead))
          (_ bead))))
    (gascity-runs-test--fixture-beads)))
+
+(defun gascity-runs-test--long-member-beads ()
+  "Return the failed member fixture with a long failure reason."
+  (mapcar
+   (lambda (bead)
+     (if (member (alist-get 'id bead) '("be-qrpg" "be-3rij" "be-ab44"))
+         (let ((copy (copy-tree bead)))
+           (setf (alist-get 'metadata copy)
+                 (append `((gc.failure_reason . ,gascity-runs-test--long-reason))
+                         (assq-delete-all 'gc.failure_reason
+                                          (alist-get 'metadata copy))))
+           copy)
+       bead))
+   (gascity-runs-test--member-beads 'failed)))
+
+(ert-deftest gascity-test-run-drawer-failure-lines-fit ()
+  "The step and drain-member drawers bound their failure line to the
+drawer width and keep the full class/reason in help-echo (REQ-003)."
+  (let* ((step-reason gascity-runs-test--long-reason)
+         (root `((id . "hw-long") (status . "in_progress")
+                 (metadata . ((gc.kind . "workflow")
+                              (gc.formula_name . "build-basic")))))
+         (step `((id . "hw-long-step") (status . "closed")
+                  (metadata . ((gc.root_bead_id . "hw-long")
+                               (gc.step_ref . "build-basic.review")
+                               (gc.outcome . "fail")
+                               (gc.failure_class . "control_dispatch_error")
+                               (gc.failure_reason . ,step-reason)))))
+         (ctx (gascity-runs-test--inspector-ctx (list root step) "hw-long"))
+         (line (car (last (gascity-run--step-drawer step nil ctx))))
+         (full (concat "control_dispatch_error: " step-reason))
+         (pos (string-match "control_dispatch_error" line)))
+    (should (string-prefix-p "failure  " (substring-no-properties line)))
+    (should (<= (+ 4 (string-width line)) gascity-dashboard--width))
+    (should (string-suffix-p "…" (substring-no-properties line)))
+    (should pos)
+    (should (equal (get-text-property pos 'help-echo line) full)))
+  (let* ((beads (gascity-runs-test--long-member-beads))
+         (ctx (gascity-runs-test--inspector-ctx beads "be-bn2"))
+         (member (seq-find (lambda (b) (equal (alist-get 'id b) "be-qrpg"))
+                           beads))
+         (lines (gascity-run--member-drawer member (plist-get ctx :index) ctx))
+         (line (seq-find (lambda (l)
+                           (string-prefix-p "failure  "
+                                            (substring-no-properties l)))
+                         lines))
+         (pos (string-match "hard: " line))
+         (help (and pos (get-text-property pos 'help-echo line))))
+    (should line)
+    (should (<= (+ 4 (string-width line)) gascity-dashboard--width))
+    (should (string-suffix-p "…" (substring-no-properties line)))
+    (should pos)
+    (should (string-suffix-p gascity-runs-test--long-reason help))))
 
 (ert-deftest gascity-test-run-member-inspect ()
   "`I' on a `└ …' drain-member row opens the member's own drawer, for a

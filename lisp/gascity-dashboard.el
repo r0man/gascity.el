@@ -169,6 +169,27 @@ The same entry as `gascity-runs-read-key', read by `gascity-runs-read-beads'.")
 (defconst gascity-dashboard--width 78
   "Column where right-aligned cockpit hints end.")
 
+(defconst gascity-dashboard--drawer-width (- gascity-dashboard--width 4)
+  "Columns available inside a drawer line (the `  │ ' prefix is 4).")
+
+(defun gascity-dashboard--drawer-value (prefix value &optional full)
+  "Return PREFIX followed by VALUE cut to `gascity-dashboard--drawer-width'.
+FULL (default VALUE) rides in `help-echo' when VALUE is cut, so the
+complete text stays available from a rendered drawer line; a caller
+that shows one line of a multi-line reason passes the whole text.
+This is the one place a drawer value is bounded: fit once, never
+re-fit an already-cut string."
+  (let* ((value (or value ""))
+         (full (or full value))
+         (budget (max 0 (- gascity-dashboard--drawer-width
+                           (string-width prefix))))
+         (cut (gascity-ui-truncate value budget)))
+    (concat prefix
+            (cond ((zerop budget) "")
+                  ((or (not (equal cut value)) (not (equal full value)))
+                   (propertize cut 'help-echo full))
+                  (t cut)))))
+
 (defvar gascity-dashboard--view nil
   "The root view state while a cockpit renders (dynamically bound).
 A plist (:collapsed :drawers :expanded) of the root component.")

@@ -220,6 +220,15 @@ is never idle."
       (or (alist-get 'closed_at root) (alist-get 'updated_at root))
     (alist-get 'created_at root)))
 
+(defun gascity-runs--close-reason (bead)
+  "Return BEAD's non-empty close reason, or nil.
+`gc events' payload beads keep it in `metadata', while the `gc bd list'
+shape puts it at the bead's top level; prefer the event shape and keep
+the top-level value as the fallback (review R2)."
+  (let ((reason (or (gascity-runs--meta bead 'close_reason)
+                    (alist-get 'close_reason bead))))
+    (and (stringp reason) (not (string-empty-p reason)) reason)))
+
 (defun gascity-runs--failure (graph)
   "Return why a run failed, from its GRAPH beads, or nil.
 The first failed bead's `gc.failure_reason', else its close reason."
@@ -227,8 +236,7 @@ The first failed bead's `gc.failure_reason', else its close reason."
                         graph)))
     (and bead
          (or (gascity-runs--meta bead 'gc.failure_reason)
-             (let ((reason (alist-get 'close_reason bead)))
-               (and (stringp reason) (not (string-empty-p reason)) reason))))))
+             (gascity-runs--close-reason bead)))))
 
 (defun gascity-runs--failure-info (beads)
   "Return (CLASS . REASON) from the first of BEADS that names one.
@@ -241,8 +249,7 @@ reason.  Either may be nil; nil when no bead names either."
       (setq reason
             (or reason
                 (gascity-runs--meta b 'gc.failure_reason)
-                (let ((r (alist-get 'close_reason b)))
-                  (and (stringp r) (not (string-empty-p r)) r)))))
+                (gascity-runs--close-reason b))))
     (and (or class reason) (cons class reason))))
 
 (defun gascity-runs--failed-beads-of-run (index root)
@@ -585,16 +592,24 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                  ('failed (gascity-dashboard--dim
                            (or (plist-get run :failure) "outcome: fail")))
                  (_ (gascity-dashboard--dim (or (plist-get run :outcome) "")))))
-         (line2 (concat (make-string (+ 5 (* 4 depth)) ?\s)
-                        (if (plist-get run :ladder)
-                            (concat (gascity-dashboard--ladder-string
-                                     (plist-get run :ladder))
-                                    "  " (gascity-ui-fit (plist-get run :label) 14)
-                                    " " (if changed (gascity-ui-changed progress)
-                                            progress)
-                                    " ")
-                          (gascity-dashboard--dim "no steps  "))
-                        tail))
+         (prefix (concat (make-string (+ 5 (* 4 depth)) ?\s)
+                         (if (plist-get run :ladder)
+                             (concat (gascity-dashboard--ladder-string
+                                      (plist-get run :ladder))
+                                     "  " (gascity-ui-fit (plist-get run :label) 14)
+                                     " " (if changed (gascity-ui-changed progress)
+                                             progress)
+                                     " ")
+                           (gascity-dashboard--dim "no steps  "))))
+         ;; Only the Failed card's failure-reason tail is unbounded; fit it
+         ;; against the width the prefix leaves.  A deep member card's
+         ;; prefix can already fill the view, so clamp the budget at 0.
+         (line2 (concat prefix
+                        (if (eq state 'failed)
+                            (gascity-ui-truncate
+                             tail (max 0 (- gascity-dashboard--width
+                                            (string-width prefix))))
+                          tail)))
          (drawer-id (concat "run:" id)))
     (cons (apply #'gascity-dashboard--line (concat line1 "\n" line2)
                  'beads-thing (gascity-dashboard--thing
