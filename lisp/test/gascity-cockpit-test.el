@@ -309,6 +309,175 @@ steps alone it would read idle while its members work."
     (should (equal (gascity-cockpit-test--kinds items) '((fail "run"))))
     (should (string-match-p "be-j2b build-basic  failed" (plist-get (car items) :text)))))
 
+;;; Needs you — failed-run drawer and row budget (REQ-001)
+
+(cl-defun gascity-cockpit-test--failed-run (&key (id "hw-y10")
+                                                 (formula "gstack-work")
+                                                 (class "control_dispatch_error")
+                                                 (reason "environment repair required"))
+  "Return a failed run closed in the event window.
+A plist (:id :formula :class :reason :root :step :event): ROOT is the
+closed root bead, STEP its failed top-level step bead (class, step ref
+and REASON) and EVENT the `bead.closed' event carrying ROOT.  CLASS and
+REASON may be nil to model a failure that names neither."
+  (let* ((root-meta (append `((gc.kind . "workflow")
+                              (gc.outcome . "fail")
+                              (gc.formula_name . ,formula))
+                            (and class `((gc.failure_class . ,class)))))
+         (step-meta (append `((gc.root_bead_id . ,id)
+                              (gc.step_ref . ,(concat formula ".review"))
+                              (gc.outcome . "fail"))
+                            (and class `((gc.failure_class . ,class)))
+                            (and reason `((gc.failure_reason . ,reason)))))
+         (root `((id . ,id) (status . "closed")
+                 (closed_at . "2026-09-24T22:17:42+02:00")
+                 (metadata . ,root-meta)))
+         (step `((id . ,(concat id "-review")) (status . "closed")
+                 (metadata . ,step-meta))))
+    (list :id id :formula formula :class class :reason reason
+          :root root :step step
+          :event `((type . "bead.closed") (seq . 9)
+                   (ts . "2026-09-24T22:17:42+02:00")
+                   (payload . ((bead . ,root)))))))
+
+(defun gascity-cockpit-test--needs-you-failed-item (ctx)
+  "Return the failed-run Needs you item of CTX, or nil."
+  (seq-find (lambda (i) (equal (plist-get i :kind) "run"))
+            (gascity-dashboard--needs-you ctx)))
+
+(defun gascity-cockpit-test--rendered-row (ctx id)
+  "Return the single Needs you row of CTX that names ID."
+  (seq-find (lambda (line)
+              (string-match-p (regexp-quote id) (substring-no-properties line)))
+            (gascity-dashboard--needs-you-lines ctx)))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-drawer ()
+  "A failed run's drawer names class, failed step and the first reason
+line, keeps the full multi-line reason in help-echo, and hints RET/b.
+The row's right column carries the class (REQ-001, AC-1)."
+  (require 'gascity-runs)
+  (let* ((run (gascity-cockpit-test--failed-run
+               :reason (concat "environment repair required\n"
+                               "rig still has no git remote")))
+         (ctx (gascity-cockpit-test--ctx
+               :events (list (plist-get run :event))
+               :run-beads (list (plist-get run :root) (plist-get run :step))))
+         (item (gascity-cockpit-test--needs-you-failed-item ctx))
+         (drawer (and item (gascity-dashboard--needs-you-drawer item)))
+         (text (and drawer (gascity-cockpit-test--text drawer)))
+         (reason-line (and drawer
+                           (seq-find (lambda (line)
+                                       (string-prefix-p "reason" (substring-no-properties line)))
+                                     drawer))))
+    (should item)
+    ;; The right cell is the class, cut to 20 columns with the full class
+    ;; in help-echo (Decisions 3).
+    (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                   "control_dispatch_error"))
+    (should (string-prefix-p "control_dispatch_" (plist-get item :right)))
+    (should (string-match-p (regexp-quote (plist-get run :id)) text))
+    (should (string-match-p "run      hw-y10  gstack-work" text))
+    (should (string-match-p "class    control_dispatch_error" text))
+    (should (string-match-p "step     gstack-work.review" text))
+    (should (string-match-p "reason   environment repair required" text))
+    ;; Only the first line is drawn; the whole reason rides in help-echo.
+    (should-not (string-match-p "no git remote" text))
+    (should (equal (get-text-property 0 'help-echo reason-line)
+                   (plist-get run :reason)))
+    (should (string-match-p "RET run detail" text))
+    (should (string-match-p "b root bead" text))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-row-budget ()
+  "The rendered failed-run row never exceeds the 78-column cockpit.
+The class is truncated to 20 columns (full text in help-echo) and the
+left cell gives back exactly what the right cell takes (REQ-001, AC-1)."
+  (require 'gascity-runs)
+  (let* ((run (gascity-cockpit-test--failed-run))
+         (ctx (gascity-cockpit-test--ctx
+               :events (list (plist-get run :event))
+               :run-beads (list (plist-get run :root) (plist-get run :step))))
+         (item (gascity-cockpit-test--needs-you-failed-item ctx))
+         (row (gascity-cockpit-test--rendered-row ctx "hw-y10")))
+    (should row)
+    (should (<= (string-width (substring-no-properties row)) 78))
+    (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                   "control_dispatch_error"))
+    ;; A long rig (no class) is the fallback right cell, budgeted the same.
+    (let* ((plain (gascity-cockpit-test--failed-run :class nil))
+           (ctx (gascity-cockpit-test--ctx :events (list (plist-get plain :event))))
+           (ctx (plist-put ctx :rig-prefixes
+                           '(("hello-world-gstack-verylongrig" . "hw"))))
+           (item (gascity-cockpit-test--needs-you-failed-item ctx))
+           (row (gascity-cockpit-test--rendered-row ctx "hw-y10")))
+      (should row)
+      (should (<= (string-width (substring-no-properties row)) 78))
+      (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                     "hello-world-gstack-verylongrig")))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-event-fallback ()
+  "Without the Runs read the event bead still names class, step, reason."
+  (let* ((reason "environment repair required\nsecond line detail")
+         (event `((type . "bead.closed") (seq . 9)
+                  (ts . "2026-09-24T22:17:42+02:00")
+                  (payload . ((bead . ((id . "hw-y11") (status . "closed")
+                                       (metadata . ((gc.kind . "workflow")
+                                                    (gc.outcome . "fail")
+                                                    (gc.formula_name . "gstack-work")
+                                                    (gc.failure_class . "control_dispatch_error")
+                                                    (gc.failure_reason . ,reason)
+                                                    (gc.step_ref . "gstack-work.review")))))))))
+         (item (gascity-cockpit-test--needs-you-failed-item
+                (gascity-cockpit-test--ctx :events (list event))))
+         (drawer (and item (gascity-dashboard--needs-you-drawer item)))
+         (text (and drawer (gascity-cockpit-test--text drawer)))
+         (reason-line (and drawer
+                           (seq-find (lambda (line)
+                                       (string-prefix-p "reason" (substring-no-properties line)))
+                                     drawer))))
+    (should item)
+    (should (equal (get-text-property 0 'help-echo (plist-get item :right))
+                   "control_dispatch_error"))
+    (should (string-match-p "class    control_dispatch_error" text))
+    (should (string-match-p "step     gstack-work.review" text))
+    (should (string-match-p "reason   environment repair required" text))
+    (should (equal (get-text-property 0 'help-echo reason-line) reason))
+    (should (string-match-p "RET run detail" text))
+    (should (string-match-p "b root bead" text))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-close-reason ()
+  "A bead with no gc.failure_reason falls back to its close_reason."
+  (let* ((event `((type . "bead.closed") (seq . 9)
+                  (ts . "2026-09-24T22:17:42+02:00")
+                  (payload . ((bead . ((id . "hw-y12") (status . "closed")
+                                       (close_reason . "environment repair required")
+                                       (metadata . ((gc.kind . "workflow")
+                                                    (gc.outcome . "fail")
+                                                    (gc.formula_name . "gstack-work")))))))))
+         (drawer (gascity-dashboard--needs-you-drawer
+                  (gascity-cockpit-test--needs-you-failed-item
+                   (gascity-cockpit-test--ctx :events (list event))))))
+    (should (seq-some (lambda (line)
+                        (string-match-p "reason   environment repair required"
+                                        (substring-no-properties line)))
+                      drawer))))
+
+(ert-deftest gascity-test-cockpit-needs-you-failed-run-minimal-drawer ()
+  "A failed event naming no class or reason still draws the run and the
+hint line, never the old `run  <row text>' fallback (REQ-001, AC-1)."
+  (let* ((run (gascity-cockpit-test--failed-run :class nil :reason nil))
+         (ctx (gascity-cockpit-test--ctx :events (list (plist-get run :event))))
+         (item (gascity-cockpit-test--needs-you-failed-item ctx))
+         (drawer (and item (gascity-dashboard--needs-you-drawer item))))
+    (should item)
+    (should (= (length drawer) 2))
+    (should (string-match-p "run      hw-y10  gstack-work"
+                            (substring-no-properties (car drawer))))
+    (should (string-match-p "RET run detail  b root bead"
+                            (substring-no-properties (cadr drawer))))
+    ;; Never the old `run  <row text>' fallback.
+    (should-not (member (format "run  %s" (plist-get item :text))
+                        (mapcar #'substring-no-properties drawer)))))
+
 (ert-deftest gascity-test-cockpit-needs-you-active-run-failed-step ()
   "■ run: an active run whose ladder has a failed step is a Needs-you
 fail item naming the run, the failed step ref and gc.failure_class
