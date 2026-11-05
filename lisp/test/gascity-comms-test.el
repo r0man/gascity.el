@@ -256,16 +256,18 @@ and every value starts in one column."
      (bead . ((id . "ga-4odv8")
               (title . "Events detail: bead close_reason and gc.failure_class")
               (status . "closed")
-              (close_reason .
-               "environment repair required: the rig still has no git remote and the controller cannot dispatch its workflow")
               (metadata .
-               ((gc.failure_class .
+               ((close_reason .
+                 "environment repair required: the rig still has no git remote and the controller cannot dispatch its workflow")
+                (gc.failure_class .
                  "control_dispatch_error: the controller could not reach the rig's git remote after three dispatch attempts")
                 (gc.outcome . "fail")))))))
   "An inline `bead.closed' event whose payload bead says why it ended.
-The captured fixtures carry neither `close_reason' at the bead level nor
-`gc.failure_class' in its metadata, so AC-4 builds the payload inline
-rather than claiming a fixture covers it (plan-review R5).")
+Real `gc events' payload beads carry `close_reason' in `metadata', not
+at the bead's top level: the committed `emacs-city.events-2h.jsonl'
+fixture has 30 `bead.closed' beads, none with a top-level key and all 30
+with the metadata one.  This fixture therefore uses the captured event
+shape (plan-review R5, review E1).")
 
 (defun gascity-comms-test--bead-of (event)
   "Return the payload bead alist of EVENT."
@@ -292,7 +294,7 @@ rather than claiming a fixture covers it (plan-review R5).")
   (let* ((event gascity-comms-test--closed-bead-event)
          (bead (gascity-comms-test--bead-of event))
          (lines (gascity-event-fields event))
-         (reason (alist-get 'close_reason bead))
+         (reason (alist-get 'close_reason (alist-get 'metadata bead)))
          (class (alist-get 'gc.failure_class (alist-get 'metadata bead)))
          (reason-line (gascity-comms-test--field-line "close_reason" lines))
          (class-line (gascity-comms-test--field-line "gc.failure_class" lines)))
@@ -318,20 +320,68 @@ rather than claiming a fixture covers it (plan-review R5).")
     (dolist (line (gascity-dashboard--drawer lines))
       (should (<= (string-width line) gascity-dashboard--width)))))
 
+(defun gascity-comms-test--event-with-bead (bead)
+  "Return a `bead.closed' event whose payload bead is BEAD.
+The event is a fresh copy of `gascity-comms-test--closed-bead-event',
+so a test can vary the bead shape without touching the shared const."
+  (let* ((event (copy-tree gascity-comms-test--closed-bead-event))
+         (payload (alist-get 'payload event)))
+    (setcdr (assq 'bead payload) bead)
+    event))
+
+(defun gascity-comms-test--bare-bead (&rest extra)
+  "Return a minimal closed payload bead, followed by EXTRA pairs."
+  (append (list (cons 'id "ga-4odv8")
+                (cons 'title "Events detail: bead close_reason and gc.failure_class")
+                (cons 'status "closed"))
+          extra))
+
+(ert-deftest gascity-test-comms-event-drawer-close-reason-top-level-fallback ()
+  "A bead carrying `close_reason' at its top level still shows it
+\(the `gc bd list' shape), and the metadata value wins when both exist
+\(REQ-004, AC-4)."
+  (let* ((top-level "top-level reason from the bd list shape")
+         (metadata-reason
+          (alist-get 'close_reason
+                     (alist-get 'metadata
+                                (gascity-comms-test--bead-of
+                                 gascity-comms-test--closed-bead-event))))
+         (line-for (lambda (bead)
+                     (gascity-comms-test--field-line
+                      "close_reason"
+                      (gascity-event-fields (gascity-comms-test--event-with-bead bead)))))
+         (value-of (lambda (line)
+                     (get-text-property
+                      (gascity-comms-test--field-value-start "close_reason" line)
+                      'help-echo line))))
+    ;; bd-list shape: top level only.
+    (let ((line (funcall line-for (gascity-comms-test--bare-bead
+                                   (cons 'close_reason top-level)))))
+      (should line)
+      (should (equal (gascity-comms-test--field-value "close_reason" line)
+                     top-level)))
+    ;; Both shapes: the captured event shape (metadata) wins, printed once.
+    (let* ((bead (gascity-comms-test--bare-bead
+                  (cons 'close_reason top-level)
+                  (cons 'metadata (list (cons 'close_reason metadata-reason)))))
+           (lines (gascity-event-fields (gascity-comms-test--event-with-bead bead)))
+           (line (gascity-comms-test--field-line "close_reason" lines)))
+      (should (= 1 (seq-count (lambda (l) (string-prefix-p "close_reason " l))
+                              lines)))
+      (should (equal (funcall value-of line) metadata-reason)))))
+
 (ert-deftest gascity-test-comms-event-drawer-no-why-lines-when-absent ()
   "A payload bead without `close_reason'/`gc.failure_class' adds no line
 and no empty value (REQ-004, AC-4)."
-  (let* ((event (copy-tree gascity-comms-test--closed-bead-event))
-         (bead (gascity-comms-test--bead-of event)))
-    (setf (alist-get 'close_reason bead) nil)
-    (setf (alist-get 'metadata bead) nil)
-    (let ((lines (gascity-event-fields event)))
-      (should (gascity-comms-test--field-line "bead" lines))
-      (should-not (gascity-comms-test--field-line "close_reason" lines))
-      (should-not (gascity-comms-test--field-line "gc.failure_class" lines))
-      (should-not (seq-some #'string-empty-p lines))
-      (dolist (line lines)
-        (should (string-match-p "  [^ ]" line))))))
+  (let ((lines (gascity-event-fields
+                (gascity-comms-test--event-with-bead
+                 (gascity-comms-test--bare-bead)))))
+    (should (gascity-comms-test--field-line "bead" lines))
+    (should-not (gascity-comms-test--field-line "close_reason" lines))
+    (should-not (gascity-comms-test--field-line "gc.failure_class" lines))
+    (should-not (seq-some #'string-empty-p lines))
+    (dolist (line lines)
+      (should (string-match-p "  [^ ]" line)))))
 
 (ert-deftest gascity-test-comms-event-drawer-why-key-once ()
   "An event-level `close_reason' wins over the payload bead's: each key

@@ -250,9 +250,14 @@ text in `help-echo'."
 (defun gascity-event--bead-why-fields (bead)
   "Return why BEAD ended, as drawer pairs: `close_reason' then failure class.
 Each is present only when it is a non-empty string: the bead's
-`close_reason' and its metadata `gc.failure_class' (REQ-004)."
-  (let ((reason (alist-get 'close_reason bead))
-        (class (alist-get 'gc.failure_class (alist-get 'metadata bead))))
+`close_reason' and its metadata `gc.failure_class' (REQ-004).
+`gc events' payload beads carry the reason in `metadata', while the
+`gc bd list' shape puts it at the bead's top level; prefer the event
+shape and keep the top-level value as the fallback."
+  (let* ((metadata (alist-get 'metadata bead))
+         (reason (or (alist-get 'close_reason metadata)
+                     (alist-get 'close_reason bead)))
+         (class (alist-get 'gc.failure_class metadata)))
     (delq nil
           (list (and (stringp reason) (not (string-blank-p reason))
                      (cons 'close_reason reason))
