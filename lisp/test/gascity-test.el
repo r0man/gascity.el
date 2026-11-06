@@ -4476,6 +4476,55 @@ opening the buffer's own store."
         (should-error (gascity-bead-show-at-point) :type 'user-error)
         (should-not opened)))))
 
+(ert-deftest gascity-test-bead-show-at-point-buffer-map-outside-city ()
+  "A warm buffer snapshot answers even outside the city tree (REQ-013).
+The install path captures the city scope, so an attach buffer pinned to a
+worktree (or any directory) outside the city keeps a warm snapshot.  The
+resolver and `map-ready-p' must share one rule: a known id opens its store
+and an unknown id reports `No bead store owns' instead of deferring with
+`Resolving bead stores…' while the warm map is right there (REQ-008,
+review synthesis S2)."
+  (let ((city (file-name-as-directory (make-temp-file "gascity-eldoc-city" t)))
+        (outside (file-name-as-directory
+                  (make-temp-file "gascity-eldoc-outside" t)))
+        (opened nil) (msgs nil))
+    (unwind-protect
+        (progn
+          (with-temp-file (expand-file-name "city.toml" city) (insert ""))
+          (let* ((scope (gascity-context-scope-key city))
+                 (map (gascity-beads-eldoc--map-create
+                       :scope scope :city city :prefixes '("gce")
+                       :stores '(("gce" . "/p/gascity.el/"))
+                       :fetched-at (float-time))))
+            (cl-letf (((symbol-function 'gascity-beads-eldoc-map)
+                       (lambda (&optional _dir)
+                         (error "fell back to default-directory")))
+                      ((symbol-function 'gascity-bead-show)
+                       (lambda (id &optional dir) (setq opened (list id dir))))
+                      ((symbol-function 'message)
+                       (lambda (fmt &rest args)
+                         (push (apply #'format fmt args) msgs))))
+              (with-temp-buffer
+                (setq default-directory outside)
+                ;; `setq-local': this tree may not define the install-path
+                ;; variables yet (that slice lands separately), and a plain
+                ;; `setq' would leak a global map into later tests.
+                (setq-local gascity-beads-eldoc--scope scope)
+                (setq-local gascity-beads-eldoc--map map)
+                ;; Same warm map for both halves of the decision.
+                (should (gascity-beads-eldoc-map-ready-p))
+                (should (equal (gascity-beads-eldoc-store-for-id "gce-abc")
+                               "/p/gascity.el/"))
+                ;; A prefix the warm map does not carry is final, not pending.
+                (insert "zz-abc")
+                (goto-char (point-min))
+                (put-text-property (point-min) (point-max) 'gascity-bead "zz-abc")
+                (should-error (gascity-bead-show-at-point) :type 'user-error)
+                (should-not opened)
+                (should-not msgs)))))
+      (delete-directory city t)
+      (delete-directory outside t))))
+
 (ert-deftest gascity-test-bead-show-at-point-empty-map-defers ()
   "A map whose first fill landed no stores is still pending: defer, do
 not report \"no store owns\" for an id the fill has not seen yet."

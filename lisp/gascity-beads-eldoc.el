@@ -483,6 +483,28 @@ heals the buffer when that fill lands."
 ;; yet — it then answers from the city map of `default-directory', which
 ;; is what a cold install would do anyway.
 
+(defun gascity-beads-eldoc--buffer-map (&optional dir)
+  "Return the prefix to store map the current buffer resolves against.
+The buffer's installed snapshot is authoritative when its scope is the
+scope the view captured at install time; otherwise answer the city map of
+DIR, defaulting to `default-directory' (and starting its one asynchronous
+fill when cold).
+
+This is the single rule behind `gascity-beads-eldoc-store-for-id' and
+`gascity-beads-eldoc-map-ready-p', so `C-c b' can never disagree with
+eldoc (REQ-013).  An attach buffer pinned to a worktree outside the city
+is exactly the case the rule exists for: its warm snapshot must answer
+even though `default-directory' sits outside every city tree (REQ-008)."
+  (let* ((scope (and (boundp 'gascity-beads-eldoc--scope)
+                     (symbol-value 'gascity-beads-eldoc--scope)))
+         (snapshot (and scope
+                        (boundp 'gascity-beads-eldoc--map)
+                        (symbol-value 'gascity-beads-eldoc--map))))
+    (if (and snapshot
+             (equal (gascity-beads-eldoc--map-scope snapshot) scope))
+        snapshot
+      (gascity-beads-eldoc-map dir))))
+
 (defun gascity-beads-eldoc-store-for-id (id)
   "Return the store directory owning bead ID, or nil.
 Answers, in order: this buffer's installed map snapshot when its city
@@ -490,16 +512,8 @@ matches, the city map of `default-directory' (starting at most one
 asynchronous fill when it is cold), else nil.  Never runs gc or bd, never
 uses `default-directory' as a store, never expands a path: the map's
 directories were localized once at fill time (REQ-005, REQ-012)."
-  (let* ((scope (and (boundp 'gascity-beads-eldoc--scope)
-                     (symbol-value 'gascity-beads-eldoc--scope)))
-         (snapshot (and scope
-                        (boundp 'gascity-beads-eldoc--map)
-                        (symbol-value 'gascity-beads-eldoc--map)))
-         (map (if (and snapshot
-                       (equal (gascity-beads-eldoc--map-scope snapshot) scope))
-                  snapshot
-                (gascity-beads-eldoc-map))))
-    (and map (gascity-beads-eldoc--store-for map id))))
+  (when-let* ((map (gascity-beads-eldoc--buffer-map)))
+    (gascity-beads-eldoc--store-for map id)))
 
 (defun gascity-beads-eldoc-map-ready-p (&optional dir)
   "Return non-nil when DIR's city map has landed at least one store.
@@ -508,9 +522,11 @@ caller whether \"no store owns this id\" is final (a warm map that simply
 does not carry the prefix) or still pending (no map yet, or a first fill
 that has landed nothing).  Callers use it to defer rather than report a
 wrong answer (REQ-006/REQ-011).  DIR defaults to `default-directory'.
-Pure: it reads the cached map and starts the one asynchronous fill when
-cold, exactly like `gascity-beads-eldoc-map'."
-  (when-let* ((map (gascity-beads-eldoc-map dir)))
+Uses `gascity-beads-eldoc--buffer-map', the same rule as the resolver, so
+a warm buffer snapshot answers even outside the city tree.  Pure: it reads
+the cached map and starts the one asynchronous fill when cold, exactly
+like `gascity-beads-eldoc-map'."
+  (when-let* ((map (gascity-beads-eldoc--buffer-map dir)))
     (gascity-beads-eldoc--map-prefixes map)))
 
 (provide 'gascity-beads-eldoc)
