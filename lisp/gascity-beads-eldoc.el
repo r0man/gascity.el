@@ -462,22 +462,6 @@ heals the buffer when that fill lands."
         (when (equal gascity-beads-eldoc--scope scope)
           (gascity-beads-eldoc-install buffer scope))))))
 
-;;; Wiring
-
-;; Every buffer the view factory creates, and every attach buffer the
-;; terminal opens (which calls the installer itself), goes through the one
-;; install path (REQ-001, TS-1).
-(add-hook 'gascity-view-created-functions #'gascity-beads-eldoc-install)
-
-;; Major-mode setup must not lose the wiring (TS-5).
-(add-hook 'after-change-major-mode-hook #'gascity-beads-eldoc--reinstall)
-
-;; An explicit clear drops the maps, so the buffers that installed one must
-;; go cold instead of answering from the dropped snapshot (REQ-010).  The
-;; seam is owned by the refresh/invalidation slice; `add-hook' needs no
-;; value, so this registration is load-order independent.
-(add-hook 'gascity-beads-eldoc-clear-cache-functions
-          #'gascity-beads-eldoc--buffers-go-cold)
 ;;; The buffer-aware resolver (plan §C — caller migration)
 
 ;; The install path (`gascity-beads-eldoc-install', plan §B) captures each
@@ -489,11 +473,10 @@ heals the buffer when that fill lands."
 ;; store beads eldoc named (REQ-013) and no caller re-resolves from
 ;; `default-directory'.
 ;;
-;; The two variables are reached by symbol, not by a forward `defvar': the
-;; install path owns them, and this accessor must stay usable (and
-;; byte-compile clean) on a tree where that module half has not landed
-;; yet — it then answers from the city map of `default-directory', which
-;; is what a cold install would do anyway.
+;; The install path above owns `gascity-beads-eldoc--scope' and
+;; `gascity-beads-eldoc--map'; in the merged module they are plain
+;; buffer-local reads, so the accessor sees the snapshot the installer
+;; installed even when `default-directory' sits outside the city tree.
 
 (defun gascity-beads-eldoc--buffer-map (&optional dir)
   "Return the prefix to store map the current buffer resolves against.
@@ -507,11 +490,8 @@ This is the single rule behind `gascity-beads-eldoc-store-for-id' and
 eldoc (REQ-013).  An attach buffer pinned to a worktree outside the city
 is exactly the case the rule exists for: its warm snapshot must answer
 even though `default-directory' sits outside every city tree (REQ-008)."
-  (let* ((scope (and (boundp 'gascity-beads-eldoc--scope)
-                     (symbol-value 'gascity-beads-eldoc--scope)))
-         (snapshot (and scope
-                        (boundp 'gascity-beads-eldoc--map)
-                        (symbol-value 'gascity-beads-eldoc--map))))
+  (let ((scope gascity-beads-eldoc--scope)
+        (snapshot gascity-beads-eldoc--map))
     (if (and snapshot
              (equal (gascity-beads-eldoc--map-scope snapshot) scope))
         snapshot
@@ -590,6 +570,21 @@ context keeps no dependency on this module."
 
 ;;; Hook registration
 
+;; Every buffer the view factory creates, and every attach buffer the
+;; terminal opens (which calls the installer itself), goes through the one
+;; install path (REQ-001, TS-1).
+(add-hook 'gascity-view-created-functions #'gascity-beads-eldoc-install)
+
+;; Major-mode setup must not lose the wiring (TS-5).
+(add-hook 'after-change-major-mode-hook #'gascity-beads-eldoc--reinstall)
+
+;; An explicit clear drops the maps, so the buffers that installed one go
+;; cold instead of answering from the dropped snapshot (REQ-010).
+(add-hook 'gascity-beads-eldoc-clear-cache-functions
+          #'gascity-beads-eldoc--buffers-go-cold)
+
+;; Only an `all'/`rig' batch can change the prefix to store mapping;
+;; session and agent batches are ignored (REQ-007, TS-6).
 (add-hook 'gascity-live-invalidate-functions #'gascity-beads-eldoc--invalidate)
 
 (provide 'gascity-beads-eldoc)
