@@ -385,8 +385,14 @@ it in the same buffer without a reopen (REQ-010, REQ-006)."
                       (cl-letf (((symbol-function 'gascity-beads-eldoc--fill)
                                  (lambda (&rest _) nil)))
                         (gascity-context-clear-cache))
-                      (should (= 0 (hash-table-count
-                                    gascity-beads-eldoc--maps)))
+                      ;; The clear dropped every warm map; the reinstall's
+                      ;; one deduplicated fill may create a fresh COLD entry
+                      ;; (S1 says it must start that fill), so assert no warm
+                      ;; snapshot for the scope rather than an empty table.
+                      (let ((entry (gethash scope gascity-beads-eldoc--maps)))
+                        (should-not (and entry
+                                         (gascity-beads-eldoc--map-fetched-at
+                                          entry))))
                       (should (equal beads-issue-id-prefixes
                                      gascity-beads-eldoc--deny-all-prefixes))
                       (should-not (funcall beads-eldoc-directory "be-abc"))
