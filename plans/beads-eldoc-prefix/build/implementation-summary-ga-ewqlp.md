@@ -196,12 +196,26 @@ $ scripts/lint.sh
 lint: package-lint is not installed; skipping package metadata checks (CI installs it)
 exit=0   # checkdoc clean on every lisp/*.el
 
-$ emacs --batch -Q -L lisp -L lisp/test \
+$ EMACSLOADPATH="$HOME/workspace/beads.el/lisp:$HOME/workspace/beads.el/.eldev/31.1/packages/vui-1.4.0:$EMACSLOADPATH:" \
+    emacs --batch -Q -L lisp -L lisp/test \
     -l lisp/test/gascity-beads-eldoc-install-test.el \
     --eval '(ert-run-tests-batch-and-exit)'
 Ran 11 tests, 11 results as expected, 0 unexpected (0.08 sec)
 exit=0
 ```
+
+Without that `EMACSLOADPATH` prefix the focused command fails before running a
+test — the sibling beads.el checkout's `beads-prefix` is not on the bare
+`-L lisp` path:
+
+```
+Cannot open load file: No such file or directory, beads-prefix
+Error: file-missing ("Cannot open load file" "No such file or directory" "beads-prefix")
+```
+
+The whole-package `scripts/gate.sh` / `scripts/lint.sh` commands above supply
+the same environment for the target tree, so only the focused command needed
+the explicit prefix.
 
 Evidence for the ask's other proofs:
 
