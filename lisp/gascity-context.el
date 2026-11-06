@@ -349,14 +349,11 @@ with a local `default-directory' — new views must come through here."
     ;; project.el must never do I/O from this buffer's redisplay: the
     ;; pinned root is the project (see `gascity-context-install-project').
     (gascity-context-install-project buf dir)
-    ;; When the rig list is already known for this host, narrow beads
-    ;; eldoc to the city's real id prefixes — cheap, and it keeps a
-    ;; stray hyphenated token from costing a `bd show'.  A cold memo is
-    ;; left alone: never spawn gc to open a buffer.
-    (when-let* ((prefixes (gascity-rigs-cached-prefixes dir)))
-      (with-current-buffer buf
-        (when (boundp 'beads-issue-id-prefixes)
-          (setq-local beads-issue-id-prefixes prefixes))))
+    ;; bead-id eldoc is installed by the one install path, on the hook
+    ;; below: it captures this pinned city root, sets the per-id resolver
+    ;; and the city's prefix allowlist (deny-all while the map is cold),
+    ;; and keeps them across the major mode this view enables afterwards.
+    ;; Never spawn gc to open a view.
     (run-hook-with-args 'gascity-view-created-functions buf)
     buf))
 

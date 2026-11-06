@@ -21,8 +21,8 @@
 ;; - the I/O-free `project' of `gascity-context-install-project'
 ;;   (project.el's VC walk over TRAMP on every redisplay was a real
 ;;   hang, dashboard-v3 D9);
-;; - the rig-scoped beads eldoc (`gascity-terminal--beads-integrate'):
-;;   the per-id rig memorandums and the city's real id prefixes;
+;; - the city-scoped beads eldoc (`gascity-terminal--beads-integrate'):
+;;   the one install path, from the city captured at attach time;
 ;; - the gascity key map (`C-c b' -> `gascity-bead-show-at-point');
 ;; - the debug log of the attach argv.
 ;;
@@ -99,6 +99,12 @@
 
 ;;; Buffer-local state and modes follow their implementation.
 
+;; The one bead-id eldoc install path (gascity-beads-eldoc); declared
+;; rather than required, so this module stays below it in the load order.
+(declare-function gascity-beads-eldoc-install "gascity-beads-eldoc"
+                  (&optional buffer dir))
+(defvar gascity-beads-eldoc--scope)
+
 (defvaralias 'gascity-terminal-scroll-mode 'beads-terminal-tmux-scroll-mode)
 (defvaralias 'gascity-terminal-wheel-mode 'beads-terminal-tmux-wheel-mode)
 (defvaralias 'gascity-terminal--scroll-wheel-first
@@ -171,35 +177,27 @@ prefix — no file access."
         (file-name-as-directory store)
       dir)))
 
-(defun gascity-terminal--beads-integrate (buffer store)
-  "Wire beads.el's eldoc in the attach BUFFER to the agent's STORE.
-STORE is the agent's rig store directory (nil when unknown).  Sets,
-buffer-locally, `beads-eldoc-directory' — STORE when known, else the
-spawn-free per-id resolver `gascity-beads--bead-path-cached', so
-`bd show' runs against the store owning the id's prefix rather than
-the buffer's own directory (which for a remote attach is the city
-root, whose `bd' answers \"no issues found\" for a rig's bead) — and
-`beads-issue-id-prefixes' to the city's real prefixes from the rig
-memo, when it is warm, so a random hyphenated token in the transcript
-never costs a `bd show'.  Nothing here spawns gc: the memo is read,
-never filled.  A no-op when beads-eldoc is absent or predates the
-variables (soft `require', `boundp' guards)."
-  (when (buffer-live-p buffer)
-    (require 'beads-eldoc nil t)
-    (with-current-buffer buffer
-      (when (boundp 'beads-eldoc-directory)
-        (setq-local beads-eldoc-directory
-                    (or store #'gascity-beads--bead-path-cached)))
-      (when-let* (((boundp 'beads-issue-id-prefixes))
-                  (prefixes (gascity-rigs-cached-prefixes)))
-        (setq-local beads-issue-id-prefixes prefixes)))))
+(defun gascity-terminal--beads-integrate (buffer city)
+  "Install bead-id eldoc in the attach BUFFER for captured CITY.
+CITY is the city context captured when the attach started (the
+calling buffer's installed scope first, else `gascity-context-city-root',
+else nil); it delegates to `gascity-beads-eldoc-install' — the one
+install path every gascity buffer uses (REQ-001, TS-1) — so the
+resolver is a function of the id, never the agent's store: an id from
+another rig, or a city-store id, resolves to its own store (REQ-002).
+Nil CITY installs nothing and starts no fill (D8), and a beads.el
+without the eldoc variables is left alone.  Nothing here spawns gc.
+Returns BUFFER."
+  (gascity-beads-eldoc-install buffer city))
 
 (defun gascity-terminal-attach-tmux (session &optional socket dir store)
   "Attach to tmux SESSION in a terminal buffer, without blocking Emacs.
 SOCKET selects a non-default tmux server when set.  DIR is the working
 directory for the spawned terminal.  STORE is the agent's rig store
 directory when the caller knows it (`gascity-agent-attach-tmux' passes
-the memoized one); it scopes the buffer's project and beads eldoc.
+the memoized one); it scopes the buffer's `project' root.  Bead eldoc
+is city-scoped, never store-scoped: the captured city decides the
+per-id resolver (REQ-002).
 Signals a `user-error' when SESSION is empty, or at once for a remote
 method plain ssh cannot reach.
 
@@ -225,14 +223,20 @@ pre-step found it there, else to the city directory the attach came
 from.
 
 Pinned local or remote, the buffer then gets gascity's I/O-free
-`project' (`gascity-context-install-project'), beads eldoc wired to the
-agent's store (`gascity-terminal--beads-integrate') and, when
+`project' (`gascity-context-install-project'), bead eldoc from the
+captured city (`gascity-terminal--beads-integrate') and, when
 `beads-terminal-tmux-mode-line-status' is non-nil, the asynchronous tmux
 status mirror (`gascity-terminal--status-install').  Returns the live
 terminal buffer when one was raised, else nil."
   (unless (and session (stringp session) (not (string-empty-p session)))
     (user-error "No tmux session for this agent"))
   (let* ((origin default-directory)
+         ;; The city the attach's bead eldoc resolves against, captured
+         ;; NOW: a re-attach from an attach buffer pinned to a polecat
+         ;; worktree has its city only in the installed scope, and the
+         ;; buffer's `default-directory' may sit outside the city tree.
+         (eldoc-city (or (bound-and-true-p gascity-beads-eldoc--scope)
+                         (gascity-context-city-root origin)))
          (remote (and (file-remote-p origin) origin))
          ;; Built first: an unsupported TRAMP method fails here with its
          ;; clear `user-error', before anything runs.
@@ -259,16 +263,17 @@ terminal buffer when one was raised, else nil."
            (let ((default-directory origin))
              (gascity-terminal--attach-finish
               result session socket dir store remote buf-name term host-dir
-              status-off))))
+              status-off eldoc-city))))
         nil))))
 
 (defun gascity-terminal--attach-finish (result session socket dir store remote
-buf-name term host-dir status-off)
+buf-name term host-dir status-off eldoc-city)
   "Open the attach terminal after the pre-step answered RESULT.
 RESULT is (EXIT . STDOUT) of `gascity-terminal--attach-script'.
-SESSION, SOCKET, DIR, STORE, REMOTE, BUF-NAME, TERM, HOST-DIR and
-STATUS-OFF are the attach's, see `gascity-terminal-attach-tmux'.  Runs
-from a timer: reports problems in the echo area, never signals."
+SESSION, SOCKET, DIR, STORE, REMOTE, BUF-NAME, TERM, HOST-DIR,
+STATUS-OFF and ELDOC-CITY are the attach's, see
+`gascity-terminal-attach-tmux'.  Runs from a timer: reports problems
+in the echo area, never signals."
   (let ((lines (gascity-terminal--lines (cdr result))))
     (cond
      ((member "beads-no-session" lines)
@@ -310,7 +315,7 @@ from a timer: reports problems in the echo area, never signals."
              buf (gascity-terminal--project-root
                   (buffer-local-value 'default-directory buf) store))
             (gascity-terminal--install-keys buf)
-            (gascity-terminal--beads-integrate buf store)
+            (gascity-terminal--beads-integrate buf eldoc-city)
             (gascity-terminal--status-install buf session socket remote
                                               status-off))
           buf))))))

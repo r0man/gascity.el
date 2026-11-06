@@ -1,4 +1,4 @@
-;;; gascity-beads-eldoc.el --- Per-city bead-id prefix to store map -*- lexical-binding: t; -*-
+;;; gascity-beads-eldoc.el --- Per-city bead-id map and its install path -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026
 
@@ -40,10 +40,31 @@
 ;; there is no map and no fill (D8): a map keyed by the bare host prefix would
 ;; be shared by every local city on the host (REQ-007).
 ;;
-;; The install path (buffer-locals for beads.el's eldoc, the major-mode
-;; re-install hook, the deny-all sentinel) and the caller migration (`C-c b`,
-;; `gascity-beads--bead-path-cached') are the plan's items 2 and 3 and extend
-;; this module.
+;; Eldoc resolves an id by its prefix, so a buffer needs two related
+;; buffer-locals from beads.el: `beads-eldoc-directory', a function of the id
+;; answering the store that owns the id's prefix (never a bare store string:
+;; a transcript in one rig must still resolve another rig's id, REQ-002), and
+;; `beads-issue-id-prefixes', the city's real prefixes, so a random
+;; hyphenated token in the transcript never costs a `bd show'.
+;;
+;; `gascity-beads-eldoc-install' is the only writer of that contract in the
+;; package.  The view factory (`gascity-view-created-functions') and
+;; `after-change-major-mode-hook' both funnel into
+;; `gascity-beads-eldoc--apply', so every view and every terminal/attach
+;; buffer gets the same wiring and keeps it across the major mode's
+;; `kill-all-local-variables' (TS-5).  The city scope is captured at install
+;; time, never re-derived from `default-directory' later: an attach buffer in
+;; a polecat worktree outside the city tree still resolves the city and its
+;; rigs (REQ-008, TS-4).  No city context means no install and no fill (D8).
+;;
+;; Cold start admits nothing: `gascity-beads-eldoc--deny-all-prefixes' is
+;; `'("")', which beads.el's `beads-issue-id--allowed-p' can never match, so
+;; a cold buffer never falls back to `default-directory' (REQ-006).  When a
+;; fill lands, `gascity-beads-eldoc--land' re-applies the map to the buffers
+;; already open for that scope (`gascity-beads-eldoc--reapply-buffers'), so
+;; they heal without being reopened or reverted.  The caller migration
+;; (`C-c b', `gascity-beads--bead-path-cached') is the plan's item 3 and
+;; reuses the same resolver.
 
 ;;; Code:
 
@@ -108,6 +129,85 @@ answer nil; the caller's allowlist is the same map's `prefixes', so
 beads.el has already rejected ids the map cannot store."
   (when-let* ((prefix (and map (gascity-beads--id-prefix id))))
     (cdr (assoc prefix (gascity-beads-eldoc--map-stores map)))))
+
+;;; Buffer state
+
+(defvar-local gascity-beads-eldoc--scope nil
+  "The city scope this buffer's bead eldoc resolves against.
+Captured by `gascity-beads-eldoc-install' from the install context
+\(a `gascity-context-scope-key'), never re-derived from the buffer's
+`default-directory'.  Nil in buffers gascity does not own.  Permanent
+local: every view enables its major mode after the factory installed
+the wiring, and `kill-all-local-variables' must not lose the city the
+buffer was opened for (TS-4, TS-5).")
+(put 'gascity-beads-eldoc--scope 'permanent-local t)
+
+(defvar-local gascity-beads-eldoc--map nil
+  "The city map snapshot installed in this buffer, or nil while cold.
+The resolver closure installed as `beads-eldoc-directory' captures this
+object, so a fill that mutates the map in place is visible to it.
+Permanent local for the same reason as `gascity-beads-eldoc--scope'.")
+(put 'gascity-beads-eldoc--map 'permanent-local t)
+
+(defconst gascity-beads-eldoc--deny-all-prefixes '("")
+  "The cold-map allowlist: a prefix that matches no bead id.
+beads.el's `beads-issue-id--allowed-p' accepts a prefix P when
+`(string-prefix-p (concat P \"-\") ID)'; ids begin with a letter, so
+a \"-\" prefix never matches and the buffer admits nothing while the
+map is cold.  Nil would mean \"accept any id\" — exactly the
+wrong-store lookup REQ-006 forbids — and an empty list would mean the
+same.  Pinned by an ERT test against the installed beads.el, so an
+upstream change to that predicate fails loudly instead of silently
+re-enabling the bug.")
+
+;;; Buffer registry
+
+(defvar gascity-beads-eldoc--buffers nil
+  "Alist mapping a city scope to the buffers installed for it.
+The fill re-applies the completed map to these buffers
+\(`gascity-beads-eldoc--reapply-buffers'), so a buffer installed while
+the map was cold heals without being reopened (REQ-006).  Dead buffers
+are pruned on every use; the registry holds no other state.")
+
+(defun gascity-beads-eldoc--live-buffers (scope)
+  "Return the live buffers registered for SCOPE, pruning dead ones.
+SCOPE is a string (`gascity-context-scope-key'), so the lookup is
+`assoc'/`equal', never `eq'."
+  (let ((cell (assoc scope gascity-beads-eldoc--buffers)))
+    (when cell
+      (setcdr cell (seq-filter #'buffer-live-p (cdr cell)))
+      (if (cdr cell)
+          (cdr cell)
+        (setq gascity-beads-eldoc--buffers
+              (assoc-delete-all scope gascity-beads-eldoc--buffers))
+        nil))))
+
+(defun gascity-beads-eldoc--register (buffer)
+  "Register BUFFER under its installed scope; return BUFFER.
+Idempotent: a re-install moves the buffer to the front instead of
+duplicating it."
+  (let* ((scope gascity-beads-eldoc--scope)
+         (cell (assoc scope gascity-beads-eldoc--buffers)))
+    (if cell
+        (setcdr cell (cons buffer (delq buffer (cdr cell))))
+      (push (cons scope (list buffer)) gascity-beads-eldoc--buffers))
+    buffer))
+
+(defun gascity-beads-eldoc--reapply-buffers (scope)
+  "Re-resolve SCOPE's map and re-apply it to its registered buffers.
+Called when a fill completes: a buffer installed cold goes from
+deny-all to the city's prefixes and per-id resolver without being
+reopened or reverted (REQ-006).  Buffers whose scope changed since
+registration are left alone; dead ones are pruned.  Reads the landed
+map directly — this runs from the fill's own completion, so it must
+never start another read."
+  (when-let* ((map (gethash scope gascity-beads-eldoc--maps))
+              ((gascity-beads-eldoc--map-fetched-at map)))
+    (dolist (buffer (gascity-beads-eldoc--live-buffers scope))
+      (with-current-buffer buffer
+        (when (equal gascity-beads-eldoc--scope scope)
+          (setq gascity-beads-eldoc--map map)
+          (gascity-beads-eldoc--apply buffer))))))
 
 ;;; Fill
 
@@ -179,6 +279,9 @@ line per fill (D4)."
           (gascity-beads-eldoc--map-stale map) nil
           (gascity-beads-eldoc--map-fetching map) nil
           (gascity-beads-eldoc--map-failed-at map) 0)
+    ;; The map is warm now: apply it to the buffers installed while it was
+    ;; cold, so they heal without being reopened (REQ-006, plan §B).
+    (gascity-beads-eldoc--reapply-buffers (gascity-beads-eldoc--map-scope map))
     map))
 
 (defun gascity-beads-eldoc--fail (map err)
@@ -265,6 +368,80 @@ This is the map's only read path; it never runs gc or bd synchronously
           (setf (gascity-beads-eldoc--map-stale map) t)
           (gascity-beads-eldoc--refill map scope city))
         map)))))
+
+;;; Install
+
+(defun gascity-beads-eldoc--apply (buffer)
+  "Apply BUFFER's installed map to beads.el's buffer-local contract.
+Sets, boundp-guarded and after a soft `require' of beads-eldoc,
+`beads-eldoc-directory' to a closure over the buffer's map snapshot and
+`beads-issue-id-prefixes' to that snapshot's prefixes — or to
+`gascity-beads-eldoc--deny-all-prefixes' while cold, so no id is
+admitted before the map lands.  A no-op against a beads.el without the
+variables.  Returns BUFFER."
+  (when (buffer-live-p buffer)
+    (require 'beads-eldoc nil t)
+    (with-current-buffer buffer
+      (when (boundp 'beads-eldoc-directory)
+        (setq-local beads-eldoc-directory
+                    (let ((map gascity-beads-eldoc--map))
+                      (lambda (id)
+                        (and map
+                             (gascity-beads-eldoc--store-for map id))))))
+      (when (boundp 'beads-issue-id-prefixes)
+        (setq-local beads-issue-id-prefixes
+                    (or (and gascity-beads-eldoc--map
+                             (gascity-beads-eldoc--map-prefixes
+                              gascity-beads-eldoc--map))
+                        gascity-beads-eldoc--deny-all-prefixes))))
+    buffer))
+
+(defun gascity-beads-eldoc-install (&optional buffer dir)
+  "Install per-id bead eldoc in BUFFER.
+BUFFER defaults to the current buffer.  DIR is the city context to
+capture, defaulting to BUFFER's `default-directory'; it is the city
+root for a view and the origin city's root for an attach.  The scope is
+captured now (TS-4): a later refresh, an attach buffer pinned to a
+worktree, or a major-mode switch never re-derives it from
+`default-directory'.
+
+No city context — DIR outside any city tree — installs nothing and
+starts no fill (D8): the buffer keeps beads.el's own behavior.  A
+beads.el without the eldoc variables is likewise left alone.  Returns
+BUFFER when installed, nil otherwise."
+  (let ((buffer (or buffer (current-buffer))))
+    (when (buffer-live-p buffer)
+      (let* ((dir (or dir (buffer-local-value 'default-directory buffer)))
+             (city (gascity-context-city-root dir)))
+        (when city
+          (with-current-buffer buffer
+            (setq gascity-beads-eldoc--scope (gascity-context-scope-key dir))
+            (setq gascity-beads-eldoc--map (gascity-beads-eldoc-map dir))
+            (gascity-beads-eldoc--register buffer)
+            (gascity-beads-eldoc--apply buffer)
+            buffer))))))
+
+(defun gascity-beads-eldoc--reinstall ()
+  "Re-apply this buffer's installed bead eldoc after a major-mode switch.
+On `after-change-major-mode-hook', mirroring
+`gascity-context--reinstall-project': every view enables its major mode
+AFTER the factory installed the wiring, and the mode's
+`kill-all-local-variables' drops `beads-eldoc-directory' and
+`beads-issue-id-prefixes' (auto buffer-local).  The scope and map are
+permanent-local, so they survive to re-apply from.  A no-op in buffers
+gascity does not own (no scope)."
+  (when gascity-beads-eldoc--scope
+    (gascity-beads-eldoc--apply (current-buffer))))
+
+;;; Wiring
+
+;; Every buffer the view factory creates, and every attach buffer the
+;; terminal opens (which calls the installer itself), goes through the one
+;; install path (REQ-001, TS-1).
+(add-hook 'gascity-view-created-functions #'gascity-beads-eldoc-install)
+
+;; Major-mode setup must not lose the wiring (TS-5).
+(add-hook 'after-change-major-mode-hook #'gascity-beads-eldoc--reinstall)
 
 (provide 'gascity-beads-eldoc)
 ;;; gascity-beads-eldoc.el ends here

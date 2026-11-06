@@ -700,7 +700,8 @@ a contextless view whose reads fail and whose live indicator spins
 
 (ert-deftest gascity-test-costs-shows-text ()
   "`gascity-costs' starts `gc costs' async and shows its text as-is."
-  (let ((calls nil)
+  (gascity-test-without-bead-eldoc-map
+   (let ((calls nil)
         (gascity-store-synchronous-delivery t))
     (cl-letf (((symbol-function 'gascity-reader-run-async)
                (lambda (args callback) (push (list args callback) calls) nil))
@@ -730,9 +731,7 @@ a contextless view whose reads fail and whose live indicator spins
               (should buffer-read-only)
               (should (eq (keymap-lookup (current-local-map) "g")
                           #'gascity-costs-refresh)))
-          (kill-buffer (current-buffer)))))))
-
-;;; Entry points
+          (kill-buffer (current-buffer))))))))
 
 (ert-deftest gascity-test-health-views-are-commands ()
   "The `j' targets are interactive commands and `j $' is in `?'."

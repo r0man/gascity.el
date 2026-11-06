@@ -5676,7 +5676,8 @@ city root — two local cities get distinct names, a remote city's name
 carries the full city root and is distinguishable from a local one —
 while outside any city today's host-only shapes still hold
 (REQ-001, REQ-002, REQ-013)."
-  (gascity-context-clear-cache)
+  (gascity-test-without-bead-eldoc-map
+   (gascity-context-clear-cache)
   (let* ((tmp (make-temp-file "gascity-test-bname" t))
          (city-a (file-name-as-directory (expand-file-name "emacs-city" tmp)))
          (city-b (file-name-as-directory (expand-file-name "bright-lights" tmp)))
@@ -5733,7 +5734,7 @@ while outside any city today's host-only shapes still hold
       (dolist (buf bufs)
         (when (buffer-live-p buf) (kill-buffer buf)))
       (delete-directory tmp t)
-      (gascity-context-clear-cache))))
+      (gascity-context-clear-cache)))))
 
 (ert-deftest gascity-test-remote-ssh-argv ()
   "The local ssh argv carries user/port, quotes remote tokens, and rejects
@@ -7704,11 +7705,12 @@ to error), nil for a city-scoped agent or a cold memo."
     (gascity-context-clear-cache)))
 
 (ert-deftest gascity-test-terminal-beads-integrate ()
-  "The attach buffer gets beads eldoc's buffer-local contract: the store
-as `beads-eldoc-directory' (the spawn-free per-id resolver when the
-store is unknown) and the memo's prefixes as `beads-issue-id-prefixes'
-\(untouched when the memo is cold) — and it is a no-op, not an error,
-when beads.el lacks the variables."
+  "The attach buffer gets the one bead-eldoc contract, per id (REQ-002).
+A warm map installs the per-id resolver and the map's prefixes, so a
+`be-' id resolves to the beads.el store even though the attach's agent
+store is the gascity.el rig; a cold map is deny-all with a resolver that
+answers nil; no captured city installs nothing (D8); and it stays a
+no-op, not an error, when beads.el lacks the variables."
   (gascity-context-clear-cache)
   ;; Load beads-eldoc NOW (when available), so the function's own soft
   ;; `require' below can no longer re-define the variables the
@@ -7716,51 +7718,59 @@ when beads.el lacks the variables."
   (require 'beads-eldoc nil t)
   (let* ((vars '(beads-eldoc-directory beads-issue-id-prefixes))
          (bound (seq-filter #'boundp vars))
-         (saved (mapcar (lambda (v) (cons v (default-value v))) bound)))
+         (saved (mapcar (lambda (v) (cons v (default-value v))) bound))
+         (city (file-name-as-directory (make-temp-file "gascity-test-city" t)))
+         (warm (gascity-beads-eldoc--map-create
+                :prefixes '("gce" "be")
+                :stores '(("gce" . "/p/gascity.el/")
+                          ("be" . "/p/beads.el/"))
+                :fetched-at (float-time)))
+         (map nil))
+    (with-temp-file (expand-file-name "city.toml" city) (insert ""))
     (unwind-protect
         (progn
           ;; With the contract present (bind the variables ourselves
           ;; when this beads.el predates them).
           (dolist (v vars)
             (unless (boundp v) (set-default v nil)))
-          (let ((default-directory "/"))
+          (cl-letf (((symbol-function 'gascity-beads-eldoc-map)
+                     (lambda (&optional _dir) map)))
+            ;; Warm map: a function of the id, not the agent's store.
+            (setq map warm)
             (with-temp-buffer
-              (gascity-terminal--beads-integrate (current-buffer) "/p/gascity.el/")
-              (should (equal (buffer-local-value 'beads-eldoc-directory
-                                                 (current-buffer))
-                             "/p/gascity.el/"))
-              ;; Cold memo: the allowlist is left alone.
-              (should-not (local-variable-p 'beads-issue-id-prefixes)))
-            (gascity-rigs-remember
-             (gascity-test--rigs '((name . "gascity.el") (prefix . "gce")
-                                   (path . "/p/gascity.el"))
-                                 '((name . "hq") (path . "/p/hq"))))
-            (with-temp-buffer
-              (gascity-terminal--beads-integrate (current-buffer) nil)
-              (should (eq (buffer-local-value 'beads-eldoc-directory
-                                              (current-buffer))
-                          #'gascity-beads--bead-path-cached))
-              (should (equal (buffer-local-value 'beads-issue-id-prefixes
-                                                 (current-buffer))
-                             '("gce")))
-              ;; The resolver it installed answers from the memo.
+              (setq default-directory city)
+              (gascity-terminal--beads-integrate (current-buffer) city)
+              (should (functionp beads-eldoc-directory))
+              (should (equal beads-issue-id-prefixes '("gce" "be")))
+              (should (equal (funcall beads-eldoc-directory "be-abc")
+                             "/p/beads.el/"))
               (should (equal (funcall beads-eldoc-directory "gce-abc")
                              "/p/gascity.el/")))
-            ;; A view buffer gets the allowlist too when the memo is warm.
-            (let ((buf (gascity-view-get-buffer-create "*gascity-test-eldoc*")))
-              (unwind-protect
-                  (should (equal (buffer-local-value 'beads-issue-id-prefixes buf)
-                                 '("gce")))
-                (kill-buffer buf))))
+            ;; Cold map: deny-all (never the ambient directory).
+            (setq map nil)
+            (with-temp-buffer
+              (setq default-directory city)
+              (gascity-terminal--beads-integrate (current-buffer) city)
+              (should (functionp beads-eldoc-directory))
+              (should-not (funcall beads-eldoc-directory "gce-abc"))
+              (should (equal beads-issue-id-prefixes
+                             gascity-beads-eldoc--deny-all-prefixes)))
+            ;; No city context: nothing installed, no fill started (D8).
+            (with-temp-buffer
+              (setq default-directory "/")
+              (gascity-terminal--beads-integrate (current-buffer) nil)
+              (should-not (local-variable-p 'beads-eldoc-directory))
+              (should-not (local-variable-p 'beads-issue-id-prefixes))))
           ;; Without the contract: nothing set, nothing signalled.  Both
           ;; variables are automatically buffer-local in beads.el, so
           ;; `makunbound' voids them in THIS buffer only (a void local
           ;; binding, gone with the buffer) — hence the check runs here:
           ;; a `setq-local' would have re-bound them.
           (with-temp-buffer
+            (setq default-directory "/")
             (dolist (v vars) (makunbound v))
             (should-not (boundp 'beads-eldoc-directory))
-            (gascity-terminal--beads-integrate (current-buffer) "/p/gascity.el/")
+            (gascity-terminal--beads-integrate (current-buffer) nil)
             (should-not (boundp 'beads-eldoc-directory))
             (should-not (boundp 'beads-issue-id-prefixes))))
       ;; Restore: defaults for what was bound, void for what we bound.
@@ -7768,7 +7778,9 @@ when beads.el lacks the variables."
         (if (assq v saved)
             (set-default v (cdr (assq v saved)))
           (makunbound v)))
+      (delete-directory city t)
       (gascity-context-clear-cache))))
+
 
 ;;; ============================================================
 ;;; Suite completion — cross-cutting per-city keying
@@ -7945,7 +7957,8 @@ the override bound to city B's root, a view opened from a directory
 that naturally resolves to city A is keyed under B — its own buffer,
 B's root in the name and pinned as its `default-directory' — while
 the naturally-resolved A buffer is left untouched (REQ-011, REQ-012)."
-  (gascity-context-clear-cache)
+  (gascity-test-without-bead-eldoc-map
+   (gascity-context-clear-cache)
   (let* ((tmp (make-temp-file "gascity-test-override" t))
          (city-a (file-name-as-directory (expand-file-name "emacs-city" tmp)))
          (city-b (file-name-as-directory
@@ -7983,7 +7996,7 @@ the naturally-resolved A buffer is left untouched (REQ-011, REQ-012)."
       (dolist (buf bufs)
         (when (buffer-live-p buf) (kill-buffer buf)))
       (delete-directory tmp t)
-      (gascity-context-clear-cache))))
+      (gascity-context-clear-cache)))))
 
 ;;; Auto-refresh error hygiene: dedupe + backoff (ga-eyw9)
 
