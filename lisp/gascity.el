@@ -64,6 +64,7 @@
 (require 'gascity-terminal)
 (require 'gascity-live)
 (require 'gascity-section)
+(require 'gascity-beads-eldoc)
 (require 'gascity-tabulated)
 (require 'gascity-status)
 (require 'gascity-action)
