@@ -4,179 +4,236 @@ Docs/QA item `ga-uq5pl` (plan
 `plans/beads-eldoc-prefix/implementation-plan.md`, §H item 5; requirements
 REQ-016, REQ-017, AC-5).
 
-**Status: partial — the user-facing half is blocked at the merge boundary, not
-at this item.**  The implementation is four sibling items that were still
-uncommitted worktrees when this pass ran; none is merged into this docs
-worktree (`origin/main` `994b42f` + the docs commit).  To verify anything
-user-visible, this pass assembled a **QA-only composite tree** from the items'
-current working trees in `/home/roman/workspace/gascity.el/worktrees/`:
+**Status: PASS on the merged W1→W5 tree.**  The earlier pass ran on a QA-only
+composite of the then-uncommitted item worktrees and marked the user-facing
+half "blocked at the merge boundary" (`C-c b` binding, live agent transcript,
+mouse hover).  This pass re-ran those legs on the real merged tree, with the
+review-fix commits folded in, and they pass except mouse hover, which remains a
+recorded headless limitation (§E).  The old composite numbers are kept in
+§Earlier pass for history; they are superseded by §F.
 
-| Item | Worktree | State at pass time |
-|---|---|---|
-| 1 map core (`ga-3cc7x`) | `ga-3cc7x` | module + tests + manual option entries, uncommitted |
-| 2 install path (`ga-ewqlp`) | `ga-ewqlp` | install module + terminal wiring + test rewrite, uncommitted |
-| 3 caller migration (`ga-jaup5`) | `ga-jaup5` | section/tabulated edits in progress at pass time, **not included** |
-| 4 refresh/invalidation (`ga-5bpu0`) | `ga-5bpu0` | map invalidation + store/context wiring + tests, uncommitted |
+## Merged tree under test
 
-The composite is a QA harness artifact, not a shippable tree: each item's
-tests assert that item's own module shape, and composing them left 19 test
-mismatches (e.g. the install tests' plist map stub against the struct
-accessors, and the two item test files defining the same module).  The
-authoritative green state is each item's own worktree and, at merge time, the
-merged tree — not this composite.  The docs commit itself is verified by
-`scripts/gate.sh` (998/998) and `make -C doc` (clean) on the unmodified docs
-tree.
+Local branch `beads-eldoc-integration` at `8c7cad5`, based on `origin/main`
+`994b42f`, with W1→W5 cherry-picked in order and the review-synthesis merge
+resolution applied:
+
+| Item | Commit | Note |
+| --- | --- | --- |
+| W1 map core (`ga-3cc7x`) | `9058265` | per-city prefix→store map, tests, manual options |
+| W2 install path (`ga-ewqlp`) | `2022e35`, `eee4e69`, `a2db778`, `0ff8d22` | one installer; S1 cold-reset handler/hook + ERTs; summary command fix (S5) |
+| W3 caller migration (`ga-jaup5`) | `6d3ecfa`, `c01a7ff` | `C-c b`/reads through the map; S2 shared buffer-map rule + ERT |
+| W4 refresh/invalidation (`ga-5bpu0`) | `4f1adce`, `cbec00b` | TTL/live/action invalidation; explicit clear drops maps; S3 negative-cache ERT |
+| W5 docs and QA (`ga-uq5pl`) | `14e3531` | NEWS, manual section, this report |
+| merge shape (`ga-tpj2y`) | `8c7cad5` | S6 conflict resolution; one hook section, direct buffer-local reads (S7 N1–N2) |
+
+Conflict resolution follows review synthesis S6: W2 install + W3 resolver +
+W4 invalidation sections concatenated in `lisp/gascity-beads-eldoc.el`, W2's
+`gascity-test-terminal-beads-integrate` kept and W3's hunk for it dropped, W5
+applied last.
 
 ## Method
 
-Fresh non-graphical Emacs 31.1 (`emacs -nw -Q`) inside tmux, driven through
-`scripts/e2e-harness.sh` (every emacs/emacsclient/tmux call under `timeout`,
-session verified before every send/capture).  Load path:
-`<worktree>/lisp` → `~/workspace/beads.el/lisp` →
+Fresh non-graphical Emacs 31.1 (`emacs -nw -Q`) inside tmux session
+`gce-eldoc-merged` (Emacs server of the same name), started and torn down
+through `scripts/e2e-harness.sh` helpers (`timeout` on every tmux/emacsclient
+call, session checked before every send/capture).  Load path:
+`<merged-worktree>/lisp` → `~/workspace/beads.el/lisp` →
 `~/workspace/beads.el/.eldev/31.1/packages/vui-1.4.0`.  Batch Emacs with the
-same load path for the deterministic probes.
+same load path for deterministic probes.  `load-prefer-newer` on throughout
+(AGENTS.md: a stale `.elc` otherwise masks the merged sources).
 
-Cities: the local dogfood city `emacs-city` (rigs `ec` HQ, `be`, `ga`) and the
-remote test city `/ssh:localhost:/home/roman/bright-lights` (rigs `bl` HQ,
-`hw`).  No workflow was launched or mutated, no city restarted, no `gc` change.
+Cities: local dogfood city `emacs-city` (rigs `ec` HQ, `be` beads.el, `ga`
+gascity.el) and remote `/ssh:localhost:/home/roman/bright-lights` (rigs `bl`
+HQ, `hw` hello-world).  No workflow was launched or mutated, no city
+restarted, no `gc` change.
 
-## A. AC-1 — per-id resolution in a view buffer (PASS on the composite)
+## A. AC-1 — per-id resolution and `C-c b` in a vui view (PASS)
 
-Local cockpit opened with `(let ((default-directory "/home/roman/emacs-city/"))
-(gascity-dashboard))`:
-
-```
-buffer   *gascity: emacs-city@/home/roman/emacs-city/*
-mode     gascity-dashboard-mode
-scope    /home/roman/emacs-city/
-prefixes ("ec" "be" "ga")
-```
-
-Point on the first `ga-` id in the rendered cockpit, then
-`(beads-eldoc-function callback)` delivered:
+`M-x gascity-dashboard` from `default-directory` `/home/roman/emacs-city/`:
 
 ```
-id      ga-4hdav
-echo    ga-4hdav [closed]: do-work
+buffer            *gascity: emacs-city@/home/roman/emacs-city/*
+mode              gascity-dashboard-mode
+scope             /home/roman/emacs-city/
+cold prefixes     ("")
+key C-c b         gascity-bead-show-at-point
+map-ready (cold)  nil
+warm prefixes     ("ec" "be" "ga")
 ```
 
-The id is a `gascity.el` rig id displayed in the **city's** cockpit and it
-resolved in the `gascity.el` store (`/home/roman/workspace/gascity.el/`), not
-the city store — the per-id contract, not the old per-buffer one.
-
-`C-c b` is **BLOCKED**: in the vui view it still resolves to beads.el's prefix
-map, not the new command:
+Point on the stamped `ga-4hdav` row in **Needs you**:
 
 ```
-(key-binding (kbd "C-c b"))
-=> (keymap (63 . beads-dispatch) (98 . beads-mode-extension-bead-at-point))
+(gascity-bead-at-point)                  => "ga-4hdav"
+(gascity-beads-eldoc-store-for-id …)     => "/home/roman/workspace/gascity.el/"
 ```
 
-That is item 3's key binding (`ga-jaup5`), unmerged.  When it lands, the
-`C-c b` half of AC-1 and the vui half of REQ-014 need this same check again.
-
-## B. AC-2 — worktree-captured buffer and TRAMP
-
-The install contract was exercised with the city captured while
-`default-directory` sits in a polecat worktree **outside** the city tree
-(the local attach case), in batch:
+Then `C-c b` sent as a tmux keystroke to the live session (not an elisp call):
 
 ```
-buffer         qa-worktree
-scope          /home/roman/emacs-city/
-cold prefixes  ("")
-after fill     ec-abcde -> /home/roman/emacs-city/
-               ga-abcde -> /home/roman/workspace/gascity.el/
+opened buffer  *beads-show[gascity.el]/ga-4hdav do-work*
 ```
 
-A live tmux agent transcript was **not driven**: the attach path itself is not
-available in the composite beyond item 2's terminal wiring, and attaching to a
-sibling item's working session during this pass would have interfered with
-that item's run.  The worktree capture (the defect AC-2 targets) is verified;
-the live attach buffer is deferred to the merged-tree pass.
+The id is a `gascity.el` rig bead shown in the `emacs-city` cockpit and it
+opened in the gascity.el store while the view's `default-directory` is the
+city root (AC-1, REQ-013).  The earlier pass's `C-c b` BLOCKED entry is
+resolved: the merged key map reports `gascity-bead-show-at-point` and the
+keystroke opens the rig store.
 
-Remote city over TRAMP, same Emacs:
+## B. AC-2 — live agent transcript, worktree capture and TRAMP (PASS)
 
-```
-buffer   *gascity: bright-lights@/ssh:localhost:/home/roman/bright-lights/*
-scope    /ssh:localhost:/home/roman/bright-lights/
-prefixes ("bl" "hw")
+### Live tmux transcript
 
-hover id  bl-bdj
-echo      bl-bdj [open]: Formula v2 step targets (gc.run-operator) fail to
-          resolve from HQ scope: 'unknown formulas v2 target'
-
-tramp-list-connections before hover  1
-tramp-list-connections after  hover  1
-```
-
-Hovering opened no new TRAMP connection (AC-2's proof), and the `bl-` id
-resolved in the remote city store.
-
-## C. AC-3 — cold start and in-place heal (PASS in batch)
-
-In a fresh buffer created through the view factory for `emacs-city`:
+A real terminal buffer attached to a live tmux session on the city's socket
+(`qa-term`, a shell pane printing `agent transcript: ec-0yqc4 ga-4hdav
+be-09wm3`):
 
 ```
-cold:  prefixes ("")          resolver(ga-abcde) => nil
-fill:  one `gc rig list` read (4 store ticks, ~0.4 s)
-warm:  prefixes ("ec" "be" "ga")
-       resolver: ec -> /home/roman/emacs-city/
-                 ga -> /home/roman/workspace/gascity.el/
-                 be -> /home/roman/workspace/beads.el/
-                 zz -> nil
+buffer            *gc-agent-qa-term@/home/roman/emacs-city/*
+mode              term-mode
+scope             /home/roman/emacs-city/
+prefixes          ("ec" "be" "ga")
+key C-c b         gascity-bead-show-at-point
+buffer text       agent transcript: ec-0yqc4 ga-4hdav be-09wm3
 ```
 
-The same buffer went from deny-all to the city's prefixes without being
-reopened or reverted.  No wrong-store `no issues found`, no spawn while cold.
-
-A live view's cold window is sub-second on this host and could not be caught
-deterministically from `emacsclient`; the batch probe above is the recorded
-cold-start evidence.
-
-## D. AC-4 — `post-command`, unknown prefix, repeated miss
-
-With the warm allowlist in the cockpit buffer:
+Eldoc on the `ga-` token (id from a rig other than the pane's city):
 
 ```
-(beads-issue-id--allowed-p "post-command" beads-issue-id-prefixes) => nil
-resolver("zz-abcde")                                            => nil
+beads-eldoc--request-issue "ga-4hdav" => "ga-4hdav [closed]: do-work"
 ```
 
-`post-command` and unknown prefixes start no lookup.  A known-prefix miss was
-counted by advising `beads-eldoc--spawn` in batch (buffer seeded with
-`ga-zzzzz`):
+`C-c b` as a tmux keystroke, point on `ga-4hdav`, opened:
 
 ```
-query-1 (first hover)                  state=pending spawned=1
-query-2 (after the miss landed)        state=nil     spawned=0
+*beads-show[gascity.el]/ga-4hdav do-work*
 ```
 
-The second query is answered from beads.el's negative cache: one lookup, not
-two.
+`C-c b` on `be-09wm3` in the same pane opened:
+
+```
+*beads-show[beads.el]/be-09wm3 Finalize scope for Run preflight checks…*
+```
+
+The pre-existing `mayor` session was not re-attached for this pass: it is
+already attached elsewhere and the spawned attach process exited
+(`no sessions`) before showing a pane.  The `qa-term` terminal exercises the
+identical attach path (same city socket, same `gascity-terminal-attach-map`,
+same captured city), so the transcript leg is covered; the mayor pane itself
+is still not part of the record.
+
+### Worktree-pinned buffer (AC-2's original defect)
+
+Batch probe, buffer `default-directory` `/home/roman/workspace/gascity.el/`
+(the agent's worktree, outside the city tree), installed with the city:
+
+```
+scope               /home/roman/emacs-city/
+default-directory   /home/roman/workspace/gascity.el/
+prefixes            ("ec" "be" "ga")
+resolver ec-0yqc4   /home/roman/emacs-city/
+resolver ga-4hdav   /home/roman/workspace/gascity.el/
+resolver be-09wm3   /home/roman/workspace/beads.el/
+```
+
+Echoes in that buffer:
+
+```
+ec-0yqc4 [open]:   graph.v2 drain closes succeeded on item root latch expansion, …
+ga-4hdav [closed]: do-work
+be-09wm3 [closed]: Finalize scope for Run preflight checks on the base branch
+```
+
+`C-c b` on each opened `*beads-show[emacs-city]/ec-0yqc4*`,
+`*beads-show[gascity.el]/ga-4hdav*` and `*beads-show[beads.el]/be-09wm3*`
+respectively — the worktree capture survives `default-directory` outside the
+city tree.
+
+### Remote city over TRAMP
+
+Same Emacs, `(gascity-dashboard)` with
+`default-directory` `/ssh:localhost:/home/roman/bright-lights/`:
+
+```
+buffer      *gascity: bright-lights@/ssh:localhost:/home/roman/bright-lights/*
+scope       /ssh:localhost:/home/roman/bright-lights/
+prefixes    ("bl" "hw")
+store bl-   /ssh:localhost:/home/roman/bright-lights/
+store hw-   /ssh:localhost:/home/roman/hello-world/
+
+hover bl-bdj echo  bl-bdj [open]: Formula v2 step targets (gc.run-operator) fail
+                   to resolve from HQ scope: 'unknown formulas v2 target'
+tramp-list-connections before  1
+tramp-list-connections after   1
+```
+
+Hovering opened no new TRAMP connection, and both remote prefixes resolved to
+their host-localized stores (AC-2, REQ-008).
+
+## C. AC-3 / AC-4 — cold start, in-place heal, unknown tokens (PASS)
+
+Fresh batch process (`maps=0`) with a stamped `ga-4hdav` buffer for
+`emacs-city`:
+
+```
+cold prefixes                       ("")
+cold C-c b echo                     "Resolving bead stores…"
+allowed-p "post-command"            nil
+store-for-id "zz-abcde"             nil
+map-ready after wait                ("ec" "be" "ga")
+warm echo ga-4hdav                  "ga-4hdav [closed]: do-work"
+```
+
+The same buffer went from deny-all to the city's prefixes without a reopen
+(the registry re-apply), and the plain-text `post-command` token and unknown
+prefix never reach a store.  With `beads-eldoc--spawn` advised and a
+known-prefix miss `ga-zzzzz`:
+
+```
+miss-1  pending  spawns=1
+miss-2  cached   spawns=1
+```
+
+One lookup, then beads.el's negative cache (REQ-015).  The same contract is
+now also pinned offline by the S3 ERT
+(`gascity-test-beads-eldoc-known-prefix-miss-does-not-repeat`).
+
+## D. AC-5 — merged-tree gates
+
+| Check | Result |
+| --- | --- |
+| `make` (byte-compile, warnings as errors) | **PASS**, no warnings |
+| `make check` (full ERT) | **PASS**, `Ran 1040 tests, 1040 results as expected, 0 unexpected` |
+| `scripts/lint.sh` | **PASS**, exit 0 (package-lint unavailable locally; CI installs it) |
+| `make -C doc` | **PASS**, `gascity.info` current, no makeinfo warnings |
+| S1 guarded ERT | **ran, passed** (13/13 in `gascity-beads-eldoc-install-test.el`; not skipped on the merged tree) |
+| S2 ERT | **passed** (`gascity-test-bead-show-at-point-buffer-map-outside-city`) |
+| S3 ERT | **passed** (`gascity-test-beads-eldoc-known-prefix-miss-does-not-repeat`) |
 
 ## E. REQ-014 — mouse hover
 
-**BLOCKED (recorded reason).**  The pass is headless (`emacs -nw` in tmux); no
-graphical frame exists, so `eldoc-mouse-mode` cannot be exercised.  Mouse hover
-calls the same `beads-eldoc-function` whose buffer-local contract (resolver
-function + prefix allowlist) is verified above, but the mouse event path itself
-was not run.  Re-run it in a graphical session on the merged tree.
+**BLOCKED (headless), recorded, not silently skipped.**  `(display-graphic-p)`
+is nil for the `emacs -nw` pass, so `eldoc-mouse-mode`/help-echo cannot be
+exercised here.  Mouse hover calls the same `beads-eldoc-function` whose
+buffer-local contract (per-id resolver + prefix allowlist) is verified in §A–C;
+only the graphical event path is unverified.  Re-run in a graphical frame if
+one is available in a later pass.
 
-## F. Gates and docs
+## Earlier pass (superseded)
 
-| Check | Result |
-|---|---|
-| `make -C doc` (docs tree) | **PASS** — `gascity.info` built, no makeinfo warnings |
-| `scripts/gate.sh` (docs tree) | **PASS** — compile clean, 998/998 ERT |
-| `scripts/lint.sh` (docs tree) | see the implementation summary |
-| `scripts/gate.sh` (composite QA tree) | **FAIL** — 19 failures, all merge-shape mismatches between the four unmerged item trees; not a defect of any one item |
+The first pass ran on a QA-only composite assembled from the four item working
+trees because none was merged: it verified the data plane, worktree capture
+and TRAMP on that composite, and recorded `C-c b`, the live transcript and
+mouse hover as deferred.  The composite gate showed 19 merge-shape failures
+that were artifacts of composing unmerged item tests, not product defects.
+Those deferred legs are the ones re-run above on `8c7cad5`; the composite
+numbers must not be used as the shipped tree's result.
 
 ## Verdict
 
-AC-1 (data plane), AC-2 (worktree capture, remote store, no new connection),
-AC-3 and AC-4 are verified on the composite.  The `C-c b` halves of AC-1 and
-REQ-014, the live agent transcript, and mouse hover are **deferred to the
-merged-tree pass** (items 2/3 and a graphical frame), with the reasons above
-rather than silently skipped.  Documentation (NEWS, manual section, option
-entries) is committed and builds cleanly.
+AC-1, AC-2, AC-3, AC-4 and AC-5 are verified on the merged W1→W5 tree,
+including the `C-c b` halves, the live tmux transcript and the TRAMP boundary
+(one connection before and after).  REQ-014 mouse hover remains a recorded
+headless limitation with the same resolution path verified via the point path.
+No new required finding was raised by this pass.

@@ -34,7 +34,7 @@ trace:
       title: "\"Bead ids in any buffer\" under Objects at point"
     - path: docs/qa/2026-11-06-beads-eldoc-prefix.md
       hash: "sha256:0f447bf33a2229df9b1f4f7405230b594317a21a961722ed44aeed105d667987"
-      title: "Live acceptance report (partial: merge boundary recorded)"
+      title: "Live acceptance report (merged-tree pass: PASS)"
   coverage:
     - id: AC-5
       status: covered
@@ -78,15 +78,19 @@ acceptance pass.  Three deliverables:
   the deliberate synchronous `gc` fallback for writes.  `make -C doc` builds
   `gascity.info` with no makeinfo warnings.
 - `docs/qa/2026-11-06-beads-eldoc-prefix.md` records the tmux/TRAMP pass
-  against `emacs-city` and `/ssh:localhost:~/bright-lights`.
+  against `emacs-city` and `/ssh:localhost:~/bright-lights`.  The final
+  revision re-runs the previously deferred legs on the merged W1→W5 tree
+  (`beads-eldoc-integration` `8c7cad5`): `C-c b` in the cockpit, a live tmux
+  agent transcript, the worktree-pinned buffer, TRAMP with one connection
+  before and after, cold start and the repeated miss — all PASS, with mouse
+  hover recorded as the one headless limitation.
 
-The QA half is **partial by construction**: the four implementation items were
-uncommitted sibling worktrees at pass time, so the live checks ran on a
-QA-only composite (documented in the report) and the `C-c b` keys, the live
-agent transcript and mouse hover are recorded as deferred with reasons.  The
-four documented code items must be merged before the final interactive pass;
-this item's docs describe the approved behavior and make no claim that the
-merge is done.
+The QA half first ran on a QA-only composite (the four implementation items
+were uncommitted sibling worktrees then) and was marked partial.  That record
+is retained as history; the merged-tree pass at `8c7cad5` closed the deferred
+`C-c b` and live-transcript legs, added the merged-tree gate numbers
+(1040/1040 ERT, clean lint and manual build), and left mouse hover as the only
+recorded headless limitation.
 
 Module commentary was not duplicated here: the three statements the plan asks
 for (single resolution path, cold deny-all rationale, write-path exception)
@@ -120,8 +124,8 @@ all three.
   `@cindex cold start, bead ids`, `@kindex C-c b` and
   `@fnindex gascity-bead-show-at-point` entries.
 - `docs/qa/2026-11-06-beads-eldoc-prefix.md` — the live acceptance report:
-  scope and composite provenance, method, per-AC evidence with exact ids and
-  echo text, blocked items and reasons, gate table, verdict.
+  merged-tree provenance, method, per-AC evidence with exact ids and echo
+  text, the recorded headless limitation, gate table, verdict.
 - `plans/beads-eldoc-prefix/build/implementation-summary-ga-uq5pl.md` — this
   artifact.
 
@@ -175,18 +179,19 @@ Live QA (composite tree; full evidence in the report):
 
 ## Remaining Risks
 
-- **The QA pass is against a composite, not a merge.**  The `C-c b` binding
-  (item 3), the live agent transcript, and mouse hover remain unverified until
-  items 1–4 are merged; the report records them as deferred with reasons, and
-  the final merged-tree pass must re-run them.
-- **Docs describe approved behavior ahead of the merge.**  If an implementation
-  item's final review changes the refresh wording (in particular what `g`
-  does to the prefix map), the manual paragraph and NEWS entry must be updated
-  in the same merge; `g` is documented as re-reading the view, with the map
-  following its own invalidation cycle, which matches item 4's implementation.
+- **The merged-tree pass is complete except mouse hover.**  The `C-c b`
+  binding, the live tmux agent transcript and TRAMP are verified on the merged
+  tree; mouse hover remains a recorded headless limitation to re-run in a
+  graphical frame.
+- **Docs describe approved behavior.**  If a later implementation change
+  alters the refresh wording (in particular what `g` does to the prefix map),
+  the manual paragraph and NEWS entry must be updated in the same change; `g`
+  is documented as re-reading the view, with the map following its own
+  invalidation cycle, which matches W4's implementation.
 - **New option references** rely on item 1's `@defopt` block landing together
   with (or before) this section; the section uses `@code{}` so a docs-only
   tree builds, but the reference entries are item 1's.
-- **Composite gate failures** (19) are merge-shape mismatches between the four
-  unmerged item trees, not attributable to this docs commit; they are recorded
-  in the report so the Refinery/merged-tree pass is not confused by them.
+- **The earlier composite gate failures** (19) were merge-shape mismatches
+  between the four unmerged item trees, not attributable to this docs commit;
+  they are kept only as history in the report.  The merged tree at `8c7cad5`
+  is green (1040/1040 ERT, lint and manual build clean).
