@@ -703,6 +703,99 @@ the faithful rendering of the underlying value alongside it (gce-79f)."
          (cells (cadr (gascity-session-list--entry s "sock"))))
     (should (equal (substring-no-properties (aref cells 3)) "—"))))
 
+(ert-deftest gascity-test-session-columns-fit-window-and-content ()
+  "Session column widths use the window and fit long agent/rig names.
+At 220 columns a 15-char rig name and a long qualified agent name are
+not truncated, and the widths plus padding/separators fill the window."
+  (let* ((rigs '("burningswell-cl" "gascity.el"))
+         (agent "burningswell-cl/gc.implementation-worker-1")
+         (wd "/home/roman/workspace/burningswell-cl/polecats/worker-1")
+         (widths (gascity-session-list--column-widths
+                  220 rigs (string-width agent) (string-width wd)))
+         (agent-w (nth 0 widths))
+         (rig-w (nth 1 widths))
+         (wd-w (nth 4 widths)))
+    (should (>= rig-w (string-width "burningswell-cl")))
+    (should (>= agent-w (string-width agent)))
+    (should (>= wd-w (string-width wd)))
+    ;; 1 padding + 4 separators + the five columns = the window width.
+    (should (= (+ 1 4 (seq-reduce #'+ widths 0)) 220))))
+
+(ert-deftest gascity-test-session-list-fit-columns-from-window ()
+  "`gascity-session-list--fit-columns' derives widths from the window width.
+A 220-column window gives the Agent and Working dir columns the room a
+long qualified name and path need, and the Rig column fits a 15-char
+rig name; the rendered row is not truncated."
+  (gascity-test-with-temp-view
+    (gascity-session-list-mode)
+    (cl-letf (((symbol-function 'gascity-tabulated--window-width)
+               (lambda () 220)))
+      (let* ((s (gascity-domain-decode
+                 'gascity-session
+                 '((agent_name . "burningswell-cl/gc.implementation-worker-1")
+                   (rig . "burningswell-cl") (state . "active")
+                   (provider . "claude")
+                   (work_dir . "/home/roman/workspace/burningswell-cl/polecats/worker-1"))))
+             (entry (gascity-session-list--entry s "sock"))
+             (cells (cadr entry)))
+        (gascity-session-list--fit-columns (list entry))
+        (should (>= (nth 1 (aref tabulated-list-format 0))
+                    (string-width (aref cells 0))))
+        (should (>= (nth 1 (aref tabulated-list-format 1))
+                    (string-width (aref cells 1))))
+        (should (>= (nth 1 (aref tabulated-list-format 4))
+                    (string-width (aref cells 4))))
+        (let ((out (gascity-tabulated--truncate-row cells)))
+          (should (equal (substring-no-properties (aref out 0))
+                         (substring-no-properties (aref cells 0))))
+          (should (equal (substring-no-properties (aref out 1))
+                         (substring-no-properties (aref cells 1)))))))))
+
+(ert-deftest gascity-test-session-list-reflow-preserves-sort-and-point ()
+  "Reflowing the session columns keeps the sort key and point on its row.
+`g' re-fits the table to the window; the tabulated-list contract
+\(sorting, movement) must survive."
+  (gascity-test-with-temp-view
+    (gascity-session-list-mode)
+    (setq tabulated-list-sort-key (cons "Rig" t))
+    (setq gascity-tabulated--all-entries
+          (list (list 'a (vector "rig-a/agent" "rig-a" "active" "claude" "/wd/a"))
+                (list 'b (vector "rig-b/agent" "rig-b" "active" "claude" "/wd/b")))
+          gascity-tabulated--current-page 1
+          gascity-tabulated--page-size 100
+          gascity-tabulated--base-name "Sessions")
+    (gascity-tabulated--refresh-display)
+    (goto-char (point-min))
+    (search-forward "rig-b/agent")
+    (let ((pos (line-beginning-position)))
+      (cl-letf (((symbol-function 'gascity-tabulated--window-width)
+                 (lambda () 120)))
+        (gascity-session-list--fit-columns gascity-tabulated--all-entries)
+        (gascity-tabulated--refresh-display))
+      (should (equal tabulated-list-sort-key (cons "Rig" t)))
+      (should (= (line-beginning-position) pos))
+      (should (eq (tabulated-list-get-id) 'b)))))
+
+(ert-deftest gascity-test-session-list-narrow-window-renders ()
+  "A narrow window still renders the session table without error.
+Widths shrink to fit; no column width goes below one."
+  (gascity-test-with-temp-view
+    (gascity-session-list-mode)
+    (cl-letf (((symbol-function 'gascity-tabulated--window-width)
+               (lambda () 40)))
+      (let ((entry (list 'a (vector "burningswell-cl/gc.implementation-worker-1"
+                                    "burningswell-cl" "active" "claude"
+                                    "/home/roman/workspace/burningswell-cl/polecats/worker-1"))))
+        (gascity-session-list--fit-columns (list entry))
+        (should (seq-every-p (lambda (c) (>= (nth 1 c) 1))
+                             (append tabulated-list-format nil)))
+        (setq gascity-tabulated--all-entries (list entry)
+              gascity-tabulated--current-page 1
+              gascity-tabulated--page-size 100
+              gascity-tabulated--base-name "Sessions")
+        (gascity-tabulated--refresh-display)
+        (should (equal (mapcar #'car tabulated-list-entries) '(a)))))))
+
 (ert-deftest gascity-test-session-name-prefers-agent-name ()
   "The qualified `agent_name' is preferred over the volatile `name'.
 For non-active sessions gc sets `name' to the raw tmux id, so display

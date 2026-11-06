@@ -239,6 +239,15 @@ re-derived here on every refresh so it tracks the filter across `g'."
                     nil))))
     (gascity-tabulated--init-paged base-name entries)))
 
+(defun gascity-tabulated--window-width ()
+  "Return the usable width of the window showing the current buffer.
+Falls back to the selected window, then the frame width, then 80, so a
+batch or not-yet-displayed buffer still gets a sane width."
+  (let ((win (get-buffer-window (current-buffer) t)))
+    (cond ((and win (window-live-p win)) (window-body-width win))
+          ((window-live-p (selected-window)) (window-body-width))
+          (t (or (frame-width) 80)))))
+
 (defun gascity-tabulated--show (buffer-name mode-sym refresh-fn)
   "Pop to BUFFER-NAME in major mode MODE-SYM and run REFRESH-FN.
 The buffer comes from `gascity-view-get-buffer-create', so it is keyed
@@ -291,6 +300,12 @@ is.  Idempotent."
 
 (defvar-local gascity-tabulated--page-size nil
   "Entries per page; nil means compute from the window height on demand.")
+
+(defvar-local gascity-tabulated--reflow-function nil
+  "Function re-fitting this list's columns after a window resize, or nil.
+Called with the window selected; it should return non-nil when it
+changed `tabulated-list-format', so the resize handler knows to repaint.
+Lists with fixed columns leave this nil.")
 
 (defvar-local gascity-tabulated--base-name ""
   "Label shown before the page indicator in the mode line.")
@@ -680,19 +695,28 @@ that column's cell."
   (gascity-tabulated--refresh-display))
 
 (defun gascity-tabulated--frame-resize (frame)
-  "Recompute page size for paged buffers shown in FRAME after a resize."
+  "Recompute page size and column widths for buffers shown in FRAME.
+A list with a `gascity-tabulated--reflow-function' (the session list)
+re-fits its columns to the new window width; the rows are repainted
+when either the page size or the column format changed."
   (dolist (win (window-list frame))
     (let ((buf (window-buffer win)))
       (when (buffer-live-p buf)
         (with-current-buffer buf
           (when (local-variable-p 'gascity-tabulated--all-entries)
-            (let ((new-size (with-selected-window win
-                              (beads-pager-window-page-size))))
-              (unless (eql new-size gascity-tabulated--page-size)
+            (let* ((new-size (with-selected-window win
+                               (beads-pager-window-page-size)))
+                   (size-changed (not (eql new-size gascity-tabulated--page-size)))
+                   (reflowed
+                    (and gascity-tabulated--reflow-function
+                         (with-selected-window win
+                           (funcall gascity-tabulated--reflow-function)))))
+              (when size-changed
                 (setq gascity-tabulated--page-size new-size)
                 (let ((total (gascity-tabulated--total-pages)))
                   (when (> gascity-tabulated--current-page total)
-                    (setq gascity-tabulated--current-page total)))
+                    (setq gascity-tabulated--current-page total))))
+              (when (or size-changed reflowed)
                 (gascity-tabulated--refresh-display)))))))))
 
 (add-hook 'window-size-change-functions #'gascity-tabulated--frame-resize)
@@ -1033,6 +1057,106 @@ the rig at point.
   "Active session-list filter as command initargs, or nil.
 May carry a server-side :state and a client-side :rig substring.")
 
+(defconst gascity-session-list--min-agent-width 24
+  "Minimum width of the session list's Agent column.")
+
+(defconst gascity-session-list--min-rig-width 8
+  "Minimum width of the session list's Rig column.")
+
+(defconst gascity-session-list--min-workdir-width 20
+  "Minimum width of the session list's Working dir column.")
+
+(defun gascity-session-list--max-cell (entries n)
+  "Return the widest string in column N of ENTRIES, or 0.
+ENTRIES is a list of `(ID . [COLUMNS])' rows; non-string cells count as
+zero.  Used to derive the flexible column widths from the data in hand."
+  (let ((widths (mapcar (lambda (entry)
+                          (let ((cell (aref (cadr entry) n)))
+                            (if (stringp cell) (string-width cell) 0)))
+                        entries)))
+    (if widths (seq-max widths) 0)))
+
+(defun gascity-session-list--rig-names (&optional entries)
+  "Return the rig names the session table should fit.
+The configured rigs come from the spawn-free memo
+\(`gascity-rigs-cached'); ENTRIES adds any rig a row names even when the
+memo is cold, so a first read still fits its own data."
+  (delete-dups
+   (delq nil
+         (append (mapcar #'gascity-rig-name (gascity-rigs-cached))
+                 (mapcar (lambda (entry)
+                           (let ((cell (aref (cadr entry) 1)))
+                             (and (stringp cell)
+                                  (not (string-empty-p cell))
+                                  cell)))
+                         entries)))))
+
+(defun gascity-session-list--column-widths (total rig-names
+                                                  &optional agent-content
+                                                  workdir-content)
+  "Return (AGENT RIG STATE PROVIDER WORKDIR) widths fitting TOTAL columns.
+TOTAL is the window width; the returned widths plus the list's one-column
+padding and four inter-column separators fill it exactly.  RIG-NAMES is
+a list of configured rig names, so the Rig column fits the longest one.
+AGENT-CONTENT and WORKDIR-CONTENT are the widest values in those columns
+\(0 when unknown); the two flexible columns share the spare width in
+proportion to their content, and shrink proportionally — never below one
+column — when the window is too narrow for the desired widths."
+  (let* ((available (max 5 (- total 1 4)))
+         (rig-widths (mapcar #'string-width rig-names))
+         (rig-content (if rig-widths (seq-max rig-widths) 0))
+         (agent (max gascity-session-list--min-agent-width
+                     (or agent-content 0)))
+         (rig (max gascity-session-list--min-rig-width rig-content))
+         (state 9)
+         (provider 9)
+         (workdir (max gascity-session-list--min-workdir-width
+                       (or workdir-content 0)))
+         (desired (list agent rig state provider workdir))
+         (sum (seq-reduce #'+ desired 0)))
+    (if (<= sum available)
+        ;; Grow the two flexible columns to use the spare width, in
+        ;; proportion to their content, so a wide window is not wasted.
+        (let* ((spare (- available sum))
+               (agent-extra (round (* spare (/ (float agent)
+                                               (+ agent workdir)))))
+               (agent (+ agent agent-extra))
+               (workdir (+ workdir (- spare agent-extra))))
+          (list agent rig state provider workdir))
+      ;; Too narrow: scale every column down, keeping at least one.
+      (let* ((scale (/ (float available) sum))
+             (widths (mapcar (lambda (w) (max 1 (floor (* w scale))))
+                             desired))
+             (used (seq-reduce #'+ widths 0)))
+        (when (< used available)
+          (setcar widths (+ (car widths) (- available used))))
+        widths))))
+
+(defun gascity-session-list--fit-columns (&optional entries width)
+  "Fit the session table's columns to WIDTH (default: the window width).
+ENTRIES, when non-nil, supplies the content widths of the Agent, Rig and
+Working dir columns; the rig memo supplies configured rig names even
+before the first read.  Returns non-nil when the format changed, so the
+resize handler can repaint only when needed."
+  (let* ((width (or width (gascity-tabulated--window-width)))
+         (agent (gascity-session-list--max-cell entries 0))
+         (workdir (gascity-session-list--max-cell entries 4))
+         (rigs (gascity-session-list--rig-names entries))
+         (widths (gascity-session-list--column-widths width rigs agent workdir))
+         (format (vector (list "Agent" (nth 0 widths) t)
+                         (list "Rig" (nth 1 widths) t)
+                         (list "State" (nth 2 widths) t)
+                         (list "Provider" (nth 3 widths) t)
+                         (list "Working dir" (nth 4 widths) t))))
+    (unless (equal format tabulated-list-format)
+      (setq tabulated-list-format format)
+      ;; `tabulated-list-init-header' rebuilds `header-line-format', so
+      ;; re-append the §F7 hint the list installed on the old header.
+      (setq gascity-tabulated--header-hint nil)
+      (tabulated-list-init-header)
+      (gascity-tabulated--install-header-hint)
+      t)))
+
 (defun gascity-session-list--entry (session socket)
   "Map SESSION (a `gascity-session') to a tabulated-list entry on tmux SOCKET.
 The entry id is the agent action object (`gascity-agent', built by
@@ -1139,12 +1263,18 @@ a live stream that is down."
     (gascity-tabulated--refresh-async
      "Sessions" cmd
      (lambda (payload)
-       (let ((sessions (gascity-domain-decode-list
-                        'gascity-session (alist-get 'sessions payload))))
-         (mapcar (lambda (s) (gascity-session-list--entry s socket))
-                 (seq-filter (lambda (s)
-                               (gascity-session-list--match-p s (oref cmd rig)))
-                             sessions))))
+       (let* ((sessions (gascity-domain-decode-list
+                         'gascity-session (alist-get 'sessions payload)))
+              (entries (mapcar (lambda (s) (gascity-session-list--entry s socket))
+                               (seq-filter (lambda (s)
+                                             (gascity-session-list--match-p
+                                              s (oref cmd rig)))
+                                           sessions))))
+         ;; Re-fit to the window and this read's content before the rows
+         ;; are painted, so a long qualified name or rig is not truncated
+         ;; and a resize is honoured by `g' as well as by the resize hook.
+         (gascity-session-list--fit-columns entries)
+         entries))
      gascity-session-list--filter
      ;; Auto-refresh error hygiene (ga-eyw9): dedupe + backoff on
      ;; failure, silent self-heal on success.
@@ -1228,15 +1358,19 @@ re-reads `gc' when its city's live event stream reports session or
 agent events (the mode line shows the stream state); `W' toggles it.
 \\{gascity-session-list-mode-map}"
   :group 'gascity
-  (setq tabulated-list-format
-        [("Agent" 40 t) ("Rig" 14 t) ("State" 9 t)
-         ("Provider" 9 t) ("Working dir" 40 t)])
   (setq tabulated-list-padding 1)
   (setq tabulated-list-sort-key (cons "Agent" nil))
-  (tabulated-list-init-header)
+  ;; Widths are derived from the window and the data (see
+  ;; `gascity-session-list--fit-columns'); the initial call gives the
+  ;; empty list a sane layout before the first read lands.
+  (gascity-session-list--fit-columns)
   (gascity-tabulated--setup-things)
   (gascity-tabulated--install-filter 'gascity-session-list--filter
                                      #'gascity-session-list-refresh)
+  (setq-local gascity-tabulated--reflow-function
+              (lambda ()
+                (gascity-session-list--fit-columns
+                 gascity-tabulated--all-entries)))
   (setq-local mode-line-process
               '(:eval (let ((live (gascity-ui-live-string)))
                         (if live (concat " " live) ""))))
