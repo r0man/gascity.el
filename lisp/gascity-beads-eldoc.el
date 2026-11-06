@@ -433,6 +433,23 @@ gascity does not own (no scope)."
   (when gascity-beads-eldoc--scope
     (gascity-beads-eldoc--apply (current-buffer))))
 
+(defun gascity-beads-eldoc--buffers-go-cold ()
+  "Put every installed buffer back in the cold deny-all state.
+Runs after `gascity-beads-eldoc-clear-cache' dropped every city map: the
+resolver closure installed as `beads-eldoc-directory' captured the old
+map object, so an open buffer would otherwise keep answering from a map
+the clear dropped (REQ-007, REQ-010).  Each buffer is reinstalled against
+its own captured scope — never its `default-directory', so an attach
+buffer pinned to a worktree outside the city stays scoped to the city it
+was opened for.  The install sees the cold map table, applies deny-all,
+and starts the one deduplicated fill; `gascity-beads-eldoc--reapply-buffers'
+heals the buffer when that fill lands."
+  (dolist (scope (mapcar #'car gascity-beads-eldoc--buffers))
+    (dolist (buffer (gascity-beads-eldoc--live-buffers scope))
+      (with-current-buffer buffer
+        (when (equal gascity-beads-eldoc--scope scope)
+          (gascity-beads-eldoc-install buffer scope))))))
+
 ;;; Wiring
 
 ;; Every buffer the view factory creates, and every attach buffer the
@@ -442,6 +459,13 @@ gascity does not own (no scope)."
 
 ;; Major-mode setup must not lose the wiring (TS-5).
 (add-hook 'after-change-major-mode-hook #'gascity-beads-eldoc--reinstall)
+
+;; An explicit clear drops the maps, so the buffers that installed one must
+;; go cold instead of answering from the dropped snapshot (REQ-010).  The
+;; seam is owned by the refresh/invalidation slice; `add-hook' needs no
+;; value, so this registration is load-order independent.
+(add-hook 'gascity-beads-eldoc-clear-cache-functions
+          #'gascity-beads-eldoc--buffers-go-cold)
 
 (provide 'gascity-beads-eldoc)
 ;;; gascity-beads-eldoc.el ends here

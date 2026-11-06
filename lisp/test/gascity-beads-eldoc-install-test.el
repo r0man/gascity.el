@@ -324,6 +324,85 @@ permanent-local scope and map reinstall them on
                 (kill-buffer buf))))
         (delete-directory city t)))))
 
+;;; The clear seam
+
+(ert-deftest gascity-test-beads-eldoc-clear-cache-goes-cold ()
+  "The clear seam puts an installed buffer back in the cold deny-all state.
+`gascity-beads-eldoc-clear-cache-functions' is registered by the install
+path (not only defined by the refresh slice): after the maps are dropped,
+the same buffer's resolver must answer nil instead of the dropped map,
+and its prefix set must go cold (REQ-007, REQ-010)."
+  (gascity-test-eldoc--with-contract
+    (let ((city (gascity-test-eldoc--make-city)))
+      (unwind-protect
+          (gascity-test-eldoc--with-map (gascity-test-eldoc--warm-map)
+            (let ((buf (gascity-view-get-buffer-create
+                        "*gascity-eldoc-cold-reset*" city)))
+              (unwind-protect
+                  (with-current-buffer buf
+                    ;; Warm through the factory.
+                    (should (equal beads-issue-id-prefixes '("gce" "be")))
+                    (should (equal (funcall beads-eldoc-directory "be-abc")
+                                   "/p/beads.el/"))
+                    ;; The seam drops the maps and runs the hook; the reader
+                    ;; is cold, so the reinstall starts the one fill.
+                    (clrhash gascity-beads-eldoc--maps)
+                    (cl-letf (((symbol-function 'gascity-beads-eldoc-map)
+                               (lambda (&optional _dir) nil)))
+                      (run-hooks 'gascity-beads-eldoc-clear-cache-functions))
+                    (should (equal beads-issue-id-prefixes
+                                   gascity-beads-eldoc--deny-all-prefixes))
+                    (should-not (funcall beads-eldoc-directory "be-abc"))
+                    (should-not gascity-beads-eldoc--map))
+                (kill-buffer buf))))
+        (gascity-test-eldoc--clear-maps)
+        (gascity-context-clear-cache)
+        (delete-directory city t)))))
+
+(ert-deftest gascity-test-beads-eldoc-context-clear-goes-cold ()
+  "An explicit context clear drops the map and cools the same buffer in place.
+End to end on the merged tree: `gascity-context-clear-cache' drops every
+city map, the install path's handler reinstalls the open buffer against the
+cold table (deny-all, nil resolver, zero maps), and one landed fill heals
+it in the same buffer without a reopen (REQ-010, REQ-006)."
+  (skip-unless (fboundp 'gascity-beads-eldoc-clear-cache))
+  (gascity-test-eldoc--with-contract
+    (let* ((city (gascity-test-eldoc--make-city))
+           (scope (gascity-context-scope-key city)))
+      (unwind-protect
+          (progn
+            (gascity-test-eldoc--clear-maps)
+            (puthash scope (gascity-test-eldoc--warm-map)
+                     gascity-beads-eldoc--maps)
+            (let ((buf (generate-new-buffer " *gascity-eldoc-clear-e2e*")))
+              (unwind-protect
+                  (progn
+                    (with-current-buffer buf (setq default-directory city))
+                    (should (eq (gascity-beads-eldoc-install buf) buf))
+                    (with-current-buffer buf
+                      (should (equal beads-issue-id-prefixes '("gce" "be")))
+                      ;; Never start a real store read from the clear.
+                      (cl-letf (((symbol-function 'gascity-beads-eldoc--fill)
+                                 (lambda (&rest _) nil)))
+                        (gascity-context-clear-cache))
+                      (should (= 0 (hash-table-count
+                                    gascity-beads-eldoc--maps)))
+                      (should (equal beads-issue-id-prefixes
+                                     gascity-beads-eldoc--deny-all-prefixes))
+                      (should-not (funcall beads-eldoc-directory "be-abc"))
+                      ;; A later fill lands: the registered buffer heals in
+                      ;; place through the registry re-apply.
+                      (puthash scope (gascity-test-eldoc--warm-map)
+                               gascity-beads-eldoc--maps)
+                      (gascity-beads-eldoc--reapply-buffers city)
+                      (should (equal beads-issue-id-prefixes '("gce" "be")))
+                      (should (equal (funcall beads-eldoc-directory "be-abc")
+                                     "/p/beads.el/"))))
+                (kill-buffer buf))))
+        (gascity-test-eldoc--clear-maps)
+        (gascity-context-clear-cache)
+        (delete-directory city t)))))
+
 ;;; The view factory
 
 (ert-deftest gascity-test-beads-eldoc-view-factory-installs ()
