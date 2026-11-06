@@ -108,6 +108,97 @@ CEST), so idle/active states the fixture timestamps drive are stable.")
               (lambda (&optional _) gascity-agents-test--fixture-now)))
      ,@body))
 
+;;; One agent-state truth (ec-elkm5.9 / ec-elkm5.10)
+
+(ert-deftest gascity-test-agent-state-unknown-is-not-stopped ()
+  "ec-elkm5.9: during partial status a non-running row is unknown.
+`stopped' is a definite dead state; the probe never answered for that
+row, so the shared classifier must not invent one.  Evidence from a live
+session (or a known-running row) still wins."
+  (let* ((now 1790323200)
+         (dead '((qualified_name . "bd.dog-1")))
+         (live '((qualified_name . "bd.dog-2") (running . t)))
+         (session `((agent_name . "bd.dog-2") (state . "active")
+                    (last_active . ,(format-time-string
+                                     "%FT%TZ" (- now 7200) t)))))
+    ;; A partial probe's not-running row is unknown, never stopped.
+    (should (eq (gascity-status--agent-state dead nil nil now t) 'unknown))
+    ;; Outside partial status the same row is a definite stopped.
+    (should (eq (gascity-status--agent-state dead nil nil now nil) 'stopped))
+    ;; A known-running row with no live session is stalled.
+    (should (eq (gascity-status--agent-state live nil nil now t) 'stalled))
+    ;; A live session outranks the partial probe's not-running flag.
+    (should (eq (gascity-status--agent-state dead session nil now t) 'idle))
+    (should (eq (gascity-status--agent-state dead session nil now nil) 'idle))
+    ;; Suspension is definite in either status.
+    (should (eq (gascity-status--agent-state '((suspended . t)) nil nil now t)
+                'suspended))))
+
+(ert-deftest gascity-test-agents-unknown-visible-and-counted ()
+  "ec-elkm5.9: the Agents view labels unknown agents `unknown', counts
+them apart from stopped, and the default state filter keeps them."
+  (let* ((now 1790323200)
+         (status '((partial . t)
+                   (agents . [((qualified_name . "beads.el/w-unknown"))
+                              ((qualified_name . "beads.el/w-running")
+                               (running . t))])))
+         (sessions '((sessions . [((agent_name . "beads.el/w-running")
+                                   (state . "active")
+                                   (last_active . "2026-09-25T09:59:00+02:00"))])))
+         (data (list :status status :sessions sessions :agents nil :work nil))
+         (rows (gascity-agents--rows data now))
+         (unknown (seq-find (lambda (a)
+                              (equal (plist-get a :name) "beads.el/w-unknown"))
+                            rows))
+         (rig (gascity-rig--agents "beads.el" status nil
+                                   (append (alist-get 'sessions sessions) nil)
+                                   nil "sock" now))
+         (summary (gascity-agents--summary rows)))
+    (should (eq (plist-get unknown :state) 'unknown))
+    ;; The rig dashboard applies the same partial verdict.
+    (should (equal (mapcar (lambda (a) (cons (plist-get a :name)
+                                            (plist-get a :state)))
+                           rig)
+                   '(("beads.el/w-unknown" . unknown)
+                     ("beads.el/w-running" . running))))
+    (should (string-match-p "1 unknown" (gascity-rig--agents-summary rig)))
+    (should (equal (gascity-agents--state-label unknown) "unknown"))
+    (should (string-match-p "1 unknown" summary))
+    (should-not (string-match-p "1 stopped" summary))
+    ;; The default running filter keeps unknown rows (stalled always pass).
+    (should (gascity-agents--match-p unknown '(:state "running")))
+    (should (gascity-agents--match-p unknown '(:state "unknown")))
+    (should-not (gascity-agents--match-p unknown '(:state "idle")))))
+
+(ert-deftest gascity-test-agent-state-agrees-across-surfaces ()
+  "ec-elkm5.10: cockpit, Agents view and rig dashboard call one rule.
+The same agent with a live session, no hooked work and 11h of inactivity
+is `idle' everywhere; `gc status' says `running: true'."
+  (let* ((now 1790323200)
+         (name "burningswell-cl/core.control-dispatcher")
+         (status `((agents . [((qualified_name . ,name) (running . t))])))
+         (session `((agent_name . ,name) (rig . "burningswell-cl")
+                    (state . "active")
+                    (last_active . "2026-09-24T23:00:00+02:00")))
+         (sessions (list session))
+         (data (list :status status
+                     :sessions `((sessions . [,session]))
+                     :agents nil :work nil))
+         (dashboard (car (gascity-dashboard--agents status sessions nil nil now)))
+         (agents (seq-find (lambda (a) (equal (plist-get a :name) name))
+                           (gascity-agents--rows data now)))
+         (rig (car (gascity-rig--agents "burningswell-cl" status nil
+                                        sessions nil "sock" now))))
+    (should (eq (plist-get dashboard :state) 'idle))
+    (should (eq (plist-get agents :state) 'idle))
+    (should (eq (plist-get rig :state) 'idle))
+    (should (equal (gascity-status--state-label (plist-get rig :state)) "idle"))
+    (should (string-match-p "idle"
+                            (gascity-test--vnode-text
+                             (gascity-rig--agent-row rig))))
+    (should (string-match-p "1 idle" (gascity-rig--agents-summary
+                                       (list rig))))))
+
 ;;; Roster — the sling's Who completion (REQ-005, WI-2)
 
 (ert-deftest gascity-test-agents-scope-classifier ()

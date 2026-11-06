@@ -4538,8 +4538,7 @@ silently drops a section from N/P navigation."
                   (gascity-rig--header-vnode '((name . "gce")) "bl"))
                  '("gce   city bl")))
   (should (equal (gascity-test--section-labels
-                  (gascity-rig--agents-vnode
-                   [] "gce" (make-hash-table :test 'equal) nil))
+                  (gascity-rig--agents-vnode []))
                  '("Agents  none")))
   (should (equal (gascity-test--section-labels
                   (gascity-rig--beads-section "Ready" '(:state ready :data [])))

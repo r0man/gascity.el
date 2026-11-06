@@ -13,8 +13,12 @@
 ;;   their live sessions, plus the named sessions (the mayor) — with
 ;;   state, last activity, the bead on the hook and the provider.
 ;;   Stalled agents (■) are pinned first.  `/' filters by state (running
-;;   by default; stalled rows are always shown), rig, provider and a
-;;   search string; the shared tabulated keys sort, page and bookmark.
+;;   by default; stalled and unknown rows are always shown), rig, provider
+;;   and a search string; the shared tabulated keys sort, page and
+;;   bookmark.  The state is `gascity-status--agent-state''s one verdict,
+;;   so a partial status shows `unknown' rather than inventing `stopped'
+;;   and an idle live agent shows `idle' here, in the cockpit and in the
+;;   rig dashboard alike (ec-elkm5.9, ec-elkm5.10).
 ;;   The tree alternative was retired (ga-2mmet): it rendered the same
 ;;   agents, and pool topology, if wanted later, reads better as a
 ;;   grouping option on this table than as a second view.
@@ -52,6 +56,7 @@
 (require 'gascity-domain)
 (require 'gascity-store)
 (require 'gascity-tabulated)
+(require 'gascity-status)             ; the shared agent-state rule
 (require 'gascity-dashboard)
 
 (declare-function gascity-polecat-detail-at-point "gascity-session")
@@ -140,9 +145,11 @@ list' when the agent has no session."
 
 (defun gascity-agents--match-p (agent filter)
   "Return non-nil when AGENT passes FILTER (a plist, §7.3).
-:state `running' keeps running, idle and stalled agents; `all' or nil
-keeps every one; any other value that state.  Stalled agents always
-pass the state filter.  :rig, :provider and :search (a case-insensitive
+:state `running' (the default) keeps running, idle, stalled and unknown
+agents; `all' or nil keeps every one; any other value keeps that state.
+Stalled agents always pass the state filter, and unknown agents pass the
+default filter: they are a degraded verdict, not something to hide
+silently (ec-elkm5.9).  :rig, :provider and :search (a case-insensitive
 substring of the name) narrow further."
   (let ((state (plist-get filter :state))
         (rig (plist-get filter :rig))
@@ -151,7 +158,7 @@ substring of the name) narrow further."
         (s (plist-get agent :state)))
     (and (or (null state) (equal state "all") (eq s 'stalled)
              (if (equal state "running")
-                 (memq s '(running idle stalled))
+                 (memq s '(running idle stalled unknown))
                (equal state (symbol-name s))))
          (or (null rig)
              (equal rig (or (plist-get agent :rig) "city")))
@@ -161,10 +168,10 @@ substring of the name) narrow further."
                (string-match-p (regexp-quote search) (plist-get agent :name)))))))
 
 (defun gascity-agents--state-label (agent)
-  "Return AGENT's state column: active, idle, stopped, stalled, suspended."
-  (pcase (plist-get agent :state)
-    ('running "active")
-    (s (symbol-name s))))
+  "Return AGENT's state column: active, idle, unknown, stopped, ….
+The label is the shared one (`gascity-status--state-label'), so the
+cockpit and the rig dashboard spell the same state the same way."
+  (gascity-status--state-label (plist-get agent :state)))
 
 (defun gascity-agents--entry (agent now)
   "Return the tabulated entry of AGENT at NOW; its id is the action object."
@@ -175,8 +182,7 @@ substring of the name) narrow further."
                     (substring name (1+ (length rig)))
                   name)))
     (list (plist-get agent :object)
-          (vector (gascity-ui-glyph (pcase state ('stalled 'fail)
-                                      ('running 'ok) (_ 'idle)))
+          (vector (gascity-ui-glyph (gascity-status--state-glyph state))
                   (propertize short 'face (if (eq state 'stalled)
                                               'gascity-failed
                                             'default))
@@ -188,16 +194,11 @@ substring of the name) narrow further."
                   (or (plist-get agent :provider) "")))))
 
 (defun gascity-agents--summary (rows)
-  "Return `3 running · 1 idle · 3 stopped' for agent ROWS."
-  (let ((count (lambda (states) (seq-count (lambda (a) (memq (plist-get a :state) states))
-                                           rows))))
-    (string-join
-     (delq nil (list (let ((n (funcall count '(stalled)))) (and (> n 0) (format "%d stalled" n)))
-                     (let ((n (funcall count '(running)))) (and (> n 0) (format "%d running" n)))
-                     (let ((n (funcall count '(idle)))) (and (> n 0) (format "%d idle" n)))
-                     (let ((n (funcall count '(stopped suspended))))
-                       (and (> n 0) (format "%d stopped" n)))))
-     " · ")))
+  "Return `3 running · 1 idle · 2 unknown · 3 stopped' for ROWS.
+Unknown counts apart from stopped (ec-elkm5.9) and the
+formatting is shared with the cockpit and the rig dashboard."
+  (gascity-status--state-summary
+   (mapcar (lambda (a) (plist-get a :state)) rows)))
 
 ;;; Roster — the sling's Who completion (REQ-005)
 
@@ -511,7 +512,8 @@ With CACHED (opening the view), fresh store entries answer at once."
                (gascity-agents--render)))))))))
 
 (gascity-filter-define-choice gascity-agents-filter-state
-  :state "state" '("running" "idle" "stopped" "stalled" "suspended" "all") "all")
+  :state "state" '("running" "idle" "unknown" "stopped" "stalled"
+                    "suspended" "all") "all")
 (gascity-filter-define-choice gascity-agents-filter-rig
   :rig "rig" (cons "city" (mapcar #'gascity-rig-name
                                   (seq-remove #'gascity-rig-hq (gascity-rigs-cached)))))

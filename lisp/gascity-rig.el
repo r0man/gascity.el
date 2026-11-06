@@ -19,6 +19,12 @@
 ;; - agents        the rig's agents (polecat/refinery/witness/…), joined
 ;;                 to `gc session list' for each one's worktree and tmux
 ;;                 target so `d'/`t'/`i'/`RET' act on the agent at point.
+;;                 State comes from the same `gc status' rows and the
+;;                 same classifier as the cockpit and the Agents view, so
+;;                 running/idle/unknown agree on every surface
+;;                 (ec-elkm5.9, ec-elkm5.10); `gc rig status' supplies
+;;                 `draining' and covers a city status read still in
+;;                 flight.
 ;; - beads         the rig's ready and in-progress beads (`gc bd ready'
 ;;                 / `gc bd list --status in_progress', both `--rig'
 ;;                 scoped); `RET' opens one in beads.el (DESIGN.md §4.3).
@@ -134,43 +140,103 @@ line is a section header for `N'/`P'."
               'gascity-rig name
               'gascity-rig-dir (alist-get 'path rig))))
 
-(defun gascity-rig--agent-row (agent rig-name session-map socket)
-  "Return a vnode for AGENT (a raw `gc rig status' agent entry) under RIG-NAME.
-SESSION-MAP and SOCKET join the row to its live session, whose last
-activity renders as a relative time; the row carries the action
-`gascity-agent' for the agent keys."
-  (let* ((qname (alist-get 'qualified_name agent))
-         (running (alist-get 'running agent))
-         (suspended (alist-get 'suspended agent))
-         (draining (alist-get 'draining agent))
-         (state (cond (suspended "suspended") (draining "draining")
-                      (running "running") (t "stopped")))
-         (session (and qname (gethash qname session-map)))
-         (obj (gascity-status--agent agent rig-name session-map socket)))
-    (vui-text (concat "  " (gascity-ui-glyph (if running 'ok 'idle))
-                      " " (gascity-ui-fit (or qname (alist-get 'name agent) "?") 40)
-                      " " (gascity-ui-fit state 10)
-                      (gascity-ui-time (and session (gascity-session-last-active session))))
-              'gascity-agent obj)))
+(defun gascity-rig--agents (rig-name status rig-status sessions beads socket now)
+  "Return the modeled agent plists of RIG-NAME.
+STATUS is the city `gc status' payload (the same rows the cockpit and
+the Agents view classify, so the running/idle/unknown verdict agrees on
+every surface — ec-elkm5.9, ec-elkm5.10); RIG-STATUS is `gc rig status',
+which supplies `draining' and covers a city status read that has not
+landed; SESSIONS is the raw `gc session list' rows; BEADS the rig's
+in-progress beads; SOCKET the tmux socket and NOW the time.
+
+Every row carries :name :rig :state :draining :active :bead :session
+:object (the action `gascity-agent').  The state comes from the one
+shared classifier (`gascity-status--agent-state'), and the hooked bead
+from the same join the cockpit uses (`gascity-status--hook-work'), so a
+live agent with no work reads idle here exactly as it does there."
+  (let* ((status-agents
+          (seq-filter (lambda (a)
+                        (equal (gascity-status--rig-of
+                                (alist-get 'qualified_name a))
+                               rig-name))
+                      (append (alist-get 'agents status) nil)))
+         (rig-agents (append (alist-get 'agents rig-status) nil))
+         (session-map (gascity-status--session-map sessions))
+         (draining (make-hash-table :test 'equal))
+         (seen (make-hash-table :test 'equal))
+         (names nil)
+         (partial (alist-get 'partial status))
+         (rows nil))
+    (dolist (agent rig-agents)
+      (when-let* ((name (alist-get 'qualified_name agent)))
+        (puthash name (and (alist-get 'draining agent) t) draining)))
+    ;; The hook join's candidates: every rendered agent plus this rig's
+    ;; live sessions, so a bead held by a session-only agent is never
+    ;; handed to a free pool slot as well.
+    (dolist (agent (append status-agents rig-agents))
+      (when-let* ((name (alist-get 'qualified_name agent)))
+        (cl-pushnew name names :test #'equal)))
+    (dolist (session sessions)
+      (when (and (gascity-status--live-session-p session)
+                 (equal (alist-get 'rig session) rig-name))
+        (when-let* ((name (alist-get 'agent_name session)))
+          (cl-pushnew name names :test #'equal))))
+    (let ((hooked (gascity-status--hook-work names beads sessions)))
+      (cl-labels
+          ((row (agent)
+             (let* ((name (alist-get 'qualified_name agent))
+                    (session (and name (gethash name session-map)))
+                    (bead (and name (gethash name hooked))))
+               (list :name name
+                     :rig rig-name
+                     :state (gascity-status--agent-state
+                             agent session bead now partial)
+                     :draining (and (gethash name draining) t)
+                     :active (and session (gascity-session-last-active session))
+                     :bead (and bead (alist-get 'id bead))
+                     :session session
+                     :object (gascity-status--agent agent rig-name
+                                                    session-map socket)))))
+        (dolist (agent status-agents)
+          (let ((name (alist-get 'qualified_name agent)))
+            (when (and name (not (gethash name seen)))
+              (puthash name t seen)
+              (push (row agent) rows))))
+        (dolist (agent rig-agents)
+          (let ((name (alist-get 'qualified_name agent)))
+            (when (and name (not (gethash name seen)))
+              (puthash name t seen)
+              (push (row agent) rows))))))
+    (sort (nreverse rows) #'gascity-status--agent-order)))
+
+(defun gascity-rig--agent-row (agent)
+  "Return a vnode for the modeled AGENT plist.
+The state is the shared one, so the rig dashboard spells `idle' and
+`unknown' exactly as the cockpit and the Agents view do.  A draining
+agent keeps its live state but says `draining' in the state cell; the
+row carries the action `gascity-agent' for the agent keys."
+  (let* ((state (plist-get agent :state))
+         (label (if (plist-get agent :draining)
+                    "draining"
+                  (gascity-status--state-label state))))
+    (vui-text (concat "  " (gascity-ui-glyph (gascity-status--state-glyph state))
+                      " " (gascity-ui-fit (or (plist-get agent :name) "?") 40)
+                      " " (gascity-ui-fit label 10)
+                      (gascity-ui-time (plist-get agent :active)))
+              'gascity-agent (plist-get agent :object))))
 
 (defun gascity-rig--agents-summary (agents)
-  "Return the Agents header summary of AGENTS: `1 running · 1 stopped'."
-  (let ((running (seq-count (lambda (a) (alist-get 'running a)) agents)))
-    (string-join (delq nil (list (and (> running 0) (format "%d running" running))
-                                 (and (> (- (length agents) running) 0)
-                                      (format "%d stopped" (- (length agents) running)))))
-                 " · ")))
+  "Return the Agents header summary of AGENTS: `1 running · 1 idle'."
+  (gascity-status--state-summary
+   (mapcar (lambda (a) (plist-get a :state)) agents)))
 
-(defun gascity-rig--agents-vnode (agents rig-name session-map socket)
-  "Return the Agents section vnode for AGENTS under RIG-NAME.
-SESSION-MAP and SOCKET join each row to its live session."
+(defun gascity-rig--agents-vnode (agents)
+  "Return the Agents section vnode for the modeled AGENTS."
   (let ((agents (append agents nil)))
     (apply #'vui-vstack
            (gascity-ui-section-header
             "Agents" (if agents (gascity-rig--agents-summary agents) "none"))
-           (mapcar (lambda (a)
-                     (gascity-rig--agent-row a rig-name session-map socket))
-                   agents))))
+           (mapcar #'gascity-rig--agent-row agents))))
 
 (defun gascity-rig--bead-row (bead &optional key)
   "Return a vnode for BEAD (an alist), stamped with its id for `RET'.
@@ -276,6 +342,9 @@ the last payload keeps rendering while a reload is in flight."
   ;; All store hooks run unconditionally, in order, every render.
   (let* ((status-res
           (gascity-store-use (list "rig" "status" rig-name) :tick refresh-tick))
+         ;; The city status the cockpit and Agents view read: the same agent
+         ;; rows, so the running/idle/unknown verdict agrees (ec-elkm5.10).
+         (city-res (gascity-store-use '("status") :tick refresh-tick))
          (sessions-res
           (gascity-store-use '("session" "list") :tick refresh-tick))
          (ready-res
@@ -290,6 +359,7 @@ the last payload keeps rendering while a reload is in flight."
          (dolt-res
           (gascity-store-use '("dolt" "health") :tick refresh-tick))
          (status (gascity-ui-store-load status-res))
+         (city-load (gascity-ui-store-load city-res))
          (sessions (gascity-ui-store-load sessions-res))
          (ready (gascity-ui-store-load ready-res))
          (inprog (gascity-ui-store-load inprog-res))
@@ -305,15 +375,19 @@ the last payload keeps rendering while a reload is in flight."
        (let* ((data (plist-get status :data))
               (rig (alist-get 'rig data))
               (city-name (alist-get 'city_name data))
-              (session-map (gascity-status--session-map
-                            (or (alist-get 'sessions (plist-get sessions :data)) [])))
+              (session-rows (append (alist-get 'sessions
+                                               (plist-get sessions :data))
+                                    nil))
               ;; Render: no synchronous gc fallback (`no-probe').
-              (socket (gascity-resolve-tmux-socket city-name 'no-probe)))
+              (socket (gascity-resolve-tmux-socket city-name 'no-probe))
+              (agents (gascity-rig--agents
+                       rig-name (plist-get city-load :data) data session-rows
+                       (gascity-section-beads (plist-get inprog :data))
+                       socket (float-time))))
          (vui-vstack
           :spacing 1
           (gascity-rig--header-vnode rig city-name)
-          (gascity-rig--agents-vnode (alist-get 'agents data) rig-name
-                                     session-map socket)
+          (gascity-rig--agents-vnode agents)
           (let ((gascity-rig--extra extra))
             (gascity-rig--beads-section "Ready" ready))
           (let ((gascity-rig--extra extra))
