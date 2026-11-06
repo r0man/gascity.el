@@ -4405,12 +4405,16 @@ refresh — so it tracks the filter across `g' and clears with `/ c'."
 
 (ert-deftest gascity-test-bead-show-at-point-text ()
   "`gascity-bead-show-at-point' opens the id under point in plain text,
-routed to the store owning its prefix from the rig memo — an agent
-transcript in an attach buffer, a shell buffer.  A vui row's stamped bead
-wins over the text; nothing at point is a clean `user-error'."
-  (let ((rigs (list (gascity-rig :name "bs-rig" :prefix "bs" :path "/r/bs")))
-        (opened nil))
-    (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) rigs))
+routed to the store owning its prefix by the city's prefix→store map
+\(`gascity-beads-eldoc-store-for-id', the function beads eldoc's
+installed resolver calls) — an agent transcript in an attach buffer, a
+shell buffer.  A vui row's stamped bead wins over the text; nothing
+allowed at point is a clean `user-error'."
+  (let ((opened nil))
+    (cl-letf (((symbol-function 'gascity-beads-eldoc-store-for-id)
+               (lambda (id) (pcase id
+                              ("bs-xe3ge" "/r/bs/")
+                              ("gce-abc" "/r/gce/"))))
               ((symbol-function 'gascity-bead-show)
                (lambda (id &optional dir) (setq opened (list id dir)))))
       (with-temp-buffer
@@ -4421,11 +4425,127 @@ wins over the text; nothing at point is a clean `user-error'."
         ;; A stamped bead property takes precedence over the text.
         (put-text-property (point-min) (point-max) 'gascity-bead "gce-abc")
         (gascity-bead-show-at-point)
-        (should (equal (car opened) "gce-abc"))
+        (should (equal opened (list "gce-abc" "/r/gce/")))
         (remove-text-properties (point-min) (point-max) '(gascity-bead nil))
         ;; The buffer's prefix allowlist applies.
         (setq-local beads-issue-id-prefixes '("gce"))
         (should-error (gascity-bead-show-at-point) :type 'user-error)))))
+
+(ert-deftest gascity-test-bead-show-at-point-cold-defers ()
+  "A cold store map never opens the ambient store (REQ-006/REQ-011).
+Text ids are hidden by the deny-all allowlist; a vui row's stamped id
+bypasses it.  Both defer with one message and zero `gascity-bead-show'
+calls — a cockpit bead row must not open the city store for a rig id."
+  (let ((opened nil) (msgs nil))
+    (cl-letf (((symbol-function 'gascity-beads-eldoc-store-for-id)
+               (lambda (_id) nil))
+              ((symbol-function 'gascity-beads-eldoc-map-ready-p)
+               (lambda (&rest _) nil))
+              ((symbol-function 'gascity-bead-show)
+               (lambda (id &optional dir) (setq opened (list id dir))))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+      (with-temp-buffer
+        (setq-local beads-issue-id-prefixes '("bs"))
+        (insert "the mayor slung bs-xe3ge to a worker")
+        (goto-char (+ (point-min) 20))
+        (gascity-bead-show-at-point)
+        (should-not opened)
+        ;; Stamped id (vui row text property): same deferral.
+        (goto-char (point-min))
+        (put-text-property (point-min) (1+ (point-min)) 'gascity-bead "ga-abc")
+        (gascity-bead-show-at-point)
+        (should-not opened)
+        (should (equal msgs '("Resolving bead stores…"
+                              "Resolving bead stores…")))))))
+
+(ert-deftest gascity-test-bead-show-at-point-warm-unknown-store-errors ()
+  "A warm map that does not own the id's prefix errors instead of
+opening the buffer's own store."
+  (let ((opened nil))
+    (cl-letf (((symbol-function 'gascity-beads-eldoc-store-for-id)
+               (lambda (_id) nil))
+              ((symbol-function 'gascity-beads-eldoc-map-ready-p)
+               (lambda (&rest _) t))
+              ((symbol-function 'gascity-bead-show)
+               (lambda (id &optional dir) (setq opened (list id dir)))))
+      (with-temp-buffer
+        (insert "ec-abc")
+        (goto-char (point-min))
+        (put-text-property (point-min) (point-max) 'gascity-bead "zz-abc")
+        (should-error (gascity-bead-show-at-point) :type 'user-error)
+        (should-not opened)))))
+
+(ert-deftest gascity-test-bead-show-at-point-empty-map-defers ()
+  "A map whose first fill landed no stores is still pending: defer, do
+not report \"no store owns\" for an id the fill has not seen yet."
+  (let ((opened nil) (msgs nil))
+    (cl-letf (((symbol-function 'gascity-beads-eldoc-store-for-id)
+               (lambda (_id) nil))
+              ((symbol-function 'gascity-beads-eldoc-map-ready-p)
+               (lambda (&rest _) nil))
+              ((symbol-function 'gascity-bead-show)
+               (lambda (id &optional dir) (setq opened (list id dir))))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+      (with-temp-buffer
+        (insert "ga-abc")
+        (goto-char (point-min))
+        (put-text-property (point-min) (point-max) 'gascity-bead "ga-abc")
+        (gascity-bead-show-at-point)
+        (should-not opened)
+        (should (equal msgs '("Resolving bead stores…")))))))
+
+(ert-deftest gascity-test-bead-show-at-point-c-c-b-agrees-with-eldoc ()
+  "`C-c b' passes `gascity-bead-show' exactly the directory the map
+resolver returns — the function beads eldoc calls — for a city id and a
+rig id (REQ-013)."
+  (let ((opened nil))
+    (cl-letf (((symbol-function 'gascity-beads-eldoc-store-for-id)
+               (lambda (id) (pcase id
+                              ("ec-abc" "/city/")
+                              ("ga-def" "/p/gascity.el/"))))
+              ((symbol-function 'gascity-bead-show)
+               (lambda (id &optional dir) (setq opened (list id dir)))))
+      (with-temp-buffer
+        (setq-local beads-issue-id-prefixes '("ec" "ga"))
+        (insert "ec-abc and ga-def")
+        (goto-char (point-min))
+        (gascity-bead-show-at-point)
+        (should (equal opened '("ec-abc" "/city/")))
+        (goto-char (1- (point-max)))
+        (gascity-bead-show-at-point)
+        (should (equal opened '("ga-def" "/p/gascity.el/")))))))
+
+(ert-deftest gascity-test-bead-path-cached-answers-from-the-map ()
+  "`gascity-beads--bead-path-cached' is a thin, spawn-free wrapper over
+the city's prefix→store map: it no longer reads the rig memo, and an
+unknown id is nil rather than another store."
+  (cl-letf (((symbol-function 'gascity-reader-run)
+             (lambda (&rest _) (error "spawned gc")))
+            ((symbol-function 'gascity-command-rig-list!)
+             (lambda (&rest _) (error "spawned gc rig list")))
+            ((symbol-function 'gascity-beads-eldoc-store-for-id)
+             (lambda (id) (and (equal id "bs-x1") "/r/bs/"))))
+    (should (equal (gascity-beads--bead-path-cached "bs-x1") "/r/bs/"))
+    (should-not (gascity-beads--bead-path-cached "zz-x1"))
+    (should-not (gascity-beads--bead-path-cached "no-hyphen-prefix-"))))
+
+(ert-deftest gascity-test-bead-path-prefers-the-map ()
+  "The synchronous resolver asks the map first; only a map miss runs the
+one `gc rig list' fallback (the documented bead-write exception)."
+  (gascity-context-clear-cache)
+  (unwind-protect
+      (let ((spawned 0))
+        (cl-letf (((symbol-function 'gascity-beads-eldoc-store-for-id)
+                   (lambda (id) (and (equal id "bs-x1") "/r/bs/")))
+                  ((symbol-function 'gascity-command-rig-list!)
+                   (lambda (&rest _) (setq spawned (1+ spawned)) nil)))
+          (should (equal (gascity-beads--bead-path "bs-x1") "/r/bs/"))
+          (should (zerop spawned))
+          (should-not (gascity-beads--bead-path "zz-x1"))
+          (should (= spawned 1))))
+    (gascity-context-clear-cache)))
 
 (ert-deftest gascity-test-terminal-install-keys ()
   "The attach map is active in the buffer whatever the local map does.
@@ -7571,7 +7691,12 @@ stays cold, a warm city's entry is never touched by another's."
   (gascity-context-clear-cache)
   (unwind-protect
       (cl-letf (((symbol-function 'gascity-reader-run)
-                 (lambda (&rest _) (error "spawned gc"))))
+                 (lambda (&rest _) (error "spawned gc")))
+                ;; Bead *reads* resolve from the prefix→store map (W3,
+                ;; REQ-013), not from this memo; the map is stubbed cold
+                ;; here so this memo test starts no fill and no process.
+                ((symbol-function 'gascity-beads-eldoc-store-for-id)
+                 (lambda (_id) nil)))
         (let ((default-directory "/"))
           (cl-letf (((symbol-function 'gascity-command-rig-list!)
                      (lambda (&rest _) (error "spawned gc rig list"))))
@@ -7592,8 +7717,10 @@ stays cold, a warm city's entry is never touched by another's."
               (should (equal (gascity-rigs-cached-prefixes) '("gce" "bde")))
               (should (equal (gascity-beads--rig-store-cached "gascity.el")
                              "/p/gascity.el/"))
-              (should (equal (gascity-beads--bead-path-cached "bde-x1")
-                             "/p/beads.el/"))
+              ;; Bead *reads* resolve from the city's prefix→store map
+              ;; (`gascity-beads-eldoc'), never from this memo — a warm
+              ;; rig memo alone no longer routes a read (W3, REQ-013).
+              (should-not (gascity-beads--bead-path-cached "bde-x1"))
               (should-not (gascity-beads--bead-path-cached "zzz-x1"))
               (should-not (gascity-beads--bead-path-cached "no-hyphen-prefix-"))
               ;; A payload variant without prefixes keeps the prefixed map
@@ -7800,7 +7927,11 @@ stays cold (REQ-005, REQ-006, REQ-007, REQ-014)."
       (cl-letf (((symbol-function 'gascity-reader-run)
                  (lambda (&rest _) (error "spawned gc")))
                 ((symbol-function 'gascity-command-rig-list!)
-                 (lambda (&rest _) (error "spawned gc rig list"))))
+                 (lambda (&rest _) (error "spawned gc rig list")))
+                ;; Bead reads go through the prefix→store map (W3), not
+                ;; the memo; stubbed cold so no fill starts here.
+                ((symbol-function 'gascity-beads-eldoc-store-for-id)
+                 (lambda (_id) nil)))
         ;; Two local cities, plus a third that stays cold: real temp
         ;; cities, the walk is free.
         (let* ((tmp (make-temp-file "gascity-test-memo" t))

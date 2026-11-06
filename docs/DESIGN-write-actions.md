@@ -425,6 +425,7 @@ don’t collide with view keys):
 | runs | `F` follow → `gascity-run-show` on the run at point (the launch offer's persistent twin; ga-40tbg.4) |
 | run detail | `I` inspect (toggle the step inspector / the member drawer) · `w` copy id (step, iteration or member root) · `!` diagnose the failed step (run-view-v2 §3) · `o` open artifact · `B` browse the web dashboard · `Y` copy the run URL · `T` the `needs` tree (run-view-v3 §B/§C/§E3) |
 | mail inbox | `r` read · `R` reply · `a` archive · `u` mark-unread · `c`→ `gascity-mail-dispatch` (adds send) |
+| every vui + tabulated view | `C-c b` → `gascity-bead-show-at-point` (opens the bead id at point in its owning store; the same prefix→store map as beads eldoc, so the command agrees with eldoc. `C-c` is otherwise unused in these maps; D3) |
 | (bead refs everywhere) | `S` sling/route shortcut (→ `gascity-sling-dispatch`) |
 
 The run detail's `w` is the one recorded reuse: its rows are bead refs, so
