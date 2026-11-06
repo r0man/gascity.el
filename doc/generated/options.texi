@@ -19,6 +19,15 @@ are in @ref{Customization and Theming}; this table only enumerates them.
 
 @multitable @columnfractions .42 .33 .25
 @headitem User option @tab Default @tab Type
+@item @code{gascity-beads-eldoc-map-ttl}
+@tab @code{600}
+@tab @code{integer}
+@item @code{gascity-beads-eldoc-refill-min-interval}
+@tab @code{30}
+@tab @code{integer}
+@item @code{gascity-beads-eldoc-retry-delay}
+@tab @code{60}
+@tab @code{integer}
 @item @code{gascity-dashboard-agent-idle-threshold}
 @tab @code{3600}
 @tab @code{natnum}

@@ -116,6 +116,8 @@ multi-second stall.")
 ;; one-way).  `gascity-beads-sling' owns the value and its docstring.
 (defvar gascity-beads-sling--city)
 
+(declare-function gascity-beads-eldoc-clear-cache "gascity-beads-eldoc" ())
+
 (defun gascity-context-clear-cache ()
   "Forget cached rig, city, root, and remote-executable resolutions.
 The one cache entry point: also clears the city-root memo, the rig-list
@@ -133,7 +135,12 @@ re-resolution."
   ;; loaded.  The variable is declared above, so no require edge runs from
   ;; gascity-context back to gascity-beads-sling.
   (when (boundp 'gascity-beads-sling--city)
-    (setq gascity-beads-sling--city nil)))
+    (setq gascity-beads-sling--city nil))
+  ;; The bead-id prefix to store map (plans/beads-eldoc-prefix §D) is
+  ;; downstream state too.  An explicit clear DROPS it rather than marking
+  ;; it stale, so no buffer keeps a stale city's prefixes (REQ-010).
+  (when (fboundp 'gascity-beads-eldoc-clear-cache)
+    (gascity-beads-eldoc-clear-cache)))
 
 (defun gascity-context--find-root (start marker)
   "Walk up from directory START for the file MARKER (the city marker).
@@ -349,14 +356,11 @@ with a local `default-directory' — new views must come through here."
     ;; project.el must never do I/O from this buffer's redisplay: the
     ;; pinned root is the project (see `gascity-context-install-project').
     (gascity-context-install-project buf dir)
-    ;; When the rig list is already known for this host, narrow beads
-    ;; eldoc to the city's real id prefixes — cheap, and it keeps a
-    ;; stray hyphenated token from costing a `bd show'.  A cold memo is
-    ;; left alone: never spawn gc to open a buffer.
-    (when-let* ((prefixes (gascity-rigs-cached-prefixes dir)))
-      (with-current-buffer buf
-        (when (boundp 'beads-issue-id-prefixes)
-          (setq-local beads-issue-id-prefixes prefixes))))
+    ;; bead-id eldoc is installed by the one install path, on the hook
+    ;; below: it captures this pinned city root, sets the per-id resolver
+    ;; and the city's prefix allowlist (deny-all while the map is cold),
+    ;; and keeps them across the major mode this view enables afterwards.
+    ;; Never spawn gc to open a view.
     (run-hook-with-args 'gascity-view-created-functions buf)
     buf))
 

@@ -1296,10 +1296,18 @@ exceptions (city start/stop) are exempt by name."
               (should (< (- (float-time) start) 1.0))
               (ert-info ((format "%s" (car verb)))
                 (should (null sync-calls))
-                ;; `r' also opens the thread: one read beside the
-                ;; mark-read (§7.9).
-                (should (= (length reads)
-                           (if (eq (car verb) 'gascity-mail-read-at-point) 1 0)))
+                ;; A verb that opens a view also starts the bead-id map's
+                ;; asynchronous `gc rig list' fill (REQ-006) — on the read
+                ;; lane, never synchronously — so count only the verb's
+                ;; own reads.
+                (let ((reads (seq-remove
+                              (lambda (read) (equal (car read) '("rig" "list")))
+                              reads)))
+                  ;; `r' also opens the thread: one read beside the
+                  ;; mark-read (§7.9).
+                  (should (= (length reads)
+                             (if (eq (car verb) 'gascity-mail-read-at-point)
+                                 1 0))))
                 (should (= (length actions) 1))
                 ;; Only started: nothing has answered, the target is
                 ;; still pending.

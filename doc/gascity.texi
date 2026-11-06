@@ -4949,6 +4949,27 @@ The remote options --- @code{gascity-remote-transport},
 @code{gascity-remote-async-timeout}, @code{gascity-remote-sync-timeout}
 --- are described in @ref{Remote Cities}.
 
+@subheading Bead-id eldoc
+
+@vindex gascity-beads-eldoc-map-ttl
+@defopt gascity-beads-eldoc-map-ttl
+Seconds a city's bead-id prefix to store map stays fresh (default 600).
+Past it the map is served stale while one refill runs; the live event
+stream and rig actions invalidate it earlier.
+@end defopt
+
+@vindex gascity-beads-eldoc-refill-min-interval
+@defopt gascity-beads-eldoc-refill-min-interval
+Minimum seconds between two successful fills of one city's bead-id map
+(default 30), which bounds the refill rate of a busy live stream.
+@end defopt
+
+@vindex gascity-beads-eldoc-retry-delay
+@defopt gascity-beads-eldoc-retry-delay
+Seconds to wait after a failed fill of a city's bead-id map before
+retrying (default 60); a warm map keeps serving its last good payload.
+@end defopt
+
 @section Context overrides
 
 @vindex gascity-context-city

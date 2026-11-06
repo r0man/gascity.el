@@ -736,6 +736,9 @@ spans every page).  Each list's own keymap parents off this and adds
   "S" #'gascity-sling-dispatch
   "C-o" #'gascity-tabulated-detail-show
   "C-c C-f" #'gascity-tabulated-detail-follow-mode
+  ;; `C-c b' opens the bead id at point in its owning store, resolving
+  ;; through the same prefix→store map beads eldoc uses (D3, REQ-013).
+  "C-c b" #'gascity-bead-show-at-point
   "q" #'gascity-tabulated-quit)
 
 ;; §5.4 in every list: TAB/S-TAB next/previous row, `?' dispatch, `j'

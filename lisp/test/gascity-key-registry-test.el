@@ -121,6 +121,17 @@ one dispatch everywhere."
             (should (eq (gascity-key-registry--lookup map (concat "a " key))
                         cmd))))))))
 
+(ert-deftest gascity-test-key-registry-bead-show-at-point ()
+  "D3: `C-c b' opens the bead at point in every vui and tabulated view.
+It is the command beads eldoc's installed resolver feeds, so the command
+and eldoc resolve through the same prefix→store map (REQ-013)."
+  (dolist (view gascity-key-registry--views)
+    (when (memq (nth 2 view) '(vui list))
+      (ert-info ((format "%s: C-c b" (car view)))
+        (should (eq (gascity-key-registry--lookup
+                     (gascity-key-registry--map view) "C-c b")
+                    'gascity-bead-show-at-point))))))
+
 (ert-deftest gascity-test-key-registry-bead-keys-stay-beads ()
   "F1: the beads.el-reserved keys never mean a gascity agent verb in a
 view that can also hold a bead."

@@ -46,6 +46,14 @@
 (declare-function beads-show "beads-command-show")
 (declare-function beads-dashboard "beads-dashboard")
 
+;; The city's prefix→store map and its spawn-free resolver live in
+;; `gascity-beads-eldoc' (loaded after this module; it requires nothing
+;; from here at load time, so these are `declare-function' only).  Every
+;; read-side resolution in this module — `C-c b', `gascity-bead-show' —
+;; goes through them.
+(declare-function gascity-beads-eldoc-map-ready-p "gascity-beads-eldoc" nil)
+(declare-function gascity-beads-eldoc-store-for-id "gascity-beads-eldoc" (id))
+
 ;;; Base mode
 
 (defun gascity-section-activate ()
@@ -276,6 +284,13 @@ commands (see `beads-thing-define-keys'), `?' opens the dispatch and
 ;; `S' is sling in every view (dashboard-v3 §5.3); defined in
 ;; gascity-action, resolved at key time.
 (keymap-set gascity-section-mode-map "S" 'gascity-sling-dispatch)
+
+;; `C-c b' opens the bead id at point in the store that owns it — the
+;; read-only twin of beads.el's own `C-c b'.  It resolves through the
+;; same prefix→store map beads eldoc uses, so the command opens exactly
+;; the store eldoc named (D3, REQ-013); `C-c' is otherwise unused in
+;; this map (DESIGN-write-actions.md §10).
+(keymap-set gascity-section-mode-map "C-c b" #'gascity-bead-show-at-point)
 
 ;;; The `a' agent/rig verb prefix (F1)
 ;;
@@ -901,21 +916,35 @@ name is resolved against `gascity-rigs'; any failure degrades to nil."
 
 (defun gascity-beads--bead-path (id)
   "Return the store directory owning bead ID, or nil.
-Gas City routes beads by id prefix (`gce-*' -> the gascity.el rig); this
-maps ID's prefix to the owning rig's store via `gascity-command-rig-list!'.
-Failures degrade to nil so callers fall back to the ambient directory."
-  (when-let* ((prefix (gascity-beads--id-prefix id))
-              (rig (ignore-errors
-                     (seq-find (lambda (r) (equal (gascity-rig-prefix r) prefix))
-                               (gascity-rigs)))))
-    (gascity-beads--rig-path rig)))
+Gas City routes beads by id prefix (`gce-*' -> the gascity.el rig).  The
+city's prefix→store map answers first (`gascity-beads--bead-path-cached',
+which never spawns); only a map that cannot answer falls through to the
+one synchronous `gc rig list' read, which resolves the prefix through
+`gascity-command-rig-list!'.
 
-;; The spawn-free twins of the two resolvers above.  They answer from the
-;; rig memo (`gascity-rigs-cached') alone, so the UI paths that call them —
-;; wiring an attach buffer's project and beads eldoc, resolving a bead's
-;; store from a terminal — never run a synchronous `gc rig list' (a
-;; multi-second stall on a remote city).  A cold memo degrades to nil, and
-;; the callers fall back to the ambient directory.
+That synchronous read is the single deliberate exception to the
+non-blocking rule (DESIGN.md, dashboard-v3 D9): it survives only where a
+wrong answer is worse than one read — a bead *write* pinned to the
+wrong store (`gascity-action--bead-store', `gascity-bead-note--run') and
+`gascity-bead-show''s no-directory fallback.  Every eldoc / `C-c b' path
+uses `gascity-beads--bead-path-cached' instead.  Failures degrade to nil
+so callers fall back to the ambient directory."
+  (or (gascity-beads--bead-path-cached id)
+      (when-let* ((prefix (gascity-beads--id-prefix id))
+                  (rig (ignore-errors
+                         (seq-find (lambda (r)
+                                     (equal (gascity-rig-prefix r) prefix))
+                                   (gascity-rigs)))))
+        (gascity-beads--rig-path rig))))
+
+;; The spawn-free readers.  `gascity-beads--rig-store-cached' answers from
+;; the rig memo (`gascity-rigs-cached'); `gascity-beads--bead-path-cached'
+;; answers from the city's prefix→store map (`gascity-beads-eldoc'), which
+;; is the one resolution implementation for bead reads.  Neither ever runs
+;; a synchronous `gc rig list' (a multi-second stall on a remote city), so
+;; the UI paths that use them — wiring beads eldoc, `C-c b', hovering an
+;; id in a transcript — never block.  A cold cache degrades to nil rather
+;; than to an unrelated store.
 
 (defun gascity-beads--rig-store-cached (name)
   "Return the store directory of the memoized rig NAME, or nil.
@@ -955,17 +984,19 @@ and FN is not called."
                     (car (split-string (format "%s" err) "\n" t)))))))))
 
 (defun gascity-beads--bead-path-cached (id)
-  "Return the store directory owning bead ID from the rig memo, or nil.
-Like `gascity-beads--bead-path' — ID's prefix picks the owning rig —
-but resolved from `gascity-rigs-cached' alone, never `gc rig list'.
+  "Return the store directory owning bead ID, or nil.
+A thin wrapper over the city's prefix→store map
+\(`gascity-beads-eldoc-store-for-id'): the current buffer's captured
+snapshot when its city matches, else the city's cached map, else nil.
+Never spawns, never consults `default-directory' — the answer comes from
+the map alone, so a cold map is nil rather than an unrelated store's
+\"no issues found\" (REQ-006/REQ-011).
+
 The resolver an attach buffer hands beads eldoc as
-`beads-eldoc-directory' (a function of the id), so hovering an id in a
-terminal never spawns gc synchronously; a cold memo yields nil and
-beads falls back to the buffer's own directory."
-  (when-let* ((prefix (gascity-beads--id-prefix id))
-              (rig (seq-find (lambda (r) (equal (gascity-rig-prefix r) prefix))
-                             (gascity-rigs-cached))))
-    (gascity-beads--rig-path rig)))
+`beads-eldoc-directory' (a function of the id) is the same function, so
+hovering an id in a terminal never spawns gc synchronously and `C-c b'
+opens the store eldoc named (REQ-013)."
+  (gascity-beads-eldoc-store-for-id id))
 
 (defun gascity-beads--city-store (&optional dir)
   "Return the city root's own bead store for DIR, or nil.
@@ -1119,9 +1150,19 @@ or, in plain text — an agent transcript in a tmux attach buffer
 \(`vterm-copy-mode' puts point on it), a shell buffer, a mail body —
 from beads.el's id detection (`beads-issue-id-at-point', honouring the
 buffer's `beads-issue-id-prefixes').  The store is the one owning the
-id's prefix, from the rig memo when warm
-\(`gascity-beads--bead-path-cached'); `gascity-bead-show' resolves it
-otherwise.  Bound to \[gascity-bead-show-at-point] in attach buffers."
+id's prefix, from the city's prefix→store map
+\(`gascity-beads--bead-path-cached', the function beads eldoc's installed
+resolver calls) — the identical answer eldoc gives (REQ-013).
+
+A cold map never opens the ambient store.  A plain-text id is hidden by
+the deny-all allowlist while the map is cold, and a vui row's stamped id
+bypasses that allowlist, so an unresolvable id means the map has not
+landed yet: start the one deduplicated fill and say so, rather than
+calling `gascity-bead-show' with nil (which would open the buffer's own
+directory — the wrong-store open of REQ-006/REQ-011, e.g. a cockpit bead
+row against the city store).  Once the fill lands the buffer resolves
+without being reopened.  Bound to \[gascity-bead-show-at-point] in
+attach buffers and in every vui/tabulated view (D3)."
   (interactive)
   (let ((id (or (gascity-bead-at-point)
                 (and (fboundp 'beads-issue-id-at-point)
@@ -1129,8 +1170,19 @@ otherwise.  Bound to \[gascity-bead-show-at-point] in attach buffers."
                       (and (boundp 'beads-issue-id-prefixes)
                            beads-issue-id-prefixes))))))
     (unless id (user-error "No bead id at point"))
-    (gascity-bead-show (substring-no-properties id)
-                       (gascity-beads--bead-path-cached id))))
+    (let* ((id (substring-no-properties id))
+           (store (gascity-beads-eldoc-store-for-id id)))
+      (cond
+       (store (gascity-bead-show id store))
+       ;; Cold city, or a map that has not landed a single store yet (its
+       ;; first fill is still answering): defer, never resolve against the
+       ;; buffer's `default-directory'.  `store-for-id' is also what kicks
+       ;; the one deduplicated fill.
+       ((not (gascity-beads-eldoc-map-ready-p))
+        (message "Resolving bead stores…"))
+       ;; Warm map, but no store claims this prefix: say so instead of
+       ;; opening an unrelated store.
+       (t (user-error "No bead store owns %s" id))))))
 
 ;;; Rig at point
 

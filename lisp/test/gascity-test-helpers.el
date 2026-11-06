@@ -268,6 +268,19 @@ render fed from canned payloads (dashboard-v3 §8.4)."
          (gascity-test-render-guard-violations nil))
      ,@body))
 
+;;; The bead-id map read
+
+(defmacro gascity-test-without-bead-eldoc-map (&rest body)
+  "Run BODY with the bead-id map read disabled.
+Opening any gascity view starts the map's asynchronous `gc rig list'
+fill (REQ-006), so a test that opens views without the gc boundary
+stubbed opts out here instead of leaking a real `gc' process.  A test
+that exercises the map stubs it explicitly."
+  (declare (indent 0) (debug t))
+  `(cl-letf (((symbol-function 'gascity-beads-eldoc-map)
+              (lambda (&optional _dir) nil)))
+     ,@body))
+
 ;;; Store boundary stubs
 
 (defmacro gascity-test-with-store-stubs (reads actions &rest body)
