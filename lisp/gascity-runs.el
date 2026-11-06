@@ -374,17 +374,65 @@ running marks that step failed; a retried loop does not."
                            (stringp (alist-get 'assignee b))))
                     graph))))
 
+(defun gascity-runs-member-roots (index root)
+  "Return the member run roots of ROOT's drain steps in INDEX.
+A member root names the drain step in `gc.drain_control_id'; INDEX's
+:drains maps that step id back to the runs which drain through it.
+The roots keep the ladder order of their steps, and each step's
+members keep the order they were read in."
+  (let ((drains (plist-get index :drains))
+        (members nil))
+    (dolist (step (gascity-runs-ladder index root))
+      (setq members
+            (append members
+                    (reverse (gethash (plist-get step :id) drains)))))
+    members))
+
+(defun gascity-runs--live-worker (index root seen)
+  "Return the live worker of ROOT or of a run nested in its drain steps.
+INDEX is the run index; a plist (:id ID :root ROOT-BEAD :worker-bead
+BEAD) is returned, where ID is the run the worker belongs to, so a
+parent can report work that lives in a sub-run.  SEEN lists the run ids
+already visited, so a drain cycle terminates.  Nil when neither ROOT
+nor any nested member run has an in-progress bead with an assignee."
+  (let ((id (alist-get 'id root)))
+    (when (and (memq (gascity-runs-state root) '(active waiting))
+               (not (member id seen)))
+      (let ((bead (gascity-runs--worker-bead
+                   (gascity-runs-graph index id))))
+        (or (and bead (list :id id :root root :worker-bead bead))
+            (seq-some (lambda (member)
+                        (gascity-runs--live-worker
+                         index member (cons id seen)))
+                      (gascity-runs-member-roots index root)))))))
+
+(defun gascity-runs--live-subrun (index root)
+  "Return the nested run under ROOT whose live worker ROOT should report.
+INDEX is the run index.  Used only when ROOT's own graph has no
+in-progress worker: the parent card then names the member run's worker
+instead of reading `no live worker' while a nested card shows that very
+worker (ec-elkm5.5)."
+  (seq-some (lambda (member)
+              (gascity-runs--live-worker
+               index member (list (alist-get 'id root))))
+            (gascity-runs-member-roots index root)))
+
 (defun gascity-runs-summary (index root)
   "Return the summary plist of run ROOT from INDEX.
 Keys: :id :root :rig :formula :state :ladder :label :progress :time
-:outcome :failure :failed-step :worker-bead :parent (the run it drains
-for, or nil).  :failed-step is set for an active run whose ladder has a
-failed step (ga-g092a); a failed run's reason is :failure."
+:outcome :failure :failed-step :worker-bead :live-subrun :parent (the
+run it drains for, or nil).  :failed-step is set for an active run
+whose ladder has a failed step (ga-g092a); a failed run's reason is
+:failure.  :worker-bead is ROOT's own live worker; when it has none but
+a drain member run does, :live-subrun names that member (with its
+:worker-bead), so a parent never reads as workerless while a nested run
+is live (ec-elkm5.5)."
   (let* ((id (alist-get 'id root))
          (graph (gascity-runs-graph index id))
          (ladder (gascity-runs-ladder index root))
          (label (gascity-dashboard--ladder-label ladder))
-         (state (gascity-runs-state root)))
+         (state (gascity-runs-state root))
+         (worker (and (eq state 'active) (gascity-runs--worker-bead graph))))
     (list :id id :root root
           :rig (alist-get 'gascity-rig root)
           :formula (or (gascity-runs--meta root 'gc.formula_name)
@@ -396,7 +444,9 @@ failed step (ga-g092a); a failed run's reason is :failure."
           :failure (and (eq state 'failed) (gascity-runs--failure graph))
           :failed-step (and (eq state 'active)
                             (gascity-runs-failed-step index root))
-          :worker-bead (and (eq state 'active) (gascity-runs--worker-bead graph))
+          :worker-bead worker
+          :live-subrun (and (eq state 'active) (null worker)
+                            (gascity-runs--live-subrun index root))
           :parent (gascity-runs-parent-id index root))))
 
 (defun gascity-runs-window-seconds (window)
@@ -519,6 +569,27 @@ TEXT is `● name  bead' (`○' when no live session), AGENT the action
                   (gascity-dashboard--dim (alist-get 'id bead)))
           (plist-get facts :agent))))
 
+(defun gascity-runs--run-worker (run ctx)
+  "Return (TEXT . AGENT) for RUN's live worker in CTX, or nil.
+RUN's own in-progress worker wins; otherwise the live worker of a drain
+member run is reported as `● name  SUB-RUN', so a parent card never
+reads as workerless while its nested card shows a live worker
+\(ec-elkm5.5).  CTX supplies the `session list' rows and the socket."
+  (let ((sessions (plist-get ctx :sessions))
+        (socket (plist-get ctx :socket)))
+    (cond
+     ((plist-get run :worker-bead)
+      (gascity-runs--worker (plist-get run :worker-bead) sessions socket))
+     ((plist-get run :live-subrun)
+      (let* ((sub (plist-get run :live-subrun))
+             (facts (gascity-runs--worker-facts
+                     (plist-get sub :worker-bead) sessions socket))
+             (session (plist-get facts :session)))
+        (cons (concat (gascity-ui-glyph (if session 'ok 'idle)) " "
+                      (plist-get facts :display) "  "
+                      (gascity-dashboard--dim (plist-get sub :id)))
+              (plist-get facts :agent)))))))
+
 (defun gascity-runs--facts (runs ctx)
   "Return the compared facts of RUNS in CTX: an alist RUN-ID → plist.
 The plist holds :state, :progress, :worker (the rendered worker cell,
@@ -526,10 +597,7 @@ or nil) and :failed-step (the failed step's class, or nil).  Pure;
 run-view-v3 §D fingerprints the Runs cards with it."
   (mapcar
    (lambda (run)
-     (let ((worker (and (plist-get run :worker-bead)
-                        (gascity-runs--worker (plist-get run :worker-bead)
-                                              (plist-get ctx :sessions)
-                                              (plist-get ctx :socket)))))
+     (let ((worker (gascity-runs--run-worker run ctx)))
        (cons (plist-get run :id)
              (list :state (plist-get run :state)
                    :progress (plist-get run :progress)
@@ -566,10 +634,7 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
          (now (plist-get ctx :now))
          (changed (and (plist-get ctx :deltas)
                        (gethash id (plist-get ctx :deltas))))
-         (worker (and (plist-get run :worker-bead)
-                      (gascity-runs--worker (plist-get run :worker-bead)
-                                            (plist-get ctx :sessions)
-                                            (plist-get ctx :socket))))
+         (worker (gascity-runs--run-worker run ctx))
          (glyph (gascity-runs--state-glyph state))
          (progress (gascity-ui-fit (plist-get run :progress) 6))
          (line1 (gascity-dashboard--row

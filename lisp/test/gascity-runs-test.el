@@ -164,9 +164,29 @@ CITY names the buffer's city (default \"emacs-city\"); CONVOY is the
          (root (seq-find (lambda (r) (equal (alist-get 'id r) id))
                          (plist-get index :roots)))
          (run (gascity-runs-summary index root))
-         (ctx (list :run-id id :now (float-time)
+         (ctx (list :run-id id :now (float-time) :index index
                     :city (or city "emacs-city") :convoy convoy)))
     (gascity-run--header-lines run root ctx)))
+
+(defun gascity-runs-test--header-block (lines label)
+  "Return the header LINES' LABEL row as a list of value strings.
+The first element is the row's value, the rest are its wrapped
+continuation lines (the rows starting with the label's 11-column
+indent); nil when LINES has no such row."
+  (let* ((prefix (format "  %-9s" label))
+         (indent (make-string (length prefix) ?\s))
+         (start (cl-position-if (lambda (l)
+                                      (string-prefix-p prefix l))
+                                lines)))
+    (when start
+      (let ((block (list (substring (nth start lines) (length prefix))))
+            (rest (nthcdr (1+ start) lines)))
+        (while (and rest
+                    (string-prefix-p indent (substring-no-properties (car rest))))
+          (setq block (append block
+                              (list (substring (car rest) (length indent))))
+                rest (cdr rest)))
+        (mapcar #'substring-no-properties block)))))
 
 (cl-defun gascity-runs-test--inspector-ctx (beads run-id &key now sessions events)
   "Return a run-detail context over BEADS for RUN-ID, as the inspector sees it.
@@ -500,6 +520,108 @@ tail and `help-echo', exactly like the top-level `gc bd list' shape
       (should (equal (substring-no-properties (car worker))
                      "● requirements-planner-1  be-bcb5"))
       (should (gascity-agent-p (cdr worker))))))
+
+(defun gascity-runs-test--nested-live-beads ()
+  "Return a parent run whose only live worker sits in a nested drain sub-run.
+Shaped after burningswell's bs-rve5l5 / bs-0gtp7l: the parent's drain
+step is open, its member run is in progress, and the in-progress worker
+bead lives in the member's graph -- the parent's own graph has none
+\(ec-elkm5.5)."
+  (list
+   `((id . "bs-rve5l5") (status . "in_progress") (issue_type . "task")
+     (created_at . ,(gascity-runs-test--ts 2700))
+     (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+     (gascity-rig . "burningswell-cl"))
+   `((id . "bs-q2el") (status . "open") (issue_type . "task")
+     (metadata . ((gc.root_bead_id . "bs-rve5l5")
+                  (gc.step_ref . "build-basic.implement")
+                  (gc.kind . "drain")))
+     (gascity-rig . "burningswell-cl"))
+   `((id . "bs-0gtp7l") (status . "in_progress") (issue_type . "task")
+     (created_at . ,(gascity-runs-test--ts 1560))
+     (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")
+                  (gc.drain_control_id . "bs-q2el")))
+     (gascity-rig . "burningswell-cl"))
+   `((id . "bs-o7oxpu") (status . "in_progress") (issue_type . "task")
+     (assignee . "gc__implementation-worker-ec-wisp")
+     (updated_at . ,(gascity-runs-test--ts 60))
+     (metadata . ((gc.root_bead_id . "bs-0gtp7l")
+                  (gc.step_ref . "do-work.implement")))
+     (gascity-rig . "burningswell-cl"))))
+
+(defconst gascity-runs-test--implementation-sessions
+  `((sessions . [((id . "ec-wisp")
+                  (agent_name . "burningswell-cl/gc.implementation-worker-1")
+                  (state . "active")
+                  (session_name . "gc__implementation-worker-ec-wisp")
+                  (work_dir . "/home/roman/burningswell"))]))
+  "A `session list' payload with the live implementation worker.")
+
+(ert-deftest gascity-test-runs-parent-liveness-through-subrun ()
+  "A parent whose own graph has no live worker reports the live worker of
+its nested drain sub-run -- naming the sub-run -- instead of reading
+`no live worker' beside the live nested card (ec-elkm5.5)."
+  (let* ((beads (gascity-runs-test--nested-live-beads))
+         (runs (gascity-runs-test--summaries beads))
+         (parent (gascity-runs-test--by-id runs "bs-rve5l5"))
+         (ctx (gascity-runs-test--ctx
+               beads :sessions gascity-runs-test--implementation-sessions))
+         (text (gascity-runs-test--text (gascity-runs-lines ctx))))
+    (should (eq (plist-get parent :state) 'active))
+    ;; The parent itself owns no in-progress bead...
+    (should-not (plist-get parent :worker-bead))
+    ;; ...but it names the member run whose worker is live.
+    (should (equal (plist-get (plist-get parent :live-subrun) :id) "bs-0gtp7l"))
+    (should (equal (alist-get 'id (plist-get (plist-get parent :live-subrun)
+                                             :worker-bead))
+                   "bs-o7oxpu"))
+    (should (string-match-p "● implementation-worker-1  bs-0gtp7l" text))
+    (should (string-match-p "● implementation-worker-1  bs-o7oxpu" text))
+    (should-not (string-match-p "no live worker" text))))
+
+(ert-deftest gascity-test-runs-parent-liveness-deep-nest ()
+  "Liveness is found through two levels of drain sub-runs."
+  (let* ((rig "burningswell-cl")
+         (beads
+          (list
+           `((id . "bs-rve5l5") (status . "in_progress") (issue_type . "task")
+             (metadata . ((gc.kind . "workflow") (gc.formula_name . "build-basic")))
+             (gascity-rig . ,rig))
+           `((id . "bs-q2el") (status . "open") (issue_type . "task")
+             (metadata . ((gc.root_bead_id . "bs-rve5l5")
+                          (gc.step_ref . "build-basic.implement")
+                          (gc.kind . "drain")))
+             (gascity-rig . ,rig))
+           ;; First hop: in progress, but no worker bead of its own.
+           `((id . "bs-0gtp7l") (status . "in_progress") (issue_type . "task")
+             (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")
+                          (gc.drain_control_id . "bs-q2el")))
+             (gascity-rig . ,rig))
+           `((id . "bs-deepstep") (status . "open") (issue_type . "task")
+             (metadata . ((gc.root_bead_id . "bs-0gtp7l")
+                          (gc.step_ref . "do-work.implement")
+                          (gc.kind . "drain")))
+             (gascity-rig . ,rig))
+           ;; Second hop: carries the live worker.
+           `((id . "bs-deeper") (status . "in_progress") (issue_type . "task")
+             (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")
+                          (gc.drain_control_id . "bs-deepstep")))
+             (gascity-rig . ,rig))
+           `((id . "bs-deeper-worker") (status . "in_progress")
+             (issue_type . "task")
+             (assignee . "gc__implementation-worker-ec-wisp")
+             (metadata . ((gc.root_bead_id . "bs-deeper")
+                          (gc.step_ref . "do-work.implement")))
+             (gascity-rig . ,rig))))
+         (runs (gascity-runs-test--summaries beads))
+         (parent (gascity-runs-test--by-id runs "bs-rve5l5")))
+    (should (eq (plist-get parent :state) 'active))
+    (should-not (plist-get parent :worker-bead))
+    ;; The deepest run with the live worker is reported, not the first hop.
+    (should (equal (plist-get (plist-get parent :live-subrun) :id) "bs-deeper"))
+    (should (equal (alist-get 'id (plist-get (plist-get parent :live-subrun)
+                                             :worker-bead))
+                   "bs-deeper-worker"))))
 
 (ert-deftest gascity-test-runs-ladder-failed-only-in-failed-run ()
   "A failed bead beneath a closed step marks it failed only when the run
@@ -1422,6 +1544,59 @@ or the delegation opens the bead in the city store and fails."
             (if (= (length key) 59)
                 (should (string-match-p (concat "key " (regexp-quote key)) key-line))
               (should (string-match-p "…" key-line)))))))))
+
+(ert-deftest gascity-test-run-header-names-failed-step-class-and-reason ()
+  "A failed run's header names the failed step, its `gc.failure_class' and
+the full reason (wrapped, never clipped), and says `not recorded' for a
+root with no close reason instead of inventing one (ec-elkm5.8)."
+  (let* ((beads (gascity-runs-test--long-failure-beads))
+         (lines (gascity-runs-test--header beads "be-bn2"))
+         (step (gascity-runs-test--header-block lines "step"))
+         (class (gascity-runs-test--header-block lines "class"))
+         (reason (gascity-runs-test--header-block lines "reason"))
+         (close (gascity-runs-test--header-block lines "close")))
+    (should (equal (car step) "build-basic.review  be-fkq"))
+    (should (equal (car class) "control_dispatch_error"))
+    ;; The complete reason is in the buffer, wrapped over several rows.
+    (should reason)
+    (should (> (length reason) 1))
+    (should (equal (string-join reason " ")
+                   gascity-runs-test--long-reason))
+    (should (equal close '("not recorded")))
+    (should (<= (apply #'max (mapcar #'string-width lines))
+                gascity-dashboard--width))))
+
+(ert-deftest gascity-test-run-header-close-reason-when-recorded ()
+  "A closed run's header shows the root's close reason verbatim."
+  (let* ((beads
+          (mapcar
+           (lambda (b)
+             (if (equal (alist-get 'id b) "be-52m5")
+                 (let ((copy (copy-tree b)))
+                   (setf (alist-get 'metadata copy)
+                         (cons '(close_reason . "published to main")
+                               (assq-delete-all
+                                'close_reason (alist-get 'metadata copy))))
+                   copy)
+               b))
+           (gascity-runs-test--fixture-beads)))
+         (lines (gascity-runs-test--header beads "be-52m5")))
+    (should (equal (gascity-runs-test--header-block lines "close")
+                   '("published to main")))))
+
+(ert-deftest gascity-test-run-detail-failed-step-row-names-class ()
+  "The failed step's row carries its failure class (ec-elkm5.8)."
+  (gascity-runs-test--with-detail (gascity-runs-test--long-failure-beads) "be-bn2"
+    (let ((text (buffer-string)))
+      ;; The failing ladder step names the class the Runs card shows too.
+      (should (string-match-p
+               "review +be-fkq +✕ loop +control_dispatch_error" text))
+      ;; The row's full class/reason is reachable by help-echo.
+      (goto-char (point-min))
+      (re-search-forward "^    ▾ review +be-fkq")
+      (should (equal (get-text-property (match-beginning 0) 'help-echo)
+                     (concat "control_dispatch_error: "
+                             gascity-runs-test--long-reason))))))
 
 (ert-deftest gascity-test-run-detail-failed-run-opens-failure ()
   "A failed run's loop containing the failure starts expanded down to it."
@@ -2373,9 +2548,33 @@ STATE `live' makes be-qrpg and its implement step in progress;
        bead))
    (gascity-runs-test--member-beads 'failed)))
 
-(ert-deftest gascity-test-run-drawer-failure-lines-fit ()
-  "The step and drain-member drawers bound their failure line to the
-drawer width and keep the full class/reason in help-echo (REQ-003)."
+(defun gascity-runs-test--failure-block-text (lines)
+  "Return the joined text of the `failure  ' rows in drawer LINES.
+The rows are the line starting `failure  ' and the continuation rows
+aligned under its value; the leading label/indent is dropped."
+  (let* ((prefix "failure  ")
+         (indent (make-string (length prefix) ?\s))
+         (start (cl-position-if (lambda (l)
+                                      (string-prefix-p prefix
+                                                       (substring-no-properties l)))
+                                lines)))
+    (when start
+      (let ((values (list (substring (nth start lines) (length prefix))))
+            (rest (nthcdr (1+ start) lines)))
+        (while (and rest
+                    (string-prefix-p indent (substring-no-properties (car rest))))
+          (setq values (append values
+                               (list (substring (car rest) (length indent))))
+                rest (cdr rest)))
+        (string-join (mapcar (lambda (v) (string-trim (substring-no-properties v)))
+                             values)
+                     " ")))))
+
+(ert-deftest gascity-test-run-drawer-failure-wraps-full-reason ()
+  "The step and drain-member drawers wrap a long failure into several
+lines inside the drawer width, so the whole class and reason are
+readable in the buffer, and every line keeps the full text in
+`help-echo' (REQ-003, ec-elkm5.8)."
   (let* ((step-reason gascity-runs-test--long-reason)
          (root `((id . "hw-long") (status . "in_progress")
                  (metadata . ((gc.kind . "workflow")
@@ -2387,30 +2586,36 @@ drawer width and keep the full class/reason in help-echo (REQ-003)."
                                (gc.failure_class . "control_dispatch_error")
                                (gc.failure_reason . ,step-reason)))))
          (ctx (gascity-runs-test--inspector-ctx (list root step) "hw-long"))
-         (line (car (last (gascity-run--step-drawer step nil ctx))))
          (full (concat "control_dispatch_error: " step-reason))
-         (pos (string-match "control_dispatch_error" line)))
-    (should (string-prefix-p "failure  " (substring-no-properties line)))
-    (should (<= (+ 4 (string-width line)) gascity-dashboard--width))
-    (should (string-suffix-p "…" (substring-no-properties line)))
-    (should pos)
-    (should (equal (get-text-property pos 'help-echo line) full)))
+         (rows (gascity-run--failure-line full))
+         (drawer (gascity-run--step-drawer step nil ctx)))
+    ;; The drawer's failure rows are the wrapped lines, not one clipped row.
+    (should (> (length rows) 1))
+    (should (equal (gascity-runs-test--failure-block-text drawer) full))
+    (should (string-prefix-p "failure  " (substring-no-properties (car rows))))
+    (dolist (line rows)
+      (should (<= (+ 4 (string-width line)) gascity-dashboard--width))
+      (should-not (string-match-p "…" (substring-no-properties line)))
+      (should (equal (get-text-property 0 'help-echo line) full))))
   (let* ((beads (gascity-runs-test--long-member-beads))
          (ctx (gascity-runs-test--inspector-ctx beads "be-bn2"))
          (member (seq-find (lambda (b) (equal (alist-get 'id b) "be-qrpg"))
                            beads))
          (lines (gascity-run--member-drawer member (plist-get ctx :index) ctx))
-         (line (seq-find (lambda (l)
-                           (string-prefix-p "failure  "
-                                            (substring-no-properties l)))
-                         lines))
-         (pos (string-match "hard: " line))
-         (help (and pos (get-text-property pos 'help-echo line))))
-    (should line)
-    (should (<= (+ 4 (string-width line)) gascity-dashboard--width))
-    (should (string-suffix-p "…" (substring-no-properties line)))
-    (should pos)
-    (should (string-suffix-p gascity-runs-test--long-reason help))))
+         (text (gascity-runs-test--failure-block-text lines))
+         (failure-rows (seq-filter
+                        (lambda (l)
+                          (and (>= (string-width l) (length "failure  "))
+                               (string-prefix-p "failure  "
+                                                (substring-no-properties l))))
+                        lines)))
+    (should text)
+    (should (string-suffix-p gascity-runs-test--long-reason text))
+    (should (> (length failure-rows) 0))
+    (dolist (line lines)
+      (should (<= (+ 4 (string-width line)) gascity-dashboard--width)))
+    (should (equal (get-text-property 0 'help-echo (car failure-rows))
+                   text))))
 
 (ert-deftest gascity-test-run-member-inspect ()
   "`I' on a `└ …' drain-member row opens the member's own drawer, for a
@@ -2539,7 +2744,9 @@ and echoes the ref, class and reason, truncated to the echo area."
     (re-search-forward "^  ▾ ✕ Review")
     (gascity-thing-toggle)
     (should (string-match-p "^  ▸ ✕ Review" (buffer-string)))
-    (should-not (string-match-p "be-fkq" (buffer-string)))
+    ;; The collapsed stage hides its failing row; the header's failure
+    ;; rows (which name the failed step) stay visible.
+    (should-not (string-match-p "review +be-fkq +✕ loop" (buffer-string)))
     (let (shown)
       (cl-letf (((symbol-function 'message)
                  (lambda (format-string &rest args)

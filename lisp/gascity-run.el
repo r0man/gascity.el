@@ -461,15 +461,117 @@ formulas record `plans/…/review-report.md') is relative to the run's
   "Return LABEL in the dim face, padded to the header's 9-column field."
   (gascity-dashboard--dim (format "%-9s" label)))
 
+(defun gascity-run--wrap-text (text width first-prefix rest-prefix)
+  "Return TEXT word-wrapped into lines of at most WIDTH columns.
+FIRST-PREFIX starts the first line, REST-PREFIX every continuation.  A
+newline in TEXT ends a line; a word that does not fit moves whole to
+the next line and a word wider than a whole line is broken, so every
+character of TEXT is kept: a long failure reason is readable in the
+buffer rather than clipped (ec-elkm5.8)."
+  (let ((lines nil)
+        (prefix first-prefix)
+        (line ""))
+    (cl-labels
+        ((avail () (max 1 (- width (string-width prefix))))
+         (flush ()
+           (push (concat prefix line) lines)
+           (setq line "" prefix rest-prefix))
+         (place (word)
+           (let* ((a (avail))
+                  (gap (if (string-empty-p line) 0 1))
+                  (w (string-width word)))
+             (cond
+              ((<= (+ (string-width line) gap w) a)
+               (setq line (concat line (if (zerop gap) "" " ") word)))
+              ((and (string-empty-p line) (> w a))
+               (let* ((head (truncate-string-to-width word a))
+                      (tail (substring word (length head))))
+                 (push (concat prefix head) lines)
+                 (setq prefix rest-prefix
+                       line "")
+                 (unless (string-empty-p tail) (place tail))))
+              (t (flush) (place word))))))
+      (dolist (paragraph (split-string (or text "") "\n"))
+        (dolist (word (split-string paragraph "[ \t]+" t))
+          (place word))
+        (flush)))
+    (nreverse lines)))
+
+(defun gascity-run--wrapped-header-line (label text)
+  "Return the header row(s) for LABEL and TEXT, wrapped, never clipped.
+LABEL takes the header's 9-column field after the two-space indent, so
+continuation lines align under the value.  Every line carries the full
+TEXT in `help-echo'."
+  (let* ((prefix (concat "  " (gascity-run--label label)))
+         (indent (make-string (string-width prefix) ?\s))
+         (full (or text "")))
+    (mapcar (lambda (line) (propertize line 'help-echo full))
+            (gascity-run--wrap-text full gascity-dashboard--width
+                                    prefix indent))))
+
+(defun gascity-run--failure-detail (root ctx)
+  "Return (:class :reason :ref :id :full) for ROOT's failure in CTX, or nil.
+The failed step named by CTX's run index supplies the class, ref, id
+and reason; the root's own `gc.failure_class'/`gc.failure_reason' are
+the fallback.  A close reason alone is not a failure -- the `close'
+row shows it -- so a run that passed is never labelled failed, and
+nothing is invented (ec-elkm5.8)."
+  (let* ((index (plist-get ctx :index))
+         (step (and index root (gascity-runs-failed-step index root)))
+         (info (if step
+                   (and (or (plist-get step :class) (plist-get step :reason))
+                        (cons (plist-get step :class) (plist-get step :reason)))
+                 (let ((class (gascity-run--meta root 'gc.failure_class))
+                       (reason (gascity-run--meta root 'gc.failure_reason)))
+                   (and (or class reason) (cons class reason)))))
+         (class (car-safe info))
+         (reason (cdr-safe info)))
+    (and info
+         (list :class class :reason reason
+               :ref (or (plist-get step :ref)
+                        (gascity-run--meta root 'gc.step_ref))
+               :id (plist-get step :id)
+               :full (or reason class)))))
+
+(defun gascity-run--failure-lines (root run ctx)
+  "Return the failure and close header rows of ROOT (summary RUN) in CTX.
+A failed run, or an active run with a failed step, names that step, its
+`gc.failure_class' and the full reason (wrapped, never clipped).  A
+closed run always shows its root's close reason, `not recorded' when gc
+carries none -- never fabricated, and never confused with a step's
+failure (ec-elkm5.8; run-view-v3 §B, REQ-003)."
+  (let* ((state (plist-get run :state))
+         (failure (and (memq state '(active failed))
+                       (gascity-run--failure-detail root ctx))))
+    (append
+     (and failure
+          (append
+           (and (or (plist-get failure :ref) (plist-get failure :id))
+                (list (concat "  " (gascity-run--label "step")
+                              (or (plist-get failure :ref) "")
+                              (if-let* ((id (plist-get failure :id)))
+                                  (concat "  " (gascity-dashboard--dim id))
+                                ""))))
+           (and (plist-get failure :class)
+                (list (concat "  " (gascity-run--label "class")
+                              (plist-get failure :class))))
+           (and (plist-get failure :reason)
+                (gascity-run--wrapped-header-line
+                 "reason" (plist-get failure :reason)))))
+     (and (memq state '(done failed))
+          (gascity-run--wrapped-header-line
+           "close" (or (gascity-runs--close-reason root) "not recorded"))))))
+
 (defun gascity-run--header-lines (run root ctx)
   "Return the header lines of RUN (a summary) with ROOT in CTX.
 The first row is the run's `root' (glyph, id, formula and outcome, with
 the right-aligned rig and started/closed time); the labelled rows below
-give its provenance (store with rig and city, scope), its formula
-\(name and contract, with the graph key and formula source on aligned
-continuation lines) and v2's plans and convoy rows.  An absent optional
-fact renders `(none)' only where the row exists for it; nothing is
-derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
+name its failure (failed step, class, full reason) and close reason
+when it has them, then give its provenance (store with rig and city,
+scope), its formula (name and contract, with the graph key and formula
+source on aligned continuation lines) and v2's plans and convoy rows.
+An absent optional fact renders `(none)' only where the row exists for
+it; nothing is derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
   (let* ((now (plist-get ctx :now))
          (state (plist-get run :state))
          (store (gascity-run--meta root 'gc.root_store_ref))
@@ -496,7 +598,11 @@ derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
                      (if (memq state '(done failed)) "closed" "started")
                      (gascity-ui-time (plist-get run :time) now)))
             'gascity-bead (plist-get run :id)
-            'beads-thing (gascity-dashboard--thing 'row "root"))
+            'beads-thing (gascity-dashboard--thing 'row "root"))))
+         (lines (append lines (gascity-run--failure-lines root run ctx)))
+         (lines
+          (append lines
+                  (list
            (gascity-ui-truncate
             (concat "  " (gascity-run--label "store")
                     (or store "city store")
@@ -514,7 +620,7 @@ derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
                     (if contract
                         (concat "  " (gascity-dashboard--dim "contract ") contract)
                       ""))
-            gascity-dashboard--width))))
+            gascity-dashboard--width)))))
     (when key
       (setq lines
             (append lines
@@ -704,12 +810,17 @@ already-loaded run graph, so this reads nothing."
                     (t (string< (alist-get 'id a) (alist-get 'id b)))))))))
 
 (defun gascity-run--failure-line (text)
-  "Return the drawer's `failure  ' line for TEXT.
-The line is fitted to `gascity-dashboard--drawer-width' -- the drawer
-prefix takes the rest of `gascity-dashboard--width' -- and the full text
-rides in `help-echo' when it had to be cut.  Every drawer failure --
-step inspector and drain member -- goes through here (REQ-003)."
-  (gascity-dashboard--drawer-value "failure  " text))
+  "Return the drawer's `failure  ' lines for TEXT.
+TEXT (the class and reason) is word-wrapped at
+`gascity-dashboard--drawer-width' so the whole reason is readable in
+the buffer rather than clipped at the window edge; every line also
+carries the full text in `help-echo'.  Every drawer failure -- step
+inspector and drain member -- goes through here (REQ-003,
+ec-elkm5.8)."
+  (let ((full (or text "")))
+    (mapcar (lambda (line) (propertize line 'help-echo full))
+            (gascity-run--wrap-text full gascity-dashboard--drawer-width
+                                    "failure  " "         "))))
 
 (defun gascity-run--attempt-line (bead ctx)
   "Return the attempt-history row of BEAD in CTX.
@@ -1024,8 +1135,8 @@ payload in hand; the only I/O is a local file stat."
      (list (gascity-run--worker-line step iteration ctx))
      (gascity-run--artifact-lines step iteration ctx)
      (gascity-run--event-lines step iteration ctx)
-     (list (gascity-run--failure-line
-            (gascity-run--failure-text step iteration ctx))))))
+     (gascity-run--failure-line
+      (gascity-run--failure-text step iteration ctx)))))
 
 (defun gascity-run--member-drawer (member index ctx)
   "Return the inline drawer lines of drain-member run MEMBER.
@@ -1042,17 +1153,18 @@ index, so opening or refreshing the drawer reads nothing."
                       (gascity-runs--worker (plist-get run :worker-bead)
                                             (plist-get ctx :sessions)
                                             (plist-get ctx :socket)))))
-    (list
-     (concat "root     " (plist-get run :id) "  "
-             (gascity-runs--state-glyph state) " "
-             (or (and state (symbol-name state)) "?"))
-     (concat "formula  " (or (plist-get run :formula) "-")
-             "  " (or (plist-get run :progress) "-")
-             "  " (gascity-ui-time (plist-get run :time) (plist-get ctx :now))
-             "  " (or (plist-get run :rig) "city"))
-     (concat "worker   " (if worker (car worker) "no live worker"))
+    (append
+     (list
+      (concat "root     " (plist-get run :id) "  "
+              (gascity-runs--state-glyph state) " "
+              (or (and state (symbol-name state)) "?"))
+      (concat "formula  " (or (plist-get run :formula) "-")
+              "  " (or (plist-get run :progress) "-")
+              "  " (gascity-ui-time (plist-get run :time) (plist-get ctx :now))
+              "  " (or (plist-get run :rig) "city"))
+      (concat "worker   " (if worker (car worker) "no live worker")))
      (gascity-run--failure-line (gascity-ui-failure-text info))
-     (gascity-dashboard--dim "RET run"))))
+     (list (gascity-dashboard--dim "RET run")))))
 
 (defun gascity-run--member-lines (step depth ctx)
   "Return the rows (and open drawers) of the members drain STEP fans out to.
@@ -1316,6 +1428,19 @@ indentation; every row machinery is inherited from
                     (gascity-run--detail node))
                   9))
          (detail (if changed (gascity-ui-changed detail) detail))
+         ;; A failed step names its failure class where the worker would
+         ;; sit: the row is red because of that class, and the full reason
+         ;; rides in `help-echo' on the row (ec-elkm5.8).
+         (failure-info
+          (and (eq state 'failed)
+               (let ((failed (plist-get ctx :failed-step)))
+                 (if (and failed (equal (plist-get failed :id) id))
+                     (cons (plist-get failed :class) (plist-get failed :reason))
+                   (gascity-runs--failure-info (list (plist-get node :bead)))))))
+         (failure (and failure-info
+                       (or (car-safe failure-info) (cdr-safe failure-info))))
+         (failure-help (and failure-info
+                            (gascity-ui-failure-text failure-info)))
          (left (concat (make-string (+ 2 (* 2 depth)) ?\s)
                        (if fold
                            (gascity-ui-glyph (if open 'expanded 'folded))
@@ -1328,6 +1453,16 @@ indentation; every row machinery is inherited from
                        ;; so its state glyph leads the detail column.
                        " " detail
                        (if note (concat " " note) "")))
+         (left (if failure
+                   (concat left "  "
+                           (gascity-dashboard--dim
+                            (gascity-ui-truncate
+                             failure
+                             (max 8 (- gascity-dashboard--width 2
+                                       (string-width left)
+                                       ;; leave the worker its room
+                                       (if who 10 0))))))
+                 left))
          ;; The worker gets what the row has left before the time.
          (left (if who
                    (let* ((mark (if agent (concat (gascity-ui-glyph 'ok) " ") ""))
@@ -1349,7 +1484,8 @@ indentation; every row machinery is inherited from
                       (if fold 'fold 'row) thing-id
                       (lambda () (gascity-dashboard--flip
                                   (if fold :expanded :drawers) thing-id)))
-                     (and agent (list 'gascity-agent agent)))))
+                     (append (and failure-help (list 'help-echo failure-help))
+                             (and agent (list 'gascity-agent agent))))))
     (cons row
           (append
            (gascity-run--member-lines (plist-get node :bead) depth ctx)
@@ -1428,13 +1564,13 @@ rows (run-view-v2 §2)."
              (tree-view (plist-get (plist-get ctx :view) :tree))
              (needs (and tree-view (gascity-run--needs-map graph formula)))
              (forest (and needs (gascity-run--needs-forest tree needs)))
-             (ctx (if groups
-                      (let ((failed (gascity-runs-failed-step
-                                     (plist-get ctx :index) root)))
-                        (if failed
-                            (plist-put (copy-sequence ctx) :failed-step failed)
-                          ctx))
-                    ctx))
+             ;; :failed-step is what the stage headers and the failed step
+             ;; rows name; compute it once for grouped and flat runs alike.
+             (ctx (let ((failed (gascity-runs-failed-step
+                                 (plist-get ctx :index) root)))
+                    (if failed
+                        (plist-put (copy-sequence ctx) :failed-step failed)
+                      ctx)))
              (body
               (cond
                ((and groups forest)
