@@ -26,7 +26,8 @@
   "Forget every map and city memo a previous test could have left."
   (clrhash gascity-beads-eldoc--maps)
   (clrhash gascity-context--root-cache)
-  (clrhash gascity-context--rigs-cache))
+  (clrhash gascity-context--rigs-cache)
+  (clrhash gascity-store--entries))
 
 (defun gascity-beads-eldoc-test--city ()
   "Create a temporary city root (a directory holding `city.toml').
@@ -407,6 +408,229 @@ one resolves."
               (gascity-beads-eldoc-test--hq city "tc")))
             (setq map (gascity-beads-eldoc-map city))
             (should (equal (gascity-beads-eldoc--store-for map "tc-1") city))))
+      (delete-directory city t))))
+
+;;; Invalidation: live stream, actions, explicit clear (plan §D)
+
+(defun gascity-beads-eldoc-test--age-map (map seconds)
+  "Make MAP look as if its last good fill was SECONDS ago.
+The store entry the refill reads is marked stale too, so the refill is a
+real read rather than the store's fresh-payload answer."
+  (setf (gascity-beads-eldoc--map-fetched-at map)
+        (- (float-time) seconds))
+  (when-let* ((city (gascity-beads-eldoc--map-city map)))
+    (gascity-store-invalidate :dir city :kind 'rig :refetch nil)))
+
+(defun gascity-beads-eldoc-test--past-interval ()
+  "Seconds past `gascity-beads-eldoc-refill-min-interval', under the TTL."
+  (1+ gascity-beads-eldoc-refill-min-interval))
+
+(defun gascity-beads-eldoc-test--warm-map (city &rest rows)
+  "Fill CITY's map from ROWS and return the warm map.
+ROWS default to one HQ row with prefix \"tc\" for CITY."
+  (gascity-test-with-store-stubs reads _actions
+    (gascity-beads-eldoc-map city)
+    (gascity-beads-eldoc-test--settle
+     (car reads)
+     (apply #'gascity-beads-eldoc-test--payload
+            (or rows (list (gascity-beads-eldoc-test--hq city "tc"))))))
+  (gascity-beads-eldoc-map city))
+
+(ert-deftest gascity-test-beads-eldoc-live-hook-registered ()
+  "The module registers its invalidator on the live stream hook (REQ-007).
+The hook is the stream's one delivery point for rig batches."
+  (should (memq #'gascity-beads-eldoc--invalidate
+                gascity-live-invalidate-functions)))
+
+(ert-deftest gascity-test-beads-eldoc-live-invalidation-refills ()
+  "A live `rig' batch marks the map stale and starts one refill (TS-6).
+The stale map keeps answering; the landed refill drops a removed rig's
+prefix and resolves a new one."
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city (gascity-beads-eldoc-test--city))
+        (old (file-name-as-directory (make-temp-file "gascity-eldoc-live-old" t)))
+        (new (file-name-as-directory (make-temp-file "gascity-eldoc-live-new" t)))
+        map)
+    (unwind-protect
+        (gascity-test-with-store-stubs reads _actions
+          (setq map (gascity-beads-eldoc-test--warm-map
+                     city
+                     (gascity-beads-eldoc-test--hq city "tc")
+                     (gascity-beads-eldoc-test--rig "old.el" "ol" old)))
+          (should (equal (gascity-beads-eldoc--store-for map "ol-1") old))
+          (should-not reads)
+          (gascity-beads-eldoc-test--age-map
+           map (gascity-beads-eldoc-test--past-interval))
+          (gascity-beads-eldoc--invalidate city '(rig))
+          ;; Stale, still serving, one refill in flight.
+          (should (gascity-beads-eldoc--map-stale map))
+          (should (equal (gascity-beads-eldoc--store-for map "ol-1") old))
+          (should (= (length reads) 1))
+          (gascity-beads-eldoc--invalidate city '(rig))
+          (should (= (length reads) 1))
+          (gascity-beads-eldoc-test--settle
+           (car reads)
+           (gascity-beads-eldoc-test--payload
+            (gascity-beads-eldoc-test--hq city "tc")
+            (gascity-beads-eldoc-test--rig "new.el" "nw" new)))
+          (should-not (gascity-beads-eldoc--map-stale map))
+          (should (equal (gascity-beads-eldoc--store-for map "nw-1") new))
+          (should-not (gascity-beads-eldoc--store-for map "ol-1")))
+      (delete-directory city t)
+      (delete-directory old t)
+      (delete-directory new t))))
+
+(ert-deftest gascity-test-beads-eldoc-live-invalidation-ignores-other-kinds ()
+  "A session or agent batch cannot change the prefix to store map (TS-6).
+Only `rig' (or `all' after a resume) invalidates it."
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city (gascity-beads-eldoc-test--city))
+        map)
+    (unwind-protect
+        (gascity-test-with-store-stubs reads _actions
+          (setq map (gascity-beads-eldoc-test--warm-map city))
+          (gascity-beads-eldoc-test--age-map
+           map (gascity-beads-eldoc-test--past-interval))
+          (gascity-beads-eldoc--invalidate city '(session agent) '("session.woke"))
+          (should-not (gascity-beads-eldoc--map-stale map))
+          (should-not reads)
+          (gascity-beads-eldoc--invalidate city 'all)
+          (should (gascity-beads-eldoc--map-stale map))
+          (should (= (length reads) 1)))
+      (delete-directory city t))))
+
+(ert-deftest gascity-test-beads-eldoc-refill-min-interval-bounds-stream ()
+  "A stream cannot start two fills within `refill-min-interval' (TS-6).
+The batch marks the map stale; the next read past the interval fills."
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city (gascity-beads-eldoc-test--city))
+        map)
+    (unwind-protect
+        (gascity-test-with-store-stubs reads _actions
+          (setq map (gascity-beads-eldoc-test--warm-map city))
+          ;; The fill just landed: too soon for another one.
+          (gascity-beads-eldoc--invalidate city '(rig))
+          (should (gascity-beads-eldoc--map-stale map))
+          (should-not reads)
+          ;; Past the interval, the next resolve starts exactly one fill.
+          (gascity-beads-eldoc-test--age-map
+           map (gascity-beads-eldoc-test--past-interval))
+          (should (eq (gascity-beads-eldoc-map city) map))
+          (should (= (length reads) 1))
+          (should (gascity-beads-eldoc-map city))
+          (should (= (length reads) 1)))
+      (delete-directory city t))))
+
+(ert-deftest gascity-test-beads-eldoc-invalidation-is-per-city ()
+  "Invalidating one city never marks or refills another (REQ-007).
+The two maps, their prefixes and their stores stay isolated."
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city-a (gascity-beads-eldoc-test--city))
+        (city-b (gascity-beads-eldoc-test--city))
+        (rig-a (file-name-as-directory (make-temp-file "gascity-eldoc-ia" t)))
+        (rig-b (file-name-as-directory (make-temp-file "gascity-eldoc-ib" t)))
+        map-a map-b)
+    (unwind-protect
+        (gascity-test-with-store-stubs reads _actions
+          (setq map-a (gascity-beads-eldoc-test--warm-map
+                       city-a
+                       (gascity-beads-eldoc-test--hq city-a "ta")
+                       (gascity-beads-eldoc-test--rig "a.el" "aa" rig-a)))
+          (setq map-b (gascity-beads-eldoc-test--warm-map
+                       city-b
+                       (gascity-beads-eldoc-test--hq city-b "tb")
+                       (gascity-beads-eldoc-test--rig "b.el" "bb" rig-b)))
+          (should-not reads)
+          (gascity-beads-eldoc-test--age-map
+           map-a (gascity-beads-eldoc-test--past-interval))
+          (gascity-beads-eldoc--invalidate city-a '(rig))
+          (should (gascity-beads-eldoc--map-stale map-a))
+          (should-not (gascity-beads-eldoc--map-stale map-b))
+          (should (= (length reads) 1))
+          ;; A's refill lands a different rig set; B is untouched.
+          (gascity-beads-eldoc-test--settle
+           (car reads)
+           (gascity-beads-eldoc-test--payload
+            (gascity-beads-eldoc-test--hq city-a "ta")
+            (gascity-beads-eldoc-test--rig "a2.el" "a2" rig-a)))
+          (should (member "a2" (gascity-beads-eldoc--map-prefixes map-a)))
+          (should-not (member "aa" (gascity-beads-eldoc--map-prefixes map-a)))
+          (should (equal (gascity-beads-eldoc--map-prefixes map-b)
+                         '("tb" "bb")))
+          (should (equal (gascity-beads-eldoc--store-for map-b "bb-1") rig-b))
+          (should (= (length reads) 1)))
+      (delete-directory city-a t)
+      (delete-directory city-b t)
+      (delete-directory rig-a t)
+      (delete-directory rig-b t))))
+
+(ert-deftest gascity-test-beads-eldoc-clear-cache-drops-maps ()
+  "An explicit clear drops the map instead of serving it stale (REQ-010).
+The next resolve is cold: nil, deny-all, and one new fill — a removed
+city's prefixes never answer."
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city (gascity-beads-eldoc-test--city))
+        (rig (file-name-as-directory (make-temp-file "gascity-eldoc-clr" t)))
+        cleared map)
+    (unwind-protect
+        (gascity-test-with-store-stubs reads _actions
+          (setq map (gascity-beads-eldoc-test--warm-map
+                     city
+                     (gascity-beads-eldoc-test--hq city "tc")
+                     (gascity-beads-eldoc-test--rig "r.el" "rr" rig)))
+          (should (gascity-beads-eldoc--store-for map "rr-1"))
+          (let ((gascity-beads-eldoc-clear-cache-functions
+                 (list (lambda () (setq cleared t)))))
+            (gascity-beads-eldoc-clear-cache))
+          (should cleared)
+          (should (= (hash-table-count gascity-beads-eldoc--maps) 0))
+          ;; The store entry is stale too: the refill is a real read.
+          (gascity-store-invalidate :dir city :kind 'rig :refetch nil)
+          ;; Cold again: no stale prefix, exactly one fill.
+          (should-not (gascity-beads-eldoc-map city))
+          (should (= (length reads) 1))
+          (gascity-beads-eldoc-test--settle
+           (car reads)
+           (gascity-beads-eldoc-test--payload
+            (gascity-beads-eldoc-test--hq city "tc")))
+          (setq map (gascity-beads-eldoc-map city))
+          (should-not (gascity-beads-eldoc--store-for map "rr-1")))
+      (delete-directory city t)
+      (delete-directory rig t))))
+
+(ert-deftest gascity-test-beads-eldoc-context-clear-cache-clears-map ()
+  "`gascity-context-clear-cache' clears the bead-id maps too (REQ-007).
+The call is guarded, so context keeps no dependency on the module."
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city (gascity-beads-eldoc-test--city)))
+    (unwind-protect
+        (gascity-test-with-store-stubs reads _actions
+          (gascity-beads-eldoc-test--warm-map city)
+          (should (= (hash-table-count gascity-beads-eldoc--maps) 1))
+          (gascity-context-clear-cache)
+          (should (= (hash-table-count gascity-beads-eldoc--maps) 0))
+          (gascity-store-invalidate :dir city :kind 'rig :refetch nil)
+          (should-not (gascity-beads-eldoc-map city))
+          (should (= (length reads) 1)))
+      (delete-directory city t))))
+
+(ert-deftest gascity-test-beads-eldoc-rig-action-invalidates-map ()
+  "A completed rig action refreshes the map even without a live stream (§D).
+Other actions leave it alone."
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city (gascity-beads-eldoc-test--city))
+        map)
+    (unwind-protect
+        (gascity-test-with-store-stubs reads _actions
+          (setq map (gascity-beads-eldoc-test--warm-map city))
+          (gascity-beads-eldoc-test--age-map
+           map (gascity-beads-eldoc-test--past-interval))
+          (gascity-store--invalidate-for-action '("session" "list") city)
+          (should-not (gascity-beads-eldoc--map-stale map))
+          (should-not reads)
+          (gascity-store--invalidate-for-action '("rig" "add") city)
+          (should (gascity-beads-eldoc--map-stale map))
+          (should (= (length reads) 1)))
       (delete-directory city t))))
 
 (provide 'gascity-beads-eldoc-test)

@@ -65,12 +65,23 @@
 ;; they heal without being reopened or reverted.  The caller migration
 ;; (`C-c b', `gascity-beads--bead-path-cached') is the plan's item 3 and
 ;; reuses the same resolver.
+;; Invalidation has three sources that all coalesce into one fill (plan §D):
+;; the TTL above, the live stream's `rig' batches, and a completed rig action
+;; (`gascity-store--invalidate-for-action'); an explicit
+;; `gascity-context-clear-cache' instead DROPS the maps, so no buffer keeps a
+;; stale city's prefixes (REQ-010).
+;;
+;; The install path (buffer-locals for beads.el's eldoc, the major-mode
+;; re-install hook, the deny-all sentinel) and the caller migration (`C-c b`,
+;; `gascity-beads--bead-path-cached') are the plan's items 2 and 3 and extend
+;; this module.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'gascity-context)
 (require 'gascity-domain)
+(require 'gascity-live)
 (require 'gascity-remote)
 (require 'gascity-section)
 (require 'gascity-store)
@@ -238,6 +249,10 @@ prefix-less row is not a wildcard, and no HQ row means no city entry
           city-store
         (gascity-beads--rig-path rig)))))
 
+(defun gascity-beads-eldoc--duplicate-prefix (prefix stores)
+  "Return non-nil when PREFIX is already claimed in STORES."
+  (and (assoc prefix stores) t))
+
 (defun gascity-beads-eldoc--land (map city payload)
   "Fill MAP from a `gc rig list' PAYLOAD read for the city rooted at CITY.
 Decodes the rigs once, remembers them for the existing spawn-free
@@ -259,19 +274,16 @@ line per fill (D4)."
                                 (not (string-empty-p prefix))
                                 (gascity-beads-eldoc--row-store
                                  rig city-store))))
-          (cond
-           ((assoc prefix stores)
+          (if (gascity-beads-eldoc--duplicate-prefix prefix stores)
             (unless warned
               (setq warned t)
               (when (fboundp 'gascity--log)
                 (gascity--log
                  'info
-                 (concat "Duplicate bead-id prefix %s in gc rig list; "
-                         "keeping the first store")
-                 prefix))))
-           (t
+                 "Duplicate bead-id prefix %s in gc rig list; keeping the first store"
+                 prefix)))
             (push (cons prefix store) stores)
-            (push prefix prefixes))))))
+            (push prefix prefixes)))))
     (setf (gascity-beads-eldoc--map-city map) city
           (gascity-beads-eldoc--map-stores map) (nreverse stores)
           (gascity-beads-eldoc--map-prefixes map) (nreverse prefixes)
@@ -528,6 +540,57 @@ the cached map and starts the one asynchronous fill when cold, exactly
 like `gascity-beads-eldoc-map'."
   (when-let* ((map (gascity-beads-eldoc--buffer-map dir)))
     (gascity-beads-eldoc--map-prefixes map)))
+;;; Invalidation
+
+(defun gascity-beads-eldoc--maps-of (root)
+  "Return the maps whose city is ROOT, or every map when ROOT is nil.
+City roots are compared canonically (`gascity-remote-canonical-dir'), so
+\"/ssh:host:/c/\" and \"/ssh:host:/c\" name one city."
+  (let ((want (and root (gascity-remote-canonical-dir root)))
+        maps)
+    (maphash
+     (lambda (_scope map)
+       (when (or (null want)
+                 (when-let* ((city (gascity-beads-eldoc--map-city map)))
+                   (equal want (gascity-remote-canonical-dir city))))
+         (push map maps)))
+     gascity-beads-eldoc--maps)
+    (nreverse maps)))
+
+(defun gascity-beads-eldoc--invalidate (root kinds &optional _types)
+  "Mark ROOT's bead-id maps stale and start one refill (REQ-007, TS-6).
+Registered on `gascity-live-invalidate-functions', which calls it with
+\(ROOT KINDS TYPES).  Only KINDS `all' or containing `rig' can change the
+prefix to store mapping; a session or agent batch is ignored, and
+`gascity-beads-eldoc-refill-min-interval' bounds the fills a stream can
+start.  The stale map keeps answering until the refill lands
+\(stale-while-revalidate)."
+  (when (or (eq kinds 'all) (memq 'rig kinds))
+    (dolist (map (gascity-beads-eldoc--maps-of root))
+      (when-let* ((city (gascity-beads-eldoc--map-city map)))
+        (setf (gascity-beads-eldoc--map-stale map) t)
+        (gascity-beads-eldoc--refill
+         map (gascity-beads-eldoc--map-scope map) city)))))
+
+(defvar gascity-beads-eldoc-clear-cache-functions nil
+  "Abnormal hook run after `gascity-beads-eldoc-clear-cache' drops the maps.
+The install path uses it to put its buffers back in the cold deny-all
+state; nothing may answer from a map the clear dropped.")
+
+(defun gascity-beads-eldoc-clear-cache ()
+  "Drop every city's bead-id prefix to store map (REQ-007, REQ-010).
+An explicit clear is not a refresh: no stale map may answer afterwards,
+so buffers go cold (deny-all) and repopulate only from the fill their
+next install or resolve starts — never a stale city's prefixes.
+`gascity-context-clear-cache' calls this through an `fboundp' guard, so
+context keeps no dependency on this module."
+  (interactive)
+  (clrhash gascity-beads-eldoc--maps)
+  (run-hooks 'gascity-beads-eldoc-clear-cache-functions))
+
+;;; Hook registration
+
+(add-hook 'gascity-live-invalidate-functions #'gascity-beads-eldoc--invalidate)
 
 (provide 'gascity-beads-eldoc)
 ;;; gascity-beads-eldoc.el ends here

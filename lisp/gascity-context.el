@@ -116,6 +116,8 @@ multi-second stall.")
 ;; one-way).  `gascity-beads-sling' owns the value and its docstring.
 (defvar gascity-beads-sling--city)
 
+(declare-function gascity-beads-eldoc-clear-cache "gascity-beads-eldoc" ())
+
 (defun gascity-context-clear-cache ()
   "Forget cached rig, city, root, and remote-executable resolutions.
 The one cache entry point: also clears the city-root memo, the rig-list
@@ -133,7 +135,12 @@ re-resolution."
   ;; loaded.  The variable is declared above, so no require edge runs from
   ;; gascity-context back to gascity-beads-sling.
   (when (boundp 'gascity-beads-sling--city)
-    (setq gascity-beads-sling--city nil)))
+    (setq gascity-beads-sling--city nil))
+  ;; The bead-id prefix to store map (plans/beads-eldoc-prefix §D) is
+  ;; downstream state too.  An explicit clear DROPS it rather than marking
+  ;; it stale, so no buffer keeps a stale city's prefixes (REQ-010).
+  (when (fboundp 'gascity-beads-eldoc-clear-cache)
+    (gascity-beads-eldoc-clear-cache)))
 
 (defun gascity-context--find-root (start marker)
   "Walk up from directory START for the file MARKER (the city marker).

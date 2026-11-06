@@ -77,6 +77,8 @@
 (require 'gascity-timer)
 
 (declare-function gascity--log "gascity")
+(declare-function gascity-beads-eldoc--invalidate "gascity-beads-eldoc"
+                  (root kinds &optional types))
 (declare-function tramp-dissect-file-name "tramp" (name &optional nodefault))
 (declare-function tramp-file-name-host "tramp" (vec))
 
@@ -1189,6 +1191,12 @@ is left to a running stream, which keeps it current."
   (let ((prefixes (alist-get (gascity-store-kind args) gascity-store-action-routes)))
     (when prefixes
       (gascity-store-invalidate-event prefixes dir))
+    ;; A rig add/remove/enable action changes which store owns a bead-id
+    ;; prefix (plans/beads-eldoc-prefix §D).  Not every verb emits an event,
+    ;; so refresh the map from here as well as from the live stream.
+    (when (and (eq (gascity-store-kind args) 'rig)
+               (fboundp 'gascity-beads-eldoc--invalidate))
+      (gascity-beads-eldoc--invalidate dir 'all))
     (unless (and gascity-store-live-p-function
                  (funcall gascity-store-live-p-function dir))
       (gascity-store-invalidate :dir dir :kind 'events))))
