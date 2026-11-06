@@ -20,6 +20,10 @@
 (require 'gascity)
 (require 'gascity-test-helpers)
 
+;; The negative-cache contract under test is beads.el's; the install path
+;; supplies its per-id resolver as `beads-eldoc-directory'.
+(require 'beads-eldoc nil t)
+
 ;;; Fixtures
 
 (defun gascity-beads-eldoc-test--fresh-state ()
@@ -631,6 +635,47 @@ Other actions leave it alone."
           (gascity-store--invalidate-for-action '("rig" "add") city)
           (should (gascity-beads-eldoc--map-stale map))
           (should (= (length reads) 1)))
+      (delete-directory city t))))
+
+(ert-deftest gascity-test-beads-eldoc-known-prefix-miss-does-not-repeat ()
+  "A known-prefix miss is cached: one spawn, then `cached' with no spawns.
+REQ-015: a token that looks like a bead id but is not in the store
+\(`tc-zzzzz' under a warm `tc' map) costs at most one `bd show' per
+`beads-eldoc-negative-cache-ttl' and scope.  The map installs its
+per-id resolver as `beads-eldoc-directory', exactly as the install path
+does, so the scope is the owning store."
+  (skip-unless (fboundp 'beads-eldoc--request-issue))
+  (gascity-beads-eldoc-test--fresh-state)
+  (let ((city (gascity-beads-eldoc-test--city))
+        (spawns 0))
+    (unwind-protect
+        (let ((map (gascity-beads-eldoc-test--warm-map city)))
+          (clrhash beads-eldoc--cache)
+          (clrhash beads-eldoc--pending)
+          (with-temp-buffer
+            (setq-local beads-eldoc-directory
+                        (lambda (id) (gascity-beads-eldoc--store-for map id)))
+            (when (boundp 'beads-issue-id-prefixes)
+              (setq-local beads-issue-id-prefixes
+                          (gascity-beads-eldoc--map-prefixes map))
+              ;; An unknown prefix never reaches a lookup: the allowlist
+              ;; rejects it first, so it cannot spawn either.
+              (should-not (beads-issue-id--allowed-p
+                           "zz-zzzzz" beads-issue-id-prefixes)))
+            (cl-letf (((symbol-function 'beads-eldoc--spawn)
+                       (lambda (issue-id _dir _store key)
+                         (cl-incf spawns)
+                         ;; A miss answers the pending request and caches the
+                         ;; negative entry, exactly like the real sentinel.
+                         (beads-eldoc--on-result key issue-id nil))))
+              (should (eq (beads-eldoc--request-issue "tc-zzzzz" #'ignore)
+                          'pending))
+              (should (= spawns 1))
+              (should (eq (beads-eldoc--request-issue "tc-zzzzz" #'ignore)
+                          'cached))
+              (should (= spawns 1)))))
+      (clrhash beads-eldoc--cache)
+      (clrhash beads-eldoc--pending)
       (delete-directory city t))))
 
 (provide 'gascity-beads-eldoc-test)
