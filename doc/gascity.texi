@@ -1016,8 +1016,10 @@ tooltip carrying the full value.
 @code{gascity-dashboard-mode}: one short triage buffer answering, top to
 bottom, what needs you, what is moving, who is working, what is queued
 and what just happened.  A @dfn{city} is the workspace the cockpit
-triages; @ref{Terminology} fixes the term.  No section shows more than
-@code{gascity-dashboard-section-rows} rows (five); the rest is a
+triages; @ref{Terminology} fixes the term.  Most sections show no more
+than @code{gascity-dashboard-section-rows} rows (five); the Agents
+section starts at @code{gascity-dashboard-agent-rows} (eight) so a live
+worker is not hidden by idle or stopped ones.  The rest is a
 @samp{@dots{} N more} line whose @key{RET} opens the full view, and
 @kbd{+}/@kbd{-} show more or fewer rows in place.
 
@@ -1070,9 +1072,11 @@ runs.  A member whose parent is not active stays at the top level.  An
 in-progress bead with no assignee reads @samp{unassigned} and counts as
 no worker.
 @item Agents
-Running agents by recent activity, then idle ones; stopped agents fold
-into one @samp{▸ stopped} line.  Named sessions such as the mayor are
-agents too.
+Running agents first, by recent activity, then stalled and unknown
+ones, then idle ones; stopped agents fold into one @samp{▸ stopped}
+line.  The section starts at @code{gascity-dashboard-agent-rows}
+(eight) rows, and the fold counts as one of them.  Named sessions such
+as the mayor are agents too.
 @item Work
 In-progress work first, oldest claim first, each row naming its
 assignee and the age since it was claimed (@samp{gone} after the
@@ -4708,6 +4712,15 @@ Obsolete alias of @code{beads-terminal-tmux-status-interval}.
 @defopt gascity-dashboard-section-rows
 Maximum number of rows a cockpit section shows (default 5); the rest
 collapse into a @samp{@dots{} N more} line that opens the full view.
+The Agents section uses @code{gascity-dashboard-agent-rows} instead.
+@end defopt
+
+@vindex gascity-dashboard-agent-rows
+@defopt gascity-dashboard-agent-rows
+Base number of Agents rows the cockpit shows before its
+@samp{@dots{} N more} line (default 8).  Only that section reads it;
+the @samp{▸ stopped} fold counts as one of its rows, and @kbd{+} adds
+more (ga-boawq).
 @end defopt
 
 @vindex gascity-dashboard-section-batch

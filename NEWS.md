@@ -4,6 +4,18 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### The cockpit's Agents section leads with live workers
+
+The cockpit shows up to eight Agents rows by default (new option
+`gascity-dashboard-agent-rows', the other sections keep
+`gascity-dashboard-section-rows' at five), and running agents come
+first, ordered by most recent activity, before stalled/unknown and idle
+ones; suspended and stopped agents stay in the `▸ stopped' fold, which
+counts as one of the eight.  A live worker can no longer be pushed out
+of the section by idle or stopped rows.  The Agents view and the rig
+dashboard keep the shared attention-first order, and the section
+summary line is unchanged (ga-boawq).
+
 ### Cockpit and run diagnostics
 
 A failed run in the cockpit's Needs you section now explains its

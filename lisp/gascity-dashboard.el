@@ -134,7 +134,17 @@
 
 (defcustom gascity-dashboard-section-rows 5
   "Maximum number of rows a cockpit section shows (dashboard-v3 §4.2).
-The rest collapse into a `… N more' line that opens the full view."
+The rest collapse into a `… N more' line that opens the full view.
+The Agents section starts at `gascity-dashboard-agent-rows' instead."
+  :type 'natnum
+  :group 'gascity)
+
+(defcustom gascity-dashboard-agent-rows 8
+  "Base number of Agents rows the cockpit's Agents section shows.
+The rest collapse into a `… N more' line that opens the Agents view.
+Only that section reads it: every other cockpit section starts at
+`gascity-dashboard-section-rows'.  The `▸ stopped' fold counts as one
+of these rows, and the section's expansion (`+') adds to it (ga-boawq)."
   :type 'natnum
   :group 'gascity)
 
@@ -423,11 +433,16 @@ counted by `gascity-dashboard-agent-counts'."
                               (append (alist-get 'sessions sessions-payload) nil)
                               nil nil (float-time))))
 
-(defun gascity-dashboard--agent-order (a b)
+(defun gascity-dashboard--agent-order (a b &optional running-first)
   "Return non-nil when agent plist A sorts before B in the Agents section.
 The shared order (ec-elkm5.10): stalled and unknown first, then running
-by most recent activity, then idle, suspended and stopped."
-  (gascity-status--agent-order a b))
+by most recent activity, then idle, suspended and stopped.  With
+RUNNING-FIRST, running leads, then stalled/unknown, then idle: the
+cockpit section never spends its rows on a non-working agent while a
+live one is hidden (ga-boawq).  The Agents view and the rig dashboard
+call the default order; only `gascity-dashboard--agents-lines' passes
+RUNNING-FIRST."
+  (gascity-status--agent-order a b running-first))
 
 ;;; Runs (§3.2, §7.6)
 
@@ -1845,7 +1860,7 @@ no worker."
 (defun gascity-dashboard--agents-lines (ctx)
   "Return the Agents section lines for CTX."
   (let* ((agents (sort (copy-sequence (plist-get ctx :agents))
-                       #'gascity-dashboard--agent-order))
+                       (lambda (a b) (gascity-dashboard--agent-order a b t))))
          (awake (seq-remove (lambda (a) (memq (plist-get a :state) '(stopped suspended)))
                             agents))
          (asleep (seq-filter (lambda (a) (memq (plist-get a :state) '(stopped suspended)))
@@ -1853,9 +1868,11 @@ no worker."
          (summary (gascity-status--state-summary
                    (mapcar (lambda (a) (plist-get a :state)) agents)))
          (gascity-dashboard-section-rows
-          ;; The `▸ stopped' fold is one of the section's rows.
-          (if asleep (max 1 (1- gascity-dashboard-section-rows))
-            gascity-dashboard-section-rows))
+          ;; Only this section starts at `gascity-dashboard-agent-rows',
+          ;; and the `▸ stopped' fold is one of its rows (ga-boawq).
+          (max 1 (if asleep
+                     (1- gascity-dashboard-agent-rows)
+                   gascity-dashboard-agent-rows)))
          (rows (gascity-dashboard--cap-groups
                 (mapcar (lambda (a) (gascity-dashboard--agent-row a ctx)) awake)
                 "agents" #'gascity-jump-agents)))

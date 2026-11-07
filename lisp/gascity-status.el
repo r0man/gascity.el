@@ -142,18 +142,30 @@ cockpit, the Agents view and the rig dashboard agree (ec-elkm5.10).  Pure."
     ('running 'ok)
     (_ 'idle)))
 
-(defun gascity-status--state-rank (state)
-  "Return the Agents ordering rank of STATE: attention states first."
-  (pcase state
-    ('stalled 0) ('unknown 1) ('running 2) ('idle 3) ('suspended 4) (_ 5)))
+(defun gascity-status--state-rank (state &optional running-first)
+  "Return the Agents ordering rank of STATE.
+The default order puts the attention states first (`stalled', `unknown'),
+then running, idle, suspended and stopped.  With RUNNING-FIRST, running
+ranks first and the attention states come after it: the cockpit Agents
+section's order, so no live agent is hidden behind one that needs
+attention or is idle (ga-boawq)."
+  (if running-first
+      (pcase state
+        ('running 0) ('stalled 1) ('unknown 2) ('idle 3) ('suspended 4) (_ 5))
+    (pcase state
+      ('stalled 0) ('unknown 1) ('running 2) ('idle 3) ('suspended 4) (_ 5))))
 
-(defun gascity-status--agent-order (a b)
+(defun gascity-status--agent-order (a b &optional running-first)
   "Return non-nil when agent plist A sorts before B.
 One order for the cockpit, the Agents view and the rig dashboard: stalled
 and unknown first (the states that need a human), then running by most
-recent activity, then idle, suspended and stopped."
-  (let ((rank-a (gascity-status--state-rank (plist-get a :state)))
-        (rank-b (gascity-status--state-rank (plist-get b :state))))
+recent activity, then idle, suspended and stopped.  With RUNNING-FIRST,
+running agents lead, then stalled and unknown, then idle (ga-boawq).
+The cockpit's Agents section passes RUNNING-FIRST; the Agents view and
+the rig dashboard (see `gascity-agents' and `gascity-rig') call the
+default order."
+  (let ((rank-a (gascity-status--state-rank (plist-get a :state) running-first))
+        (rank-b (gascity-status--state-rank (plist-get b :state) running-first)))
     (if (/= rank-a rank-b)
         (< rank-a rank-b)
       (> (or (gascity-ui-parse-time (plist-get a :active)) 0)

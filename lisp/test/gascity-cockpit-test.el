@@ -1702,5 +1702,151 @@ per-rig rows keep counting only their own agents."
       (should (string-match-p "1/1 agents" be))
       (should-not (string-match-p "(HQ)" be)))))
 
+;;; Agents section cap and order (ga-boawq)
+
+(defun gascity-cockpit-test--agent (name state &optional ago)
+  "Return an agent plist NAME in STATE, last active AGO seconds ago.
+The name doubles as the row's `:object', so a rendered row is findable
+by its `gascity-agent' text property."
+  (list :name name :state state :provider "pi" :object name
+        :active (and ago (gascity-cockpit-test--ts ago))))
+
+(defun gascity-cockpit-test--agents-lines (agents &optional view)
+  "Return the rendered Agents section lines for AGENTS under VIEW."
+  (let ((gascity-dashboard--view view))
+    (gascity-dashboard--agents-lines
+     (list :agents agents :now (float-time) :view view))))
+
+(defun gascity-cockpit-test--agent-rows (lines)
+  "Return the agent names of the item rows in LINES, in render order."
+  (delq nil (mapcar (lambda (line)
+                      (and (> (length line) 0)
+                           (get-text-property 0 'gascity-agent line)))
+                    lines)))
+
+(defun gascity-cockpit-test--agents (specs)
+  "Return agent plists from SPECS, a list of (NAME STATE AGO)."
+  (mapcar (lambda (spec)
+            (apply #'gascity-cockpit-test--agent spec))
+          specs))
+
+(ert-deftest gascity-test-cockpit-agents-eight-running-fit-without-more ()
+  "Eight running agents are all shown, with no `… more' line (ga-boawq)."
+  (let* ((agents (gascity-cockpit-test--agents
+                  (cl-loop for i below 8
+                           collect (list (format "rig/run-%d" i) 'running (* 10 i)))))
+         (lines (gascity-cockpit-test--agents-lines agents))
+         (text (gascity-cockpit-test--text lines)))
+    (should (= 8 (length (gascity-cockpit-test--agent-rows lines))))
+    (should-not (string-match-p "… [0-9]+ more" text))
+    (dolist (agent agents)
+      (should (string-match-p (regexp-quote (plist-get agent :name)) text)))))
+
+(ert-deftest gascity-test-cockpit-agents-cap-at-eight-running-first ()
+  "Ten agents show exactly eight rows, every running agent before the
+rest, and one `… 2 more' line (ga-boawq)."
+  (let* ((agents (gascity-cockpit-test--agents
+                  (append (cl-loop for i below 8
+                                   collect (list (format "rig/run-%d" i)
+                                                 'running (* 10 i)))
+                          (list '("rig/idle-0" idle 5)
+                                '("rig/idle-1" idle 6)))))
+         (lines (gascity-cockpit-test--agents-lines agents))
+         (rows (gascity-cockpit-test--agent-rows lines))
+         (text (gascity-cockpit-test--text lines)))
+    (should (= 8 (length rows)))
+    (should (equal (seq-take rows 8)
+                   (cl-loop for i below 8 collect (format "rig/run-%d" i))))
+    (should-not (string-match-p "rig/idle-" (gascity-cockpit-test--text rows)))
+    (should (string-match-p "… 2 more" text))))
+
+(ert-deftest gascity-test-cockpit-agents-running-first-over-attention-states ()
+  "Running agents sort ahead of stalled/unknown in the cockpit section;
+the shared order (Agents view, rig dashboard) still puts attention first.
+Six running + three unknown + one idle shows the six running and two
+unknown rows (ga-boawq)."
+  (let* ((agents (gascity-cockpit-test--agents
+                  (append (cl-loop for i below 6
+                                   collect (list (format "rig/run-%d" i)
+                                                 'running (* 10 i)))
+                          (cl-loop for i below 3
+                                   collect (list (format "rig/unk-%d" i)
+                                                 'unknown 0))
+                          (list '("rig/idle-0" idle 1)))))
+         (lines (gascity-cockpit-test--agents-lines agents))
+         (rows (gascity-cockpit-test--agent-rows lines))
+         (text (gascity-cockpit-test--text lines)))
+    (should (= 8 (length rows)))
+    (should (equal (seq-take rows 6)
+                   (cl-loop for i below 6 collect (format "rig/run-%d" i))))
+    (should (= 2 (seq-count (lambda (name) (string-prefix-p "rig/unk-" name)) rows)))
+    (should-not (member "rig/idle-0" rows))
+    (should (string-match-p "… 2 more" text))
+    ;; The summary line is unchanged: one state truth.
+    (should (string-prefix-p "Agents  6 running · 1 idle · 3 unknown" text))
+    ;; The shared order is untouched: attention first.
+    (let ((stalled (gascity-cockpit-test--agent "rig/stalled" 'stalled 100))
+          (running (gascity-cockpit-test--agent "rig/running" 'running 1000)))
+      (should (gascity-status--agent-order stalled running))
+      (should-not (gascity-status--agent-order running stalled))
+      (should (gascity-status--agent-order running stalled t))
+      (should-not (gascity-status--agent-order stalled running t)))))
+
+(ert-deftest gascity-test-cockpit-agents-running-by-recent-activity ()
+  "Running agents sort by most recent activity, ahead of an idle agent
+that was active more recently (ga-boawq)."
+  (let* ((agents (gascity-cockpit-test--agents
+                  '(("rig/old" running 1000)
+                    ("rig/new" running 10)
+                    ("rig/mid" running 100)
+                    ("rig/idle" idle 1))))
+         (rows (gascity-cockpit-test--agent-rows
+                (gascity-cockpit-test--agents-lines agents))))
+    (should (equal rows '("rig/new" "rig/mid" "rig/old" "rig/idle")))))
+
+(ert-deftest gascity-test-cockpit-agents-stopped-fold-counts-one-row ()
+  "The `▸ stopped' fold counts as one of the eight rows and unfolds to
+render every asleep agent (ga-boawq)."
+  (let* ((agents (gascity-cockpit-test--agents
+                  (append (cl-loop for i below 8
+                                   collect (list (format "rig/run-%d" i)
+                                                 'running (* 10 i)))
+                          (list '("rig/still-0" stopped 100)
+                                '("rig/still-1" suspended 200)))))
+         (closed (gascity-cockpit-test--agents-lines agents))
+         (closed-rows (gascity-cockpit-test--agent-rows closed))
+         (open (gascity-cockpit-test--agents-lines
+                agents '(:expanded ("fold:stopped"))))
+         (open-rows (gascity-cockpit-test--agent-rows open)))
+    (should (= 7 (length closed-rows)))
+    (should-not (member "rig/still-0" closed-rows))
+    (should (string-match-p "▸ stopped" (gascity-cockpit-test--text closed)))
+    (should (= 9 (length open-rows)))
+    (should (equal (seq-take open-rows 7)
+                   (cl-loop for i below 7 collect (format "rig/run-%d" i))))
+    (should (member "rig/still-0" open-rows))
+    (should (member "rig/still-1" open-rows))
+    (should (string-match-p "▾ stopped" (gascity-cockpit-test--text open)))))
+
+(ert-deftest gascity-test-cockpit-agents-extra-adds-and-more-routes ()
+  "The Agents expansion adds rows to the eight, and the more row still
+routes to the Agents view (ga-boawq)."
+  (let* ((agents (gascity-cockpit-test--agents
+                  (cl-loop for i below 10
+                           collect (list (format "rig/run-%d" i)
+                                         'running (* 10 i)))))
+         (plain (gascity-cockpit-test--agents-lines agents))
+         (extra (gascity-cockpit-test--agents-lines agents
+                                                    '(:extra (("agents" . 2)))))
+         (more (seq-find (lambda (line) (string-match-p "… [0-9]+ more" line))
+                         plain)))
+    (should (= 8 (length (gascity-cockpit-test--agent-rows plain))))
+    (should (= 10 (length (gascity-cockpit-test--agent-rows extra))))
+    (should-not (string-match-p "… [0-9]+ more"
+                               (gascity-cockpit-test--text extra)))
+    (should more)
+    (should (eq (get-text-property 0 'gascity-dashboard-target more)
+                #'gascity-jump-agents))))
+
 (provide 'gascity-cockpit-test)
 ;;; gascity-cockpit-test.el ends here

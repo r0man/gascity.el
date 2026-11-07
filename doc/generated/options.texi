@@ -31,6 +31,9 @@ are in @ref{Customization and Theming}; this table only enumerates them.
 @item @code{gascity-dashboard-agent-idle-threshold}
 @tab @code{3600}
 @tab @code{natnum}
+@item @code{gascity-dashboard-agent-rows}
+@tab @code{8}
+@tab @code{natnum}
 @item @code{gascity-dashboard-churn-unfold-rows}
 @tab @code{20}
 @tab @code{natnum}
