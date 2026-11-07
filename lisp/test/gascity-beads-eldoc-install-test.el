@@ -220,7 +220,9 @@ A map keyed by the bare host prefix would be shared by every local city
                 (should-not gascity-beads-eldoc--scope)
                 (should-not gascity-beads-eldoc--map)
                 (should-not (local-variable-p 'beads-eldoc-directory))
-                (should-not (local-variable-p 'beads-issue-id-prefixes)))))
+                (should-not (local-variable-p 'beads-issue-id-prefixes))
+                (should-not (local-variable-p
+                             'eldoc-documentation-functions)))))
         (kill-buffer buf)
         (delete-directory outside t)))))
 
@@ -497,3 +499,150 @@ agent's rig store (REQ-002, plan §B)."
             (when (buffer-live-p spawned) (kill-buffer spawned)))
         (delete-directory city t)
         (delete-directory rig t)))))
+
+;;; The cold-map eldoc message
+
+(defun gascity-test-eldoc--callback (sink)
+  "Return an eldoc callback recording DOC and ARGS in SINK.
+SINK is a one-element list; the callback prepends to its car, so the
+caller can inspect the recorded items after the call."
+  (lambda (doc &rest args)
+    (setcar sink (cons (cons doc args) (car sink)))))
+
+(defmacro gascity-test-eldoc--with-id-at-point (&rest body)
+  "Run BODY in a temp buffer with point inside the id \"gce-abc\"."
+  (declare (indent 0) (debug t))
+  `(with-temp-buffer
+     (insert "see gce-abc now")
+     (goto-char (point-min))
+     (search-forward "gce-")
+     ,@body))
+
+(ert-deftest gascity-test-beads-eldoc-cold-says-resolving ()
+  "A cold map says so at point instead of staying silent; no lookup runs.
+beads.el's own backend is still deny-all (REQ-006), so the message comes
+from the installed cold backend: it never resolves a store and never
+spawns `gc' or `bd' (REQ-005, REQ-012)."
+  (gascity-test-eldoc--with-contract
+    (let ((city (gascity-test-eldoc--make-city)))
+      (unwind-protect
+          (gascity-test-eldoc--with-map nil
+            (gascity-test-eldoc--with-id-at-point
+              (setq default-directory city)
+              (should (gascity-beads-eldoc-install (current-buffer)))
+              ;; The map is still cold: beads.el's allowlist denies the id,
+              ;; so its backend would answer nil ...
+              (should (equal beads-issue-id-prefixes
+                             gascity-beads-eldoc--deny-all-prefixes))
+              (should-not (beads-issue-id-at-point beads-issue-id-prefixes))
+              ;; ... and the cold backend is installed buffer-locally.
+              (should (memq 'gascity-beads-eldoc--cold-documentation
+                            (symbol-value 'eldoc-documentation-functions)))
+              (let ((sink (list nil)))
+                (cl-letf (((symbol-function 'beads-command-execute-async)
+                           (lambda (&rest _) (error "spawned bd")))
+                          ((symbol-function 'beads-eldoc--request-issue)
+                           (lambda (&rest _) (error "started a lookup")))
+                          ((symbol-function 'gascity-reader-run)
+                           (lambda (&rest _) (error "spawned gc")))
+                          ((symbol-function 'gascity-reader-run-async)
+                           (lambda (&rest _) (error "spawned gc"))))
+                  (should (eq (gascity-beads-eldoc--cold-documentation
+                               (gascity-test-eldoc--callback sink))
+                              t)))
+                (should (= (length (car sink)) 1))
+                (should (equal (caar (car sink)) gascity-beads-cold-message))
+                (should (equal (plist-get (cdar (car sink)) :thing)
+                               "gce-abc")))))
+        (delete-directory city t)))))
+
+(ert-deftest gascity-test-beads-eldoc-cold-message-runs-from-the-hook ()
+  "The installed buffer answers eldoc through the real hook protocol.
+`run-hook-wrapped' mirrors `eldoc-documentation-default': the cold
+backend must deliver the message and stop the chain while the map is
+cold."
+  (gascity-test-eldoc--with-contract
+    (let ((city (gascity-test-eldoc--make-city)))
+      (unwind-protect
+          (gascity-test-eldoc--with-map nil
+            (gascity-test-eldoc--with-id-at-point
+              (setq default-directory city)
+              (should (gascity-beads-eldoc-install (current-buffer)))
+              (let (echoed)
+                (should
+                 (run-hook-wrapped
+                  'eldoc-documentation-functions
+                  (lambda (function)
+                    (funcall function
+                             (lambda (doc &rest _) (setq echoed doc))))))
+                (should (equal echoed gascity-beads-cold-message)))))
+        (delete-directory city t)))))
+
+(ert-deftest gascity-test-beads-eldoc-warm-is-silent ()
+  "A warm map says nothing extra: the cold backend is inert.
+The warm allowlist and resolver are what the user should see, and a
+stale-but-warm map must not regress to the cold message."
+  (gascity-test-eldoc--with-contract
+    (let ((city (gascity-test-eldoc--make-city)))
+      (unwind-protect
+          (gascity-test-eldoc--with-map (gascity-test-eldoc--warm-map)
+            (gascity-test-eldoc--with-id-at-point
+              (setq default-directory city)
+              (should (gascity-beads-eldoc-install (current-buffer)))
+              (should (equal beads-issue-id-prefixes '("gce" "be")))
+              (let ((sink (list nil)))
+                (should-not (gascity-beads-eldoc--cold-documentation
+                             (gascity-test-eldoc--callback sink)))
+                (should-not (car sink)))))
+        (delete-directory city t)))))
+
+(ert-deftest gascity-test-beads-eldoc-cold-off-id-is-silent ()
+  "The cold message is for an id at point, not for every position."
+  (gascity-test-eldoc--with-contract
+    (let ((city (gascity-test-eldoc--make-city)))
+      (unwind-protect
+          (gascity-test-eldoc--with-map nil
+            (with-temp-buffer
+              (setq default-directory city)
+              (insert "nothing to resolve here")
+              (goto-char (point-min))
+              (should (gascity-beads-eldoc-install (current-buffer)))
+              (let ((sink (list nil)))
+                (should-not (gascity-beads-eldoc--cold-documentation
+                             (gascity-test-eldoc--callback sink)))
+                (should-not (car sink)))))
+        (delete-directory city t)))))
+
+(ert-deftest gascity-test-beads-eldoc-cold-message-heals-on-fill ()
+  "The landed map silences the cold message in the open buffer.
+The registry re-apply is the same path that heals the allowlist, so
+the buffer goes from \"Resolving bead stores...\" to real resolution
+without being reopened (REQ-006)."
+  (gascity-test-eldoc--with-contract
+    (let ((city (gascity-test-eldoc--make-city))
+          (scope nil))
+      (unwind-protect
+          (progn
+            (gascity-test-eldoc--with-map nil
+              (with-temp-buffer
+                (setq default-directory city)
+                (setq scope (gascity-context-scope-key city))
+                (insert "see gce-abc now")
+                (goto-char (point-min))
+                (search-forward "gce-")
+                (should (gascity-beads-eldoc-install (current-buffer)))
+                (let ((sink (list nil)))
+                  (should (gascity-beads-eldoc--cold-documentation
+                           (gascity-test-eldoc--callback sink)))
+                  (should (car sink)))
+                ;; The fill lands.
+                (puthash scope (gascity-test-eldoc--warm-map)
+                         gascity-beads-eldoc--maps)
+                (gascity-beads-eldoc--reapply-buffers city)
+                (should (equal beads-issue-id-prefixes '("gce" "be")))
+                (let ((sink (list nil)))
+                  (should-not (gascity-beads-eldoc--cold-documentation
+                               (gascity-test-eldoc--callback sink)))
+                  (should-not (car sink))))))
+        (gascity-test-eldoc--clear-maps)
+        (delete-directory city t)))))

@@ -59,10 +59,15 @@
 ;;
 ;; Cold start admits nothing: `gascity-beads-eldoc--deny-all-prefixes' is
 ;; `'("")', which beads.el's `beads-issue-id--allowed-p' can never match, so
-;; a cold buffer never falls back to `default-directory' (REQ-006).  When a
-;; fill lands, `gascity-beads-eldoc--land' re-applies the map to the buffers
-;; already open for that scope (`gascity-beads-eldoc--reapply-buffers'), so
-;; they heal without being reopened or reverted.  The caller migration
+;; a cold buffer never falls back to `default-directory' (REQ-006).  To keep
+;; that silence honest, the install path also adds the cold eldoc backend
+;; (`gascity-beads-eldoc--cold-documentation'): while the map is cold, point
+;; on an id says `gascity-beads-cold-message' ("Resolving bead stores…")
+;; instead of nothing, and starts no lookup — the one fill is already in
+;; flight.  When a fill lands, `gascity-beads-eldoc--land' re-applies the map
+;; to the buffers already open for that scope
+;; (`gascity-beads-eldoc--reapply-buffers'), so they heal without being
+;; reopened or reverted and the cold backend goes inert.  The caller migration
 ;; (`C-c b', `gascity-beads--bead-path-cached') is the plan's item 3 and
 ;; reuses the same resolver.
 ;; Invalidation has three sources that all coalesce into one fill (plan §D):
@@ -383,14 +388,39 @@ This is the map's only read path; it never runs gc or bd synchronously
 
 ;;; Install
 
+(defun gascity-beads-eldoc--cold-documentation (callback)
+  "Eldoc backend: explain a pending map fill instead of answering nil.
+Installed buffer-locally by `gascity-beads-eldoc--apply'.  While this
+buffer has a city scope but no landed map, and point sits on an
+id-shaped token, hand CALLBACK `gascity-beads-cold-message' and return
+non-nil, which stops eldoc from asking the next backend.  The city's
+one fill is already in flight, so this resolves no store and spawns
+neither `gc' nor `bd' (REQ-005, REQ-012); beads.el's own backend stays
+behind the deny-all allowlist (REQ-006).  Inert once the map lands, and
+when point is not on an id."
+  (when (and gascity-beads-eldoc--scope
+             (null gascity-beads-eldoc--map)
+             (fboundp 'beads-issue-id-at-point))
+    ;; Nil PREFIXES is detection only: any id-shaped token can be the id
+    ;; the user is on while the map that would narrow it is still cold.
+    ;; No lookup follows, and the installed allowlist stays deny-all.
+    (when-let* ((id (beads-issue-id-at-point nil)))
+      (funcall callback
+               gascity-beads-cold-message
+               :thing id
+               :face 'font-lock-constant-face)
+      t)))
+
 (defun gascity-beads-eldoc--apply (buffer)
   "Apply BUFFER's installed map to beads.el's buffer-local contract.
 Sets, boundp-guarded and after a soft `require' of beads-eldoc,
 `beads-eldoc-directory' to a closure over the buffer's map snapshot and
 `beads-issue-id-prefixes' to that snapshot's prefixes — or to
 `gascity-beads-eldoc--deny-all-prefixes' while cold, so no id is
-admitted before the map lands.  A no-op against a beads.el without the
-variables.  Returns BUFFER."
+admitted before the map lands.  Installs
+`gascity-beads-eldoc--cold-documentation' in the buffer's eldoc hook so
+a cold map says why it answers nothing.  A no-op against a beads.el
+without the variables.  Returns BUFFER."
   (when (buffer-live-p buffer)
     (require 'beads-eldoc nil t)
     (with-current-buffer buffer
@@ -405,7 +435,10 @@ variables.  Returns BUFFER."
                     (or (and gascity-beads-eldoc--map
                              (gascity-beads-eldoc--map-prefixes
                               gascity-beads-eldoc--map))
-                        gascity-beads-eldoc--deny-all-prefixes))))
+                        gascity-beads-eldoc--deny-all-prefixes))
+        (when (boundp 'eldoc-documentation-functions)
+          (add-hook 'eldoc-documentation-functions
+                    #'gascity-beads-eldoc--cold-documentation nil t))))
     buffer))
 
 (defun gascity-beads-eldoc-install (&optional buffer dir)

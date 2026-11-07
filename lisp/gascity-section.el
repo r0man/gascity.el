@@ -1142,6 +1142,13 @@ clean `user-error' when neither is at point."
      ((gascity-rig-at-point) (gascity-rig-beads (gascity-rig-at-point)))
      (t (user-error "No agent or rig at point")))))
 
+(defconst gascity-beads-cold-message "Resolving bead stores…"
+  "Message shown while a city's bead-id prefix map is still cold.
+One asynchronous `gc rig list' fills the map, which can take seconds
+on a remote city.  Both `C-c b' and the bead-id eldoc backend say this
+until it lands, instead of opening or querying an unrelated store
+\(REQ-006, REQ-011).")
+
 ;;;###autoload
 (defun gascity-bead-show-at-point ()
   "Open the bead whose id is at point in beads.el, scoped to its store.
@@ -1179,7 +1186,7 @@ attach buffers and in every vui/tabulated view (D3)."
        ;; buffer's `default-directory'.  `store-for-id' is also what kicks
        ;; the one deduplicated fill.
        ((not (gascity-beads-eldoc-map-ready-p))
-        (message "Resolving bead stores…"))
+        (message "%s" gascity-beads-cold-message))
        ;; Warm map, but no store claims this prefix: say so instead of
        ;; opening an unrelated store.
        (t (user-error "No bead store owns %s" id))))))
