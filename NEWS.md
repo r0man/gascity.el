@@ -17,6 +17,20 @@ workflow root.  A standalone workflow without the variable, or a
 convoy or member gc no longer reports, omits the row instead of
 guessing (ga-uf8kr).
 
+### One demo dataset and the default theme for the manual
+
+The manual's demo now uses beads.el's canonical `demo-1' … `demo-12'
+issue dataset, byte-identical in both repositories, and the shared
+`${TMPDIR:-/tmp}/demo-project` checkout, so a reader who follows either
+manual sees the same ids, titles and statuses; the vendored file's
+SHA-256 is pinned by the manual's tests.  Screenshots are captured with
+Emacs's built-in default theme and published as `<view>-default.png`,
+replacing the `-dark`/`-light` names, which changes the public image
+URLs for every view.  A black-box, manual-only QA pass over the seeded
+fixture is recorded in `docs/qa/2026-11-08-manual-demo-consistency.md`.
+See `plans/manual-demo-consistency/implementation-plan.md`
+(REQ-001–REQ-015).
+
 ### The cockpit's Agents section leads with live workers
 
 The cockpit shows up to eight Agents rows by default (new option
