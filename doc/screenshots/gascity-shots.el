@@ -84,6 +84,20 @@
   (setq screenshot-theme
         (unless (member theme '("default" "none")) (intern theme))))
 
+;; `tabulated-list-print' lays its columns out to the width of the window it
+;; is displayed in, and `display-buffer' splits a 220-column capture frame
+;; side by side once `split-width-threshold' (160) is exceeded.  Whether the
+;; split happened before a list's first print was a race: `session-list' was
+;; laid out for a ~109-column half-window in some runs and for the full
+;; 220-column frame in others, so the fitted image came out ~101 or ~170
+;; columns wide with different column x positions.  Pin the layout (never
+;; split) so every list prints at the full capture frame and the fitted
+;; frame is a pure function of the fixture.
+;; Only the width matters: `display-buffer' enters its side-by-side branch
+;; on a wide frame, while a vertical split is deterministic at the fixed
+;; capture height (and the terminal shot depends on it).
+(setq split-width-threshold nil)
+
 ;;; Deterministic role ids and terminal normalization (defense in depth)
 ;;
 ;; The fixture pins bead ids to `demo-<role>' (see fixtures/README.md), and
@@ -214,7 +228,7 @@ at most SECONDS (default 20)."
 ;; call site rather than as changes to the engine.
 (advice-add 'screenshot-export :before
             (lambda (buffer _name &optional _fixed-rows)
-              (when-let ((buf (get-buffer buffer)))
+              (when-let* ((buf (get-buffer buffer)))
                 (gascity-shots--await-stable buf))
               (gascity-shots--normalize-buffer (get-buffer buffer))))
 (advice-add 'screenshot-fit-frame :after

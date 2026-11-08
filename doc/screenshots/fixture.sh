@@ -56,7 +56,10 @@ readonly TMP_ROOT="${TMPDIR:-/tmp}"
 # header/mode line from the directory basename, and header lines are not buffer
 # text, so a random suffix could not be normalized out of a committed image.
 # A stable path keeps every capture byte-reproducible.  `--create' removes a
-# stale fixture at this path first; `FIXTURE_STATE' still lets two runs coexist.
+# stale fixture at this path first.  `FIXTURE_STATE' only isolates the city
+# record and its state file: the demo-project checkout below is one fixed path
+# per $TMPDIR, so parallel fixtures need separate `TMPDIR's (or must run
+# serially).
 readonly FIXTURE_DIR_PREFIX="gascity-fixture"
 readonly FIXTURE_MARKER=".gascity-fixture-city"
 # The shared demo project: the same path the beads.el manual uses, so both
@@ -72,7 +75,8 @@ readonly FIXTURE_PROJECT="$TMP_ROOT/$FIXTURE_PROJECT_NAME"
 # engine; see doc/screenshots/README.md.
 readonly FIXTURE_CITY_NAME="gascity-fixture"
 # Where --create records the current fixture for --seed/--teardown.  Override
-# with FIXTURE_STATE to run two fixtures side by side.
+# with FIXTURE_STATE to keep two city records side by side; the shared project
+# checkout still needs its own `TMPDIR' for true isolation.
 readonly STATE_FILE="${FIXTURE_STATE:-$TMP_ROOT/gascity-fixture.current}"
 
 # Pinned git identity/date for the throwaway project's single commit, so the

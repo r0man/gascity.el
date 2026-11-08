@@ -89,9 +89,11 @@ doc/screenshots/fixture.sh --self-test  # offline teardown-guard check, no city
 the city tree.  The command records the city path in
 `${TMPDIR:-/tmp}/gascity-fixture.current` so `--seed` and `--teardown` need no
 argument.  Pass `--city <dir>` (or set `FIXTURE_STATE`) to address a fixture
-explicitly; set `FIXTURE_STATE` and pass `--city` to run two fixtures side by
-side.  `--teardown` always derives the project path from `TMPDIR`, so a
-`capture.sh --teardown --city DIR` removes it too.  `--self-test` runs the
+explicitly.  `FIXTURE_STATE` isolates only the city/state file: the demo
+project is one fixed `$TMPDIR/demo-project` checkout, so give each parallel
+fixture its own `TMPDIR` (or run them serially).  A capture run that created
+the fixture tears it down on exit (`teardown_project`); to remove one by hand
+use `doc/screenshots/fixture.sh --teardown --city DIR`.  `--self-test` runs the
 teardown marker guard and repeated-teardown idempotence in a scratch
 `TMPDIR`, without creating a city, so `make check` can assert the guard
 without `gc`.

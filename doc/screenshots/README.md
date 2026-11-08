@@ -29,7 +29,13 @@ screenshots/
    and the shot list; renders each view; waits for the view's
    asynchronous `gc` data to settle; normalizes any residual run-generated
    value to a role token; fits the frame tightly to the rendered content;
-   and exports a raw PNG with `x-export-frames`.
+   and exports a raw PNG with `x-export-frames`. It also pins the window
+   width layout (`split-width-threshold` is nil; the fixed capture height
+   keeps the vertical split deterministic): a `tabulated-list-mode` view
+   lays its columns out to the width of the window it is printed in, so
+   letting `display-buffer` split the 220-column capture frame made
+   `session-list` come out ~101 or ~170 columns wide between `--verify`
+   runs.
 4. **Compresses** each raw PNG to an 8-bit-palette full image plus a
    small thumbnail under `../images/` (committed). The raw PNGs are
    throwaway.
@@ -92,7 +98,16 @@ only opens dashboards; it never mutates.
 
 `--verify <scope>` runs the scope twice into two `$TMPDIR` staging dirs and
 fails, naming the first drifting file, unless every output is
-byte-identical. It then runs the subset-isolation check.
+byte-identical. It then runs the subset-isolation check. `--verify` compares
+only the two fresh runs, so after a recapture also assert that the committed
+images are the ones just produced:
+
+```sh
+./doc/screenshots/capture.sh --scope all
+git diff --exit-code doc/images
+```
+
+A non-empty diff means a stale or race-variant image is committed.
 
 `--check-isolation <scope>` regenerates the scope into a throwaway copy of
 the committed `doc/images` and asserts that every image **outside** the
