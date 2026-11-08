@@ -93,7 +93,7 @@ the Gas City (@command{gc}) CLI.  It renders the state of a multi-agent
 * Actions::                 Mutating commands, run asynchronously.
 * Health, Costs and the Lighter: Health Costs and the Lighter.  Supervisor, versions, stores, usage and the mode line.
 * Bookmarks::               Every view as an Emacs bookmark.
-* Worked Examples::         Three end-to-end walkthroughs.
+* Worked Examples::         A demo tour and three end-to-end walkthroughs.
 * View and Key Reference::  Every registered view, key and action verb.
 * Command and Variable Reference:: Every command, function and user option.
 * Generated Reference Tables:: Key and command tables generated from code.
@@ -375,6 +375,7 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 * The gc environment::  XDG_RUNTIME_DIR and the supervisor.
 * Loading from a checkout::  Put lisp/ on the load-path.
 * Building and installing with autotools::  autogen.sh, configure, make.
+* Tested with::  The versions and fixture behind this manual.
 @end menu
 
 @node Requirements
@@ -563,6 +564,38 @@ reference.  The manual's own build targets are in @ref{Contributing},
 and the lint and documentation-drift gates in
 @ref{Linting and documentation drift}.
 
+@node Tested with
+@section Tested with
+@cindex tested with
+@cindex versions
+@cindex Guix revision
+
+This manual and every screenshot in it were built and exercised with
+the environment below.  The versions are a record, not a requirement:
+any GNU Emacs 29.1 or later and a reasonably current @command{gc} work
+(@pxref{Requirements}); the exact versions matter because a face, key
+or payload can change between them.
+
+@multitable @columnfractions .22 .78
+@headitem Part @tab Tested value
+@item GNU Emacs @tab 31.1, with the built-in default theme (no theme
+package).  30.2 is in the CI matrix, and 29.4 is tested non-blocking.
+@item GNU Guix @tab channel revision
+@code{f546638fed68114b67e5bf1c681c5c62876a4018}, from @command{guix
+describe} at authoring time.  The publish stage refreshes this value
+before a release.
+@item @command{gc} @tab 1.5.1, reporting store @code{BdStore}.
+@item Demo fixture @tab @file{doc/screenshots/fixtures/beads-fixture.jsonl},
+SHA-256
+@code{6504c508bd25f3a2efc8a0e99bc940767b3306ae41352077fa446d2d6c319ca8}.
+@end multitable
+
+@noindent
+The fixture digest is the cross-repository contract with beads.el: the
+same file, byte for byte, is the demo dataset both manuals describe
+(@pxref{The demo city}).  The Guix revision is prose; the digest is
+pinned by the manual's tests, so a drifting copy fails the gate.
+
 @c ====================================================================
 @node Getting Started
 @chapter Getting Started
@@ -649,6 +682,7 @@ The dispatcher transient.
 
 @menu
 * Install and Start::  Load gascity.el and open a dashboard.
+* The demo city::  The shared fixture this manual walks through.
 @end menu
 
 @node Install and Start
@@ -680,6 +714,107 @@ Inside any gascity buffer one set of keys means the same thing:
 thing at point, @key{RET} acts on it, @kbd{g} reloads, @kbd{q} buries,
 @kbd{j} jumps to another view, @kbd{/} filters and @kbd{?} lists every
 verb under its view key.  @xref{Buffers and Navigation}.
+
+@node The demo city
+@section The demo city
+@cindex demo city
+@cindex fixture
+@cindex demo project
+
+Every walkthrough and every screenshot in this manual uses one
+throwaway city and one throwaway project, the same pair beads.el's
+manual uses.  Nothing in the demo is your machine's state, so the ids,
+statuses and paths below are exactly what the manual and its images
+show.
+
+@table @asis
+@item Project
+@file{$@{TMPDIR:-/tmp@}/demo-project}: one pinned git commit with a
+@file{README} file, registered as the @dfn{rig} @samp{demo-rig} with
+bead-id prefix @samp{demo}.  The images and shell examples use
+@file{/tmp/demo-project} because the capture leaves @env{TMPDIR}
+unset.
+@item City
+@file{$@{TMPDIR:-/tmp@}/gascity-fixture}, named @samp{gascity-fixture},
+with no live provider and no controller.  Its HQ rig uses the
+@samp{gf} prefix; its orders, events and usage are seeded too.
+@item Screenshot state
+@file{$@{TMPDIR:-/tmp@}/gascity-fixture.current} records the city so
+@code{fixture.sh --seed} and @code{--teardown} need no argument, and
+@file{gc-home/cities.toml} registers only the fixture city, so the
+Cities view never lists a developer's live cities.
+@item Dataset
+@file{doc/screenshots/fixtures/beads-fixture.jsonl}, SHA-256
+@code{6504c508bd25f3a2efc8a0e99bc940767b3306ae41352077fa446d2d6c319ca8},
+vendored unmodified from beads.el.  It is the only source of demo issue
+text; the seed adds only the role objects listed below.
+@end table
+
+Build it from the repository root, then open the cockpit from inside
+the city:
+
+@example
+doc/screenshots/fixture.sh --create
+doc/screenshots/fixture.sh --seed
+cd "$@{TMPDIR:-/tmp@}/gascity-fixture"
+@end example
+
+@noindent
+and @kbd{M-x gascity-dashboard}.  @code{fixture.sh --teardown} removes
+the city and the project; both refuse to delete a path that does not
+carry the fixture's marker, so a real directory named @file{demo-project}
+is never adopted or removed.
+
+@cindex demo beads
+The dataset is twelve beads, @code{demo-1} through @code{demo-12}:
+
+@multitable @columnfractions .12 .12 .14 .62
+@headitem ID @tab Type @tab Status @tab Title
+@item @code{demo-1} @tab task @tab open @tab Set up the local development environment
+@item @code{demo-2} @tab feature @tab open @tab Add keyboard navigation to the issue list
+@item @code{demo-3} @tab bug @tab in progress @tab Fix crash when opening an empty store
+@item @code{demo-4} @tab task @tab blocked @tab Write the Dolt migration guide
+@item @code{demo-5} @tab feature @tab open @tab Render the dependency graph view
+@item @code{demo-6} @tab chore @tab closed @tab Deprecate the legacy ops menu
+@item @code{demo-7} @tab task @tab open @tab Refactor the EIEIO command base class
+@item @code{demo-8} @tab task @tab open @tab Document the agent session protocol
+@item @code{demo-9} @tab task @tab open @tab Add a Gherkin-style smoke test
+@item @code{demo-10} @tab epic @tab open @tab Epic: rewrite the user manual
+@item @code{demo-11} @tab task @tab open @tab Capture deterministic screenshots
+@item @code{demo-12} @tab task @tab open @tab Write per-task reference pages
+@end multitable
+
+@noindent
+The dependencies are part of the scenario: @code{demo-4} is blocked by
+@code{demo-3}, @code{demo-5} by @code{demo-2} and @code{demo-9} by
+@code{demo-5}; @code{demo-11} and @code{demo-12} are children of the
+@code{demo-10} epic; @code{demo-6} is the closed one.
+
+@cindex demo role ids
+On top of the dataset the seed adds the role objects the views need:
+
+@multitable @columnfractions .26 .16 .58
+@headitem Id @tab Kind @tab Purpose
+@item @code{demo-session-dev} @tab session @tab @code{demo-3}, agent @samp{demo-rig/gc.implementation-worker}, tmux session @samp{demo-agent}, @code{asleep}.
+@item @code{demo-session-review} @tab session @tab @code{demo-4}, agent @samp{demo-rig/gc.reviewer}, tmux session @samp{demo-reviewer}, @code{asleep}.
+@item @code{demo-mail-review} @tab message @tab mail naming @code{demo-10} and @code{demo-11}.
+@item @code{demo-run} @tab run root @tab @samp{build-basic on demo-10}, an in-progress run built on @code{demo-10} and @code{demo-11}.
+@item @code{demo-rev1} @tab run step @tab the run's failed review iteration, failure class @code{code_review}.
+@item @code{demo-health}, @code{demo-nightly} @tab orders @tab a cooldown order and a cron order in the order list.
+@item @code{demo-run-build}, @code{demo-run-review} @tab usage @tab the two recorded usage rows in Costs.
+@end multitable
+
+@quotation Note
+The fixture has no controller and no supervisor.  That is deliberate:
+every read is offline and every state is the honest one.  The cockpit
+header reads @samp{■ controller down} and @samp{○ live: supervisor
+down}; agents read @samp{stopped} and sessions @samp{asleep}; the
+Agents table's default filter has no rows until you ask for
+@samp{all}; and the two view families that read through the supervisor
+API (@command{gc events} and @command{gc mail inbox}) report that
+failure instead of inventing data.  @ref{Tour the demo city} walks
+these exact states.
+@end quotation
 
 @c ====================================================================
 @node Buffers and Navigation
@@ -1217,6 +1352,10 @@ running instance; a @dfn{polecat} is gascity's detail row for one agent
 such as the mayor.  Each row shows the agent's state, last activity, the
 bead on its hook and its provider.  Stalled agents (@samp{■}: running
 by @command{gc}'s account, with no live session) are pinned to the top.
+The state filter defaults to @samp{running}, which keeps running,
+idle, stalled and unknown rows; a city with no controller has only
+@samp{stopped} agents, so the table opens empty and @kbd{/ -s all}
+reveals them.  The captured image is that empty default.
 
 @shot{agents-default, The Agents view (built-in default theme)}
 
@@ -1449,10 +1588,17 @@ can reach, one row each, in @file{*gascity-cities*}; a city runs on a
 
 @example
  City               Where                              Agents Runs Mail Health
- ● bright-lights    ~/bright-lights/                   2/4         ▲4   ●
- ● emacs-city       ~/emacs-city/                      1/5    1 ⬣  ▲5   ▲
- ● bright-lights    /ssh:localhost:~/bright-lights/    2/4         ▲4   ●
+ ■ gascity-fixture   /tmp/gascity-fixture/                0/4   1 ●   0     ■
 @end example
+
+@noindent
+The row is the demo city: no controller, so its @emph{Health} cell is
+@samp{■} while its one active run reads @samp{1 ●} and its unread-mail
+cell @samp{0}.  A remote city adds one more row for the same city, its
+@emph{Where} a
+@file{/ssh:@var{host}:@var{path}} TRAMP name and its header marked
+@samp{@@host}, so one city can appear once per host
+(@pxref{Remote Cities}).
 
 @shot{cities-default, The Cities view (built-in default theme)}
 
@@ -1903,16 +2049,13 @@ expands into beads; its ladder is a series of @dfn{steps}
 Waiting and Failed:
 
 @example
-Runs  emacs-city   1 active · 0 waiting · 51 done · 11 failed (all time)
+Runs  gascity-fixture   1 active · 0 waiting · 0 done · 0 failed (all time)
 
 Active  1
-  ⬣ be-52m5  build-basic                              beads.el   2h
-     ◆⬣········  requirements   1/10   ● requirements-planner-1  be-bcb5
+  ● demo-run  build-basic                                demo-rig   2025-01-01
+     ◆◆◆◆◆◆◆◆✕··  review         8/11   ✕ build-basic.review  code_review
 
-Failed  1 · last 24h
-  ✕ be-bn2   build-basic                              beads.el   2h
-     ◆◆◆◆◆◆◆✕◆◆  review         9/10   control_dispatch_error
-  stage Review · step build-basic.rev… · fail control_dispatch… · work control
+Failed  none · last 24h
 @end example
 
 @shot{runs-default, The Runs view (built-in default theme)}
@@ -1995,36 +2138,42 @@ Detail, peek and attach for the run's worker at point.
 @file{*gascity-run:@: ID*}:
 
 @example
-  root     ⬣ be-52m5  build-basic                        beads.el · started 2h
-  store    rig:beads.el   rig beads.el   city emacs-city
+  root     ● demo-run  build-basic               demo-rig · started 2025-01-01
+  step     build-basic.review  demo-revw
+  class    code_review
+  reason   two blocking findings on demo-10/demo-11: the render path stats a
+           file and the header is not frozen
+  store    rig:demo-rig   city gascity-fixture
   scope    (none)
   formula  build-basic  contract graph.v2
-           key graphv2-root:be-52m5:build-basic:296b212076d7ae2e:default
-           source ~/.gc/cache/@dots{}/build-basic.formula.toml
-  plans    requirements.md · implementation-plan.md · review-report.md
-  convoy   be-93dg  closed 7/7  input
 
-Steps  1/10 · 37 beads                                    C show control nodes
-  ▾ ⬣ Intake         1/5
-    ◆ prepare                 be-5aht   pass      run-operator          Sep 25
-    ⬣ requirements            be-fy7m   iter 1    ● requirements-planner-1  3m
-    · plan                    be-x2g9   iter 1                          Sep 25
-    · plan-review             be-9nno                                   Sep 25
-    · decompose               be-mp6p   iter 1                          Sep 25
-  ▾ · Implementation 0/2
-    · implement               be-gevv   drain                           Sep 25
-    · summarize-implementation be-h3pj   iter 1                         Sep 25
-  ▾ · Review         0/1
-    ▸ review                  be-mqhp   · loop                          Sep 25
+Steps  8/11 · 12 beads                                    C show control nodes
+  ▾ ◆ Intake         5/5
+    ◆ prepare                 demo-prep pass      run-operator      2025-01-01
+    ◆ requirements            demo-reqs pass      run-operator      2025-01-01
+    ◆ plan                    demo-plan pass      run-operator      2025-01-01
+    ◆ plan-review             demo-plrv pass      run-operator      2025-01-01
+    ◆ decompose               demo-dcmp pass      run-operator      2025-01-01
+  ▾ ◆ Implementation 3/3
+    ◆ implement               demo-impl pass      implementation-w…  2025-01-01
+    ◆ implement-same-session  demo-isms pass      implementation-w…  2025-01-01
+    ◆ summarize-implementation demo-sumi pass      implementation-…  2025-01-01
+  ▾ ✕ Review         0/1  failed
+    ✕ review                  demo-revw iter 1     code_review reviewer  2025-01-01
   ▾ · Approval       0/0
   ▾ · Finalization   0/2
-    · finalize                be-t1f2   iter 1                          Sep 25
-    · publish                 be-s4bt                                   Sep 25
+    · finalize                demo-finz           run-operator      2025-01-01
+    · publish                 demo-publ           run-operator      2025-01-01
 @end example
 
 @shot{run-detail-default, The run detail: stage groups and the failed step's inspector (built-in default theme)}
 
 @noindent
+The committed image was captured after @kbd{!} revealed the failed
+Review step, so it also shows that step's inspector drawer (see the
+step inspector below).  A plain @key{RET} shows the header and the
+stage groups without the drawer.
+
 The steps are the run's beads arranged by step: iterations hang under
 their step, nested steps under theirs.  A step whose children are
 plain iterations shows its latest one inline (@samp{iter N}); any other
@@ -2048,7 +2197,10 @@ buffer's city), @samp{scope} (@code{gc.scope_ref}, else
 @code{gc.formula_contract}, with @code{gc.graphv2_root_key} and the
 formula source on aligned continuation lines).  Nothing is derived or
 invented: an absent optional fact is omitted, or reads @samp{(none)}
-where the row exists for it.
+where the row exists for it.  An active run with a failed step --- and
+any failed run --- also leads with @samp{step}, @samp{class} and
+@samp{reason} rows naming that failure, as in the example above; a
+closed run adds a @samp{close} row with its close reason.
 
 When the run root carries @code{gc.var.convoy_id} --- the synthetic
 input convoy a slung workflow is launched from --- the header adds a
@@ -2109,15 +2261,14 @@ a taxonomy; the bead count in the summary applies to it as well.
 row, opens the @dfn{step inspector}, a drawer under the row:
 
 @example
-    │ step     build-basic.requirements  be-fy7m  in_progress
-    │ attempt  1 · iteration bead be-bcb5
+    │ step     build-basic.review  demo-revw  open
+    │ attempt  1 · iteration bead demo-rev1
     │ attempts
-    │   1 fail      ○ req-planner-1     2m 14s timeout: no heartbeat
-    │   2 pass      ● req-planner-2     1m 02s (none)
-    │ worker   gc__requirements-planner-ec-fl8o  ● requirements-planner-1
-    │ artifacts run   decomposition.md (missing) · @dots{}
-    │ events   (no recent events)
-    │ failure  (none)
+    │   1   fail      ○ reviewer         2025-01-01 code_review: two bl…
+    │ worker   demo-rig/gc.reviewer  ○ reviewer  assignee/session gone
+    │ events   events unavailable
+    │ failure  code_review: two blocking findings on demo-10/demo-11: the render
+    │          path stats a file and the header is not frozen
 @end example
 
 @noindent
@@ -2363,6 +2514,11 @@ row per 15 minutes; signal events (@code{gascity-dashboard-event-levels})
 never fold and carry their @samp{■}/@samp{▲} in the Sig column.  With
 live refresh on, new events are appended as they arrive.
 
+@command{gc events} reads the supervisor API.  When the supervisor is
+down, the view's summary carries the failed call and the table stays
+empty; it does not fall back to reading the city's local
+@file{events.jsonl}.
+
 @shot{events-default, The Events view (built-in default theme)}
 
 @table @kbd
@@ -2467,6 +2623,11 @@ routine signalling, so an inbox is often empty.  Mail is reserved for
 messages that must survive a restart.
 @end quotation
 
+One more read is supervisor-mediated: @command{gc mail inbox} resolves
+the calling agent's session, so with no supervisor or session the
+inbox stays empty even when message beads are in the store.  The demo
+city shows that state (@pxref{Tour the demo city}).
+
 @node Read Mail
 @section Read Mail
 
@@ -2545,6 +2706,8 @@ Filter by status (running, suspended, stopped).
 @emph{Agent}, @emph{Rig}, @emph{State}, @emph{Provider}, @emph{Working
 dir}.  An absent value such as a pool worker's Provider renders as
 @samp{—}, so a blank column is never mistaken for a broken one.
+With no controller a row reads @samp{asleep}; that is the honest
+state, not a failed read.
 
 @shot{session-list-default, The session list (built-in default theme)}
 
@@ -2696,14 +2859,14 @@ flag and no toggle key:
 @item Plain
 @code{gc sling @var{agent} @var{bead-or-text}}: hand an agent a bead,
 or a task described in free text.  The header sentence reads
-@samp{Sling bead bl-5ja to mayor}.
+@samp{Sling bead demo-3 to demo-rig/gc.implementation-worker}.
 @item Formula
 @option{--formula}: run a formula itself on the target agent, with no
 work attached.  @samp{Run pancakes (formula) on mayor}.
 @item Targeted
 @option{--on}: run a formula against a bead --- the formula's steps
-drain the bead.  @samp{Run build-basic against bead bl-5ja, drained
-by hello-world/gc.implementation-worker}.
+drain the bead.  @samp{Run build-basic against bead demo-10, drained
+by demo-rig/gc.implementation-worker}.
 @end table
 
 The shape is a pure function of two answers.  No formula picked is
@@ -2713,8 +2876,8 @@ shape.  Picking a formula (@pxref{Picking a formula}) flips the
 header sentence immediately --- the sentence @emph{is} the shape
 display.  A formula whose steps drain the bead renders the
 @samp{drained by} clause above; one that does not renders @samp{on}
-the target instead (@samp{Run build-basic against bead bl-5ja, on
-mayor}).
+the target instead (@samp{Run build-basic against bead demo-10, on
+demo-rig/gc.implementation-worker}).
 
 The sentence is display only: the dispatch itself follows the picked
 formula's own convoy rule, so a formula that requires a convoy with no
@@ -2782,10 +2945,10 @@ over the city's open, in-progress and blocked beads plus its
 convoys, each annotated with its title, status and store:
 
 @example
-Work (bead or convoy; RET-empty or C-u for freeform text): bl-5ja
-  bl-5ja    e2e sling-v2: verify unified plain sling over TRAMP · open · city
-  bl-70ac   e2e demo latch — gce-e2e demo · open · city
-  hw-3fd    … · in_progress · hello-world
+Work (bead or convoy; RET-empty or C-u for freeform text): demo-3
+  demo-3    Fix crash when opening an empty store · in_progress · demo-rig
+  demo-4    Write the Dolt migration guide · blocked · demo-rig
+  demo-10   Epic: rewrite the user manual · open · demo-rig
 @end example
 
 Two escapes cover what the roster cannot list: a prefix argument
@@ -2834,16 +2997,16 @@ agent @command{gc agent list} reports, including a configured agent
 or pool template with no live session (shown as @samp{configured}):
 
 @example
-Target agent: hello-world/gc.run-operator
-  mayor                                    city · active
+Target agent: demo-rig/core.control-dispatcher
   bd.dog                                   city · configured
-  hello-world/core.control-dispatcher      hello-world · active
-  hello-world/gc.implementation-worker     hello-world · configured
-  hello-world/gc.run-operator              hello-world · configured
+  claude                                   city · configured
+  core.control-dispatcher                  city · configured
+  demo-rig/claude                          demo-rig · configured
+  demo-rig/core.control-dispatcher         demo-rig · configured
 @end example
 
 Names are always the @emph{qualified} form gc accepts from any
-directory (@samp{hello-world/gc.run-operator}); a bare
+directory (@samp{demo-rig/gc.implementation-worker}); a bare
 @samp{gc.run-operator} is never offered, because gc resolves that
 form only from inside the rig directory.
 
@@ -2865,8 +3028,8 @@ formula with on this city, recorded at launch.
 The picked formula's coordinating run target, qualified with the
 work bead's rig.  A formula whose steps name a binding-qualified
 @code{gc.run_target} derives @samp{@var{bead-rig}/@var{target}} ---
-build-basic on a @samp{hw-} bead derives
-@samp{hello-world/gc.run-operator}.  The target that coordinates the
+build-basic on a @samp{demo-} bead derives
+@samp{demo-rig/gc.run-operator}.  The target that coordinates the
 most steps is the formula's routing target; a tie between two targets
 is ambiguous and derives nothing.
 @item
@@ -3080,12 +3243,13 @@ asynchronously like every gascity action (@pxref{Actions}): the menu
 closed when the preview opened, the buffer closes on launch, the echo
 area reports, and the views the launch touched re-read.
 
-A plain route echoes the routing (@samp{Routed bl-5ja to mayor}) ---
+A plain route echoes the routing (@samp{Routed demo-3 to
+demo-rig/gc.implementation-worker}) ---
 no workflow is created, so there is nothing to follow.  A formula
 launch echoes the workflow it created and offers to jump to it:
 
 @example
-Launched workflow bl-9xyz (build-basic on bl-5ja) — F: run view
+Launched workflow demo-run (build-basic on demo-10) — F: run view
 @end example
 
 @noindent
@@ -3499,22 +3663,21 @@ city's plumbing, one section per @command{gc} read so that one failure
 never blanks the others.
 
 @example
-Health  bright-lights                                         ▲ watch
+Health  gascity-fixture                                            ■ attention
 Supervisor
-  pid 22262 · supervisor · ▲ degraded (no_agents_running) · not suspended
+  ■ controller down · ■ unusable · not suspended
 Versions
-  gc 1.4.2 · bd 1.3.0 · dolt 2.3.5 · store NativeDoltStore
-Store  ◐
-  ~/bright-lights/.beads/dolt        109 MB   threshold 1 MB/row
-  ◐ store health: runtime status probe incomplete
-  ● dolt :41586 · pid 23571 · 120 ms · 2 databases
-  size (this session)  ▁▁▂▂▃
+  gc 1.5.1 · store BdStore
+Store  none
 Rig stores  1
-  ● hello-world    ~/hello-world                              dolt ok
-Doctor  88 passed · 5 warned · 0 failed · ran 4m ago   ! run  F run --fix
-  ▲ formula-requirements         blocking  36 formula requirement warning(s)
-  ▸ 88 checks ok
+  ● demo-rig       /tmp/demo-project                         beads initialized
+Doctor  not run                                             ! run  F run --fix
 @end example
+
+@noindent
+The demo city stops here: the supervisor is down, so there is no
+store or doctor report to read, and the one rig store is the honest
+row that still answers.
 
 @shot{health-default, Health of the demo city (built-in default theme)}
 
@@ -3624,16 +3787,17 @@ the header line says how long ago it did.
 that shows what needs you in every open city in every mode line:
 
 @example
- GC[bl ▲1 · ec ■1▲2]
+ GC[gf ■4]
 @end example
 
 @shot{lighter-default, The lighter in the mode line (built-in default theme)}
 
 @noindent
-One segment per open cockpit: the city's initials (@samp{emacs-city}
-@result{} @samp{ec}; a remote one adds @samp{@@host}), then its Needs
+One segment per open cockpit: the city's initials (@samp{gascity-fixture}
+@result{} @samp{gf}; a remote one adds @samp{@@host}), then its Needs
 you totals --- @samp{■} attention and @samp{▲} watch --- or @samp{●}
-when it needs nothing.  @kbd{mouse-1} on a segment shows that city's
+when it needs nothing.  The demo cockpit in the image has four
+automatic attention rows and no watch rows, hence @samp{■4}.  @kbd{mouse-1} on a segment shows that city's
 cockpit; the tooltip spells the counts out.  Killing a cockpit drops its
 segment.
 
@@ -3665,11 +3829,11 @@ b} (@code{bookmark-jump}), @code{bookmark-bmenu-list} or
 The default name says what the view shows and where:
 
 @example
-gascity: bright-lights
-gascity: bright-lights@@localhost
-gascity-runs: bright-lights
-gascity-run: hw-1a2b@@localhost
-gascity-rig: hello-world
+gascity: gascity-fixture
+gascity: gascity-fixture@@localhost
+gascity-runs: gascity-fixture
+gascity-run: demo-run@@localhost
+gascity-rig: demo-rig
 @end example
 
 @noindent
@@ -3694,16 +3858,182 @@ view's filters are then set as they were recorded.
 
 @cindex worked examples
 @cindex walkthroughs
-The task guide lists what each view is for.  This chapter walks three
-jobs from start to finish, with the exact keys.  Each example assumes a
-running city and a gascity view opened from inside it
-(@pxref{Install and Start}).
+The task guide lists what each view is for.  This chapter opens with a
+tour of the shared demo city (@pxref{The demo city}) in the order a new
+user meets its views, then walks three jobs from start to finish, with
+the exact keys.  The tour uses the fixture exactly as captured; the
+three jobs assume a running city and a gascity view opened from inside
+it (@pxref{Install and Start}).
 
 @menu
+* Tour the demo city::              Every view in the order a new user meets them.
 * Route a bead through a workflow::  From ready bead to a running run.
 * Recover a stalled agent::          Find it, read it, nudge or reset it.
 * Open and drive a remote city::     Work on another host over TRAMP.
 @end menu
+
+@node Tour the demo city
+@section Tour the demo city
+@cindex tour, demo city
+@cindex demo city, walkthrough
+
+This tour follows the fixture from @ref{The demo city}.  Every step
+names the key, the state the demo city actually shows and the
+screenshot that records it; each image is embedded in the chapter that
+documents its view, and @ref{Area to Screenshot Map} maps areas to
+images.
+
+@enumerate
+@item
+@strong{Open the city.}  From @file{$@{TMPDIR:-/tmp@}/gascity-fixture},
+type @kbd{M-x gascity-dashboard}.  The cockpit opens in
+@code{gascity-dashboard-mode} (@pxref{The Cockpit}).  The demo has no
+controller, so the header reads @samp{■ controller down} and the
+summary line reads @samp{agents 0/4 ▲   sessions 0   runs 1 ●   ready
+9}.  @strong{Needs you} lists four attention rows --- @code{demo-3} in
+progress with its assignee gone, the @code{demo-run} in progress, the
+run idle, and the run's failed @samp{build-basic.review} --- and
+@strong{Moving} shows the one run with its ladder
+@samp{◆◆◆◆◆◆◆◆✕··}.  The image is @file{cockpit-default.png}.
+@item
+@strong{Read the cockpit.}  @key{TAB} and @kbd{S-@key{TAB}} move
+between things, @key{SPC} folds a section or a run's ladder,
+@key{RET} opens the view behind a section header, a run, a bead or an
+agent, @kbd{+}/@kbd{-} show more or fewer rows, @kbd{/} filters,
+@kbd{g} reloads, @kbd{q} buries.  @kbd{?} lists every verb under its
+view key (@pxref{The ? dispatch}); the dispatch image is
+@file{dispatch-default.png}.  @kbd{W} toggles live refresh: with no
+supervisor the header shows @samp{○ live: supervisor down} and the
+Activity section shows one retry line naming the failed @code{gc
+events} call rather than an invented log (@pxref{Live Refresh}).
+@item
+@strong{Agents.}  @kbd{j a} opens the Agents table
+(@pxref{The Agents view}).  With no controller every agent is
+@samp{stopped}, and the table's default state filter keeps running,
+idle, stalled and unknown rows, so the table is empty --- the captured
+@file{agents-default.png} shows exactly that.  @kbd{/ -s all} adds the
+four configured agents: @samp{bd.dog-1}, @samp{bd.dog-2},
+@samp{core.control-dispatcher} and
+@samp{demo-rig/core.control-dispatcher}, all @samp{○ stopped}.  On a
+row, @key{RET} (or @kbd{t}) attaches, @kbd{i} opens the detail,
+@kbd{v} peeks, @kbd{d} opens Dired, and @kbd{M}/@kbd{s}/@kbd{K}/
+@kbd{w}/@kbd{D}/@kbd{R}/@kbd{U} nudge, suspend, kill, wake, drain,
+reset and undrain (@pxref{Actions}).  With no live session a nudge
+reports @command{gc}'s refusal in the echo area; nothing blocks.
+@item
+@strong{Sessions and attach.}  @kbd{j s} opens the session list
+(@pxref{Sessions}).  The demo's two seeded rows are
+@samp{demo-rig/gc.implementation-worker … asleep  claude
+/tmp/demo-project} for @code{demo-3} and
+@samp{demo-rig/gc.reviewer … asleep  claude /tmp/demo-project} for
+@code{demo-4}.  State @samp{asleep}, provider @samp{claude} and the
+blank last-activity reading are the honest state with no controller,
+not a failed read.  @key{RET} (or @kbd{t}) attaches
+the agent's tmux session; the screenshot fixture starts the fixed
+@samp{demo-agent} session for the attach, and @kbd{t} in the cockpit,
+the Agents view, the rig dashboard or the agent detail does the same
+(@pxref{Attach to a Terminal}, @file{terminal-attach-default.png}).
+@kbd{i} opens the agent detail, whose @strong{Work} join finds
+@code{demo-3} and @code{demo-4} through the seeded @code{work_dir};
+run, transcript and mail are empty instead of fabricated
+(@pxref{Agent Detail}).
+@item
+@strong{Runs, run detail and the inspector.}  @kbd{j r} opens the Runs
+view (@pxref{The Runs view}): @samp{1 active · 0 waiting · 0 done · 0
+failed (all time)}, with the @code{demo-run} card reading
+@samp{◆◆◆◆◆◆◆◆✕··  review  8/11  ✕ build-basic.review
+code_review} (@file{runs-default.png}).  @key{RET} opens the run detail
+(@pxref{Run Detail}, @file{run-detail-default.png}): the header names
+the root, the failed step, its class and reason, the store, the scope
+and the formula, and @samp{Steps 8/11 · 12 beads} groups the steps into
+Intake, Implementation, Review, Approval and Finalization.  Press
+@kbd{!} (@code{gascity-run-diagnose}) to expand the failed Review
+stage and open iteration 1's inspector: it names the step, the
+attempt, the worker (@samp{assignee/session gone}), the events read
+(@samp{events unavailable}, because the demo has no supervisor) and
+the failure.  @key{SPC} opens a step's drawer, @kbd{I} toggles the
+inspector, @kbd{T} toggles the tree, @kbd{C} shows control nodes,
+@key{RET} opens the bead, artifact or worker at point, @kbd{b} opens
+the root bead and @kbd{H} pages the history.
+@item
+@strong{Beads and work.}  The cockpit's @strong{Work} section lists
+the ready beads and the in-progress @code{demo-3}; @key{RET} on a bead
+opens it in beads.el scoped to @code{demo-rig} (the @code{demo} id
+prefix maps to the rig).  @kbd{j b} does the same from any view, and
+@kbd{c} opens the bead actions (@pxref{Route Work}).  The demo's
+statuses are the dataset's: @code{demo-3} in progress, @code{demo-4}
+blocked by it, @code{demo-6} closed, @code{demo-10} an epic with
+@code{demo-11} and @code{demo-12} as children (@pxref{The demo
+city}).
+@item
+@strong{Events and Health.}  @kbd{j e} opens Events
+(@pxref{Events}).  @command{gc events} reads the supervisor API, so
+the demo's header reads @samp{■ gc events: … could not auto-discover
+the supervisor API …} above an empty table
+(@file{events-default.png}); the six pinned events are in the city's
+local log but no supervisor serves them.  @kbd{j h} opens Health
+(@file{health-default.png}), which reads @samp{■ attention},
+@samp{■ controller down · ■ unusable · not suspended},
+@samp{gc 1.5.1 · store BdStore}, an empty @samp{Store}, the one
+@samp{demo-rig … beads initialized} rig store, and
+@samp{Doctor not run} until @kbd{!} runs it (@pxref{Health Costs and
+the Lighter}).
+@item
+@strong{Convoys and Orders.}  @kbd{j v} opens the convoy list: the
+demo seeds no convoy, so the list is empty (the
+@file{convoy-list-default.png} image is that empty page).  @kbd{j o}
+opens the order list, where @samp{demo-health} (@samp{cooldown},
+@samp{5m}) and @samp{demo-nightly} (@samp{cron}, @samp{0 3 * * *})
+sit among the pack-provided orders; @kbd{]}/@kbd{[} page, @kbd{G}
+jumps to a page, @kbd{/} filters and @kbd{x} runs an order now
+(@file{order-list-default.png}, @pxref{Orders}).
+@item
+@strong{Mail.}  @kbd{j m} opens the inbox (@pxref{Mail}).  The demo
+seeds @code{demo-mail-review}, a message bead naming @code{demo-10}
+and @code{demo-11}, but @command{gc mail inbox} resolves the calling
+agent's session through the supervisor; the offline demo has none, so
+the inbox reads @samp{0 unread / 0} with an empty table and
+@samp{○ live: supervisor down} (@file{mail-inbox-default.png}).
+@key{RET} previews, @kbd{r} reads and marks read, @kbd{R} replies
+(@kbd{C-c C-c} sends), @kbd{a} archives, @kbd{u} marks unread and
+@kbd{c} opens the mail actions menu.
+@item
+@strong{Sling and the formula preview, read-only.}  From the cockpit,
+@kbd{S} raises the sling (@pxref{Sling and Dispatch}).  The demo's
+plain shape is pre-seeded with @code{demo-3} and, because the offline
+roster derives no default target, its footer reads @samp{⚠ No target —
+T to choose, or s will prompt} (@file{sling-plain-default.png});
+@kbd{q}, then @kbd{S} again, shows the cold menu
+(@file{sling-cold-default.png}).  @kbd{f} picks the formula
+@samp{mol-do-work}: with no work it is the targetless @option{--formula}
+shape (@file{sling-formula-default.png}), and with @code{demo-3} it is
+the targeted @option{--on} shape, whose sentence reads @samp{Run
+mol-do-work against bead demo-3, drained by (no target — T or default)}
+(@file{sling-on-default.png}).  @kbd{T} offers the city's agents
+(@samp{bd.dog}, @samp{core.control-dispatcher}, @samp{demo-rig/claude}
+and @samp{demo-rig/core.control-dispatcher}) and accepts a typed
+qualified name; the preview image uses the rig's worker,
+@samp{demo-rig/gc.implementation-worker}.  @kbd{s} opens @file{Sling
+preview — gascity-fixture} (@file{sling-preview-default.png}): its
+Validation section reads @samp{✓ target
+demo-rig/gc.implementation-worker}, @samp{✓ work demo-3 (the formula
+requires it)} and @samp{✓ no required vars}, then the Recipe DAG and a
+Routing plan whose dry run honestly fails because that worker is not in
+the fixture's @file{city.toml} (@samp{agent
+"demo-rig/gc.implementation-worker" not found …}).  Its own @kbd{s} (or
+@kbd{C-c C-c}) would launch and @kbd{q} aborts; the demo has no
+controller, so stop at the preview: @kbd{q} closes it and @kbd{q} quits
+the menu.
+@end enumerate
+
+@noindent
+The tour covers every captured view.  @file{cities-default.png} shows
+the fixture city alone (the fixture's @env{GC_HOME} registers no other
+city), @file{costs-default.png} the two recorded usage rows,
+@file{session-list-default.png} and @file{rig-list-default.png} the
+seeded lists, and @file{bookmarks-default.png} and
+@file{lighter-default.png} the Emacs-side surfaces.  The three jobs
+below then use the same city for their own tasks.
 
 @node Route a bead through a workflow
 @section Route a bead through a workflow
