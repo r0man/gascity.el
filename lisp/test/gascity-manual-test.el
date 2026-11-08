@@ -853,3 +853,41 @@ passing silently."
 
 (provide 'gascity-manual-test)
 ;;; gascity-manual-test.el ends here
+(ert-deftest gascity-test-manual-fixture-shared-project ()
+  "The fixture lifecycle owns one shared project and one deterministic city.
+P2 (REQ-002, REQ-003): `fixture.sh` creates `${TMPDIR}/demo-project`,
+registers it as `demo-rig`, seeds the canonical JSONL plus the documented
+role objects, and `--verify` pins the observable state.  This is the
+static half; `fixture.sh --verify` is the live half."
+  (let ((fixture (gascity-manual-test--read "doc/screenshots/fixture.sh"))
+        (seed (gascity-manual-test--read
+               "doc/screenshots/fixtures/gascity-fixture.sh"))
+        (readme (gascity-manual-test--read
+                 "doc/screenshots/fixtures/README.md")))
+    ;; Shared project path + marker + printed contract.
+    (should (string-match-p "demo-project" fixture))
+    (should (string-match-p "gascity-fixture-project" fixture))
+    (should (string-match-p "FIXTURE_PROJECT" fixture))
+    ;; The seed script imports the vendored dataset, never hand-writes it.
+    (should (string-match-p "beads-fixture\\.jsonl" seed))
+    (should (string-match-p "bd.*--rig.*import" seed))
+    (dolist (gone '("demo-epic-manual" "demo-task-manual" "demo-task-fixture"
+                    "demo-task-capture" "demo-bug-render" "demo-chore-cleanup"
+                    "demo-mail-thread"))
+      (should-not (string-match-p (regexp-quote gone) seed)))
+    ;; Deterministic role objects the canonical file cannot carry.
+    (dolist (role '("demo-mail-review" "demo-session-dev" "demo-session-review"
+                    "demo-agent" "demo-reviewer" "demo-rig/gc.reviewer"
+                    "demo-rig/gc.implementation-worker"))
+      (should (string-match-p (regexp-quote role) seed)))
+    ;; The run graph names the shared demo, and review iteration 1 fails.
+    (should (string-match-p "build-basic on demo-10" seed))
+    (should (string-match-p "demo-11" seed))
+    ;; --verify checks the vendored digest and the canonical status anchors.
+    (dolist (pin '("sha256" "demo-10" "demo-3" "demo-4" "demo-6"))
+      (should (string-match-p (regexp-quote pin) fixture)))
+    ;; The README records the shared project and the session seed.
+    (dolist (pin '("demo-project" "gascity-fixture-project"
+                   "6504c508bd25f3a2efc8a0e99bc940767b3306ae41352077fa446d2d6c319ca8"
+                   "demo-session-dev" "demo-session-review"))
+      (should (string-match-p (regexp-quote pin) readme)))))
