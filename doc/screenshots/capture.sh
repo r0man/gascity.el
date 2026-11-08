@@ -5,7 +5,8 @@
 # Pipeline, end to end:
 #   1. Start a *private* headless Wayland compositor (sway) so capture
 #      frames never appear on the user's desktop.
-#   2. Run a graphical Emacs once per theme, loading gascity.el + the
+#   2. Run a graphical Emacs once, with stock Emacs's built-in default
+#      theme (no theme package is loaded), loading gascity.el + the
 #      reusable engine (screenshot.el) + the shot list (gascity-shots.el),
 #      which renders each porcelain view and exports a raw PNG.
 #   3. Compress each raw PNG to an 8-bit-palette full image and a small
@@ -19,8 +20,9 @@
 # runs) and subset isolation (non-selected committed images untouched).
 #
 # Requirements: emacs (pgtk/GUI), sway (wlroots headless backend),
-# ImageMagick `convert`, the gc CLI on PATH, a city, ef-themes, and a
-# beads.el checkout (BEADS_REPO).  All verified on Emacs 30.2/31.1.
+# ImageMagick `convert`, the gc CLI on PATH, a city, and a beads.el
+# checkout (BEADS_REPO).  The capture uses the built-in default theme, no
+# theme package.  All verified on Emacs 30.2/31.1.
 #
 # Reuse (e.g. beads.el): copy screenshot.el unchanged, write a sibling
 # beads-shots.el with your views, and point THEMES/SHOTS and the manifest
@@ -67,15 +69,12 @@ THUMB_COLORS=128  # a preview needs fewer colours
 
 # ---- Capture manifest --------------------------------------------------
 # One line per theme: "THEME  SUFFIX  view view view ...".  A view named
-# in two themes is captured twice (e.g. the cockpit, to show theming).
-# The suffix is the "-<theme>" half of the committed name, so the output is
-# exactly <view>-<theme>.png and <view>-<theme>-thumb.png.
-# ef-deuteranopia-dark is the standard dark theme for every view; ef-cyprus
-# is kept for the single deliberate light capture, cockpit-light, which
-# pairs with cockpit-dark to demonstrate theming.
+# in two themes is captured twice.  The suffix is the "-<theme>" half of
+# the committed name, so the output is exactly <view>-<theme>.png and
+# <view>-<theme>-thumb.png.  The single row captures every view from stock
+# Emacs's built-in default theme; no theme package is loaded or required.
 read -r -d '' MANIFEST <<'EOF' || true
-ef-deuteranopia-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus             -light  cockpit
+default  -default  cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 EOF
 
 # Owning source file(s) per view, for `--scope changed` (plan-review P2).
@@ -145,6 +144,10 @@ Environment:
   GASCITY_SHOT_ENGINE    capture executable override (used by the tests;
                          skips the compositor and Emacs)
   GASCITY_SHOT_WATCHDOG  seconds before a capture Emacs kills itself (400)
+
+The capture theme is the manifest row's theme token: `default` (and
+`none') mean stock Emacs's built-in default faces, with no theme package
+installed or loaded.
 EOF
 }
 
@@ -269,8 +272,8 @@ selected_output_names() {
   done <<< "$MANIFEST"
 }
 
-# NAME is a raw/committed image base name (e.g. cockpit-dark or
-# cockpit-dark-thumb); true when the active scope writes it.
+# NAME is a raw/committed image base name (e.g. cockpit-default or
+# cockpit-default-thumb); true when the active scope writes it.
 is_selected_output() {
   local name="${1%-thumb}" out
   while IFS= read -r out; do

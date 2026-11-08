@@ -141,7 +141,7 @@ Each record is a JSON alist; the file also carries non-issue lines
       (let ((name (string-trim (match-string 1 text))))
         ;; The macro's own documentation comment spells `@shot{NAME,
         ;; CAPTION}'; only the real `<view>-<theme>' names count.
-        (when (string-match-p "^[a-z0-9-]+\\(-dark\\|-light\\)$" name)
+        (when (string-match-p "^[a-z0-9-]+-[a-z][a-z0-9-]*$" name)
           (push name names)))
       (setq text (substring text (match-end 0))))
     (nreverse names)))
@@ -315,10 +315,10 @@ table must be wired into the build, the manual and the drift check."
                  t "\\.texi\\'"))
         #'string<))
 
-(defconst gascity-manual-test--standard-dark-shots
-  '("cities-dark" "mail-inbox-dark"
-    "order-list-dark" "remote-cities-dark" "rig-list-dark")
-  "The dark shots added when the screenshot theme standardized (REQ-005).
+(defconst gascity-manual-test--standard-default-shots
+  '("cities-default" "mail-inbox-default"
+    "order-list-default" "remote-cities-default" "rig-list-default")
+  "The default-theme shots added when the screenshot theme standardized (REQ-005).
 Pinned so a rename that drops one from the manifest, the shot list or the
 manual fails the gate instead of silently shrinking the shipped set.")
 
@@ -700,17 +700,17 @@ directory, so a new `options.texi'-style table cannot bypass the checks."
                    (regexp-quote (concat "doc/generated/" base)) top)))))))
 
 (ert-deftest gascity-test-manual-standard-shots-present ()
-  "Every standardized dark shot is committed and embedded (REQ-005, REQ-006).
+  "Every standardized default-theme shot is committed and embedded (REQ-005, REQ-006).
 The manifest, the shot list and the manual must agree on the names the
 theme standardization added; a rename that drops one from any of the three
 fails here rather than quietly shipping a smaller screenshot set."
   (let ((outputs (gascity-manual-test--output-names))
         (shots (gascity-manual-test--shot-names))
         (embedded (gascity-manual-test--texi-shots)))
-    (dolist (name gascity-manual-test--standard-dark-shots)
+    (dolist (name gascity-manual-test--standard-default-shots)
       (ert-info ((format "%s" name))
         (should (member name outputs))
-        (should (member (string-remove-suffix "-dark" name) shots))
+        (should (member (string-remove-suffix "-default" name) shots))
         (should (member name embedded))))))
 
 (ert-deftest gascity-test-manual-html-presentation-held ()

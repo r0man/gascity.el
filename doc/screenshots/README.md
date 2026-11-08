@@ -24,8 +24,9 @@ screenshots/
    desktop. Windows are floated so Emacs's requested frame size is
    honored (sway tiles by default, which would force every frame to fill
    the output).
-3. Runs a **graphical** Emacs once per theme. It loads the package, the
-   engine, and the shot list; renders each view; waits for the view's
+3. Runs a **graphical** Emacs once, with stock Emacs's built-in default
+   theme (no theme package is loaded). It loads the package, the engine,
+   and the shot list; renders each view; waits for the view's
    asynchronous `gc` data to settle; normalizes any residual run-generated
    value to a role token; fits the frame tightly to the rendered content;
    and exports a raw PNG with `x-export-frames`.
@@ -44,8 +45,10 @@ the `@shot` macro in `../gascity.texi`).
 | `sway` (wlroots headless) | private capture display | 1.11 |
 | ImageMagick `convert` | compress + thumbnail | 6.9 |
 | `gc` CLI + `git` | fixture city + `--scope changed` | — |
-| `ef-themes` | the capture themes | 2.1.0 |
 | a `beads.el` checkout | gascity's non-ELPA dependency | — |
+
+The capture uses the built-in default theme: no theme package is
+installed or loaded, so an `emacs -Q` reader sees the same faces.
 
 `x-export-frames` needs a real frame, so this runs a **graphical** Emacs,
 never `--batch`.
@@ -165,16 +168,14 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-ef-deuteranopia-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus             -light  cockpit
+default  -default  cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 ```
 
-Each line is `THEME  SUFFIX  view view …`. `ef-deuteranopia-dark` is the
-standard dark theme for every view; `ef-cyprus` is kept for the single
-deliberate light capture, `cockpit-light`, which is captured alongside
-`cockpit-dark` to show theming. A view named under two themes is captured
-twice. Image geometry (widths, palette sizes) is set just below the
-manifest.
+Each line is `THEME  SUFFIX  view view …`. The single `default` row
+captures every view from stock Emacs's built-in default theme;
+`GASCITY_SHOT_THEME=default` maps to `screenshot-theme` nil, so no theme
+package is loaded. A view named under two themes is captured twice.
+Image geometry (widths, palette sizes) is set just below the manifest.
 
 ## Provenance (reused engine)
 
@@ -214,12 +215,10 @@ this section) whenever it changes:
   `images/<view>-<theme>.png` plus the `<view>-<theme>-thumb.png`
   preview, under the repo-local image directory (`doc/images/` here,
   `docs/manual/images/` in `beads.el`).
-- **Theme** `ef-deuteranopia-dark` is the standard dark theme in the
-  manifest and the `GASCITY_SHOT_THEME` fallback, with
-  `screenshot-theme-library` kept at `ef-themes`. `ef-cyprus` is used for
-  exactly one deliberate light capture, `cockpit-light`, paired with
-  `cockpit-dark`, to demonstrate theming; every other view is a `-dark`
-  capture of `ef-deuteranopia-dark`.
+- **Theme** the built-in default theme, suffix `-default`, no theme
+  package. `GASCITY_SHOT_THEME=default` (and `none`) maps to
+  `screenshot-theme` nil, so every image is a `-default` capture of
+  stock Emacs's default faces.
 
 Regenerate and verify (from the repo root):
 
@@ -243,6 +242,8 @@ sibling pipeline (see [Provenance](#provenance-reused-engine)) and must
 stay byte-identical. Upstream
 `beads.el/docs/manual/screenshots/screenshot.el`, digest
 `sha256:dd8b3313a1f440d04bd48986aa0c02e6bcbc4fa73fbe26d8e31bd3f3775459b1`.
+Its generic `screenshot-theme-library` hook is intentionally unused here:
+the capture loads no theme package.
 
 Reconcile any divergence here, in one place.
 
@@ -283,10 +284,10 @@ transient popups).
   large baseline before each shot so a paginated list opens at full size
   before being fitted down (otherwise it inherits the previous shot's
   tiny frame and paginates into many short pages).
-- **ef-themes load path.** The theme `*-theme.el` files may live outside
-  the default `custom-theme-load-path` (e.g. a Guix profile);
-  `screenshot-theme-library` adds the library's directory so `load-theme`
-  finds them.
+- **No theme package.** The manifest's `default` token maps to
+  `screenshot-theme` nil, so `screenshot-init` leaves the stock faces
+  alone. The engine's `screenshot-theme-library` hook remains generic
+  plumbing and is deliberately unset.
 - **Empty views are not faked.** A view whose data genuinely cannot be
   produced from the fixture is excluded with a reason in
   `fixtures/README.md` rather than shown empty.

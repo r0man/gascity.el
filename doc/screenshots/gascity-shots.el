@@ -14,9 +14,9 @@
 ;;
 ;;   GASCITY_REPO        repo root (default: derived from this file)
 ;;   BEADS_REPO          beads.el checkout (default: ~/workspace/beads.el)
-;;   GASCITY_SHOT_THEME  theme symbol, e.g. ef-deuteranopia-dark
+;;   GASCITY_SHOT_THEME  theme token, e.g. default (no theme loaded)
 ;;   GASCITY_SHOT_OUTDIR directory for the raw PNGs
-;;   GASCITY_SHOT_SUFFIX appended to every shot name, e.g. -dark
+;;   GASCITY_SHOT_SUFFIX appended to every shot name, e.g. -default
 ;;   GASCITY_SHOT_VIEWS  space-separated view names; empty = all
 ;;   GASCITY_SHOT_DIR    directory `gc' resolves the city from
 ;;   GASCITY_SHOT_RIG    rig to feature in the rig dashboard
@@ -75,11 +75,14 @@
 
 (setq screenshot-output-dir
       (gascity-shots-getenv "GASCITY_SHOT_OUTDIR" temporary-file-directory)
-      screenshot-theme
-      (intern (gascity-shots-getenv "GASCITY_SHOT_THEME" "ef-deuteranopia-dark"))
-      screenshot-theme-library "ef-themes"
       screenshot-async-process-regexp "gascity-gc"
       screenshot-log-function #'gascity-shots--progress)
+;; The capture uses stock Emacs's built-in default faces: the `default' and
+;; `none' tokens mean no theme is loaded, so an `emacs -Q' reader sees the
+;; same colours.  Any other token is a real theme symbol.
+(let ((theme (gascity-shots-getenv "GASCITY_SHOT_THEME" "default")))
+  (setq screenshot-theme
+        (unless (member theme '("default" "none")) (intern theme))))
 
 ;;; Deterministic role ids and terminal normalization (defense in depth)
 ;;
@@ -382,8 +385,8 @@ the cold menu.  Returns nil so the whole frame is captured
 (defun gascity-shots--sling-plain-frame ()
   "The sling menu pre-seeded with fixture work: the plain shape."
   (gascity-shots--sling-frame
-   (list :work "demo-task-manual"
-         :work-title "Write the task-organized manual")))
+   (list :work "demo-3"
+         :work-title "Fix crash when opening an empty store")))
 
 (defun gascity-shots--sling-cold-frame ()
   "The sling menu with nothing pre-seeded."
@@ -396,8 +399,8 @@ the cold menu.  Returns nil so the whole frame is captured
 (defun gascity-shots--sling-on-frame ()
   "The targeted shape: a formula picked with fixture work in scope."
   (gascity-shots--sling-frame
-   (list :work "demo-task-manual"
-         :work-title "Write the task-organized manual"
+   (list :work "demo-3"
+         :work-title "Fix crash when opening an empty store"
          :formula "mol-do-work")))
 
 (defun gascity-shots--sling-preview-buffer ()
@@ -405,8 +408,8 @@ the cold menu.  Returns nil so the whole frame is captured
   (switch-to-buffer (gascity-shots--await (gascity-shots--cockpit-buffer)))
   (gascity-sling--full-preview
    (list :city default-directory
-         :work "demo-task-manual"
-         :work-title "Write the task-organized manual"
+         :work "demo-3"
+         :work-title "Fix crash when opening an empty store"
          :formula "mol-do-work"
          :target "demo-rig/gc.implementation-worker")
    nil)
