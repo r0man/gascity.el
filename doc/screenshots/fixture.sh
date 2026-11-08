@@ -14,6 +14,7 @@
 #                          fixtures/gascity-fixture.sh).
 #   fixture.sh --teardown  Remove the city and the project.
 #   fixture.sh --verify    create + seed + assert + teardown, in one shot.
+#   fixture.sh --self-test Offline teardown-guard/idempotence check; no city.
 #   fixture.sh print-isolation-vars
 #                          Print the hardcoded isolation variable names.
 #
@@ -108,6 +109,7 @@ Commands:
   --teardown, teardown   Remove the city and the project; report what was
                          removed.
   --verify, verify       create + seed + assert the fixture; teardown.
+  --self-test, self-test Offline teardown-guard/idempotence check; no city.
   print-isolation-vars   Print the hardcoded isolation variable names.
   help, --help, -h       Show this help.
 
@@ -318,6 +320,60 @@ teardown_fixture() {
     printf 'fixture.sh: already gone: %s\n' "$FIXTURE_PROJECT" >&2
   fi
   rm -f -- "$STATE_FILE"
+}
+
+# ---------------------------------------------------------------------------
+# self-test
+# ---------------------------------------------------------------------------
+
+# Offline checks for the teardown guard, run by `make check'.  The shared
+# `${TMPDIR}/demo-project' path is also beads.el's fixture path, so a project
+# without our marker must never be deleted; a repeated teardown must also be
+# harmless.  Every subprocess runs with TMPDIR pointed at a scratch directory,
+# so the real fixture and the real demo-project are untouched.
+self_test_fixture() {
+  require_tool mktemp
+  local scratch city project err script
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/gascity-fixture-self-test.XXXXXX") \
+    || die "self-test: mktemp failed"
+  trap 'rm -rf -- "$scratch"' EXIT
+  script="$SCRIPT_DIR/fixture.sh"
+  city="$scratch/$FIXTURE_DIR_PREFIX"
+  project="$scratch/$FIXTURE_PROJECT_NAME"
+  err="$scratch/teardown.err"
+
+  # A marked city and project are removed together.
+  mkdir -p "$city" "$project"
+  : >"$city/$FIXTURE_MARKER"
+  : >"$project/$FIXTURE_PROJECT_MARKER"
+  TMPDIR="$scratch" bash "$script" --teardown --city "$city" >/dev/null 2>&1 \
+    || die "self-test: teardown of a marked fixture failed"
+  [ ! -e "$city" ] && [ ! -e "$project" ] \
+    || die "self-test: a marked fixture was not removed"
+
+  # A project without our marker is refused; neither path is removed.
+  mkdir -p "$city" "$project"
+  : >"$city/$FIXTURE_MARKER"
+  if TMPDIR="$scratch" bash "$script" --teardown --city "$city" \
+      >/dev/null 2>"$err"; then
+    die "self-test: teardown accepted a non-marker project"
+  fi
+  if ! grep -q "missing $FIXTURE_PROJECT_MARKER" "$err"; then
+    die "self-test: teardown refused for the wrong reason: $(cat "$err")"
+  fi
+  [ -d "$city" ] && [ -d "$project" ] \
+    || die "self-test: teardown removed a non-marker project or the city"
+
+  # Restoring the marker makes teardown succeed, and a second teardown is a
+  # no-op (idempotent).
+  : >"$project/$FIXTURE_PROJECT_MARKER"
+  TMPDIR="$scratch" bash "$script" --teardown --city "$city" >/dev/null 2>&1 \
+    || die "self-test: teardown after restoring the marker failed"
+  TMPDIR="$scratch" bash "$script" --teardown --city "$city" >/dev/null 2>&1 \
+    || die "self-test: a second teardown failed (not idempotent)"
+  rm -rf -- "$scratch"
+  trap - EXIT
+  printf 'fixture.sh: self-test: PASS\n' >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -706,6 +762,7 @@ main() {
     --create | create) create_fixture ;;
     --seed | seed) seed_fixture ;;
     --teardown | teardown) teardown_fixture ;;
+    --self-test | self-test) self_test_fixture ;;
     --verify | verify) verify_fixture ;;
     print-isolation-vars) print_isolation_vars ;;
     help | --help | -h) usage ;;

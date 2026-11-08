@@ -120,6 +120,14 @@ Each record is a JSON alist; the file also carries non-issue lines
           (push (concat view suffix) names))))
     (nreverse names)))
 
+(defun gascity-manual-test--image-files ()
+  "Return the file names of every PNG committed under doc/images/."
+  (sort (mapcar #'file-name-nondirectory
+                (directory-files
+                 (expand-file-name "doc/images" gascity-manual-test--root)
+                 t "\\.png\\'"))
+        #'string<))
+
 (defun gascity-manual-test--shot-names ()
   "Return the view names defined in gascity-shots.el's shot list."
   (let* ((text (gascity-manual-test--read "doc/screenshots/gascity-shots.el"))
@@ -393,6 +401,14 @@ there instead of silently diverging from the other manual."
                           (list (alist-get 'issue_type issue)
                                 (alist-get 'status issue)))))))))
 
+(ert-deftest gascity-test-manual-fixture-hash-in-manual ()
+  "The manual records the vendored fixture's exact SHA-256 (REQ-001, REQ-011).
+The fixture README carries the cross-repository contract; the manual must
+state the same literal so a reader can verify the dataset the images show."
+  (let ((digest (gascity-manual-test--fixture-readme-digest))
+        (texi (gascity-manual-test--read "doc/gascity.texi")))
+    (should (string-match-p (regexp-quote digest) texi))))
+
 (ert-deftest gascity-test-manual-scope-parser ()
   "The capture scope resolver maps all, changed and subset scopes (REQ-002)."
   (let* ((all (gascity-manual-test--views))
@@ -448,6 +464,39 @@ parent-parent), so `make screenshots' can run it by absolute path."
     (dolist (shot shots)
       (should (member shot views)))))
 
+(ert-deftest gascity-test-manual-default-theme-pinned ()
+  "The capture pipeline is the built-in default theme only (REQ-006, REQ-007).
+One manifest row (token `default', suffix `-default'), every output and
+embedded shot on that suffix, and no third-party theme name in the tracked
+pipeline or the manual.  The two scripts must not assign or read the
+engine's `screenshot-theme-library' hook; the engine's `defvar' and the
+README's documentation of it as intentionally unused stay (plan D8)."
+  (let ((rows (gascity-manual-test--manifest)))
+    (should (= 1 (length rows)))
+    (should (equal "default" (nth 0 (car rows))))
+    (should (equal "-default" (nth 1 (car rows))))
+    (dolist (name (gascity-manual-test--output-names))
+      (should (string-suffix-p "-default" name)))
+    (dolist (name (gascity-manual-test--texi-shots))
+      (should (string-suffix-p "-default" name))))
+  (dolist (file '("doc/screenshots/capture.sh"
+                  "doc/screenshots/gascity-shots.el"
+                  "doc/screenshots/README.md"
+                  "doc/screenshots/fixtures/README.md"
+                  "doc/gascity.texi"))
+    (let ((text (gascity-manual-test--read file)))
+      (ert-info ((format "%s third-party theme" file))
+        (dolist (stale '("ef-themes" "ef-deuteranopia" "ef-cyprus" "modus"))
+          (should-not (string-match-p (regexp-quote stale) text)))
+        (should-not (string-match-p "\\bef-" text)))))
+  (dolist (file '("doc/screenshots/capture.sh"
+                  "doc/screenshots/gascity-shots.el"))
+    (should-not (string-match-p "screenshot-theme-library"
+                                (gascity-manual-test--read file))))
+  (should (string-match-p "screenshot-theme-library"
+                          (gascity-manual-test--read
+                           "doc/screenshots/README.md"))))
+
 (ert-deftest gascity-test-manual-texi-shots-resolve ()
   "Every manifest image is embedded by `@shot' and exists on disk (REQ-001)."
   (let ((outputs (gascity-manual-test--output-names))
@@ -462,6 +511,26 @@ parent-parent), so `make screenshots' can run it by absolute path."
                                  gascity-manual-test--root))))
     (dolist (name shots)
       (should (member name outputs)))))
+
+(ert-deftest gascity-test-manual-image-inventory ()
+  "doc/images holds exactly the manifest's outputs and nothing stale (REQ-007).
+Every manifest view contributes `<view>-default.png' and
+`<view>-default-thumb.png' --- 25 views, 50 files --- and no `-dark',
+`-light' or other orphan image survives a theme or view rename."
+  (let ((outputs (gascity-manual-test--output-names))
+        (files (gascity-manual-test--image-files))
+        expected)
+    (should (= 25 (length outputs)))
+    (dolist (name outputs)
+      (push (concat name ".png") expected)
+      (push (concat name "-thumb.png") expected))
+    (setq expected (sort expected #'string<))
+    (ert-info ((format "expected %d images" (length expected)))
+      (should (equal expected files)))
+    (dolist (file files)
+      (dolist (stale '("-dark" "-light" "cockpit-light"))
+        (ert-info ((format "stale image %s" file))
+          (should-not (string-match-p (regexp-quote stale) file)))))))
 
 (ert-deftest gascity-test-manual-area-map-resolves ()
   "Every Area to Screenshot Map entry names a manifest image (REQ-001)."
@@ -881,8 +950,6 @@ passing silently."
                          (plist-get res :stdout))))))
         (delete-directory tmp t)))))
 
-(provide 'gascity-manual-test)
-;;; gascity-manual-test.el ends here
 (ert-deftest gascity-test-manual-fixture-shared-project ()
   "The fixture lifecycle owns one shared project and one deterministic city.
 P2 (REQ-002, REQ-003): `fixture.sh` creates `${TMPDIR}/demo-project`,
@@ -920,4 +987,27 @@ static half; `fixture.sh --verify` is the live half."
     (dolist (pin '("demo-project" "gascity-fixture-project"
                    "6504c508bd25f3a2efc8a0e99bc940767b3306ae41352077fa446d2d6c319ca8"
                    "demo-session-dev" "demo-session-review"))
-      (should (string-match-p (regexp-quote pin) readme)))))
+      (should (string-match-p (regexp-quote pin) readme)))
+    ;; `--teardown' refuses a non-marker project (the shared path is also
+    ;; beads.el's fixture path); `--verify' exercises that refusal live and
+    ;; ends by removing the fixture.
+    (should (string-match-p "teardown accepted a non-marker project" fixture))
+    (should (string-match-p
+             (regexp-quote "missing $FIXTURE_PROJECT_MARKER") fixture))
+    (should (string-match-p "fixture.sh: PASS" fixture))
+    ;; The offline shell check covers that guard without a live city.
+    (should (string-match-p "--self-test" fixture))))
+
+(ert-deftest gascity-test-manual-fixture-self-test ()
+  "fixture.sh --self-test proves the teardown guard without a city (REQ-004).
+The shared `demo-project' path is also beads.el's fixture path, so a
+project without our marker must never be deleted; the check also proves
+repeated teardown is idempotent.  Running the tracked shell check here
+keeps the guarantee exercised by `make check' without a live gc."
+  (let ((res (gascity-manual-test--call "bash" "doc/screenshots/fixture.sh"
+                                        "--self-test")))
+    (should (equal 0 (plist-get res :status)))
+    (should (string-match-p "self-test: PASS" (plist-get res :stderr)))))
+
+(provide 'gascity-manual-test)
+;;; gascity-manual-test.el ends here

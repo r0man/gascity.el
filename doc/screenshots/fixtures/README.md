@@ -80,6 +80,7 @@ doc/screenshots/fixture.sh --create     # prints FIXTURE_CITY=, FIXTURE_PROJECT=
 doc/screenshots/fixture.sh --seed       # seeds demo beads, sessions, mail, run, orders, events
 doc/screenshots/fixture.sh --teardown   # removes the city and the project, reports both
 doc/screenshots/fixture.sh --verify     # create + seed + assert + teardown
+doc/screenshots/fixture.sh --self-test  # offline teardown-guard check, no city
 ```
 
 `--create` prints `FIXTURE_CITY`, `FIXTURE_PROJECT`, `FIXTURE_RIG`,
@@ -90,7 +91,10 @@ the city tree.  The command records the city path in
 argument.  Pass `--city <dir>` (or set `FIXTURE_STATE`) to address a fixture
 explicitly; set `FIXTURE_STATE` and pass `--city` to run two fixtures side by
 side.  `--teardown` always derives the project path from `TMPDIR`, so a
-`capture.sh --teardown --city DIR` removes it too.
+`capture.sh --teardown --city DIR` removes it too.  `--self-test` runs the
+teardown marker guard and repeated-teardown idempotence in a scratch
+`TMPDIR`, without creating a city, so `make check` can assert the guard
+without `gc`.
 
 The project is one pinned README commit (`2025-01-01T00:00:00Z`, one file).
 `gc rig add` runs `bd init`, which initializes the rig's `.beads` store in the
