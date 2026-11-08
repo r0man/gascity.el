@@ -20,6 +20,7 @@
 
 (require 'ert)
 (require 'cl-lib)
+(require 'json)
 (require 'subr-x)
 
 ;;; Locations and process helpers
@@ -51,6 +52,43 @@ Return a plist with :status, the captured :stdout and the captured
                             (insert-file-contents errfile)
                             (buffer-string)))))
       (delete-file errfile))))
+
+;;; The vendored demo dataset
+
+(defconst gascity-manual-test--fixture-jsonl
+  "doc/screenshots/fixtures/beads-fixture.jsonl"
+  "Vendored canonical demo issue dataset, a byte-for-byte beads.el copy.")
+
+(defun gascity-manual-test--sha256 (path)
+  "Return the lowercase SHA-256 hex digest of repo-relative PATH.
+The file is read literally into a unibyte buffer, so the digest is over
+the bytes on disk rather than a re-encoded multibyte representation."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally
+     (expand-file-name path gascity-manual-test--root))
+    (secure-hash 'sha256 (current-buffer))))
+
+(defun gascity-manual-test--fixture-readme-digest ()
+  "Return the `sha256' digest literal recorded in fixtures/README.md.
+CI has no sibling beads.el checkout, so that literal --- not the source
+file --- is the cross-repo contract the test compares against."
+  (let ((text (gascity-manual-test--read "doc/screenshots/fixtures/README.md")))
+    (unless (string-match "sha256[^0-9a-f\n]*\\([0-9a-f]\\{64\\}\\)" text)
+      (ert-fail "fixtures/README.md records no sha256 digest literal"))
+    (match-string 1 text)))
+
+(defun gascity-manual-test--fixture-issues ()
+  "Return the issue records in the vendored JSONL fixture.
+Each record is a JSON alist; the file also carries non-issue lines
+(comments, dependencies) which are filtered out by `_type'."
+  (let ((text (gascity-manual-test--read gascity-manual-test--fixture-jsonl)))
+    (delq nil
+          (mapcar (lambda (line)
+                    (let ((record (json-read-from-string line)))
+                      (when (equal "issue" (alist-get '_type record))
+                        record)))
+                  (split-string text "\n" t)))))
 
 ;;; Parsers for the tracked sources
 
@@ -321,6 +359,39 @@ from the node name."
                     "doc/screenshots/fixtures/gascity-fixture.sh"))
     (should (equal 0 (plist-get (gascity-manual-test--call "bash" "-n" script)
                                 :status)))))
+
+(ert-deftest gascity-test-manual-fixture-digest ()
+  "The vendored demo dataset matches its recorded digest (REQ-001).
+beads.el's canonical demo issues are vendored byte for byte so both
+manuals describe the same beads.  The tracked file is hashed against
+the digest literal in `fixtures/README.md'; a drift in either fails
+there instead of silently diverging from the other manual."
+  (let ((file (expand-file-name gascity-manual-test--fixture-jsonl
+                                gascity-manual-test--root))
+        (digest (gascity-manual-test--fixture-readme-digest)))
+    (should (file-exists-p file))
+    (should (equal digest
+                   (gascity-manual-test--sha256
+                    gascity-manual-test--fixture-jsonl))))
+  ;; The dataset covers the roles both manuals describe: twelve issues
+  ;; `demo-1' ... `demo-12', with an epic, a blocked issue, an in-progress
+  ;; issue and a closed one.
+  (let ((issues (gascity-manual-test--fixture-issues)))
+    (should (= 12 (length issues)))
+    (should (equal (mapcar (lambda (issue) (alist-get 'id issue)) issues)
+                   (mapcar (lambda (n) (format "demo-%d" n))
+                           (number-sequence 1 12))))
+    (dolist (spec '(("demo-10" . "epic")
+                    ("demo-3" . "in_progress")
+                    ("demo-4" . "blocked")
+                    ("demo-6" . "closed")))
+      (let ((issue (cl-find (car spec) issues
+                            :key (lambda (i) (alist-get 'id i)) :test #'equal)))
+        (ert-info ((format "%s %s" (car spec) (cdr spec)))
+          (should issue)
+          (should (member (cdr spec)
+                          (list (alist-get 'issue_type issue)
+                                (alist-get 'status issue)))))))))
 
 (ert-deftest gascity-test-manual-scope-parser ()
   "The capture scope resolver maps all, changed and subset scopes (REQ-002)."

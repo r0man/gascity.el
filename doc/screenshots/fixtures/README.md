@@ -1,8 +1,8 @@
 # Deterministic screenshot fixture
 
 `fixture.sh` builds a throwaway Gas City workspace and rig at a fixed path
-under `TMPDIR` (`${TMPDIR:-/tmp}/gascity-fixture`), seeds it with
-role-addressed data (`gascity-fixture.sh`), and removes it again. The path is
+under `TMPDIR` (`${TMPDIR:-/tmp}/gascity-fixture`), seeds it with demo data
+(`gascity-fixture.sh`), and removes it again. The path is
 fixed, not `mktemp -d`, because gc derives the city name and the
 header/mode-line text from the directory basename; a random suffix would show
 up in a committed image and break byte-reproducibility. `--create` removes a
@@ -14,10 +14,34 @@ as a whole.
 doc/screenshots/
 ├── fixture.sh                     lifecycle: --create / --seed / --teardown / --verify
 ├── fixtures/
+│   ├── beads-fixture.jsonl        canonical demo issues, beads.el copy (unmodified)
 │   ├── city.toml                  minimal city config (no live provider)
-│   ├── gascity-fixture.sh         deterministic role-addressed seed data
+│   ├── gascity-fixture.sh         deterministic seed data: demo run graph, orders, events, mail
 │   └── README.md                  this file
 ```
+
+## The shared demo dataset
+
+`beads-fixture.jsonl` is the canonical demo issue set, vendored byte for byte
+from `beads.el/docs/manual/screenshots/fixtures/beads-fixture.jsonl`; beads.el
+is unmodified and the copy is never hand-edited.
+
+| Field | Value |
+| --- | --- |
+| file | `doc/screenshots/fixtures/beads-fixture.jsonl` |
+| source | `beads.el/docs/manual/screenshots/fixtures/beads-fixture.jsonl` (unmodified) |
+| sha256 | `6504c508bd25f3a2efc8a0e99bc940767b3306ae41352077fa446d2d6c319ca8` |
+| ids | `demo-1` … `demo-12` (`demo-10` epic, `demo-11`/`demo-12` its children, `demo-4` blocked, `demo-3` in progress, `demo-6` closed) |
+
+**This file is the only source of demo beads.**  Demo issue text is never
+authored in `gascity-fixture.sh`: the seed script consumes the JSONL with
+`bd import` and only adds the fixture state the canonical file does not carry
+(the `demo-run` workflow graph, orders, events and mail).
+
+`gascity-test-manual-fixture-digest` hashes the tracked file against the
+`sha256` above, so a drift in either the copy or this README fails
+`make check`.  CI has no sibling beads.el checkout, so the digest literal ---
+not a live comparison --- is the cross-repo contract.
 
 ## Lifecycle
 
@@ -88,12 +112,11 @@ Never seeded, never touched: the repository `.beads/`, `~/emacs-city`,
 | `session-list` | no live controller: the sessions table renders its honest empty state | `gc init --no-start` |
 | `agents` | the config-derived agents, all `stopped` (no controller) | the city's agent config |
 
-Beads are role-addressed: every id is `demo-<role>` (`demo-epic-manual`,
-`demo-task-fixture`, `demo-bug-render`, `demo-mail-thread`, `demo-run`, and
-`demo-prep`/`demo-reqs`/... for the run's steps), with labels, statuses,
-`blocks` and `parent-child` dependencies, comments, and (for the run graph)
-`gc.*` metadata. No literal run-generated id is ever written, so `--verify`
-can assert the ids are roles.
+Demo issues are exactly the vendored `demo-1` … `demo-12` set described above,
+with labels, statuses, `blocks` and `parent-child` dependencies, and comments.
+No literal run-generated id is ever written.  The seeded run graph keeps its
+role ids (`demo-run`, `demo-prep`/`demo-reqs`/... for the run's steps) and its
+`gc.*` metadata, so `--verify` can still assert the ids are roles.
 
 ## Exclusions and risks (no silent fake)
 
