@@ -756,11 +756,35 @@ the city:
 @example
 doc/screenshots/fixture.sh --create
 doc/screenshots/fixture.sh --seed
+export GC_HOME="$@{TMPDIR:-/tmp@}/gascity-fixture/gc-home"
 cd "$@{TMPDIR:-/tmp@}/gascity-fixture"
+gc import install   # first run only: the fixture GC_HOME is a cold cache
 @end example
 
 @noindent
-and @kbd{M-x gascity-dashboard}.  @code{fixture.sh --teardown} removes
+@code{--create} prints the same path as @code{FIXTURE_GC_HOME}.  Export
+it (or start Emacs with it in the environment): without it @command{gc}
+falls back to your real @env{GC_HOME}, and the Cities view lists your
+own cities instead of the fixture alone.  @code{gc import install} is
+the only step that may need the network; it caches the city's pack
+imports so the first cockpit paint resolves the agents instead of
+reporting them @samp{unknown}.  On a cold or slow first paint the
+cockpit can also show a @samp{store health: runtime status probe
+incomplete} row while the status probe warms up; @kbd{g} refreshes it,
+and the states in the tour below are the settled ones.
+
+The two seeded sessions attach to tmux sessions on the city's tmux
+socket, which @code{gascity-tmux-socket} auto-detects as the city name
+(@pxref{Attach to a Terminal}).  Start them on that socket so the
+tour's attach step has a terminal to show:
+
+@example
+tmux -L gascity-fixture new-session -d -s demo-agent
+tmux -L gascity-fixture new-session -d -s demo-reviewer
+@end example
+
+@noindent
+then @kbd{M-x gascity-dashboard}.  @code{fixture.sh --teardown} removes
 the city and the project; both refuse to delete a path that does not
 carry the fixture's marker, so a real directory named @file{demo-project}
 is never adopted or removed.
@@ -1018,7 +1042,9 @@ Its heading names the city and its path.
 @kindex /
 @kbd{/} opens the view's filter menu.  Every change applies at once
 (there is no ``apply'' step), @kbd{x} resets every filter, and one
-letter means one thing in every menu:
+letter means one thing in every menu.  The menu stays open while you
+change filters; @kbd{C-g} closes it (the filter menu has no @kbd{q}
+binding):
 
 @multitable @columnfractions .12 .48 .40
 @headitem Key @tab Meaning @tab Views
@@ -1434,8 +1460,22 @@ Open the bead at point in beads.el.
 @item g
 @fnindex gascity-polecat-detail-refresh
 Reload, preserving point.
-@item M @r{/} s @r{/} K @r{/} w @r{/} D @r{/} R @r{/} U @r{/} d @r{/} t
-The agent keys; they act on the buffer's agent wherever point is.
+@item a n
+@itemx a s
+@itemx a k
+@itemx a w
+@itemx a D
+@itemx a r
+@itemx a u
+@itemx a d
+@itemx a t
+@itemx a v
+@itemx a i
+The agent actions: nudge, suspend, kill, wake, drain, reset, undrain,
+Dired, attach the terminal, peek and (re)open the detail.  The detail
+can hold bead rows too, so the actions live under the @kbd{a} prefix
+here; the agent-only views keep the direct keys (@pxref{Inspect Agents
+and Sessions}).  The header's action bar prints the same hints.
 @item c
 @itemx S
 Bead actions and sling.
@@ -1463,9 +1503,13 @@ worktree.  @xref{Sessions}.
 @section Attach to a Terminal
 
 @kbd{t} on an agent --- in the cockpit, the Agents view, the session
-list, the rig dashboard or the agent detail --- opens a terminal buffer
-holding a live @command{tmux} client attached to the agent's session.
-@xref{The Agents view}, @ref{Agent Detail}.
+list or the rig dashboard --- opens a terminal buffer holding a live
+@command{tmux} client attached to the agent's session.  In the agent
+detail the key is @kbd{a t}, because that view's @kbd{t} can be a bead
+verb (@pxref{Agent Detail}).  The attach targets the city's tmux socket
+(@code{gascity-tmux-socket}, auto-detected as the city name); the demo
+starts its sessions with @code{tmux -L gascity-fixture} (@pxref{The
+demo city}).  @xref{The Agents view}, @ref{Agent Detail}.
 
 A tmux client draws on the alternate screen, so scrolling goes through
 tmux: @kbd{C-b [} enters copy-mode and @key{PageUp}/@key{PageDown}
@@ -3889,12 +3933,14 @@ images.
 type @kbd{M-x gascity-dashboard}.  The cockpit opens in
 @code{gascity-dashboard-mode} (@pxref{The Cockpit}).  The demo has no
 controller, so the header reads @samp{■ controller down} and the
-summary line reads @samp{agents 0/4 ▲   sessions 0   runs 1 ●   ready
-9}.  @strong{Needs you} lists four attention rows --- @code{demo-3} in
-progress with its assignee gone, the @code{demo-run} in progress, the
-run idle, and the run's failed @samp{build-basic.review} --- and
-@strong{Moving} shows the one run with its ladder
-@samp{◆◆◆◆◆◆◆◆✕··}.  The image is @file{cockpit-default.png}.
+summary line reads @samp{agents 0/4 ▲   sessions 0   runs 1 ⬣   ready
+9   mail 0}.  @strong{Needs you} lists four attention rows ---
+@code{demo-3} in progress with its assignee gone, the @code{demo-run}
+in progress, the run idle, and the run's failed
+@samp{build-basic.review} --- and @strong{Moving} shows the one run
+with its ladder @samp{◆◆◆◆◆◆◆◆✕··} plus the run's in-progress bead
+(@code{demo-3}) with no worker under the header @samp{1 run · 0
+workers}.  The image is @file{cockpit-default.png}.
 @item
 @strong{Read the cockpit.}  @key{TAB} and @kbd{S-@key{TAB}} move
 between things, @key{SPC} folds a section or a run's ladder,
@@ -3903,9 +3949,10 @@ agent, @kbd{+}/@kbd{-} show more or fewer rows, @kbd{/} filters,
 @kbd{g} reloads, @kbd{q} buries.  @kbd{?} lists every verb under its
 view key (@pxref{The ? dispatch}); the dispatch image is
 @file{dispatch-default.png}.  @kbd{W} toggles live refresh: with no
-supervisor the header shows @samp{○ live: supervisor down} and the
-Activity section shows one retry line naming the failed @code{gc
-events} call rather than an invented log (@pxref{Live Refresh}).
+supervisor the header shows @samp{○ live: supervisor down} (turning it
+off reads @samp{○ live off}) and the Activity section shows one retry
+line naming the failed @code{gc events} call rather than an invented
+log (@pxref{Live Refresh}).
 @item
 @strong{Agents.}  @kbd{j a} opens the Agents table
 (@pxref{The Agents view}).  With no controller every agent is
@@ -3919,7 +3966,8 @@ row, @key{RET} (or @kbd{t}) attaches, @kbd{i} opens the detail,
 @kbd{v} peeks, @kbd{d} opens Dired, and @kbd{M}/@kbd{s}/@kbd{K}/
 @kbd{w}/@kbd{D}/@kbd{R}/@kbd{U} nudge, suspend, kill, wake, drain,
 reset and undrain (@pxref{Actions}).  With no live session a nudge
-reports @command{gc}'s refusal in the echo area; nothing blocks.
+reports the refusal in the echo area (@samp{bd.dog-1 has no session;
+pool slots start when work arrives}); nothing blocks.
 @item
 @strong{Sessions and attach.}  @kbd{j s} opens the session list
 (@pxref{Sessions}).  The demo's two seeded rows are
@@ -3928,11 +3976,12 @@ reports @command{gc}'s refusal in the echo area; nothing blocks.
 @samp{demo-rig/gc.reviewer … asleep  claude /tmp/demo-project} for
 @code{demo-4}.  State @samp{asleep}, provider @samp{claude} and the
 blank last-activity reading are the honest state with no controller,
-not a failed read.  @key{RET} (or @kbd{t}) attaches
-the agent's tmux session; the screenshot fixture starts the fixed
-@samp{demo-agent} session for the attach, and @kbd{t} in the cockpit,
-the Agents view, the rig dashboard or the agent detail does the same
-(@pxref{Attach to a Terminal}, @file{terminal-attach-default.png}).
+not a failed read.  @key{RET} (or @kbd{t}) attaches the agent's tmux
+session; start the demo's sessions as @ref{The demo city} shows, or the
+attach reports @samp{Can't find tmux session: demo-agent}.  @kbd{t} in
+the cockpit, the Agents view and the rig dashboard attaches too; in
+the agent detail the key is @kbd{a t} (@pxref{Attach to a Terminal},
+@file{terminal-attach-default.png}).
 @kbd{i} opens the agent detail, whose @strong{Work} join finds
 @code{demo-3} and @code{demo-4} through the seeded @code{work_dir};
 run, transcript and mail are empty instead of fabricated
@@ -3959,8 +4008,10 @@ the root bead and @kbd{H} pages the history.
 @strong{Beads and work.}  The cockpit's @strong{Work} section lists
 the ready beads and the in-progress @code{demo-3}; @key{RET} on a bead
 opens it in beads.el scoped to @code{demo-rig} (the @code{demo} id
-prefix maps to the rig).  @kbd{j b} does the same from any view, and
-@kbd{c} opens the bead actions (@pxref{Route Work}).  The demo's
+prefix maps to the rig).  @kbd{j b} opens the beads dashboard instead,
+scoped to the rig at point or one you choose (it prompts @samp{Beads
+for:}), and @kbd{c} opens the bead actions (@pxref{Route Work},
+@pxref{The jump prefix}).  The demo's
 statuses are the dataset's: @code{demo-3} in progress, @code{demo-4}
 blocked by it, @code{demo-6} closed, @code{demo-10} an epic with
 @code{demo-11} and @code{demo-12} as children (@pxref{The demo
@@ -3974,7 +4025,8 @@ the supervisor API …} above an empty table
 local log but no supervisor serves them.  @kbd{j h} opens Health
 (@file{health-default.png}), which reads @samp{■ attention},
 @samp{■ controller down · ■ unusable · not suspended},
-@samp{gc 1.5.1 · store BdStore}, an empty @samp{Store}, the one
+@samp{gc 1.5.1 · store BdStore}, a @samp{Store} header reading
+@samp{none}, the one
 @samp{demo-rig … beads initialized} rig store, and
 @samp{Doctor not run} until @kbd{!} runs it (@pxref{Health Costs and
 the Lighter}).
@@ -3999,12 +4051,15 @@ the inbox reads @samp{0 unread / 0} with an empty table and
 @kbd{c} opens the mail actions menu.
 @item
 @strong{Sling and the formula preview, read-only.}  From the cockpit,
-@kbd{S} raises the sling (@pxref{Sling and Dispatch}).  The demo's
-plain shape is pre-seeded with @code{demo-3} and, because the offline
+@kbd{S} raises the sling (@pxref{Sling and Dispatch}).  The plain
+shape pre-seeds the bead at point (@code{demo-3} in the screenshot;
+@pxref{Sling key summary, point pre-seeds}) and, because the offline
 roster derives no default target, its footer reads @samp{⚠ No target —
 T to choose, or s will prompt} (@file{sling-plain-default.png});
-@kbd{q}, then @kbd{S} again, shows the cold menu
-(@file{sling-cold-default.png}).  @kbd{f} picks the formula
+@kbd{x} resets the remembered work, formula and target, and the menu
+then reads @samp{Sling (no work — A or point at a bead) to (no target —
+T or default)} --- the cold menu (@file{sling-cold-default.png}).
+@kbd{f} picks the formula
 @samp{mol-do-work}: with no work it is the targetless @option{--formula}
 shape (@file{sling-formula-default.png}), and with @code{demo-3} it is
 the targeted @option{--on} shape, whose sentence reads @samp{Run
@@ -4022,8 +4077,9 @@ Routing plan whose dry run honestly fails because that worker is not in
 the fixture's @file{city.toml} (@samp{agent
 "demo-rig/gc.implementation-worker" not found …}).  Its own @kbd{s} (or
 @kbd{C-c C-c}) would launch and @kbd{q} aborts; the demo has no
-controller, so stop at the preview: @kbd{q} closes it and @kbd{q} quits
-the menu.
+controller, so stop at the preview and press @kbd{q}: that aborts the
+preview and returns you to the view, since the sling menu itself closed
+when the preview opened (@pxref{Launch and follow}).
 @end enumerate
 
 @noindent
