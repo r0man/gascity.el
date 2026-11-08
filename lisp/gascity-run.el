@@ -40,8 +40,10 @@
 ;; (and `gc.implementation.*_path'), each a thing whose `RET' visits it
 ;; on the city's host (`gascity-remote-localize-path', §8.3 R6); `o'
 ;; visits the artifact at point explicitly.  The header's provenance
-;; rows name the run's store, rig, city and scope, and the formula's
-;; graph key and source (run-view-v3 §B).
+;; rows name the run's store, rig, city and scope, the formula's graph
+;; key and source (run-view-v3 §B), and the business bead the run was
+;; launched from (`source': the root's `gc.var.convoy_id' input convoy's
+;; first tracked member; RET opens that bead, not the workflow root).
 ;;
 ;; A step's drawer is the step inspector (run-view-v2 §3): the step's
 ;; ref, bead, status and outcome; its attempt and iteration; the
@@ -63,9 +65,10 @@
 ;;
 ;; Reads: the Runs view's shared run-beads entry (`gascity-runs-use-beads',
 ;; so opening a run from Runs costs no gc call), `session list' for the
-;; live assignees, `convoy status ID' for the input convoy, and
-;; `events --since' only while a drawer is open.  All through the store;
-;; the render is pure (§8.3 R2).
+;; live assignees, `convoy status ID' for the input convoy and for the
+;; source convoy (`gc.var.convoy_id'; the store dedupes them when they
+;; are the same), and `events --since' only while a drawer is open.  All
+;; through the store; the render is pure (§8.3 R2).
 
 ;;; Code:
 
@@ -509,6 +512,29 @@ TEXT in `help-echo'."
             (gascity-run--wrap-text full gascity-dashboard--width
                                     prefix indent))))
 
+(defun gascity-run--source-lines (source)
+  "Return the header's `source' row for SOURCE, or nil.
+SOURCE is the (:id :title :status) plist `gascity-run--source' reads
+from the input convoy, or nil when the run has no input convoy.  The
+row names the business bead the run was launched from, next to
+`root'/`scope', and carries its id in `gascity-bead', so RET opens the
+source bead in the run's store rather than the workflow root.  A long
+title is cut to the width the id and status leave, with the full title
+in `help-echo'."
+  (let ((id (plist-get source :id)))
+    (when (and (stringp id) (not (string-empty-p id)))
+      (let* ((status (or (plist-get source :status) ""))
+             (title (or (plist-get source :title) ""))
+             (prefix (concat "  " (gascity-run--label "source") id "  "))
+             (suffix (if (string-empty-p status) "" (concat "  " status)))
+             (room (max 1 (- gascity-dashboard--width
+                             (string-width prefix) (string-width suffix))))
+             (row (concat prefix (gascity-ui-truncate title room) suffix)))
+        (list (gascity-dashboard--line
+               row
+               'gascity-bead id
+               'beads-thing (gascity-dashboard--thing 'row "source")))))))
+
 (defun gascity-run--failure-detail (root ctx)
   "Return (:class :reason :ref :id :full) for ROOT's failure in CTX, or nil.
 The failed step named by CTX's run index supplies the class, ref, id
@@ -568,7 +594,8 @@ The first row is the run's `root' (glyph, id, formula and outcome, with
 the right-aligned rig and started/closed time); the labelled rows below
 name its failure (failed step, class, full reason) and close reason
 when it has them, then give its provenance (store with rig and city,
-scope), its formula (name and contract, with the graph key and formula
+scope, and the source business bead when the root names an input
+convoy), its formula (name and contract, with the graph key and formula
 source on aligned continuation lines) and v2's plans and convoy rows.
 An absent optional fact renders `(none)' only where the row exists for
 it; nothing is derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
@@ -583,6 +610,7 @@ it; nothing is derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
          (contract (gascity-run--meta root 'gc.formula_contract))
          (plans (gascity-run-plans root))
          (convoy (plist-get ctx :convoy))
+         (origin (plist-get ctx :source))
          (lines
           (list
            (gascity-dashboard--row
@@ -603,24 +631,29 @@ it; nothing is derived or invented (run-view-v3 §B, REQ-002/REQ-003)."
          (lines
           (append lines
                   (list
-           (gascity-ui-truncate
-            (concat "  " (gascity-run--label "store")
-                    (or store "city store")
-                    (if rig (concat "   " (gascity-dashboard--dim "rig ") rig) "")
-                    (if city
-                        (concat "   " (gascity-dashboard--dim "city ") city)
-                      ""))
-            gascity-dashboard--width)
-           (gascity-ui-truncate
-            (concat "  " (gascity-run--label "scope") (or scope "(none)"))
-            gascity-dashboard--width)
-           (gascity-ui-truncate
-            (concat "  " (gascity-run--label "formula")
-                    (plist-get run :formula)
-                    (if contract
-                        (concat "  " (gascity-dashboard--dim "contract ") contract)
-                      ""))
-            gascity-dashboard--width)))))
+                   (gascity-ui-truncate
+                    (concat "  " (gascity-run--label "store")
+                            (or store "city store")
+                            (if rig
+                                (concat "   " (gascity-dashboard--dim "rig ") rig)
+                              "")
+                            (if city
+                                (concat "   " (gascity-dashboard--dim "city ") city)
+                              ""))
+                    gascity-dashboard--width)
+                   (gascity-ui-truncate
+                    (concat "  " (gascity-run--label "scope") (or scope "(none)"))
+                    gascity-dashboard--width))
+                  (gascity-run--source-lines origin)
+                  (list
+                   (gascity-ui-truncate
+                    (concat "  " (gascity-run--label "formula")
+                            (plist-get run :formula)
+                            (if contract
+                                (concat "  " (gascity-dashboard--dim "contract ")
+                                        contract)
+                              ""))
+                    gascity-dashboard--width)))))
     (when key
       (setq lines
             (append lines
@@ -1542,7 +1575,8 @@ Pure: no read, no timer."
 (defun gascity-run-lines (ctx)
   "Return every run detail line for render context CTX.
 CTX keys: :run-id :now :loads (:beads) :index :sessions :socket :convoy
-:events (the drawer's events load) :failed-step (the diagnosed failure)
+:source (the input convoy's first tracked member) :events (the drawer's
+events load) :failed-step (the diagnosed failure)
 :deltas (a hash of changed step ids) :last-update (the delivery that
 last changed the facts) :view (:collapsed :drawers :expanded
 :stage-collapsed :control).  A formula with a stage table renders its
@@ -1623,6 +1657,19 @@ rows (run-view-v2 §2)."
          (cons convoy (or (alist-get 'progress payload)
                           (alist-get 'progress convoy))))))
 
+(defun gascity-run--source (payload)
+  "Return (:id :title :status) of the source bead in a convoy status PAYLOAD.
+The run root's `gc.var.convoy_id' names the synthetic input convoy the
+workflow was launched from; its first tracked member (the payload's
+`children', in `tracks' dependency order) is the business bead the user
+slung.  Nil when the payload carries no convoy or no member: a
+missing source is never fabricated."
+  (when-let* ((child (car (append (alist-get 'children payload) nil)))
+              (id (alist-get 'id child)))
+    (list :id id
+          :title (alist-get 'title child)
+          :status (alist-get 'status child))))
+
 (vui-defcomponent gascity-run-app (run-id convoy city)
   "Root component of the run detail for RUN-ID.
 CONVOY, when non-nil, is the input-convoy row the caller already holds
@@ -1664,6 +1711,18 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
                                         :tick refresh-tick))
          (last-convoy (vui-use-ref nil))
          (convoy-load (gascity-ui-effective-load convoy-res last-convoy))
+         ;; The source business bead: `gc.var.convoy_id' is the synthetic
+         ;; input convoy the workflow was launched from, whose first
+         ;; tracked member is the bead the user slung.  Its `convoy status'
+         ;; read goes through the store like every other read; when it is
+         ;; the same convoy as the input-convoy row the store dedupes it.
+         (source-convoy-id (and root (gascity-run--meta root 'gc.var.convoy_id)))
+         (source-res (gascity-store-use
+                      (and source-convoy-id
+                           (list "convoy" "status" source-convoy-id))
+                      :tick refresh-tick))
+         (last-source (vui-use-ref nil))
+         (source-load (gascity-ui-effective-load source-res last-source))
          (sessions-load (gascity-ui-effective-load sessions-res last-sessions))
          (events-load (gascity-ui-effective-load events-res last-events))
          (ctx (list :run-id run-id :now (float-time)
@@ -1678,6 +1737,8 @@ CONVOY, when non-nil, is the input-convoy row the caller already holds
                     :convoy (or (and convoy (cons convoy (alist-get 'progress convoy)))
                                 (gascity-run--convoy-pair
                                  (gascity-dashboard--data convoy-load)))
+                    :source (gascity-run--source
+                             (gascity-dashboard--data source-load))
                     :view (list :collapsed collapsed :drawers drawers
                                 :expanded expanded
                                 :stage-collapsed stage-collapsed

@@ -2052,8 +2052,20 @@ formula source on aligned continuation lines).  Nothing is derived or
 invented: an absent optional fact is omitted, or reads @samp{(none)}
 where the row exists for it.
 
+When the run root carries @code{gc.var.convoy_id} --- the synthetic
+input convoy a slung workflow is launched from --- the header adds a
+@samp{source} row, between @samp{scope} and @samp{formula}, naming that
+convoy's first tracked member: the business bead the user slung, with
+its id, status and title (cut to the view width, the full title in the
+row's help text).  @key{RET} on it opens the source bead in the run's
+store, not the workflow root.  The row is read asynchronously through
+the same store as the convoy row (when both name the same convoy, one
+read serves both); a standalone workflow without the variable, or a
+convoy or member @command{gc} cannot resolve, simply omits the row
+rather than fabricating a source.
+
 Every path in the header --- each @samp{plans} entry and the
-@samp{source} line --- is a file thing: @key{RET} visits it on the
+formula-source line --- is a file thing: @key{RET} visits it on the
 city's host, and @kbd{o} (@code{gascity-run-open-artifact}) does the
 same explicitly, reporting @samp{No artifact at point} when point is
 not on a path.  A stage header has no artifact of its own (no formula

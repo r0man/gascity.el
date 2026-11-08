@@ -4,6 +4,19 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### The run detail names the business bead a run was launched from
+
+A graph.v2 run launched by slinging a business bead now shows a
+`source` row in its header, between `scope` and `formula`, naming that
+bead: its id, status and title (cut to the view width with the full
+title in `help-echo`).  The row is resolved from the run root's
+`gc.var.convoy_id` (the synthetic input convoy) through the convoy's
+first tracked member, read asynchronously through the run detail's
+store like its other rows; RET on it opens the source bead, not the
+workflow root.  A standalone workflow without the variable, or a
+convoy or member gc no longer reports, omits the row instead of
+guessing (ga-uf8kr).
+
 ### The cockpit's Agents section leads with live workers
 
 The cockpit shows up to eight Agents rows by default (new option

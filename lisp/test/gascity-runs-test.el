@@ -119,6 +119,36 @@ under requirements-planner-1, everything else open."
                    b)))))
    (gascity-runs-test--fixture-beads)))
 
+(defconst gascity-runs-test--source-title
+  (concat "Manual overhaul: Emacs-doc quality + shared demo fixture "
+          "with gascity.el, default-theme screenshots, black-box QA")
+  "A source business bead title longer than the header row.")
+
+(defun gascity-runs-test--with-root-meta (beads id key value)
+  "Return BEADS with root ID's metadata KEY set to VALUE.
+A nil VALUE removes KEY from the root's metadata."
+  (mapcar
+   (lambda (b)
+     (if (equal (alist-get 'id b) id)
+         (let* ((copy (copy-tree b))
+                (meta (alist-get 'metadata copy))
+                (meta (if value
+                          (cons (cons key value) (assq-delete-all key meta))
+                        (assq-delete-all key meta))))
+           (setf (alist-get 'metadata copy) meta)
+           copy)
+       b))
+   beads))
+
+(defun gascity-runs-test--source-convoy (&optional title)
+  "Return a `gc convoy status' payload for be-hzrwd tracking be-tnd3z.
+TITLE is the tracked member's title (default `gascity-runs-test--source-title')."
+  `((convoy . ((id . "be-hzrwd") (status . "open")
+               (title . "input convoy for be-tnd3z")))
+    (children . [((id . "be-tnd3z") (status . "open")
+                  (title . ,(or title gascity-runs-test--source-title)))])
+    (progress . ((closed . 0) (total . 1)))))
+
 (defconst gascity-runs-test--sessions
   `((sessions . [((id . "ec-fl8o")
                   (agent_name . "beads.el/gc.requirements-planner-1")
@@ -156,16 +186,18 @@ under requirements-planner-1, everything else open."
   "Return LINES (strings) as one plain string."
   (substring-no-properties (string-join lines "\n")))
 
-(cl-defun gascity-runs-test--header (beads id &key city convoy)
+(cl-defun gascity-runs-test--header (beads id &key city convoy source)
   "Return the run detail header lines of run ID over BEADS.
 CITY names the buffer's city (default \"emacs-city\"); CONVOY is the
-\(CONVOY . PROGRESS\) pair the component would have read."
+\(CONVOY . PROGRESS\) pair the component would have read, SOURCE the
+source-bead plist it resolved."
   (let* ((index (gascity-runs-test--index beads))
          (root (seq-find (lambda (r) (equal (alist-get 'id r) id))
                          (plist-get index :roots)))
          (run (gascity-runs-summary index root))
          (ctx (list :run-id id :now (float-time) :index index
-                    :city (or city "emacs-city") :convoy convoy)))
+                    :city (or city "emacs-city") :convoy convoy
+                    :source source)))
     (gascity-run--header-lines run root ctx)))
 
 (defun gascity-runs-test--header-block (lines label)
@@ -1038,23 +1070,30 @@ data shows the error line; the view never blanks."
   "Events the serve stub answers for `gc events --since'.")
 
 (defvar gascity-runs-test--served nil
-  "Plist overriding the serve stub's answers: :beads and :sessions.
+  "Plist overriding the serve stub's answers: :beads, :sessions and
+:convoys (an alist convoy id → `convoy status' payload).
 A delivery test sets it between refreshes to change one fact.")
+
+(defvar gascity-runs-test--reads nil
+  "Reads the serve stub has answered, newest first, for read assertions.")
 
 (defun gascity-runs-test--serve (beads)
   "Return a canned `gascity-reader-read-async' serving BEADS for beads.el."
   (lambda (args callback &optional _errback &rest _)
     (let ((beads (or (plist-get gascity-runs-test--served :beads) beads))
           (sessions (or (plist-get gascity-runs-test--served :sessions)
-                        gascity-runs-test--sessions)))
+                        gascity-runs-test--sessions))
+          (convoys (plist-get gascity-runs-test--served :convoys)))
+      (push (copy-sequence args) gascity-runs-test--reads)
       (funcall
        callback
        (pcase args
          (`("rig" "list") (gascity-runs-test--json "emacs-city.rig-list.json"))
          (`("session" "list") sessions)
          (`("convoy" "status" ,id)
-          `((convoy . ((id . ,id) (status . "closed") (title . "input")))
-            (progress . ((closed . 7) (total . 7)))))
+          (or (cdr (assoc id convoys))
+              `((convoy . ((id . ,id) (status . "closed") (title . "input")))
+                (progress . ((closed . 7) (total . 7))))))
          ;; The inspector's recent events: none by default, so a rendered
          ;; drawer is deterministic.  A line-mode read's payload is
          ;; (GOOD . BAD), exactly as `gascity-reader-read-async' delivers it.
@@ -1506,6 +1545,116 @@ or the delegation opens the bead in the city store and fails."
       (should-not (string-match-p "graphv2-root" text))
       (should-not (string-match-p "^  [a-z]+ +$" text))
       (should-not (string-match-p "^  convoy " text)))))
+
+(ert-deftest gascity-test-run-source-row-renders ()
+  "The header's `source' row names the input convoy's tracked business
+bead -- id, title and status -- between `scope' and `formula', and
+carries the source id in `gascity-bead' so RET opens that bead."
+  (let* ((source (list :id "be-tnd3z"
+                       :title "Triage the demo fixture"
+                       :status "open"))
+         (lines (gascity-runs-test--header (gascity-runs-test--active-beads)
+                                           "be-52m5" :source source))
+         (text (gascity-runs-test--text lines))
+         (row (seq-find (lambda (l) (string-prefix-p "  source   " l)) lines)))
+    (should row)
+    (should (equal (substring-no-properties row)
+                   "  source   be-tnd3z  Triage the demo fixture  open"))
+    (should (equal (get-text-property 2 'gascity-bead row) "be-tnd3z"))
+    (should (eq (plist-get (get-text-property 2 'beads-thing row) :kind) 'row))
+    ;; Order: root, store, scope, source, then the formula row.
+    (should (string-match-p
+             (concat "^  scope    (none)\n"
+                     "  source   be-tnd3z  Triage the demo fixture  open\n"
+                     "  formula  build-basic")
+             text))))
+
+(ert-deftest gascity-test-run-source-row-fits ()
+  "A long source title is cut with `…' inside the view width, the status
+stays visible and the full title rides in `help-echo'."
+  (let* ((source (list :id "be-tnd3z"
+                       :title gascity-runs-test--source-title
+                       :status "open"))
+         (lines (gascity-runs-test--header (gascity-runs-test--active-beads)
+                                           "be-52m5" :source source))
+         (row (seq-find (lambda (l) (string-prefix-p "  source   " l)) lines))
+         (plain (substring-no-properties row)))
+    (should row)
+    (should (<= (string-width plain) gascity-dashboard--width))
+    (should (string-suffix-p "  open" plain))
+    (should (string-match-p "…" plain))
+    (should (equal (get-text-property (string-match "Manual overhaul" plain)
+                                      'help-echo row)
+                   gascity-runs-test--source-title))))
+
+(ert-deftest gascity-test-run-source-row-from-convoy ()
+  "The detail reads the source convoy named by `gc.var.convoy_id' through
+the store and renders its first tracked member as `source'; the
+input-convoy row still names the other convoy."
+  (let ((gascity-runs-test--served
+         (list :beads (gascity-runs-test--with-root-meta
+                       (gascity-runs-test--active-beads)
+                       "be-52m5" 'gc.var.convoy_id "be-hzrwd")
+               :convoys (list (cons "be-hzrwd"
+                                    (gascity-runs-test--source-convoy))))))
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (let ((text (buffer-string)))
+        (should (string-match-p "^  source   be-tnd3z  Manual overhaul" text))
+        (should (string-match-p "  open$" text))
+        (should (string-match-p "^  convoy   be-93dg  closed 7/7  input$" text))))))
+
+(ert-deftest gascity-test-run-source-row-ret-opens-source-bead ()
+  "RET on the source row opens the business bead, not the workflow root,
+in the run's store."
+  (let ((gascity-runs-test--served
+         (list :beads (gascity-runs-test--with-root-meta
+                       (gascity-runs-test--active-beads)
+                       "be-52m5" 'gc.var.convoy_id "be-hzrwd")
+               :convoys (list (cons "be-hzrwd"
+                                    (gascity-runs-test--source-convoy))))))
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (let (shown)
+        (cl-letf (((symbol-function 'gascity-beads--show-in-store)
+                   (lambda (id store) (setq shown (list id store))))
+                  ((symbol-function 'gascity-beads--rig-store-cached)
+                   (lambda (rig) (concat "/stores/" rig "/"))))
+          (goto-char (point-min))
+          (re-search-forward "^  source   be-tnd3z")
+          (gascity-run-activate)
+          (should (equal shown '("be-tnd3z" "/stores/beads.el/"))))))))
+
+(ert-deftest gascity-test-run-source-row-omitted-without-convoy ()
+  "A standalone run root (no `gc.var.convoy_id') omits the source row and
+never reads a source convoy; the input convoy is still read."
+  (let ((gascity-runs-test--served
+         (list :beads (gascity-runs-test--with-root-meta
+                       (gascity-runs-test--active-beads)
+                       "be-52m5" 'gc.var.convoy_id nil)
+               :convoys (list (cons "be-93dg"
+                                    (gascity-runs-test--source-convoy))))))
+    (setq gascity-runs-test--reads nil)
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (should-not (string-match-p "^  source " (buffer-string)))
+      (should (equal (seq-filter (lambda (args) (equal (car args) "convoy"))
+                                 gascity-runs-test--reads)
+                     '(("convoy" "status" "be-93dg")))))))
+
+(ert-deftest gascity-test-run-source-row-unresolvable ()
+  "A source convoy with no tracked member renders no row and no error,
+while the input-convoy row still renders."
+  (let ((gascity-runs-test--served
+         (list :beads (gascity-runs-test--with-root-meta
+                       (gascity-runs-test--active-beads)
+                       "be-52m5" 'gc.var.convoy_id "be-hzrwd")
+               :convoys
+               (list (cons "be-hzrwd"
+                           '((convoy . ((id . "be-hzrwd") (status . "open")
+                                        (title . "input convoy for be-tnd3z")))))))))
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (should-not (string-match-p "^  source " (buffer-string)))
+      (should (string-match-p "^  convoy   be-93dg" (buffer-string)))
+      ;; The source convoy's own `convoy' object is not the source row.
+      (should-not (string-match-p "be-hzrwd" (buffer-string))))))
 
 (ert-deftest gascity-test-run-header-width ()
   "Every header row is at most 78 columns, including a real 59-column
