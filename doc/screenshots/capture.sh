@@ -279,10 +279,18 @@ is_selected_output() {
   return 1
 }
 
-# ---- Fixture project lifecycle ----------------------------------------
-# WI-3 owns fixture.sh; when it is present the capture runs against the
-# throwaway fixture it creates.  Without it, fall back to a caller-provided
-# GASCITY_SHOT_DIR (or the historical live ~/emacs-city default).
+# ---- Fixture lifecycle ------------------------------------------------
+# fixture.sh builds the shared demo project checkout (${TMPDIR:-/tmp}/
+# demo-project, the demo-rig checkout) plus the throwaway gascity-fixture
+# city; when it is present the capture runs against that pair.  Without it,
+# fall back to a caller-provided GASCITY_SHOT_DIR (or the historical live
+# ~/emacs-city default).
+#
+# GASCITY_SHOT_DIR is the city `gc' resolves from and stays exported.  The
+# project path is deliberately not exported as GASCITY_SHOT_PROJECT: the
+# manifest's shots reach the demo-rig checkout through gc's rig registry, so
+# such a variable would have no consumer.  Add the export only together with
+# a named shot that reads it.
 
 PROJECT="${GASCITY_SHOT_DIR:-}"
 CREATED_PROJECT=""
@@ -294,10 +302,11 @@ ensure_project() {
     return
   fi
   if [ -r "$FIXTURE_SH" ]; then
-    # WI-3 fixture.sh contract: `--create' prints FIXTURE_CITY=/FIXTURE_RIG=/
-    # FIXTURE_RIG_NAME= for the throwaway city and records it; `--seed' loads
-    # the role-addressed data; `--teardown --city' removes it.  Parse the
-    # FIXTURE_CITY line, not the first line of output.
+    # fixture.sh contract: `--create' prints FIXTURE_CITY=/FIXTURE_PROJECT=/
+    # FIXTURE_RIG=/FIXTURE_RIG_NAME=/FIXTURE_GC_HOME= for the throwaway city
+    # and the shared demo-project checkout; `--seed' imports the canonical
+    # demo dataset and seeds the pinned role data; `--teardown --city' removes
+    # both.  Parse the FIXTURE_CITY line, not the first line of output.
     local created city gc_home
     created="$("$FIXTURE_SH" --create)"
     city="$(printf '%s\n' "$created" | sed -n 's/^FIXTURE_CITY=//p')"

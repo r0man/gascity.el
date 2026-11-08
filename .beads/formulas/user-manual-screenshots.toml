@@ -1,6 +1,6 @@
 description = """
-Capture and verify the gascity.el user-manual screenshots from a deterministic,
-throwaway fixture city.
+Capture and verify the gascity.el user-manual screenshots from one shared
+demo project and a deterministic, throwaway fixture city.
 
 `scope` selects what to regenerate:
 - `all` (default): every view in the capture manifest
@@ -30,31 +30,39 @@ default = "all"
 
 [[steps]]
 id = "prepare"
-title = "Prepare the throwaway fixture city"
+title = "Prepare the shared demo project and fixture city"
 metadata = { "gc.run_target" = "gc.run-operator" }
 description = """
-Create the deterministic, isolated fixture city the capture runs against:
+Create the deterministic, isolated fixture the capture runs against:
 
     doc/screenshots/fixture.sh --create
 
-The command prints the absolute city path as FIXTURE_CITY and the rig path as
-FIXTURE_RIG, and remembers the fixture so the seed and teardown steps need no
-argument. Nothing under the repository `.beads` store, the live city, or the
-remote test city is read or written (REQ-005).
+The command builds one shared demo project checkout at
+${TMPDIR:-/tmp}/demo-project, registered as the demo-rig checkout in the
+throwaway gascity-fixture city at ${TMPDIR:-/tmp}/gascity-fixture. It prints
+the city path as FIXTURE_CITY and the project path as FIXTURE_PROJECT
+(FIXTURE_RIG is its alias), together with FIXTURE_RIG_NAME and
+FIXTURE_GC_HOME, and remembers the fixture so the seed, capture, and teardown
+steps need no argument. Nothing under the repository `.beads` store, the live
+city, or the remote test city is read or written (REQ-005).
 """
 
 [[steps]]
 id = "seed"
-title = "Seed and validate the fixture city"
+title = "Seed and validate the shared demo project"
 needs = ["prepare"]
 metadata = { "gc.run_target" = "gc.run-operator" }
 description = """
-Seed the fixture with role-addressed data (beads, orders, pinned events) from
-the deterministic fixture under doc/screenshots/fixtures/:
+Seed the shared demo from the deterministic fixture under
+doc/screenshots/fixtures/:
 
     doc/screenshots/fixture.sh --seed
 
-The seed is GUI-free, so it also runs in CI.
+This imports the canonical demo-1 ... demo-12 dataset into the demo-rig store
+with `bd import` and adds the pinned role data the dataset does not carry: the
+demo-session-dev/demo-session-review sessions, demo-mail-review, the pinned
+orders, events, usage, and the demo run graph. The seed is GUI-free, so it
+also runs in CI.
 """
 
 [[steps]]
@@ -68,8 +76,10 @@ under doc/images/ as <view>-<theme>[-thumb].png:
 
     GASCITY_SHOT_DIR=<FIXTURE_CITY> doc/screenshots/capture.sh --scope {{scope}}
 
-Only the selected views are captured and compressed, so a subset run leaves
-every other image untouched (REQ-004).
+GASCITY_SHOT_DIR stays the fixture city; the shared demo project is reached
+through gc's rig registry, not an environment variable. Only the selected
+views are captured and compressed, so a subset run leaves every other image
+untouched (REQ-004).
 """
 
 [[steps]]
@@ -98,12 +108,13 @@ timeout = "30m"
 
 [[steps]]
 id = "teardown"
-title = "Remove the throwaway fixture city"
+title = "Remove the shared demo project and fixture city"
 needs = ["verify"]
 metadata = { "gc.run_target" = "gc.run-operator" }
 description = """
-Remove the temporary fixture city created by the prepare step so the store is
-never reused or left behind:
+Remove the throwaway gascity-fixture city and the shared
+${TMPDIR:-/tmp}/demo-project checkout created by the prepare step, both
+marker-guarded, so neither store is reused or left behind:
 
     doc/screenshots/fixture.sh --teardown
 """

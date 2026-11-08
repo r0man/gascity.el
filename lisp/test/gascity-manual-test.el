@@ -525,6 +525,36 @@ resolve a sibling repository's formula."
                  (gascity-manual-test--read
                   ".beads/formulas/user-manual-screenshots.toml"))))
 
+(ert-deftest gascity-test-manual-formula-describes-shared-fixture ()
+  "The screenshot formula describes the shared fixture pair (REQ-005).
+The fixture is now the `${TMPDIR:-/tmp}/demo-project' checkout registered
+as `demo-rig' in the `gascity-fixture' city, so every step's prose must
+name that pair and must no longer describe the retired `$city/rig'
+layout or the old role-addressed `demo-<role>' bead set.  The scope
+variable contract and the step structure stay untouched."
+  (let ((text (gascity-manual-test--read
+               ".beads/formulas/user-manual-screenshots.formula.toml")))
+    (should (string-match-p "demo-project" text))
+    (should (string-match-p "gascity-fixture" text))
+    (dolist (stale '("$city/rig" "role-addressed" "demo-<role>"
+                     "demo-epic-manual" "demo-task-manual" "demo-task-fixture"
+                     "demo-task-capture" "demo-bug-render" "demo-chore-cleanup"
+                     "demo-mail-thread"))
+      (ert-info ((format "stale reference: %s" stale))
+        (should-not (string-match-p (regexp-quote stale) text))))
+    (dolist (step '("prepare" "seed" "capture" "verify" "teardown"))
+      (should (string-match-p (format "id = \"%s\"" step) text)))))
+
+(ert-deftest gascity-test-manual-capture-project-export ()
+  "capture.sh exports the shared project path only for a consuming shot.
+`GASCITY_SHOT_DIR' stays the city gc resolves from the fixture.  The
+25-view manifest resolves rigs through gc, so `GASCITY_SHOT_PROJECT' has
+no consumer and must not be exported as dead configuration (REQ-005)."
+  (let ((text (gascity-manual-test--read "doc/screenshots/capture.sh")))
+    (should (string-match-p "export GASCITY_SHOT_DIR" text))
+    (should (string-match-p "demo-project" text))
+    (should-not (string-match-p "export GASCITY_SHOT_PROJECT" text))))
+
 (ert-deftest gascity-test-manual-key-registry-coverage ()
   "Every registered view, key and verb has a reference entry (REQ-002, REQ-003).
 The key registry is the coverage checklist: each view must have a
