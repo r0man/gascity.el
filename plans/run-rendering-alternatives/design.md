@@ -461,7 +461,9 @@ point; `!` diagnoses the member without moving point. The existing step tree
 remains below the `Machinery` header and is folded with `SPC`; `C` and `T`
 keep their current meanings inside it, so no information is lost. If the
 formula supplies a stage table, headers such as `Intake`/`Implementation` may
-be inserted above contiguous runs; the rows and order do not change.
+be inserted above contiguous runs; the rows and order do not change. Only a
+formula-provided table may add these headers; the web/DTO phase heuristic is
+never used as structure.
 
 #### A — gascity.el, flat case (no stage table, no drain)
 
@@ -597,9 +599,12 @@ be-tnd3z open · be-0kjzs build-basic · beads.el · started 3h ago
 
 Above `md` this is a single readable column; below `md` the same DOM stacks
 (item title, then the `be-… closed` line, then the member line), so no
-information depends on horizontal position. The graph and stage inspector
-move under the collapsed "Run machinery" disclosure, which keeps the
-existing `Formula Graph` and node selection intact.
+information depends on horizontal position. The generic node/edge graph and
+node inspector move under the collapsed "Run machinery" disclosure, which
+keeps the existing `Formula Graph` and node selection intact. The DTO's
+five-phase ladder is **not** carried over (its stages are a formula-flavored
+heuristic; see §3.5); only a formula-provided stage table may add optional
+labels.
 
 #### A — web, generic cases
 
@@ -875,7 +880,9 @@ it never defines the columns.
 order. Lanes = work units: a drain with members contributes one lane per
 deliverable in its column; a drain without members is one lane; a work node
 is one lane. A lane's cell is its member run (ladder/progress) or the work
-node's own state. The source feature is the board's title when present; the
+node's own state. (Here "lane" is a computed work-unit row in a dependency
+rank, not the API's `lanes` field, which is scope-based and unused by this
+design.) The source feature is the board's title when present; the
 two convoys are the header's provenance. Optional stage labels may replace
 `Rank N` only when the stage covers a contiguous range of ranks.
 
@@ -1069,6 +1076,57 @@ require. This matrix is a summary; the ASCII above is the contract.
 | inline drain: no member roots | one drain row; no member children | one drain row; `inline` on the right | one drain lane; no member lanes |
 | no stage table | no headers; flat order | no headers; flat order | rank labels |
 | stage table present | optional headers over contiguous runs | optional headers over contiguous runs | optional labels for contiguous rank ranges |
+
+## 3.5 Implementation feasibility (checked against gc)
+
+The model in §1 was checked against the live projection in
+`/home/roman/workspace/gascity` (runproj + dashboard BFF) and the live API.
+
+**What is already generic.** `RunDisplayNode`
+(`internal/runproj/detail_types.go`) carries id/semantic id/title/kind/
+constructKind/status/scope/visibility/iterations/attempts/control badges;
+`RunDisplayEdge` is built from bead dependencies (`detail_edges.go`, `tracks`
+skipped); lanes are scope-based (`detail_order.go`, `__run` + scoped refs).
+Flat formulas work without a stage table: `ga-4hdav` (`do-work`) projects 5
+nodes / 7 edges and `ga-6iwrx` (`review`, no source, no drain) 4 / 5. The BFF
+folds one filtered city bead slice (`RunBeadFilter`, summary.go;
+`runtailer.go`), which keeps engineering-type beads and run roots, so business
+beads (`be-rtqte`) and member runs (`be-dhu31`) are available for a join.
+Drain keys are engine-generic: `gc.drain_control_id`,
+`gc.drain_manifest.v1`, `gc.drain_member_id`, `gc.drain_index/count`. Source
+is generic: sling writes `gc.var.convoy_id` and the convoy tracks the source
+bead.
+
+**What must be computed (not reused).**
+
+1. **No `phase`/`stages`.** The DTO's five-stage ladder is a formula-flavored
+   heuristic (`phasemapping.go`, `stagesForFormula`): `ga-4hdav` and
+   `ga-6iwrx` both report Intake/Implementation/Review/Approval/Finalization
+   without a stage table. A formula-provided stage table is optional labels
+   only; the heuristic phase must not drive structure.
+2. **Dependency ranks.** `orderRunNodeGroups` ranks by request-time formula
+   detail when available and otherwise keeps bead-group order. The design's
+   default flat dependency order needs a generic topological/rank computation
+   from `edges` (or a small `ranks` field in the BFF).
+3. **`workUnits` join.** New but formula-agnostic: parent drain manifest →
+   member roots by `gc.drain_control_id`/`drain_member_id` → business beads,
+   plus source via `gc.var.convoy_id` → convoy `tracks`. Members live outside
+   the parent run snapshot but are present in the filtered city bead slice;
+   cross-store member roots are projected too (verify at implementation).
+   Inline/same-session drains have no member roots; the design renders the
+   drain/work node itself.
+4. **Scope.** graph.v2 only. v1 molecules/wisps return `ReasonNotRunView`,
+   matching "any graph.v2 formula".
+
+**Emacs side.** `gascity-run--source` already resolves the source row; the
+drain index (`gascity-runs-index`), the dependency forest and the optional
+stage tables already exist, so A's work spine is a join/reorder over data the
+view already loads.
+
+**Conclusion.** No formula name, stage table, phase grammar or per-formula
+rule is required. The only new production pieces are a generic rank and the
+BFF `workUnits` join/source projection; everything else is in the existing
+generic projection.
 
 ## 4. Comparison and recommendation
 
