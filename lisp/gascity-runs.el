@@ -114,6 +114,58 @@ TICK is the component's refresh counter."
   "Return metadata KEY (a symbol) of BEAD."
   (alist-get key (alist-get 'metadata bead)))
 
+(defun gascity-runs--step-ref (bead formula)
+  "Return BEAD's total authored step order, a string and never nil.
+`gc.step_ref' with FORMULA's prefix stripped when it carries it, else
+`gc.step_id', else the bead id.  The ladder's name and its same-depth
+tiebreak both use it, so a foreign or unknown-kind step keeps a name
+instead of erroring on a ref without the formula prefix."
+  (let ((ref (gascity-runs--meta bead 'gc.step_ref))
+        (step (gascity-runs--meta bead 'gc.step_id)))
+    (cond
+     ((and (stringp ref) (not (string-empty-p ref)))
+      (if (and (stringp formula)
+               (string-prefix-p (concat formula ".") ref))
+          (substring ref (1+ (length formula)))
+        ref))
+     ((and (stringp step) (not (string-empty-p step))) step)
+     (t (or (alist-get 'id bead) "")))))
+
+(defun gascity-runs--number (value)
+  "Return VALUE as a number, or nil when absent or non-numeric.
+gc emits `gc.drain_index'/`gc.drain_count' as strings (`"0"'), and a
+nil `:index' sorts last."
+  (cond ((numberp value) value)
+        ((and (stringp value)
+              (string-match-p "\\`[0-9]+\\'" (string-trim value)))
+         (string-to-number (string-trim value)))
+        (t nil)))
+
+(defun gascity-runs--deliverable (member)
+  "Return the deliverable plist drain MEMBER root declares.
+The business id is `gc.drain_member_id'; index and count are parsed
+the same way for every member."
+  (list :business-id (gascity-runs--meta member 'gc.drain_member_id)
+        :member-id (alist-get 'id member)
+        :member member
+        :index (gascity-runs--number (gascity-runs--meta member 'gc.drain_index))
+        :count (gascity-runs--number (gascity-runs--meta member 'gc.drain_count))))
+
+(defun gascity-runs--deliverable-lessp (a b)
+  "Return non-nil when deliverable A orders before B.
+By `:index' (nil last), then business id, then member id."
+  (let ((ia (plist-get a :index))
+        (ib (plist-get b :index)))
+    (cond ((and ia ib (/= ia ib)) (< ia ib))
+          ((and ia (null ib)) t)
+          ((and (null ia) ib) nil)
+          ((not (equal (or (plist-get a :business-id) "")
+                       (or (plist-get b :business-id) "")))
+           (string< (or (plist-get a :business-id) "")
+                    (or (plist-get b :business-id) "")))
+          (t (string< (or (plist-get a :member-id) "")
+                      (or (plist-get b :member-id) ""))))))
+
 (defvar gascity-runs--index-cache (cons nil nil)
   "(BEADS . INDEX): the index of the last bead list, reused by identity.")
 
@@ -122,14 +174,20 @@ TICK is the component's refresh counter."
 ROOTS are the run root beads, HASH maps a root id to its graph beads
 \(every bead whose `gc.root_bead_id' names it), :owners maps a graph
 bead id to its run's id, :drains maps a drain step id to its member
-run roots (`gc.drain_control_id').  The last result is
-reused while BEADS is the same list (every render of one payload), so
-the grouping and ladders are computed once per read."
+run roots (`gc.drain_control_id'), and :beads maps every bead id in the
+read to its bead (first write wins).  :deliverables maps a drain step
+id to its members as ordered plists (:business-id :member-id :member
+:index :count), sorted by `gc.drain_index' (nil last), then business
+id, then member id.  The last result is reused while BEADS is the same
+list (every render of one payload), so the grouping and ladders are
+computed once per read."
   (if (and beads (eq (car gascity-runs--index-cache) beads))
       (cdr gascity-runs--index-cache)
     (let ((graphs (make-hash-table :test 'equal))
           (owners (make-hash-table :test 'equal))
           (drains (make-hash-table :test 'equal))
+          (beads-by-id (make-hash-table :test 'equal))
+          (deliverables (make-hash-table :test 'equal))
           (seen (make-hash-table :test 'equal))
           (roots nil))
       (dolist (b beads)
@@ -138,6 +196,7 @@ the grouping and ladders are computed once per read."
           ;; must not double a bead.
           (unless (gethash id seen)
             (puthash id t seen)
+            (puthash id b beads-by-id)
             (cond ((gascity-dashboard--run-root-p b)
                    (push b roots)
                    (let ((drain (gascity-runs--meta b 'gc.drain_control_id)))
@@ -145,7 +204,15 @@ the grouping and ladders are computed once per read."
                   ((gascity-dashboard--root-of b)
                    (puthash id (gascity-dashboard--root-of b) owners)
                    (push b (gethash (gascity-dashboard--root-of b) graphs)))))))
+      (maphash (lambda (drain members)
+                 (puthash drain
+                          (sort (mapcar #'gascity-runs--deliverable
+                                        (reverse members))
+                                #'gascity-runs--deliverable-lessp)
+                          deliverables))
+               drains)
       (let ((index (list :roots (nreverse roots) :graphs graphs :drains drains
+                         :beads beads-by-id :deliverables deliverables
                          :owners owners
                          :ladders (make-hash-table :test 'equal))))
         (setq gascity-runs--index-cache (cons beads index))
@@ -164,13 +231,125 @@ parent.  Nil when ROOT is no member, or its drain step is not in INDEX."
     (and drain (gethash drain (plist-get index :owners)))))
 
 (defun gascity-runs-ladder (index root)
-  "Return the step ladder of ROOT (memoized in INDEX)."
-  (let ((id (alist-get 'id root))
-        (ladders (plist-get index :ladders)))
+  "Return the step ladder of ROOT (memoized in INDEX).
+ROOT is the root bead or its id."
+  (let* ((root (gascity-runs--root-bead index root))
+         (id (alist-get 'id root))
+         (ladders (plist-get index :ladders)))
     (or (gethash id ladders)
         (puthash id (gascity-dashboard--ladder root (gascity-runs-graph index id)
                                                (plist-get index :drains))
                  ladders))))
+
+(defun gascity-runs-bead (index id)
+  "Return bead ID from INDEX, or nil when the read did not load it."
+  (and id (gethash id (plist-get index :beads))))
+
+(defun gascity-runs--root-bead (index root)
+  "Return ROOT as a bead; a string root id is resolved through INDEX."
+  (if (stringp root) (gascity-runs-bead index root) root))
+
+(defun gascity-runs-deliverables (index root)
+  "Return ROOT's drains with member roots, in ladder order.
+ROOT is the root bead or its id.  Each entry is (:step STEP :members
+MEMBERS), MEMBERS being the plists INDEX orders by `gc.drain_index',
+then business id, then member id.  Nil for a formula with no drain and
+for an inline drain whose node has no member roots."
+  (let ((deliverables (plist-get index :deliverables))
+        (root (gascity-runs--root-bead index root))
+        (entries nil))
+    (dolist (step (gascity-runs-ladder index root))
+      (let ((members (gethash (plist-get step :id) deliverables)))
+        (when members
+          (push (list :step step :members members) entries))))
+    (nreverse entries)))
+
+(defun gascity-runs--work-node (step index)
+  "Return the tree node of ladder STEP in INDEX.
+The ladder entry's id is the bead; its name is the step name."
+  (let ((bead (gascity-runs-bead index (plist-get step :id))))
+    (list :bead bead :path (plist-get step :name)
+          :name (plist-get step :name) :children nil)))
+
+(defun gascity-runs-work-units (index root)
+  "Return ROOT's ordered work-unit rows from INDEX.
+One row per work unit, in ladder order: a `:drain' row (when the step
+has member roots) followed by one `:deliverable' row per member; a
+`:work' row for a drain without member roots and for every other
+top-level step.  Every row carries :unit-kind, :step (the ladder
+entry), :node (its step node), :business (bead or nil), :business-id,
+:member (root bead or nil), :member-id, :index, :count and :order."
+  (let ((by-step (make-hash-table :test 'equal))
+        (root (gascity-runs--root-bead index root))
+        (rows nil)
+        (order 0))
+    (dolist (entry (gascity-runs-deliverables index root))
+      (puthash (plist-get (plist-get entry :step) :id)
+               (plist-get entry :members)
+               by-step))
+    (dolist (step (gascity-runs-ladder index root))
+      (let* ((members (gethash (plist-get step :id) by-step))
+             (node (gascity-runs--work-node step index)))
+        (if members
+            (progn
+              (push (list :unit-kind 'drain :step step :node node
+                          :business nil :business-id nil
+                          :member nil :member-id nil :index nil
+                          :count (or (plist-get (car (last members)) :count)
+                                     (length members))
+                          :order order)
+                    rows)
+              (setq order (1+ order))
+              (dolist (member members)
+                (let ((business-id (plist-get member :business-id)))
+                  (push (list :unit-kind 'deliverable :step step :node node
+                              :business (gascity-runs-bead index business-id)
+                              :business-id business-id
+                              :member (plist-get member :member)
+                              :member-id (plist-get member :member-id)
+                              :index (plist-get member :index)
+                              :count (plist-get member :count)
+                              :order order)
+                        rows))
+                (setq order (1+ order))))
+          (push (list :unit-kind 'work :step step :node node
+                      :business nil :business-id nil
+                      :member nil :member-id nil :index nil :count nil
+                      :order order)
+                rows)
+          (setq order (1+ order)))))
+    (nreverse rows)))
+
+(defun gascity-runs-unit-counts (index root)
+  "Return ROOT's labeled counts from INDEX.
+Keys: :steps (DONE . TOTAL), :deliverables (DONE . TOTAL), :beads N,
+:in-flight N, :failed N.  The three denominators are never mixed; a
+caller renders a word next to each.  Deliverables count by their
+member run's `gascity-runs-state'."
+  (let* ((root (gascity-runs--root-bead index root))
+         (ladder (gascity-runs-ladder index root))
+         (units (gascity-runs-work-units index root))
+         (work (seq-filter (lambda (u) (eq (plist-get u :unit-kind) 'work)) units))
+         (deliverables (seq-filter (lambda (u)
+                                     (eq (plist-get u :unit-kind) 'deliverable))
+                                   units))
+         (state (lambda (u) (gascity-runs-state (plist-get u :member)))))
+    (list :steps
+          (cons (seq-count (lambda (s) (eq (plist-get s :state) 'done)) ladder)
+                (length ladder))
+          :deliverables
+          (cons (seq-count (lambda (u) (eq (funcall state u) 'done)) deliverables)
+                (length deliverables))
+          :beads (length (gascity-runs-graph index (alist-get 'id root)))
+          :in-flight (seq-count (lambda (u) (eq (funcall state u) 'active))
+                                deliverables)
+          :failed (seq-count
+                   (lambda (u)
+                     (eq (if (eq (plist-get u :unit-kind) 'deliverable)
+                             (funcall state u)
+                           (plist-get (plist-get u :step) :state))
+                         'failed))
+                   (append deliverables work)))))
 
 (defun gascity-runs-last-activity (index root)
   "Return when run ROOT's live work was last touched, in seconds (0: never).
@@ -421,18 +600,32 @@ worker (ec-elkm5.5)."
   "Return the summary plist of run ROOT from INDEX.
 Keys: :id :root :rig :formula :state :ladder :label :progress :time
 :outcome :failure :failed-step :worker-bead :live-subrun :parent (the
-run it drains for, or nil).  :failed-step is set for an active run
-whose ladder has a failed step (ga-g092a); a failed run's reason is
-:failure.  :worker-bead is ROOT's own live worker; when it has none but
-a drain member run does, :live-subrun names that member (with its
-:worker-bead), so a parent never reads as workerless while a nested run
-is live (ec-elkm5.5)."
+run it drains for, or nil), plus the labeled work counters :units,
+:deliverable-progress, :deliverable-counts and :beads.
+:failed-step is set for an active run whose ladder has a failed step
+\(ga-g092a\); a failed run's reason is :failure.  :worker-bead is ROOT's
+own live worker; when it has none but a drain member run does,
+:live-subrun names that member (with its :worker-bead), so a parent
+never reads as workerless while a nested run is live (ec-elkm5.5).
+:units counts the work units (deliverables and plain work rows, never a
+drain header); :deliverable-progress is `DONE/TOTAL' from the member
+runs' states, TOTAL being `gc.drain_count' when present; and
+:deliverable-counts is the non-zero member state tally.  The three
+deliverable keys are nil for a run without drain members, and :beads is
+the run's graph size (plan §2.1, REQ-010)."
   (let* ((id (alist-get 'id root))
          (graph (gascity-runs-graph index id))
          (ladder (gascity-runs-ladder index root))
          (label (gascity-dashboard--ladder-label ladder))
          (state (gascity-runs-state root))
-         (worker (and (eq state 'active) (gascity-runs--worker-bead graph))))
+         (worker (and (eq state 'active) (gascity-runs--worker-bead graph)))
+         (units (gascity-runs-work-units index root))
+         (members (seq-filter (lambda (u)
+                                (eq (plist-get u :unit-kind) 'deliverable))
+                              units))
+         (member-state (lambda (u) (gascity-runs-state (plist-get u :member))))
+         (total (or (seq-some (lambda (m) (plist-get m :count)) members)
+                    (length members))))
     (list :id id :root root
           :rig (alist-get 'gascity-rig root)
           :formula (or (gascity-runs--meta root 'gc.formula_name)
@@ -447,7 +640,60 @@ is live (ec-elkm5.5)."
           :worker-bead worker
           :live-subrun (and (eq state 'active) (null worker)
                             (gascity-runs--live-subrun index root))
-          :parent (gascity-runs-parent-id index root))))
+          :parent (gascity-runs-parent-id index root)
+          :units (seq-count (lambda (u)
+                              (not (eq (plist-get u :unit-kind) 'drain)))
+                            units)
+          :beads (length graph)
+          :deliverable-progress
+          (and members
+               (format "%d/%d"
+                       (seq-count (lambda (u) (eq (funcall member-state u) 'done))
+                                  members)
+                       (if (> total 0) total (length members))))
+          :deliverable-counts
+          (and members
+               (delq nil
+                     (mapcar (lambda (s)
+                               (let ((n (seq-count
+                                         (lambda (u)
+                                           (eq (funcall member-state u) s))
+                                         members)))
+                                 (and (> n 0) (cons s n))))
+                             '(active waiting done failed)))))))
+
+(defun gascity-runs--visible-runs (ctx)
+  "Return the run summaries CTX actually renders, in render order.
+The Active and Waiting sections, the Failed section, and the closed
+history CTX's page size shows when its history is on; the `/ -s' filter
+hides the sections it excludes.  The card source effect reads only
+these convoys (plan §2.2, REQ-012)."
+  (let* ((parts (or (plist-get ctx :parts)
+                    (gascity-runs-partition (plist-get ctx :runs)
+                                            (plist-get ctx :filters)
+                                            (plist-get ctx :now))))
+         (state (plist-get (plist-get ctx :filters) :state))
+         (view (plist-get ctx :view))
+         (history (or (plist-get view :history) (equal state "done")))
+         (shown (* (max 1 (or (plist-get view :pages) 1))
+                   gascity-runs-history-page))
+         (show (lambda (s) (or (null state) (equal state s)))))
+    (append (and (funcall show "active") (plist-get parts :in-progress))
+            (and (funcall show "waiting") (plist-get parts :waiting))
+            (and (funcall show "failed") (plist-get parts :failed))
+            (and history (seq-take (plist-get parts :closed) shown)))))
+
+(defun gascity-runs--visible-convoys (ctx)
+  "Return the input convoy ids of CTX's visible runs, in order.
+One entry per distinct convoy; runs without `gc.var.convoy_id' add
+nothing (plan §2.2)."
+  (delete-dups
+   (delq nil
+         (mapcar (lambda (run)
+                   (let ((root (plist-get run :root)))
+                     (and root
+                          (gascity-runs--meta root 'gc.var.convoy_id))))
+                 (gascity-runs--visible-runs ctx)))))
 
 (defun gascity-runs-window-seconds (window)
   "Return WINDOW (\"24h\", \"7d\", \"90m\", \"2w\") in seconds, or nil."
@@ -625,9 +871,94 @@ stays at depth 0 where it was."
         (unless (funcall nested-p r) (walk r 0 nil))))
     (nreverse out)))
 
+;;; Card source identity (WP-2, REQ-007/REQ-012)
+
+(defvar-local gascity-runs--source-cache nil
+  "This buffer's card source cache: convoy id → state.
+`:loading' while the read is pending, `:unavailable' after a failed or
+timed-out read, or a plist (:state ready :id :title :status :count)
+once resolved.  Only the source effect writes it; the renderer reads it
+through CTX's :sources, so `gascity-runs-lines' stays pure (plan §2.2).")
+
+(defvar-local gascity-runs--source-tick nil
+  "The `refresh-tick' the source cache was last read for.
+A changed tick (`g') clears the cache and re-reads the visible ids once.")
+
+(defun gascity-runs--source-cache-table ()
+  "Return this buffer's source cache, creating it when absent."
+  (or gascity-runs--source-cache
+      (setq gascity-runs--source-cache (make-hash-table :test 'equal))))
+
+(defun gascity-runs--source-of (payload)
+  "Return the card source state of a `convoy status' PAYLOAD.
+Exactly one tracked member is that business bead; zero or many is the
+convoy itself with its member count, never a member pretending to be
+the source.  A payload without a convoy is `:unavailable'."
+  (let ((convoy (alist-get 'convoy payload))
+        (children (append (alist-get 'children payload) nil)))
+    (cond
+     ((null convoy) :unavailable)
+     ((= (length children) 1)
+      (let ((child (car children)))
+        (list :state 'ready
+              :id (alist-get 'id child)
+              :title (alist-get 'title child)
+              :status (alist-get 'status child)
+              :count 1)))
+     (t
+      (list :state 'ready
+            :id (or (alist-get 'id convoy) (alist-get 'id payload))
+            :title (alist-get 'title convoy)
+            :status (alist-get 'status convoy)
+            :count (length children))))))
+
+(defun gascity-runs--run-source (run ctx)
+  "Return RUN's card source state from CTX's :sources cache.
+A run without `gc.var.convoy_id' is `(:state none)'; an id the effect
+has not answered yet is `(:state loading)'."
+  (let* ((root (plist-get run :root))
+         (id (and root (gascity-runs--meta root 'gc.var.convoy_id)))
+         (cache (plist-get ctx :sources))
+         (state (and (stringp id) (not (string-empty-p id))
+                     (if (hash-table-p cache)
+                         (gethash id cache)
+                       (alist-get id cache)))))
+    (cond
+     ((not (and (stringp id) (not (string-empty-p id)))) (list :state 'none))
+     ((eq state :unavailable) (list :state 'unavailable))
+     ((and (listp state) (eq (plist-get state :state) 'ready)) state)
+     (t (list :state 'loading)))))
+
+(defun gascity-runs--source-line (source)
+  "Return (TITLE . RIGHT) of SOURCE's card line.
+TITLE is the source business bead's title, or the honest placeholder
+`(no source)', `source loading…' or `source unavailable'.  RIGHT is the
+source id and status, plus the member count of a multi-member convoy."
+  (pcase (plist-get source :state)
+    ('ready
+     (let* ((id (or (plist-get source :id) ""))
+            (status (or (plist-get source :status) ""))
+            (count (or (plist-get source :count) 0))
+            (title (or (plist-get source :title)
+                       (and (not (string-empty-p id)) id)
+                       "")))
+       (cons (propertize title 'help-echo title)
+             (concat id
+                     (unless (string-empty-p status) (concat "  " status))
+                     (when (> count 1) (format "  %d beads" count))))))
+    ('none (cons (gascity-dashboard--dim "(no source)") ""))
+    ('unavailable (cons (gascity-dashboard--dim "source unavailable") ""))
+    (_ (cons (gascity-dashboard--dim "source loading…") ""))))
+
 (defun gascity-runs--card (run ctx &optional depth)
-  "Return the lines of RUN's two-line card (and its open drawer) in CTX.
-DEPTH nests a member run's card under its parent's (`└', indented)."
+  "Return the lines of RUN's three-line card (and its open drawer) in CTX.
+Line 1 names the source business bead (or its honest placeholder), line
+2 the run's identity with labeled step and bead counts, and line 3 the
+work: ladder, labeled deliverable progress, active label and state tail.
+The whole card stays one `gascity-bead' (the run root): the source spans
+add no object of their own, so RET still opens the run and SPC its
+drawer (REQ-007, AC-6).  DEPTH nests a member run's card under its
+parent's (`└', indented)."
   (let* ((depth (or depth 0))
          (id (plist-get run :id))
          (state (plist-get run :state))
@@ -636,16 +967,38 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                        (gethash id (plist-get ctx :deltas))))
          (worker (gascity-runs--run-worker run ctx))
          (glyph (gascity-runs--state-glyph state))
-         (progress (gascity-ui-fit (plist-get run :progress) 6))
+         (indent (if (zerop depth) "  "
+                   (concat (make-string (* 4 depth) ?\s) "└ ")))
+         (source (gascity-runs--source-line (gascity-runs--run-source run ctx)))
+         (source-head (concat indent
+                              (if changed (gascity-ui-changed glyph) glyph)
+                              " "))
+         (source-right (cdr source))
+         (source-room (max 1 (- gascity-dashboard--width
+                                (string-width source-head) 2
+                                (string-width source-right))))
          (line1 (gascity-dashboard--row
-                 (concat (if (zerop depth) "  "
-                           (concat (make-string (* 4 depth) ?\s) "└ "))
-                         (if changed (gascity-ui-changed glyph) glyph) " "
-                         (gascity-ui-fit id 9) " "
-                         (gascity-ui-truncate (plist-get run :formula) 40))
-                 (concat (gascity-dashboard--dim
-                          (gascity-ui-fit (or (plist-get run :rig) "city") 10))
-                         " " (gascity-runs--time-cell (plist-get run :time) now))))
+                 (concat source-head
+                         (gascity-ui-truncate (car source) source-room))
+                 (gascity-dashboard--dim source-right)))
+         (time (gascity-ui-time (plist-get run :time) now))
+         (beads (or (plist-get run :beads) 0))
+         (right (concat
+                 (let ((steps (gascity-dashboard--dim
+                               (if (plist-get run :ladder)
+                                   (concat (or (plist-get run :progress) "")
+                                           " steps")
+                                 "no steps"))))
+                   (if changed (gascity-ui-changed steps) steps))
+                 " · " (gascity-dashboard--dim
+                        (format "%d %s" beads (if (= beads 1) "bead" "beads")))))
+         (line2 (gascity-dashboard--row
+                 (concat (make-string (+ 5 (* 4 depth)) ?\s)
+                         id "  "
+                         (gascity-ui-truncate (plist-get run :formula) 40)
+                         " · " (or (plist-get run :rig) "city")
+                         (unless (string-empty-p time) (concat " · " time)))
+                 right))
          (tail (pcase state
                  ('active (if-let* ((failed (plist-get run :failed-step)))
                              (gascity-runs--failed-step-badge failed)
@@ -661,22 +1014,27 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                          (if (plist-get run :ladder)
                              (concat (gascity-dashboard--ladder-string
                                       (plist-get run :ladder))
-                                     "  " (gascity-ui-fit (plist-get run :label) 14)
-                                     " " (if changed (gascity-ui-changed progress)
-                                             progress)
-                                     " ")
-                           (gascity-dashboard--dim "no steps  "))))
-         ;; Only the Failed card's failure-reason tail is unbounded; fit it
-         ;; against the width the prefix leaves.  A deep member card's
-         ;; prefix can already fill the view, so clamp the budget at 0.
-         (line2 (concat prefix
-                        (if (eq state 'failed)
-                            (gascity-ui-truncate
-                             tail (max 0 (- gascity-dashboard--width
-                                            (string-width prefix))))
-                          tail)))
+                                     "  ")
+                           (gascity-dashboard--dim "no steps  "))
+                         (when (plist-get run :deliverable-progress)
+                           (concat (plist-get run :deliverable-progress)
+                                   " deliverables  "))
+                         (let ((label (plist-get run :label)))
+                           (if (string-empty-p (or label ""))
+                               ""
+                             (concat label "  ")))))
+         ;; The tails are words (a worker, a state, a failure): keep them
+         ;; on one line, cutting only the text beyond the view width.
+         (tail (if (> (+ (string-width prefix) 2 (string-width tail))
+                      gascity-dashboard--width)
+                   (gascity-ui-truncate
+                    tail (max 1 (- gascity-dashboard--width
+                                   (string-width prefix) 2)))
+                 tail))
+         (line3 (gascity-dashboard--row prefix tail))
          (drawer-id (concat "run:" id)))
-    (cons (apply #'gascity-dashboard--line (concat line1 "\n" line2)
+    (cons (apply #'gascity-dashboard--line
+                 (concat line1 "\n" line2 "\n" line3)
                  'beads-thing (gascity-dashboard--thing
                                'row drawer-id
                                (lambda () (gascity-dashboard--flip :drawers drawer-id)))
@@ -687,6 +1045,7 @@ DEPTH nests a member run's card under its parent's (`└', indented)."
                (gascity-dashboard--drawer
                 (or (gascity-dashboard--run-drawer (plist-get run :ladder))
                     (list (gascity-dashboard--dim "no steps yet"))))))))
+
 
 (defun gascity-runs--stage-label (formula anchor)
   "Return the lifecycle stage label of ANCHOR in FORMULA, or nil.
@@ -891,12 +1250,14 @@ Nil when there is neither a stamp nor room for a hint."
   "Return every Runs view line for render context CTX.
 CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
 :sessions :socket :view (:collapsed :drawers :expanded :history
-:pages)."
+:pages), plus the computed :parts partition, :sources card cache,
+:visible-runs and :visible-convoys `gascity-runs-context' adds."
   (let* ((gascity-dashboard--view (plist-get ctx :view))
          (filters (plist-get ctx :filters))
          (view (plist-get ctx :view))
-         (parts (gascity-runs-partition (plist-get ctx :runs) filters
-                                        (plist-get ctx :now)))
+         (parts (or (plist-get ctx :parts)
+                    (gascity-runs-partition (plist-get ctx :runs) filters
+                                            (plist-get ctx :now))))
          (state (plist-get filters :state))
          (show (lambda (s) (or (null state) (equal state s))))
          (history (or (plist-get view :history) (equal state "done")))
@@ -971,20 +1332,27 @@ CTX keys: :city :now :filters :loads (:beads) :runs (summaries)
 
 ;;; Component
 
-(defun gascity-runs-context (loads filters view now &optional city)
+(defun gascity-runs-context (loads filters view now &optional city sources)
   "Return the render context for LOADS (:beads :sessions) under FILTERS.
-VIEW is the root view state, NOW the render time, CITY the city name."
+VIEW is the root view state, NOW the render time, CITY the city name,
+SOURCES the card source cache (convoy id → state) the effect fills.
+The partition is computed once here and shared by the renderer and the
+source effect, so both agree on what is visible (plan §2.1, §2.2)."
   (let* ((beads (plist-get (gascity-dashboard--data (plist-get loads :beads)) :beads))
          (index (gascity-runs-index beads))
          (sessions (append (alist-get 'sessions (gascity-dashboard--data
                                                  (plist-get loads :sessions)))
-                           nil)))
-    (list :city city :now now :filters filters :view view :loads loads
-          :index index
-          :runs (mapcar (lambda (root) (gascity-runs-summary index root))
-                        (plist-get index :roots))
-          :sessions sessions
-          :socket (and city (gascity-resolve-tmux-socket city 'no-probe)))))
+                           nil))
+         (runs (mapcar (lambda (root) (gascity-runs-summary index root))
+                       (plist-get index :roots)))
+         (parts (gascity-runs-partition runs filters now))
+         (ctx (list :city city :now now :filters filters :view view :loads loads
+                    :index index :runs runs :parts parts :sources sources
+                    :sessions sessions
+                    :socket (and city (gascity-resolve-tmux-socket
+                                       city 'no-probe)))))
+    (plist-put (plist-put ctx :visible-runs (gascity-runs--visible-runs ctx))
+               :visible-convoys (gascity-runs--visible-convoys ctx))))
 
 (defvar-local gascity-runs--city nil
   "The city name of this Runs buffer.")
@@ -1018,7 +1386,7 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
                loads filters
                (list :collapsed collapsed :drawers drawers :expanded expanded
                      :history history :pages pages)
-               (float-time) gascity-runs--city))
+               (float-time) gascity-runs--city gascity-runs--source-cache))
          (facts (gascity-runs--facts (plist-get ctx :runs) ctx)))
     (setq ctx (gascity-ui-apply-delta
                ctx previous-facts changed-ids last-update facts
@@ -1026,6 +1394,32 @@ INITIAL-FILTERS seeds the filter state (remembered per city)."
     (setq gascity-runs--formulas
           (delete-dups (mapcar (lambda (r) (plist-get r :formula))
                                (plist-get ctx :runs))))
+    ;; The source read is an effect, never part of the render: visible
+    ;; convoys only, uncached ids only, one store read each (deduped and
+    ;; TTL'd by the store).  A `g' tick clears the cache and re-reads the
+    ;; visible ids once; the cache lives in this buffer, not the store.
+    (vui-use-effect ((plist-get ctx :visible-convoys) refresh-tick)
+      (let ((ids (plist-get ctx :visible-convoys))
+            (instance vui--current-instance)
+            (dir default-directory)
+            (cache (gascity-runs--source-cache-table)))
+        (unless (equal refresh-tick gascity-runs--source-tick)
+          (clrhash cache)
+          (setq gascity-runs--source-tick refresh-tick))
+        (dolist (id ids)
+          (let ((id id))
+            (unless (gethash id cache)
+              (puthash id :loading cache)
+              (gascity-store-fetch
+               (list "convoy" "status" id)
+               (vui-async-callback (payload)
+                 (puthash id (gascity-runs--source-of payload) cache)
+                 (vui-rerender instance))
+               (vui-async-callback (_err)
+                 (puthash id :unavailable cache)
+                 (vui-rerender instance))
+               :dir dir)))))
+      (lambda () nil))
     (vui-text (string-join (gascity-runs-lines ctx) "\n"))))
 
 ;;; Commands
