@@ -117,6 +117,14 @@ The commit subject is
 
 ## Verification
 
+This is a documentation/evidence item: it has no red phase of its own (no
+behavioral test can fail before docs are written).  The red/green shape is
+carried by the implementation items it documents: WP-0 (`1062/1062`), WP-1
+(`1070/1070`) and WP-2 (`1072/1072`) each recorded a failing test or check
+before their change and a green gate after it.  For this item the first
+verification command is the manual build plus the screenshot pass, and the
+final proof command is the lint gate.
+
 First verification command (from the item worktree):
 
 ```sh
@@ -126,6 +134,12 @@ find lisp -name '*.elc' -delete && scripts/gate.sh
 Observed: **PASS** — `>>> gate: make (byte-compile, warnings as errors)`
 clean, `Ran 1057 tests, 1057 results as expected, 0 unexpected`, then
 `>>> gate: PASS (compile clean + tests green)`.
+
+Re-run on the fix-lane integration commit `07c11a0` (same worktree):
+`scripts/gate.sh` PASS with `Ran 1088 tests, 1088 results as expected, 0
+unexpected`; `scripts/lint.sh` exit 0; `make -C doc` clean (nothing to do);
+`capture.sh --verify all` 25 images byte-identical; `--check-isolation
+cockpit` 48 non-selected images byte-identical.
 
 Docs verification:
 

@@ -6,16 +6,17 @@ exercises the shipped run-detail work spine, the Runs source card, the manual's
 keys and the TRAMP path against the live `emacs-city` and `bright-lights`
 cities, from a fresh non-graphical Emacs inside tmux.
 
-**Result: PASS (executed) on the integration tree.**  The tree was
-`9cf967e` (`feat(run-view): lead the run detail with the deliverable`) plus
-`5b376ff` (`feat(runs): name each card's source business bead`), with the
-WP-0 model, the WP-1 detail and the WP-2 card in one commit graph.  The one
-merge conflict was resolved by keeping the WP-1 keyword unit kinds
-(`:drain`/`:deliverable`/`:work`) that `gascity-run.el` consumes while keeping
-the WP-2 card/source read; the fixture seeds the business beads under their
-member runs so they are loaded without polluting the root run's machinery.
-The fixture was regenerated from `doc/screenshots/fixtures/` and the two
-changed views were captured and verified independently.
+**Result: PASS (executed) on the integration commit `07c11a0`.**  The tree
+is `e3fd295` (WP-3 docs) + `13d2dd6` (WP-0 model) + `b7134ca` (WP-1 detail) +
+`07c11a0` (WP-2 card integrated onto WP-0/WP-1), one commit graph.  The merge
+kept the WP-1 keyword unit kinds (`:drain`/`:deliverable`/`:work`) that
+`gascity-run.el` consumes, WP-0's `gascity-runs-unit-counts`, and the WP-2
+card/source read; the duplicate model, the write-only `:node` unit field and
+the closed-history source reads were dropped.  The fixture seeds the business
+beads under their member runs so they are loaded without polluting the root
+run's machinery.  The fixture was regenerated from
+`doc/screenshots/fixtures/` and every changed view was captured and verified
+independently.
 
 ## Method
 
@@ -141,8 +142,14 @@ was driven through the real mode map:
   was attached, and point stayed on the Machinery row.
 
 The deliverable row's two objects are the business title (RET opens the
-business bead) and the nested `└ do-work` line (RET opens the member run);
-the source tests cover both halves plus `SPC`/`I`/`w`/`!` dispatch.
+business bead) and the nested `└ do-work` line (RET opens the member run).
+Both halves were driven on `ga-036m5` from integration commit `07c11a0`:
+RET on the `ga-2i1hs` title opened the business bead in `beads-show[gascity.el]`,
+RET on `ga-nvipz` opened the member's own run detail, `SPC` on the title echoed
+`Business bead; RET opens it`, and `I`/`w`/`!` on a step row opened the
+inspector, printed `Copied ga-qo230` and `Run has no failed step`.  The ten
+`run-detail-*` tests in that commit cover both halves plus `SPC`/`I`/`w`/`!`
+dispatch (test evidence F2/F4; ME-4).
 
 ## 5. TRAMP (REQ-012)
 
@@ -181,7 +188,13 @@ Work  0/5 steps · 0 in flight · 0 failed · 6 beads
 ```
 
 No synchronous `gc`, file stat or TRAMP channel work runs on the render path;
-the views kept their last payload while the remote read was pending.
+the views kept their last payload while the remote read was pending.  The
+re-run on `07c11a0` repeated the key pass on the remote detail: `I` on the
+`dry` step opened its inspector, `w` printed `Copied bl-r9f5`, `!` printed
+`Run has no failed step`, and `C`/`T`/`g`/`q` toggled the machinery tree,
+restamped `updated 16:35:23` and buried the buffer.  `bright-lights` has no
+drain run, so the remote pass has no deliverable row; the local pass above is
+the deliverable-pair arm.
 
 ## 6. Screenshots and docs
 
@@ -198,11 +211,15 @@ $ doc/screenshots/capture.sh --scope runs,run-detail
   runs-default               full= 20206  thumb= 19357
 $ doc/screenshots/capture.sh --verify all
 ...
-capture verified: 22 images byte-identical over two runs
+capture verified: 25 images byte-identical over two runs
 $ doc/screenshots/capture.sh --check-isolation cockpit
 ...
-capture isolated: 21 image(s) outside cockpit unchanged
+capture isolated: 48 image(s) outside cockpit unchanged
 ```
+
+The counts were re-recorded on integration commit `07c11a0`.  `make -C doc`
+reported "Nothing to be done", i.e. a clean tree with no stale manual build
+outputs.
 
 The committed `run-detail-default` shows the Work spine, the failed Review
 inspector and the folded Machinery; `runs-default` shows the source title/id
@@ -225,10 +242,39 @@ not mutate any workflow to provoke a second change.
 - The live-refresh check above exercised the store route, not a separate
   synthetic member state transition; the existing ERT delta tests remain the
   regression guard for the face/stamp details.
-- The integration tree is the WP-1/WP-2 merge used for this pass.  The final
-  merge queue must keep the keyword unit kinds (`:drain`, `:deliverable`,
-  `:work`) when it resolves the same conflict; symbol kinds would render every
-  deliverable as a plain work row.
+- The integration commit `07c11a0` carries the keyword unit kinds
+  (`:drain`, `:deliverable`, `:work`) and WP-0's counters; the merge queue
+  must not resurrect the symbol-kind spelling or the duplicate ERT names
+  (RF-1).  The ten `run-detail-*` tests and the eight card/source tests are
+  the guard.
 - The manual's Work sample is the historical `be-0kjzs` snapshot at 5/10
   steps; the live run is now 10/10 closed.  The layout and keys are what the
   sample documents; a later manual refresh can update the counts.
+- `scripts/lint.sh` ran checkdoc only because `package-lint` is not installed
+  locally; CI installs it (RR-1).  The lint gate is not described here as
+  equivalent to the full CI job.
+- The stale W4 source anchor `ga-x37it` is still `open` while its outcome
+  bead `ga-b373v` is `closed`/`pass`; finalizer reconciliation (RR-2).  The
+  worktree evidence is `e3fd295`.
+
+## Fix-lane re-run (integration commit `07c11a0`)
+
+Run from `/home/roman/workspace/gascity.el/worktrees/ga-x37it`, `pwd -P`
+verified:
+
+```console
+$ find lisp -name '*.elc' -delete && scripts/gate.sh
+... gate: PASS (compile clean + tests green)
+Ran 1088 tests, 1088 results as expected, 0 unexpected
+$ scripts/lint.sh
+exit 0 (checkdoc clean; package-lint not installed)
+$ make -C doc
+make: Nothing to be done for 'all'.
+$ doc/screenshots/capture.sh --verify all
+verify: byte-identical for 25 image(s) (scope all)
+$ doc/screenshots/capture.sh --check-isolation cockpit
+isolation: OK; 48 non-selected image(s) byte-identical (scope cockpit)
+```
+
+The local and `/ssh:localhost:~/bright-lights` tmux passes were repeated on
+that commit (sections 4 and 5); no image changed.
