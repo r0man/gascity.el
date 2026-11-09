@@ -6,12 +6,13 @@
 
 ;;; Commentary:
 
-;; The stage mapping behind the run detail's stage groups
-;; (plans/run-view-v2/build/implementation-plan.md §1): formula name →
-;; ordered lifecycle stages, and the pure functions that assign a run's
-;; top-level anchor steps to them.  No store or process code lives here;
-;; grouping is a pure function of the decoded step tree and the formula
-;; name.
+;; The optional stage labels behind the run detail's Work spine
+;; (plans/run-view-work-spine/implementation-plan.md §1.3): formula name →
+;; ordered lifecycle stages, and the anchor lookup that labels a work
+;; unit.  This is enrichment only (REQ-009, OOS-005): a label may head a
+;; contiguous run of units, and it never reorders, splits or hides one.
+;; No store or process code lives here; labels are a pure function of the
+;; formula name and the step's anchor.
 ;;
 ;; The four per-formula tables below are a verbatim port of gc's
 ;; `stagesForFormula' in internal/runproj/phasemapping.go (gc 1.5.1,
@@ -37,10 +38,7 @@
 
 ;;; Code:
 
-(require 'seq)
 (require 'subr-x)
-(require 'gascity-ui)
-(require 'gascity-dashboard)            ; `gascity-dashboard--control-kinds'
 
 ;;; Formula stage table
 
@@ -135,7 +133,7 @@ step table rather than guessing."
   (and (stringp formula)
        (cdr (assoc formula gascity-run-stage-formulas))))
 
-;;; Anchors and nodes
+;;; Anchors
 
 (defun gascity-run-stage-anchor (step-id)
   "Return the top-level anchor of STEP-ID.
@@ -150,104 +148,6 @@ away first; the anchor is the first remaining dot-separated segment."
       (setq id (replace-regexp-in-string "\\.iteration\\.[0-9]+" "" id))
       (unless (string-empty-p id)
         (car (split-string id "\\."))))))
-
-(defun gascity-run-stage--meta (bead key)
-  "Return metadata KEY (a symbol) of BEAD, or nil."
-  (alist-get key (alist-get 'metadata bead)))
-
-(defun gascity-run-stage--control-p (node)
-  "Return non-nil when NODE's bead is a control node.
-Control nodes are the `gascity-dashboard--control-kinds' of `gc.kind';
-they are never ladder anchors."
-  (member (gascity-run-stage--meta (plist-get node :bead) 'gc.kind)
-          gascity-dashboard--control-kinds))
-
-(defun gascity-run-stage--without-control (nodes)
-  "Return NODES without control nodes at any depth."
-  (seq-keep
-   (lambda (node)
-     (unless (gascity-run-stage--control-p node)
-       (let ((copy (copy-sequence node)))
-         (plist-put copy :children
-                    (gascity-run-stage--without-control
-                     (plist-get node :children)))
-         copy)))
-   nodes))
-
-(defun gascity-run-stage--node-path (node)
-  "Return NODE's tree path, falling back to its name."
-  (or (plist-get node :path) (plist-get node :name)))
-
-;;; Stage state and progress
-
-(defun gascity-run-stage-state (nodes)
-  "Return the stage state of NODES: `failed', `active', `done' or `pending'.
-NODES are annotated tree nodes (:state is the ladder state stamped by
-`gascity-run-annotate').  A stage fails if any member failed, is active
-if any member runs, is done only when every member is done, and is
-pending otherwise, including when it has no members."
-  (let ((states (mapcar (lambda (node) (plist-get node :state)) nodes)))
-    (cond ((memq 'failed states) 'failed)
-          ((memq 'active states) 'active)
-          ((and states (seq-every-p (lambda (state) (eq state 'done)) states))
-           'done)
-          (t 'pending))))
-
-(defun gascity-run-stage--done (nodes)
-  "Return the number of NODES whose state is done."
-  (seq-count (lambda (node) (eq (plist-get node :state) 'done)) nodes))
-
-(defun gascity-run-stage-glyph (state)
-  "Return the glyph for stage STATE, propertized with its face.
-STATE is a `gascity-run-stage-state' value (`done', `active',
-`failed', `pending').  gc's `RunStage' status vocabulary (`complete',
-`blocked') is accepted too: the ported stage tables come from gc's
-phase mapping, so a status read straight from it must render."
-  (gascity-ui-glyph (pcase state
-                      ('complete 'done)
-                      ('blocked 'failed)
-                      (_ state))))
-
-;;; Grouping
-
-(defun gascity-run-stage--group (key label members)
-  "Return the stage plist of KEY and LABEL over MEMBERS (tree nodes)."
-  (list :key key :label label
-        :state (gascity-run-stage-state members)
-        :done (gascity-run-stage--done members)
-        :total (length members)
-        :anchors members))
-
-(defun gascity-run-stage-groups (tree formula)
-  "Return TREE's top-level anchors grouped by FORMULA's stages.
-Nil when FORMULA has no stage table (the flat fallback).  Otherwise a
-list of plists (:key :label :state :done :total :anchors) in table
-order.  Each top-level node of TREE is assigned to the first stage
-whose STEP-IDS contains its anchor (see `gascity-run-stage-anchor';
-nested ids match by anchor), so first match wins and tree order is
-preserved within a stage.  Control nodes are removed at every depth
-first; iteration beads and nested steps are children, never anchors.
-Unmatched anchors collect in a trailing (\"other\" \"Other\") group when
-any remain, so no present anchor is dropped."
-  (let ((table (gascity-run-stage-for-formula formula)))
-    (when table
-      (let ((remaining (gascity-run-stage--without-control tree))
-            (groups nil))
-        (dolist (stage table)
-          (let* ((key (nth 0 stage))
-                 (label (nth 1 stage))
-                 (anchors (mapcar #'gascity-run-stage-anchor (nth 2 stage)))
-                 (members (seq-filter
-                           (lambda (node)
-                             (member (gascity-run-stage-anchor
-                                      (gascity-run-stage--node-path node))
-                                     anchors))
-                           remaining)))
-            (setq remaining (seq-difference remaining members #'eq))
-            (push (gascity-run-stage--group key label members) groups)))
-        (when remaining
-          (push (gascity-run-stage--group "other" "Other" remaining) groups))
-        (nreverse groups)))))
 
 (provide 'gascity-run-stage)
 ;;; gascity-run-stage.el ends here

@@ -56,6 +56,7 @@
 (require 'gascity-run-stage)
 
 (declare-function gascity-run-show "gascity-run")
+(declare-function gascity-dashboard--step-ref "gascity-dashboard")
 (declare-function gascity-run-tree "gascity-run")
 (declare-function gascity-run-annotate "gascity-run")
 (declare-function gascity-polecat-detail-at-point "gascity-session")

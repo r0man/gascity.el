@@ -1380,13 +1380,14 @@ and the artifact visit, are stubbed and recorded."
           ;; `B'/`Y' need the buffer's run and city, as the mode sets them.
           (setq gascity-run--current-run "be-bn2"
                 gascity-run--city "emacs-city")
+          (gascity-runs-test--expand-machinery)
           ;; `w': copy the step's bead id at point.
           (goto-char (point-min))
-          (should (re-search-forward "^    ◆ prepare" nil t))
+          (should (re-search-forward "^  ◆ prepare" nil t))
           (gascity-run-copy-id)
           ;; `I': the step inspector drawer (a re-render, not a re-read).
           (goto-char (point-min))
-          (re-search-forward "^    ◆ prepare" nil t)
+          (re-search-forward "^  ◆ prepare" nil t)
           (gascity-run-inspect)
           ;; `!': diagnose the run's failed step, expanding to it.
           (goto-char (point-min))
