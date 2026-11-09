@@ -159,9 +159,11 @@ Never seeded, never touched: the repository `.beads/`, `~/emacs-city`,
 | `mail-inbox` | a `demo-mail-review` message bead naming `demo-10`/`demo-11` | `bd import` |
 | `convoy-list`, `dolt-list` | one bounded page from the seeded store | `bd import` |
 | `bookmarks` | two gascity bookmarks set in-session | the shot list, not the fixture |
-| `runs`, `run-detail` | one active `build-basic on demo-10` run (`demo-run` root + 12 step beads; the review loop's iteration 1 is closed failed) | `bd import` |
+| `runs`, `run-detail` | a source-bearing rich `build-basic on demo-10` run (`demo-run`) with eight deliverables (`demo-biz-1..8`) and their member runs (`demo-member-1..8`; the last is on `close-source-anchor`), a flat `do-work` run (`demo-flat`), a standalone `review` run (`demo-std`) and an inline drain (`demo-inline`); the rich run's review loop's iteration 1 is closed failed, source `demo-10` | `bd import` |
 | `session-list` | two seeded session rows, enriched to `asleep` (no runtime) | `bd import` into the city store |
 | `agents` | the config-derived agents, all `stopped` (no controller) | the city's agent config |
+
+The run fixture adds role-addressed beads (`demo-biz-*`, `demo-member-*` and the two convoys) without renaming the canonical `demo-1` … `demo-12` data; `demo-convoy` tracks the canonical `demo-10` epic.
 
 ## Sessions
 
@@ -206,13 +208,17 @@ offline `gc`/`bd` commands is excluded with a reason rather than synthesized.
   human --json` returns an empty inbox even with the bead present.  The bead
   stays as fixture data for a future session-backed capture; the follow-up
   bead above covers it.
-- **Runs and run-detail** need no controller: the seeded `build-basic on
-  demo-10` graph gives both views real store data.  The run is `in_progress`,
-  which keeps it in the Runs view's Active section (the Failed section only
-  looks back 24h, and every fixture timestamp is pinned to 2025), and its
-  review loop's failed iteration gives the run detail a failed stage and an
-  inspector failure.  With no session attached to the run, the inspector
-  honestly reads `no session`.
+- **Runs and run-detail** need no controller: the fixture seeds the rich
+  `build-basic on demo-10` run (with its source convoy, business beads and
+  member runs), the flat `do-work` run, the standalone `review` run and the
+  inline-drain run with `bd import` (above), so both views render real store
+  data.  The rich run and its eighth member are `in_progress` (Active, with
+  the member as a sub-run); the flat run is closed failed and the standalone
+  is closed done, so both sit in the Closed history (the Failed section only
+  looks back 24h, and every fixture timestamp is pinned to 2025-01-01).  The
+  review loop's failed iteration gives the rich run detail a failed machinery
+  step and an inspector failure.  With no session, the inspector honestly
+  reads `no session` and the member line says `no live worker`.
 - **Events over the API.** Every `gc` call in the capture inherits the
   fixture `GC_HOME`, and `gc events` then resolves through the supervisor API,
   which does not exist for this city: it fails with

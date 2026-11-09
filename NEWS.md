@@ -4,18 +4,41 @@ User-visible and API-breaking changes, newest first.
 
 ## Unreleased
 
+### The run detail leads with the deliverable
+
+The run detail now opens with the source business bead's title and the
+run's identity line, then a Work spine in dependency order: a drain
+row with its deliverable rows (the business bead and its paired member
+run), a drain with no members as one work row, or the run's own step
+rows when there is no drain.  The three denominators are labeled
+(`N/M steps`, `N/M deliverables`, `N beads`), the provenance names the
+`input convoy` and `implementation convoy` separately, and the step
+tree is folded under `Machinery` by default (`SPC`; `C` and `T` still
+work inside it).  The business/member join is in-memory, so the detail
+adds no `gc` call; the source is the convoy status read it already
+paid (ga-036m5).
+
+### Runs cards name their source
+
+Each Runs card now leads with the source business bead's title, id and
+status, read asynchronously through the store (one `gc convoy status`
+per visible run, TTL'd, deduped and visible-first).  A cold card shows
+`source loading…`; a failed read shows `source unavailable`; a run
+with no source says `(no source)`.  The card's second line names the
+run's root, formula, rig and time with the labeled step and bead
+counts; the third line is the ladder and the `N/M deliverables`
+progress.  Two `build-basic` runs are distinguishable by source, and
+the card read never blocks the list (ga-036m5).
+
 ### The run detail names the business bead a run was launched from
 
-A graph.v2 run launched by slinging a business bead now shows a
-`source` row in its header, between `scope` and `formula`, naming that
-bead: its id, status and title (cut to the view width with the full
-title in `help-echo`).  The row is resolved from the run root's
-`gc.var.convoy_id` (the synthetic input convoy) through the convoy's
-first tracked member, read asynchronously through the run detail's
-store like its other rows; RET on it opens the source bead, not the
-workflow root.  A standalone workflow without the variable, or a
-convoy or member gc no longer reports, omits the row instead of
-guessing (ga-uf8kr).
+A graph.v2 run launched by slinging a business bead resolves its source
+from the run root's `gc.var.convoy_id` (the synthetic input convoy)
+through the convoy's first tracked member; RET on the source opens the
+source bead, not the workflow root.  A standalone workflow without the
+variable, or a convoy or member `gc` no longer reports, omits the
+source instead of guessing (ga-uf8kr).  The run detail now leads with
+this source; see "The run detail leads with the deliverable" above.
 
 ### One demo dataset and the default theme for the manual
 
