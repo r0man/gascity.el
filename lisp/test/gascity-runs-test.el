@@ -655,6 +655,249 @@ its nested drain sub-run -- naming the sub-run -- instead of reading
                                              :worker-bead))
                    "bs-deeper-worker"))))
 
+(defun gascity-runs-test--workflow-step (root id ref status &optional kind deps outcome rig)
+  "Return a step bead of run ROOT.
+ID names the step, REF its `gc.step_ref'; KIND is the `gc.kind' (a
+\"drain\", say), DEPS the ids it blocks on, OUTCOME its `gc.outcome' and
+RIG its store (default \"beads.el\")."
+  `((id . ,id) (status . ,status) (issue_type . "task")
+    (metadata . ((gc.root_bead_id . ,root) (gc.step_ref . ,ref)
+                 ,@(and kind `((gc.kind . ,kind)))
+                 ,@(and outcome `((gc.outcome . ,outcome)))))
+    (dependencies . ,(vconcat (mapcar (lambda (d) `((type . "blocks")
+                                                   (depends_on_id . ,d)))
+                                      deps)))
+    (gascity-rig . ,(or rig "beads.el"))))
+
+(defconst gascity-runs-test--deliverable-pairs
+  '(("be-rtqte" . "be-b9jhp") ("be-95bl3" . "be-ybleu")
+    ("be-k8nn0" . "be-rtqoj") ("be-vrjbu" . "be-wm8j0")
+    ("be-o597j" . "be-w7pjp") ("be-gn247" . "be-s3joe")
+    ("be-7japy" . "be-sqrl5") ("be-s61jf" . "be-dhu31"))
+  "The eight (business . member) pairs of the rich run, in index order.")
+
+(defun gascity-runs-test--deliverable-beads (&optional missing-business)
+  "Return a build-basic run whose implement drain joins eight members.
+The members are read in a deliberately shuffled order and carry the
+string `gc.drain_index'/`gc.drain_count' values gc emits on the wire.
+With MISSING-BUSINESS the eighth member names a bead absent from the
+payload."
+  (let* ((root "be-0kjzs")
+         (drain "be-9sbk2")
+         (pairs gascity-runs-test--deliverable-pairs)
+         (members nil)
+         (business nil))
+    (dolist (i '(3 7 0 5 2 6 1 4))
+      (let* ((pair (nth i pairs))
+             (business-id (if (and missing-business (= i 7))
+                              "be-not-loaded"
+                            (car pair)))
+             (member-id (cdr pair))
+             (last (= i 7)))
+        (setq business
+              (append business
+                      (when (or (not missing-business) (not last))
+                        (list `((id . ,business-id)
+                                (title . ,(format "Deliverable %d" (1+ i)))
+                                (status . ,(if last "open" "closed"))
+                                (issue_type . "task")
+                                (gascity-rig . "beads.el"))))))
+        (setq members
+              (append members
+                      (list `((id . ,member-id)
+                              (status . ,(if last "in_progress" "closed"))
+                              (issue_type . "task")
+                              (metadata . ((gc.kind . "workflow")
+                                           (gc.formula_name . "do-work")
+                                           (gc.drain_control_id . ,drain)
+                                           (gc.drain_member_id . ,business-id)
+                                           (gc.drain_index . ,(number-to-string i))
+                                           (gc.drain_count . "8")
+                                           ,@(unless last
+                                               `((gc.outcome . "pass")))))
+                              (gascity-rig . "beads.el")))))))
+    (append
+     (list `((id . ,root) (status . "in_progress") (issue_type . "task")
+             (metadata . ((gc.kind . "workflow")
+                          (gc.formula_name . "build-basic")))
+             (gascity-rig . "beads.el"))
+           (gascity-runs-test--workflow-step root "be-nasax"
+                                             "build-basic.prepare" "closed"
+                                             nil nil "pass")
+           (gascity-runs-test--workflow-step root drain
+                                             "build-basic.implement" "open"
+                                             "drain" '("be-nasax"))
+           (gascity-runs-test--workflow-step root "be-o4q0j"
+                                             "build-basic.summarize" "open"
+                                             nil '("be-9sbk2")))
+     members business)))
+
+(ert-deftest gascity-test-runs-index-deliverables-ordered ()
+  "The index joins each drain member to its business bead in
+`gc.drain_index' order, though gc emits the index as a string and the
+read order is shuffled (REQ-003, AC-1)."
+  (let* ((beads (gascity-runs-test--deliverable-beads))
+         (index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (b) (equal (alist-get 'id b) "be-0kjzs"))
+                         (plist-get index :roots)))
+         (members (gethash "be-9sbk2" (plist-get index :deliverables))))
+    (should (= (length members) 8))
+    (should (equal (mapcar (lambda (m) (cons (plist-get m :business-id)
+                                             (plist-get m :member-id)))
+                           members)
+                   gascity-runs-test--deliverable-pairs))
+    (should (equal (mapcar (lambda (m) (plist-get m :index)) members)
+                   '(0 1 2 3 4 5 6 7)))
+    (should (equal (mapcar (lambda (m) (plist-get m :count)) members)
+                   '(8 8 8 8 8 8 8 8)))
+    (should (equal (mapcar (lambda (m) (gascity-runs-state (plist-get m :member)))
+                           members)
+                   '(done done done done done done done active)))
+    ;; The pair is by `gc.drain_member_id' only, never by position.
+    (should (equal (alist-get 'id (plist-get (car members) :member)) "be-b9jhp"))
+    (should (equal (alist-get 'title (gascity-runs-bead index "be-rtqte"))
+                   "Deliverable 1"))
+    (should-not (gascity-runs-bead index "be-invented"))
+    ;; :drains keeps naming the member roots, the ladder's input.
+    (should (= (length (gethash "be-9sbk2" (plist-get index :drains))) 8))
+    (should (equal (mapcar (lambda (d) (plist-get (plist-get d :step) :name))
+                           (gascity-runs-deliverables index root))
+                   '("implement")))
+    (should (equal (mapcar (lambda (s) (plist-get s :name))
+                           (gascity-runs-ladder index root))
+                   '("prepare" "implement" "summarize")))
+    ;; The labels stay separate: 1/3 steps, 7/8 deliverables, 3 graph
+    ;; beads, no failed unit (REQ-010).
+    (should (equal (gascity-runs-unit-counts index root)
+                   '(:steps (1 . 3) :deliverables (7 . 8) :beads 3
+                            :in-flight 1 :failed 0)))))
+
+(ert-deftest gascity-test-runs-index-deliverables-missing-business ()
+  "A member naming a business bead absent from the payload keeps its id
+and a nil bead; the spine still emits one row (REQ-003)."
+  (let* ((beads (gascity-runs-test--deliverable-beads 'missing))
+         (index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (b) (equal (alist-get 'id b) "be-0kjzs"))
+                         (plist-get index :roots)))
+         (members (gethash "be-9sbk2" (plist-get index :deliverables)))
+         (missing (car (last members)))
+         (units (gascity-runs-work-units index root))
+         (row (seq-find (lambda (r) (equal (plist-get r :business-id)
+                                           "be-not-loaded"))
+                        units)))
+    (should (= (length members) 8))
+    (should (equal (plist-get missing :business-id) "be-not-loaded"))
+    (should-not (plist-get missing :business))
+    (should-not (gascity-runs-bead index "be-not-loaded"))
+    (should (= (seq-count (lambda (r) (eq (plist-get r :unit-kind) :deliverable))
+                          units)
+               8))
+    (should row)
+    (should-not (plist-get row :business))
+    (should (equal (plist-get row :member-id) "be-dhu31"))
+    (should (equal (plist-get row :order) 9))))
+
+(ert-deftest gascity-test-runs-inline-drain-one-unit ()
+  "An inline drain (a drain node with no member roots) is exactly one
+work row, with no deliverables invented (REQ-004, AC-4)."
+  (let* ((beads (list `((id . "bl-demo") (status . "in_progress")
+                        (issue_type . "task")
+                        (metadata . ((gc.kind . "workflow")
+                                     (gc.formula_name . "build-basic")))
+                        (gascity-rig . "burningswell-cl"))
+                      (gascity-runs-test--workflow-step
+                       "bl-demo" "bl-impl" "build-basic.implement" "open"
+                       "drain" nil nil "burningswell-cl")
+                      (gascity-runs-test--workflow-step
+                       "bl-demo" "bl-summ" "build-basic.summarize" "open"
+                       nil nil nil "burningswell-cl")))
+         (index (gascity-runs-test--index beads))
+         (root (car (plist-get index :roots)))
+         (units (gascity-runs-work-units index root)))
+    (should-not (gascity-runs-deliverables index root))
+    (should (equal (mapcar (lambda (r) (plist-get r :unit-kind)) units)
+                   '(:work :work)))
+    (should (equal (mapcar (lambda (r) (plist-get (plist-get r :step) :name)) units)
+                   '("implement" "summarize")))
+    (should (equal (mapcar (lambda (r) (plist-get r :order)) units) '(0 1)))
+    (should (= (seq-count (lambda (r) (eq (plist-get r :unit-kind) :deliverable))
+                          units)
+               0))))
+
+(ert-deftest gascity-test-runs-no-drain-no-deliverables ()
+  "A flat run and a standalone review yield zero deliverables and their
+top-level steps as work rows in ladder order (REQ-004, AC-3)."
+  (dolist (case '(;; A flat do-work run: no drain node at all.
+                  ("bl-flat" "do-work"
+                   ("bl-prep" "do-work.prepare-worktree")
+                   ("bl-impl" "do-work.implement")
+                   ("bl-close" "do-work.close-source-anchor"))
+                  ;; A standalone review run: no drain either.
+                  ("bl-review" "review"
+                   ("bl-rprep" "review.prepare")
+                   ("bl-code" "review.code")
+                   ("bl-final" "review.finalize"))))
+    (let* ((root-id (nth 0 case))
+           (formula (nth 1 case))
+           (steps (nthcdr 2 case))
+           (beads (append
+                   (list `((id . ,root-id) (status . "in_progress")
+                           (issue_type . "task")
+                           (metadata . ((gc.kind . "workflow")
+                                        (gc.formula_name . ,formula)))
+                           (gascity-rig . "beads.el")))
+                   (mapcar (lambda (step)
+                             (gascity-runs-test--workflow-step
+                              root-id (nth 0 step) (nth 1 step) "open"))
+                           steps)))
+           (index (gascity-runs-test--index beads))
+           (root (seq-find (lambda (b) (equal (alist-get 'id b) root-id))
+                           (plist-get index :roots)))
+           (units (gascity-runs-work-units index root)))
+      (should-not (gascity-runs-deliverables index root))
+      (should (equal (mapcar (lambda (r) (plist-get r :unit-kind)) units)
+                     '(:work :work :work)))
+      (should (equal (mapcar (lambda (r) (plist-get (plist-get r :step) :name))
+                             units)
+                     (mapcar (lambda (r) (plist-get r :name))
+                             (gascity-runs-ladder index root)))))))
+
+(ert-deftest gascity-test-runs-order-step-ref-tiebreak ()
+  "Same-depth steps order by `gc.step_ref', not by bead id; a dependency
+cycle neither loops nor drops a node (REQ-002)."
+  (let* ((root "bl-order")
+         (beads (list `((id . ,root) (status . "in_progress")
+                        (issue_type . "task")
+                        (metadata . ((gc.kind . "workflow")
+                                     (gc.formula_name . "build-basic")))
+                        (gascity-rig . "beads.el"))
+                      ;; Step ref order and id order disagree on purpose:
+                      ;; "alpha" has the larger bead id.
+                      (gascity-runs-test--workflow-step
+                       root "bl-zzzz" "build-basic.alpha" "open")
+                      (gascity-runs-test--workflow-step
+                       root "bl-aaaa" "build-basic.zulu" "open")
+                      ;; A cycle: the two depend on each other.
+                      (gascity-runs-test--workflow-step
+                       root "bl-cyc-a" "build-basic.beta" "open"
+                       nil '("bl-cyc-b"))
+                      (gascity-runs-test--workflow-step
+                       root "bl-cyc-b" "build-basic.gamma" "open"
+                       nil '("bl-cyc-a"))))
+         (index (gascity-runs-test--index beads))
+         (root-bead (seq-find (lambda (b) (equal (alist-get 'id b) root))
+                              (plist-get index :roots)))
+         (ladder (gascity-runs-ladder index root-bead))
+         (names (mapcar (lambda (s) (plist-get s :name)) ladder))
+         (units (gascity-runs-work-units index root-bead)))
+    (should (= (length ladder) 4))
+    (should (equal (seq-take names 2) '("alpha" "zulu")))
+    (should (equal (plist-get (car ladder) :id) "bl-zzzz"))
+    (should (equal (sort (copy-sequence names) #'string<)
+                   '("alpha" "beta" "gamma" "zulu")))
+    (should (equal (mapcar (lambda (r) (plist-get (plist-get r :step) :name)) units)
+                   names))))
+
 (ert-deftest gascity-test-runs-ladder-failed-only-in-failed-run ()
   "A failed bead beneath a closed step marks it failed only when the run
 itself failed: a retried loop in a passing run keeps its step done."

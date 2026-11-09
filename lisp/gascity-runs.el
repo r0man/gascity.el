@@ -56,6 +56,8 @@
 (require 'gascity-run-stage)
 
 (declare-function gascity-run-show "gascity-run")
+(declare-function gascity-run-tree "gascity-run")
+(declare-function gascity-run-annotate "gascity-run")
 (declare-function gascity-polecat-detail-at-point "gascity-session")
 (declare-function gascity-session-peek-at-point "gascity-action")
 
@@ -117,19 +119,60 @@ TICK is the component's refresh counter."
 (defvar gascity-runs--index-cache (cons nil nil)
   "(BEADS . INDEX): the index of the last bead list, reused by identity.")
 
+(defalias 'gascity-runs--step-ref #'gascity-dashboard--step-ref)
+
+(defun gascity-runs--wire-number (value)
+  "Return VALUE (a number or a gc wire string) as a number, or nil.
+gc emits `gc.drain_index'/`gc.drain_count' as strings; an absent or
+non-numeric value is nil, and nil sorts last."
+  (cond ((numberp value) value)
+        ((and (stringp value) (string-match-p "\\`[0-9]+\\'" value))
+         (string-to-number value))
+        (t nil)))
+
+(defun gascity-runs--deliverable-less-p (a b)
+  "Return non-nil when deliverable A sorts before deliverable B.
+`gc.drain_index' first (nil last), then the business id, then the
+member id, so a shuffled read always yields the same order."
+  (let ((ia (plist-get a :index))
+        (ib (plist-get b :index)))
+    (cond ((and ia ib (/= ia ib)) (< ia ib))
+          ((and ia (null ib)) t)
+          ((and (null ia) ib) nil)
+          (t (let ((ba (or (plist-get a :business-id) ""))
+                   (bb (or (plist-get b :business-id) "")))
+               (if (equal ba bb)
+                   (string< (or (plist-get a :member-id) "")
+                            (or (plist-get b :member-id) ""))
+                 (string< ba bb)))))))
+
 (defun gascity-runs-index (beads)
   "Return the run index of BEADS: a plist (:roots ROOTS :graphs HASH ...).
 ROOTS are the run root beads, HASH maps a root id to its graph beads
 \(every bead whose `gc.root_bead_id' names it), :owners maps a graph
 bead id to its run's id, :drains maps a drain step id to its member
-run roots (`gc.drain_control_id').  The last result is
-reused while BEADS is the same list (every render of one payload), so
-the grouping and ladders are computed once per read."
+run roots (`gc.drain_control_id'), and :beads maps every bead id in
+BEADS to its bead (first write wins).
+
+:deliverables maps a drain step id to its member runs, joined in the
+same single pass to the business bead: one plist (:business-id ID
+:member-id ID :member ROOT :index N :count N) per member.  ID is the
+member root's `gc.drain_member_id' (kept even when the payload has no
+such bead), N its `gc.drain_index'/`gc.drain_count' parsed from gc's
+string wire values (nil, sorting last, when absent or non-numeric).
+The list is ordered by index, then business id, then member id, so the
+cached index never depends on the read order.
+
+The last result is reused while BEADS is the same list (every render
+of one payload), so the grouping and ladders are computed once per
+read."
   (if (and beads (eq (car gascity-runs--index-cache) beads))
       (cdr gascity-runs--index-cache)
     (let ((graphs (make-hash-table :test 'equal))
           (owners (make-hash-table :test 'equal))
           (drains (make-hash-table :test 'equal))
+          (deliverables (make-hash-table :test 'equal))
+          (table (make-hash-table :test 'equal))
           (seen (make-hash-table :test 'equal))
           (roots nil))
       (dolist (b beads)
@@ -138,16 +181,34 @@ the grouping and ladders are computed once per read."
           ;; must not double a bead.
           (unless (gethash id seen)
             (puthash id t seen)
+            (puthash id b table)
             (cond ((gascity-dashboard--run-root-p b)
                    (push b roots)
                    (let ((drain (gascity-runs--meta b 'gc.drain_control_id)))
-                     (when drain (push b (gethash drain drains)))))
+                     (when drain
+                       (push b (gethash drain drains))
+                       (push (list :business-id
+                                   (gascity-runs--meta b 'gc.drain_member_id)
+                                   :member-id id
+                                   :member b
+                                   :index (gascity-runs--wire-number
+                                           (gascity-runs--meta b 'gc.drain_index))
+                                   :count (gascity-runs--wire-number
+                                           (gascity-runs--meta b 'gc.drain_count)))
+                             (gethash drain deliverables)))))
                   ((gascity-dashboard--root-of b)
                    (puthash id (gascity-dashboard--root-of b) owners)
                    (push b (gethash (gascity-dashboard--root-of b) graphs)))))))
+      (dolist (drain (hash-table-keys deliverables))
+        (puthash drain
+                 (sort (gethash drain deliverables)
+                       #'gascity-runs--deliverable-less-p)
+                 deliverables))
       (let ((index (list :roots (nreverse roots) :graphs graphs :drains drains
-                         :owners owners
-                         :ladders (make-hash-table :test 'equal))))
+                         :owners owners :beads table
+                         :deliverables deliverables
+                         :ladders (make-hash-table :test 'equal)
+                         :trees (make-hash-table :test 'equal))))
         (setq gascity-runs--index-cache (cons beads index))
         index))))
 
@@ -171,6 +232,125 @@ parent.  Nil when ROOT is no member, or its drain step is not in INDEX."
         (puthash id (gascity-dashboard--ladder root (gascity-runs-graph index id)
                                                (plist-get index :drains))
                  ladders))))
+
+(defun gascity-runs-bead (index id)
+  "Return the bead ID in INDEX, or nil when the payload has none."
+  (gethash id (plist-get index :beads)))
+
+(defun gascity-runs-deliverables (index root)
+  "Return ROOT's drain steps that have deliverables in INDEX.
+One plist (:step STEP :members MEMBERS) per ladder step whose members
+are non-nil, in ladder order; MEMBERS are the ordered deliverables of
+`gascity-runs-index'.  Nil for a formula with no drain and for an
+inline drain (a drain step with no member roots), so a caller never
+invents a per-item row."
+  (let ((deliverables (plist-get index :deliverables))
+        (steps nil))
+    (dolist (step (gascity-runs-ladder index root))
+      (let ((members (gethash (plist-get step :id) deliverables)))
+        (when members
+          (push (list :step step :members members) steps))))
+    (nreverse steps)))
+
+(defun gascity-runs--tree (index root)
+  "Return ROOT's annotated step tree in INDEX (memoized in INDEX).
+The tree is `gascity-run-tree' with every node stamped with its ladder
+state by `gascity-run-annotate', so a work-unit row's :node carries the
+same state as the ladder."
+  (let* ((id (alist-get 'id root))
+         (trees (plist-get index :trees)))
+    (or (gethash id trees)
+        (puthash id (let ((graph (gascity-runs-graph index id)))
+                      (gascity-run-annotate
+                       (gascity-run-tree root graph) root graph
+                       (gascity-runs-ladder index root)))
+                 trees))))
+
+(defun gascity-runs--unit-state (row)
+  "Return the state of work-unit ROW: its member run's, else its step's."
+  (if (eq (plist-get row :unit-kind) :deliverable)
+      (gascity-runs-state (plist-get row :member))
+    (plist-get (plist-get row :step) :state)))
+
+(defun gascity-runs-work-units (index root)
+  "Return ROOT's work-unit spine in INDEX, in ladder order.
+One row per work unit: a `:drain' row for a step with member roots,
+followed by one `:deliverable' row per member, and a `:work' row for a
+drain without members (an inline drain) and for every other top-level
+step.  A row is a plist (:unit-kind :step :node :business
+:business-id :member :member-id :index :count :order): :step is the
+ladder entry, :node its annotated tree node (nil when the tree has
+none), :business the bead the member's `gc.drain_member_id' names (nil
+when the payload has none, with the id kept), :member the member run
+root, and :order the row's 0-based position here.  No row is invented:
+an inline drain is one :work row and a formula with no drain yields
+only :work rows."
+  (let ((nodes (make-hash-table :test 'equal))
+        (units nil)
+        (order 0))
+    (dolist (node (gascity-runs--tree index root))
+      (puthash (alist-get 'id (plist-get node :bead)) node nodes))
+    (dolist (step (gascity-runs-ladder index root))
+      (let* ((id (plist-get step :id))
+             (node (gethash id nodes))
+             (members (gethash id (plist-get index :deliverables))))
+        (if members
+            (progn
+              (push (list :unit-kind :drain :step step :node node
+                          :business nil :business-id nil
+                          :member nil :member-id nil
+                          :index nil :count nil :order order)
+                    units)
+              (setq order (1+ order))
+              (dolist (member members)
+                (push (list :unit-kind :deliverable :step step :node node
+                            :business (gascity-runs-bead
+                                       index (plist-get member :business-id))
+                            :business-id (plist-get member :business-id)
+                            :member (plist-get member :member)
+                            :member-id (plist-get member :member-id)
+                            :index (plist-get member :index)
+                            :count (plist-get member :count)
+                            :order order)
+                      units)
+                (setq order (1+ order))))
+          (push (list :unit-kind :work :step step :node node
+                      :business nil :business-id nil
+                      :member nil :member-id nil
+                      :index nil :count nil :order order)
+                units)
+          (setq order (1+ order)))))
+    (nreverse units)))
+
+(defun gascity-runs-unit-counts (index root)
+  "Return the labeled counts of ROOT in INDEX.
+A plist (:steps (DONE . TOTAL) :deliverables (DONE . TOTAL) :beads N
+:in-flight N :failed N).  :steps counts the ladder's done steps,
+:deliverables the member runs whose run is done, :beads the beads in
+ROOT's graph, and :in-flight/:failed the work units (never the drain
+headers, so a member is not counted twice) whose state is active or
+failed.  The totals stay separate: a caller renders a word next to
+each, never one combined ratio."
+  (let* ((ladder (gascity-runs-ladder index root))
+         (units (seq-remove (lambda (r) (eq (plist-get r :unit-kind) :drain))
+                            (gascity-runs-work-units index root)))
+         (deliverables (seq-filter (lambda (r)
+                                     (eq (plist-get r :unit-kind) :deliverable))
+                                   units)))
+    (list :steps (cons (seq-count (lambda (s) (eq (plist-get s :state) 'done))
+                                  ladder)
+                       (length ladder))
+          :deliverables (cons (seq-count (lambda (r)
+                                          (eq (gascity-runs--unit-state r) 'done))
+                                        deliverables)
+                              (length deliverables))
+          :beads (length (gascity-runs-graph index (alist-get 'id root)))
+          :in-flight (seq-count (lambda (r)
+                                  (eq (gascity-runs--unit-state r) 'active))
+                                units)
+          :failed (seq-count (lambda (r)
+                               (eq (gascity-runs--unit-state r) 'failed))
+                             units))))
 
 (defun gascity-runs-last-activity (index root)
   "Return when run ROOT's live work was last touched, in seconds (0: never).
