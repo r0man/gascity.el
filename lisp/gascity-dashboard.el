@@ -652,6 +652,22 @@ on one path tree (`review', `review.iteration.1').  Nil without a ref."
              (substring ref (1+ (length formula)))
            ref))))
 
+(defun gascity-dashboard--step-ref (bead formula)
+  "Return BEAD's ordered step reference under FORMULA.
+`gc.step_ref' with the FORMULA prefix stripped when it carries that
+prefix, else `gc.step_id', else the bead id: one total helper for the
+ladder's order and its `:name', so a bead without a prefixed ref (a
+foreign or unknown-kind step) can never break the ladder."
+  (let* ((meta (gascity-dashboard--meta bead))
+         (ref (alist-get 'gc.step_ref meta))
+         (step (alist-get 'gc.step_id meta)))
+    (cond ((and (stringp ref) (stringp formula)
+                (string-prefix-p (concat formula ".") ref))
+           (substring ref (1+ (length formula))))
+          ((and (stringp ref) (not (string-empty-p ref))) ref)
+          ((and (stringp step) (not (string-empty-p step))) step)
+          (t (alist-get 'id bead)))))
+
 (defun gascity-dashboard--failed-paths (root graph)
   "Return the step paths of GRAPH's failed beads when run ROOT failed.
 Nil for a run that did not fail (a retried loop in a passing run keeps
@@ -673,7 +689,9 @@ its step done).  The ladder and the run detail both read it."
   "Return the step ladder of run ROOT from its GRAPH beads.
 GRAPH is every bead anchored to ROOT (`gc.root_bead_id'), any status.
 Returns a list of plists (:name :id :state), one per top-level step, in
-formula order (by blocks-dependency depth).  A step's state is its
+formula order: blocks-dependency depth, then the step reference
+\(`gascity-dashboard--step-ref'), then the bead id, so the order is
+total and never depends on the payload's read order.  A step's state is its
 latest iteration bead's (`gc.logical_bead_id' → step, max
 `gc.attempt'), else its own.  In a failed run (root `gc.outcome'
 fail) a closed step with a failed bead beneath it (a nested loop that
@@ -704,9 +722,7 @@ progress is active."
                      (state (if (and iter (not (eq own 'done)))
                                 (gascity-dashboard--bead-state iter)
                               own))
-                     (name (substring (alist-get 'gc.step_ref
-                                                 (gascity-dashboard--meta step))
-                                      (1+ (length formula)))))
+                     (name (gascity-dashboard--step-ref step formula)))
                 (when (and (eq state 'done)
                            (gascity-dashboard--failed-beneath-p name failed-paths))
                   (setq state 'failed))
@@ -715,11 +731,17 @@ progress is active."
                                      (gethash id drains)))
                   (setq state 'active))
                 (list :name name :id id :state state)))
-            (sort steps (lambda (a b)
-                          (let ((da (gethash (alist-get 'id a) depth 0))
-                                (db (gethash (alist-get 'id b) depth 0)))
-                            (if (/= da db) (< da db)
-                              (string< (alist-get 'id a) (alist-get 'id b)))))))))
+            (sort steps
+                  (lambda (a b)
+                    (let ((da (gethash (alist-get 'id a) depth 0))
+                          (db (gethash (alist-get 'id b) depth 0)))
+                      (cond ((/= da db) (< da db))
+                            (t (let ((ra (gascity-dashboard--step-ref a formula))
+                                     (rb (gascity-dashboard--step-ref b formula)))
+                                 (if (equal ra rb)
+                                     (string< (or (alist-get 'id a) "")
+                                              (or (alist-get 'id b) ""))
+                                   (string< ra rb)))))))))))
 
 (defun gascity-dashboard--ladder-string (ladder)
   "Return LADDER as glyphs `◆⬣········' with every step in `help-echo'."

@@ -310,6 +310,32 @@ Then clear the echo area, so the export shows no stray message."
     (message nil)
     buffer))
 
+(defun gascity-shots--runs-buffer ()
+  "Open the Runs view and wait for every visible card's source read.
+The source line is an independent store read that starts after the run
+list's own first paint, so waiting only for the list leaves `source
+loading…' in a committed image.  Wait for both the process lane and the
+point where no card still says it, then return the buffer."
+  (gascity-runs)
+  (let ((buffer (gascity-shots--selected-buffer))
+        (deadline (+ (float-time) 30)))
+    (gascity-shots--await buffer)
+    (while (and (< (float-time) deadline)
+                (with-current-buffer buffer
+                  (save-excursion
+                    (goto-char (point-min))
+                    (search-forward "source loading" nil t))))
+      (accept-process-output nil 0.1)
+      (redisplay t)
+      (screenshot-settle 2))
+    (with-current-buffer buffer
+      (when (save-excursion
+              (goto-char (point-min))
+              (search-forward "source loading" nil t))
+        (gascity-shots--progress "runs still loading sources after 30s")))
+    (message nil)
+    buffer))
+
 (defun gascity-shots--ready (thunk)
   "Wrap view THUNK: call it, then wait for its buffer to finish loading."
   (lambda () (gascity-shots--await (funcall thunk))))
@@ -431,10 +457,11 @@ the cold menu.  Returns nil so the whole frame is captured
 
 (defun gascity-shots--run-detail-buffer ()
   "Open the fixture's build-basic run detail, revealing the failed step.
-The `!' command (`gascity-run-diagnose') expands the failed Review stage,
-opens that step's inspector and moves point to its row, so one capture
-shows the stage groups and the inspector together.  The fixture has no
-controller, so the inspector's worker line reads `no session'."
+The `!' command (`gascity-run-diagnose') expands the machinery, opens
+the failed Review step's inspector and moves point to its row, so one
+capture shows the work spine, the machinery and the inspector together.
+The fixture has no controller, so the inspector's worker line reads
+`no session' and the member line says `no live worker'."
   (gascity-run-show "demo-run")
   (let ((buffer (gascity-shots--selected-buffer)))
     (gascity-shots--await buffer 20)
@@ -449,7 +476,7 @@ controller, so the inspector's worker line reads `no session'."
   (list
    ;; vui views — auto-fit height.
    (list "cockpit" #'gascity-shots--cockpit-buffer :settle 15)
-   (list "runs" (gascity-shots--view #'gascity-runs) :settle 15)
+   (list "runs" #'gascity-shots--runs-buffer :settle 15)
    (list "run-detail" #'gascity-shots--run-detail-buffer :settle 15)
    (list "health" (gascity-shots--view #'gascity-health) :settle 15)
    (list "costs" (gascity-shots--view #'gascity-costs) :settle 12)

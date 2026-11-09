@@ -143,10 +143,12 @@ parent's and counts it as a sub-run."
          (text (gascity-runs-test--text (gascity-runs-lines ctx))))
     (should (string-match-p "^Active  3 · 1 sub-run" text))
     (should (string-match-p
-             (concat "^  ⬣ bs-8jif .*\n     ◆⬣· +implement.*\n"
-                     "    └ ⬣ bs-0c3f .*\n         ◆⬣· +implement")
+             (concat "^  ⬣ (no source).*\n     bs-8jif .*\n"
+                     "     ◆⬣· +0/1 deliverables +implement.*\n"
+                     "    └ ⬣ (no source).*\n         bs-0c3f .*\n"
+                     "         ◆⬣· +implement")
              text))
-    (should (string-match-p "^  ⬣ bs-orph " text))))
+    (should (string-match-p "^     bs-orph " text))))
 
 (ert-deftest gascity-test-subruns-run-detail-lists-members ()
   "Run detail lists the drain step's member runs with their ladders;

@@ -353,7 +353,7 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 @item Cities @tab cities-default @tab Every reachable city and host.
 @item Costs @tab costs-default @tab Recorded usage by run, wall-seconds and list-price estimate.
 @item Mode-line lighter @tab lighter-default @tab The lighter in a mode line.
-@item Runs and run detail @tab runs-default, run-detail-default @tab The run cards, and one run's stage groups with the failed step's inspector.
+@item Runs and run detail @tab runs-default, run-detail-default @tab The run cards, and one run's work spine with the failed step's inspector.
 @item Live refresh @tab cockpit-default, events-default @tab Proxy: the stream state is a header line; the cockpit and Events headers show it.
 @item Events @tab events-default @tab The event log.
 @item Mail (inbox, thread, compose) @tab mail-inbox-default @tab The inbox; thread and compose are the same buffer family.
@@ -2089,32 +2089,56 @@ expands into beads; its ladder is a series of @dfn{steps}
 @fnindex gascity-runs
 @kindex j r
 @kbd{j r} (or @kbd{M-x gascity-runs}) shows the city's workflow runs in
-@file{*gascity-runs:@: CITY*}, as two-line cards grouped into Active,
+@file{*gascity-runs:@: CITY*}, as three-line cards grouped into Active,
 Waiting and Failed:
 
 @example
-Runs  gascity-fixture   1 active · 0 waiting · 0 done · 0 failed (all time)
+Runs  gascity-fixture   3 active · 0 waiting · 8 done · 1 failed (all time)
 
-Active  1
-  ● demo-run  build-basic                                demo-rig   2025-01-01
-     ◆◆◆◆◆◆◆◆✕··  review         8/11   ✕ build-basic.review  code_review
-
+Active  2 · 1 sub-run
+  ⬣ (no source)
+     demo-inline  build-basic · demo-rig · 2025-01-01   1/4 steps · 4 beads
+     ◆···  implement             ○ run-operator  demo-inline-impl
+  ⬣ Epic: rewrite the user manual                      demo-10  open
+     demo-run  build-basic · demo-rig · 2025-01-01      7/11 steps · 12 beads
+     ◆◆◆◆◆◆◆⬣✕·  7/8 deliverables  review  ✕ build-basic.review  code_revi…
+    └ ⬣ (no source)                                     demo-member-8  open
+         demo-member-8  do-work · demo-rig · 2025-01-01 2/3 steps · 4 beads
+         ◆◆·  close-source-anchor  2/3   close-source-an…
 Failed  none · last 24h
 @end example
 
 @shot{runs-default, The Runs view (built-in default theme)}
 
 @noindent
-A card's second line is the step ladder (@pxref{Visual language}), the
-active step, progress, and the worker on it; on a failed card the last
-cell is the run's failure reason instead, cut to the width the rest of
-the line leaves it, with the full text in its help-echo.  @command{gc}
-has no run summary (@pxref{Capability Gaps}), so a run is derived from
-its bead graph: the root bead of kind @code{workflow} and every bead
-that names it as @code{gc.root_bead_id}, read from the city store and
-every rig store.  The cockpit's Moving section uses the same ladder, so
-the two always agree.  A drain member run's card nests under its parent's in
-Active (@samp{└}, indented), and the section counts it as a sub-run.
+A card's first line says @emph{what} the run is for: the source
+business bead's title (cut to the width, full text in help-echo) and,
+on the right, its id and status.  The source is the first tracked
+member of the run root's @code{gc.var.convoy_id}; the read is one
+asynchronous, store-backed @code{gc convoy status} per visible run,
+so it never blocks the list and is deduped and TTL'd like every other
+read.  A run with no source says @samp{(no source)}; a cold read says
+@samp{source loading@dots{}}; a failed read says @samp{source
+unavailable}.  The card never guesses a title.
+
+The second line names the run itself: its root bead, formula, rig and
+start or close time, with the labeled step and bead counts on the
+right.  The third line is the step ladder (@pxref{Visual language}),
+the @samp{N/M deliverables} progress, and the current (failed or
+active) step and worker on it; on a failed card the last cell is the
+run's failure reason
+instead, cut to the width the rest of the line leaves it, with the
+full text in its help-echo.  The formula appears once per card; two
+@code{build-basic} runs are told apart by their source titles and
+roots.  A run with no drain members omits the deliverables phrase.
+
+@command{gc} has no run summary (@pxref{Capability Gaps}), so a run is
+derived from its bead graph: the root bead of kind @code{workflow} and
+every bead that names it as @code{gc.root_bead_id}, read from the city
+store and every rig store.  The cockpit's Moving section uses the same
+ladder, so the two always agree.  A drain member run's card nests under
+its parent's (@samp{└}, indented), and the section counts it as a
+sub-run.
 
 The summary line counts every run all-time and says so (@samp{(all
 time)}); only the Failed section is windowed, to
@@ -2182,124 +2206,123 @@ Detail, peek and attach for the run's worker at point.
 @file{*gascity-run:@: ID*}:
 
 @example
-  root     ● demo-run  build-basic               demo-rig · started 2025-01-01
+  Epic: rewrite the user manual
+  demo-10  open                   run demo-run build-basic · demo-rig · started 2025-01-01
   step     build-basic.review  demo-revw
   class    code_review
-  reason   two blocking findings on demo-10/demo-11: the render path stats a
-           file and the header is not frozen
-  store    rig:demo-rig   city gascity-fixture
-  scope    (none)
-  formula  build-basic  contract graph.v2
+  reason   two blocking findings: the render path stats a file and the header
+           is not frozen
 
-Steps  8/11 · 12 beads                                    C show control nodes
-  ▾ ◆ Intake         5/5
-    ◆ prepare                 demo-prep pass      run-operator      2025-01-01
-    ◆ requirements            demo-reqs pass      run-operator      2025-01-01
-    ◆ plan                    demo-plan pass      run-operator      2025-01-01
-    ◆ plan-review             demo-plrv pass      run-operator      2025-01-01
-    ◆ decompose               demo-dcmp pass      run-operator      2025-01-01
-  ▾ ◆ Implementation 3/3
-    ◆ implement               demo-impl pass      implementation-w…  2025-01-01
-    ◆ implement-same-session  demo-isms pass      implementation-w…  2025-01-01
-    ◆ summarize-implementation demo-sumi pass      implementation-…  2025-01-01
-  ▾ ✕ Review         0/1  failed
-    ✕ review                  demo-revw iter 1     code_review reviewer  2025-01-01
-  ▾ · Approval       0/0
-  ▾ · Finalization   0/2
-    · finalize                demo-finz           run-operator      2025-01-01
-    · publish                 demo-publ           run-operator      2025-01-01
+Work  7/11 steps · 7/8 deliverables · 1 in flight · 1 failed · 12 beads
+  Intake
+  ◆ prepare                   demo-prep   pass      run-operator      2025-01-01
+  ◆ requirements              demo-reqs   pass      run-operator      2025-01-01
+  ◆ plan                      demo-plan   pass      run-operator      2025-01-01
+  ◆ plan-review               demo-plrv   pass      run-operator      2025-01-01
+  ◆ decompose                 demo-dcmp   pass      run-operator      2025-01-01
+  Implementation
+  ⬣ implement                 demo-impl   drain 7/8 · 1 in flight      2025-01-01
+    ◆ 1  Retarget the demo fixture to the shared contract
+         demo-biz-1  closed    └ do-work demo-member-1  ◆◆◆ 3/3 pass
+    ◆ 2  Remove third-party themes from the capture path
+         demo-biz-2  closed    └ do-work demo-member-2  ◆◆◆ 3/3 pass
+    ...
+    ⬣ 8  Pin the new manual contracts in tests and land green gates
+         demo-biz-8  open      └ do-work demo-member-8  ◆◆· 2/3 active  close-source-anchor
+  ◆ implement-same-session    demo-isms   pass      run-operator      2025-01-01
+  ◆ summarize-implementation  demo-sumi   pass      run-operator      2025-01-01
+  Review
+  ✕ review                    demo-revw   iter 1    code_review reviewer  2025-01-01
+  Finalization
+  · finalize                  demo-finz             run-operator      2025-01-01
+  · publish                   demo-publ             run-operator      2025-01-01
+  Run      demo-run · 12 beads · formula build-basic
+  Source   input convoy demo-convoy · 1 tracked member
+  Store    rig:demo-rig   rig demo-rig   city gascity-fixture
+  Scope    (none)
+  Formula  build-basic  contract graph.v2
+  Key      graphv2-root:demo-convoy:build-basic:0000000000000000:default
+  Implementation convoy demo-impl-convoy  open 7/8  implementation convoy for demo-run
+▸ Machinery  control nodes folded (C) · needs tree (T) · SPC fold
+Keys     RET open   SPC drawer   I inspect   w copy   ! diagnose   g refresh   q bury
 @end example
 
-@shot{run-detail-default, The run detail: stage groups and the failed step's inspector (built-in default theme)}
+@shot{run-detail-default, The run detail: the work spine and the failed step's inspector (built-in default theme)}
 
 @noindent
-The committed image was captured after @kbd{!} revealed the failed
-Review step, so it also shows that step's inspector drawer (see the
-step inspector below).  A plain @key{RET} shows the header and the
-stage groups without the drawer.
+The page opens with the work's headline: the source business bead's
+title (wrapped at the view width, full text in help-echo) when the
+run has one, otherwise the formula name or the run's title.  The
+identity line below puts the source's id and status on the left and
+the run's id, formula, rig and start (or close) time on the right.
+When the root names a source convoy, the source is its single tracked
+member; a multi-member convoy shows the convoy title and
+@samp{--- tracks N beads}, never one member pretending to be the
+source.  A run with no source reads @samp{(no source)}; a pending read
+reads @samp{source loading@dots{}}; a failed read reads @samp{source
+unavailable}.  The formula is never presented as the source.
 
-The steps are the run's beads arranged by step: iterations hang under
-their step, nested steps under theirs.  A step whose children are
-plain iterations shows its latest one inline (@samp{iter N}); any other
-step with children is a fold row, open while something beneath it is
-active or failed.  Under a drain step, its member runs are listed
-with their ladders (@samp{└ ⬣ bs-0c3f  do-work  ◆⬣·  implement 1/3});
-@key{RET} on one opens that run's detail; @kbd{I}, @kbd{w} and @kbd{!}
-act on the member instead of reporting @samp{No step here}: @kbd{I}
-opens an in-place member drawer (the member's root, formula, progress,
-worker and failure), @kbd{w} copies the member's root bead id, and
-@kbd{!} echoes the member's own failed step, class and reason without
-moving point.  @key{RET} still drills into the member's run detail.
+The body is the run's @dfn{work spine}: one row per work unit in
+dependency order.  A work unit is a deliverable when its drain has
+member roots, and the drain row is followed by one two-line row per
+member, in @code{gc.drain_index} order: the business bead's title
+(cut, full text in help-echo) and its id and status on the first line,
+and the member run's @samp{└ do-work} line with its ladder, labeled
+progress, state word and active step on the second.  A drain with no
+member roots is one work row; a run with no drain shows its own step
+rows.  Optional stage headers may label a contiguous run of units;
+they never reorder, split or hide one.  The order is always the flat
+dependency order.
 
-Above the steps, the header names the run's provenance, one labelled
-row per fact, all read from the run root's own metadata: @samp{root}
-(the run bead, its formula, its @code{gc.outcome} when it has one, and
-the rig with the start or close time right-aligned), @samp{store}
-(@code{gc.root_store_ref}, plus @code{gc.var.rig_name} and the
-buffer's city), @samp{scope} (@code{gc.scope_ref}, else
-@samp{(none)}), and @samp{formula} (the name and
-@code{gc.formula_contract}, with @code{gc.graphv2_root_key} and the
-formula source on aligned continuation lines).  Nothing is derived or
-invented: an absent optional fact is omitted, or reads @samp{(none)}
-where the row exists for it.  An active run with a failed step --- and
-any failed run --- also leads with @samp{step}, @samp{class} and
-@samp{reason} rows naming that failure, as in the example above; a
-closed run adds a @samp{close} row with its close reason.
+The @samp{Work} header labels the three denominators: @samp{N/M
+steps}, @samp{N/M deliverables} and @samp{N beads}, plus the in-flight
+and failed counts.  They are never mixed, and a run without a drain
+omits the deliverables phrase.  Above 40 work units the completed
+units collapse behind a @samp{◆ N done · show} row; toggling it shows
+them again.
 
-When the run root carries @code{gc.var.convoy_id} --- the synthetic
-input convoy a slung workflow is launched from --- the header adds a
-@samp{source} row, between @samp{scope} and @samp{formula}, naming that
-convoy's first tracked member: the business bead the user slung, with
-its id, status and title (cut to the view width, the full title in the
-row's help text).  @key{RET} on it opens the source bead in the run's
-store, not the workflow root.  The row is read asynchronously through
-the same store as the convoy row (when both name the same convoy, one
-read serves both); a standalone workflow without the variable, or a
-convoy or member @command{gc} cannot resolve, simply omits the row
-rather than fabricating a source.
+Below the work spine is the provenance block, one labelled row per
+fact: @samp{Run} (the run id, its bead count and formula),
+@samp{Source} (the @samp{input convoy} id and the number of tracked
+members), @samp{Store}, @samp{Scope}, @samp{Formula}, @samp{Key},
+@samp{Formula source}, @samp{Plans} and @samp{Implementation convoy}.
+The two convoy rows are named @samp{input convoy} and
+@samp{implementation convoy}; no row says @samp{convoy} alone, and the
+implementation row is omitted when it names the same convoy as the
+input.  An absent optional fact is omitted rather than invented.
 
-Every path in the header --- each @samp{plans} entry and the
-formula-source line --- is a file thing: @key{RET} visits it on the
-city's host, and @kbd{o} (@code{gascity-run-open-artifact}) does the
-same explicitly, reporting @samp{No artifact at point} when point is
-not on a path.  A stage header has no artifact of its own (no formula
-stage metadata carries one), so artifact actions on a stage are the
-step rows' inside it: each step's inspector lists the run's and the
-step's artifacts, and @key{RET} or @kbd{o} visits them there.  On a
-local city a missing file is a clear user error, not a broken buffer;
-a remote city reads @samp{remote: not checked} and never stats or
-connects on render.
+Below the provenance is the @samp{Machinery} section, folded by
+default.  @key{SPC} on its header folds and unfolds it; it is the
+existing step tree (the run's steps, iterations, nested steps and
+control nodes) with its own folds.  @kbd{C} shows or hides the control
+nodes, @kbd{T} toggles the needs tree, and the tree is exactly the
+flat renderer it was before the work spine.  A formula's stage table,
+when present, may supply the optional stage headers in the work spine;
+it never supplies the page's structure.
 
-When the run's formula has a stage table --- the @code{mol-*} review,
-design and bug flows, and @code{build-base}/@code{build-basic} ---
-the top-level steps are grouped under lifecycle stages in table order
-(@samp{Intake}, @samp{Implementation}, @samp{Review}, @samp{Approval},
-@samp{Finalization} for a build run), each with a state glyph and
-@samp{done/total} progress.  @key{SPC} on a stage header folds that
-stage, independently of the step folds.  A stage with no members is
-kept, not dropped (Approval shows @samp{0/0} in a build run); anchors
-matching no entry collect in a trailing @samp{Other} group, so no
-present step disappears.  Control nodes never join a stage: @kbd{C}
-lifts them recursively into one trailing @samp{Control} group with its
-own progress.
+When the run's formula has a stage table, the headers label contiguous
+runs of units, with the step's own state; a stage the formula does not
+name leaves its steps in the flat order.  The table is enrichment, not
+an information architecture: a formula without one is identical in
+structure.
 
-A stage is @samp{failed} if any member failed, else @samp{active} if
-any is running, else @samp{done} only when every member is done, else
-@samp{pending}; an empty stage is @samp{pending}.  A failed stage
-appends the dim word @samp{failed} and its header's help text carries
-the failure class and reason.  The stage glyphs also accept
-@command{gc}'s own @code{RunStage} vocabulary, rendering @code{complete}
-as @samp{done} and @code{blocked} as @samp{failed}.
+The @samp{N/M steps} count is over the formula's top-level steps, the
+@samp{N/M deliverables} over the drain members, and the @samp{N beads}
+over every bead in the run's graph.  A drain step counts as one step
+even when its members are separate runs.  The three denominators are
+never mixed.
 
-The stage and ladder counts are over the formula's top-level
-@dfn{anchors}, while the @samp{N beads} in the section summary counts
-every bead in the run's graph --- iterations, nested steps and control
-nodes too.  A mapped formula's stage progress therefore counts
-anchors, not graph beads: a nested
-@samp{review-pipeline.review-claude} collapses into its
-@samp{review-pipeline} anchor.  A formula with no stage table (an
-unknown or private formula) renders the flat step list without guessing
-a taxonomy; the bead count in the summary applies to it as well.
+The deliverable row has two objects.  @key{RET} on its business title
+opens the business bead in the run's store; @key{RET} on its
+@samp{└ do-work} line opens the member run's detail.  @key{SPC} on the
+member line opens the member drawer; on the business title it says the
+business bead is opened with @key{RET} (there is no run step on that
+half).  @kbd{I}, @kbd{w} and @kbd{!} follow the same split:
+@kbd{I} opens the member drawer on the member line and reports the
+business half has no step; @kbd{w} copies the business id on the title
+half and the member root id on the member line; @kbd{!} diagnoses the
+member on the member line and reports the business half is not a run
+step.  @kbd{g} and live refresh keep point and folds.
 
 @kbd{SPC} on a step row, or @kbd{I} on any step row including a fold
 row, opens the @dfn{step inspector}, a drawer under the row:
@@ -2368,8 +2391,10 @@ to the drawer's width, its full text in the line's help-echo.
 @table @kbd
 @item @key{RET}
 @fnindex gascity-run-activate
-Open the bead, artifact or worker at point, on a row or an inspector
-line.
+Open the object at point: the business bead on a deliverable's title
+half, the member run on its @samp{└ do-work} line, the step's bead or
+artifact on a step row, and the artifact or worker on an inspector
+line.  The two halves of a deliverable row are different objects.
 @item o
 Visit the artifact at point explicitly
 (@code{gascity-run-open-artifact}); the same as @key{RET} on a path,
@@ -2379,25 +2404,36 @@ and @samp{No artifact at point} elsewhere.
 Open the root bead in beads.el.
 @item C
 @fnindex gascity-run-toggle-control
-Show or hide control nodes (spec, scope check, finalize).
+Show or hide control nodes (spec, scope check, finalize) in the
+machinery.
 @item T
 Toggle the @code{needs}-aware step tree
-(@code{gascity-run-toggle-tree}; see below).
+(@code{gascity-run-toggle-tree}; see below) inside the machinery.
+@item SPC
+@fnindex gascity-thing-toggle
+Fold or unfold the machinery header, fold a loop, open a step's
+inspector, or open a deliverable's member drawer.  On a deliverable's
+business title half there is no run step: the echo area says the
+business bead is opened with @key{RET}.
 @item I
 @fnindex gascity-run-inspect
 Toggle the inspector for the row at point, fold rows included.  On a
-drain-member row it is the member's own in-place drawer.
+deliverable's member line it is the member's own in-place drawer; on
+the business title half it says the half is the business bead, not a
+run step.
 @item w
 @fnindex gascity-run-copy-id
 Copy the bead id at point: the step's id, the iteration's id on the
-inspector's iteration line, or a drain member's root id on its row.
+inspector's iteration line, the business id on a deliverable's title
+half, or the member root id on its member line.
 @item !
 @fnindex gascity-run-diagnose
-Reveal the run's failed step (expanding its stage and any folded loop
-above it), open its inspector, and echo @samp{✕ ref  class: reason}.
-With no failed step it reports a user error instead of failing quietly.
-On a drain-member row it diagnoses that member instead, leaving point
-and the buffer alone.
+Reveal the run's failed step (expanding the machinery and any folded
+loop above it), open its inspector, and echo @samp{✕ ref  class:
+reason}.  With no failed step it reports a user error instead of
+failing quietly.  On a deliverable's member line it diagnoses that
+member instead, leaving point and the buffer alone; on the business
+title half it says the half is not a run step.
 @item B
 Open the run in the configured web dashboard
 (@code{gascity-run-browse-url}; see below).
@@ -2426,21 +2462,20 @@ gascity never guesses a host.  @kbd{W} is not shadowed by any of this:
 it stays the cross-view live toggle in every view, this one included.
 
 @kbd{T} toggles the @dfn{needs tree}, which renders the step
-@code{needs} relationships as indentation.  The flat, stage-grouped
-layout is the default and is restored byte-for-byte when the tree is
-toggled back.  The edges are the graph beads' @code{blocks}
-dependencies, normalized to step paths; a bead with no such edge falls
-back to a formula step-ref @code{needs} list.  Each stage's members
-keep the stage header and progress and are reordered into the global
-pre-order, indented by the number of their ancestors that are also
-members of the same stage (at most four steps).  A member whose parent
-lives in another stage is not over-indented; its detail column carries
-a dim @samp{↳ needs @var{parent}} note instead.  A formula without
-edge data falls back to the flat layout, and an edge that closes a
-cycle is cut and marked with a dim @samp{(cycle)}; a malformed or
-cyclic graph never hides a step and never errors the render.  The
-toggle is view state: it re-renders from the loaded payload (no new
-@command{gc} read) and survives @kbd{g}.
+@code{needs} relationships as indentation.  The flat machinery layout
+is the default and is restored byte-for-byte when the tree is toggled
+back.  The edges are the graph beads' @code{blocks} dependencies,
+normalized to step paths; a bead with no such edge falls back to a
+formula step-ref @code{needs} list.  Each step's descendants are
+reordered into the global pre-order, indented by the number of their
+ancestors that are also in the tree (at most four steps).  A step
+whose parent is not in the tree is not over-indented; its detail
+column carries a dim @samp{↳ needs @var{parent}} note instead.  A
+formula without edge data falls back to the flat machinery, and an
+edge that closes a cycle is cut and marked with a dim @samp{(cycle)};
+a malformed or cyclic graph never hides a step and never errors the
+render.  The toggle is view state: it re-renders from the loaded
+payload (no new @command{gc} read) and survives @kbd{g}.
 
 After a live delivery, the facts that changed since the previous
 render are highlighted with the @code{gascity-changed} face (for a
@@ -2461,8 +2496,8 @@ These are the explicit names behind the new keys, for
 @deffn {Command} gascity-run-open-artifact
 @fnindex gascity-run-open-artifact
 @kindex o
-Visit the artifact at point: a header @samp{plans} or @samp{source}
-entry, or a step inspector's artifact line.  Requires the
+Visit the artifact at point: a header @samp{plans} entry, the
+formula-source line, or a step inspector's artifact line.  Requires the
 @code{gascity-run-file} property at point and otherwise reports
 @samp{No artifact at point}; @key{RET} on the same line does the same
 thing.
@@ -2487,9 +2522,10 @@ and same unconfigured message as @code{gascity-run-browse-url}.
 @deffn {Command} gascity-run-toggle-tree
 @fnindex gascity-run-toggle-tree
 @kindex T
-Toggle the @code{needs}-aware step tree.  A boolean view state, not a
-fold list, so toggling back restores the flat layout exactly; a
-formula without edge data keeps the flat layout either way.
+Toggle the @code{needs}-aware step tree inside the machinery.  A
+boolean view state, not a fold list, so toggling back restores the
+flat machinery exactly; a formula without edge data keeps the flat
+machinery either way.
 @end deffn
 
 @noindent
@@ -2586,8 +2622,8 @@ Toggle the city's live event stream.
 
 @kbd{j r} shows the city's workflow runs as cards grouped into Active,
 Waiting and Failed, each with its step ladder and workers, derived from
-the run's bead graph.  @key{RET} opens the run's detail (its steps,
-iterations, nested and drain-member runs, plan files and control nodes),
+the run's bead graph.  @key{RET} opens the run's detail (its work spine,
+deliverable member runs, provenance and folded machinery),
 @kbd{F} follows a run (the launch offer's momentary @kbd{F} made
 permanent), @kbd{H} pages the history, @kbd{b} opens the run's root bead
 and @kbd{/} filters by rig, formula, state and window.  @xref{Runs and Live Events},

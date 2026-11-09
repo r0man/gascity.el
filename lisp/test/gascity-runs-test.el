@@ -157,6 +157,48 @@ TITLE is the tracked member's title (default `gascity-runs-test--source-title').
                   (work_dir . "/home/roman/workspace/beads.el"))]))
   "A `session list' payload with the live requirements planner.")
 
+(defun gascity-runs-test--no-drain-beads ()
+  "Return a flat `do-work' run and a standalone `review' run.
+Neither has a drain, a source, or a stage table."
+  (list
+   `((id . "ga-flat") (status . "closed") (issue_type . "task")
+     (metadata . ((gc.kind . "workflow") (gc.formula_name . "do-work")))
+     (gascity-rig . "gascity.el"))
+   `((id . "ga-prep") (status . "closed") (issue_type . "task")
+     (metadata . ((gc.root_bead_id . "ga-flat")
+                  (gc.step_ref . "do-work.prepare-worktree")
+                  (gc.outcome . "pass")))
+     (gascity-rig . "gascity.el"))
+   `((id . "ga-impl") (status . "closed") (issue_type . "task")
+     (metadata . ((gc.root_bead_id . "ga-flat")
+                  (gc.step_ref . "do-work.implement")
+                  (gc.outcome . "fail")))
+     (dependencies . [((type . "blocks")
+                       (depends_on_id . "ga-prep"))])
+     (gascity-rig . "gascity.el"))
+   `((id . "ga-close") (status . "closed") (issue_type . "task")
+     (metadata . ((gc.root_bead_id . "ga-flat")
+                  (gc.step_ref . "do-work.close-source-anchor")
+                  (gc.outcome . "fail")))
+     (dependencies . [((type . "blocks")
+                       (depends_on_id . "ga-impl"))])
+     (gascity-rig . "gascity.el"))
+   `((id . "ga-review") (status . "closed") (issue_type . "task")
+     (metadata . ((gc.kind . "workflow") (gc.formula_name . "review")))
+     (gascity-rig . "gascity.el"))
+   `((id . "ga-context") (status . "closed") (issue_type . "task")
+     (metadata . ((gc.root_bead_id . "ga-review")
+                  (gc.step_ref . "review.validate-report-context")
+                  (gc.outcome . "pass")))
+     (gascity-rig . "gascity.el"))
+   `((id . "ga-report") (status . "closed") (issue_type . "task")
+     (metadata . ((gc.root_bead_id . "ga-review")
+                  (gc.step_ref . "review.write-review-report")
+                  (gc.outcome . "pass")))
+     (dependencies . [((type . "blocks")
+                       (depends_on_id . "ga-context"))])
+     (gascity-rig . "gascity.el"))))
+
 (defun gascity-runs-test--index (beads)
   "Return the run index of BEADS, bypassing the identity cache."
   (setq gascity-runs--index-cache (cons nil nil))
@@ -175,30 +217,42 @@ TITLE is the tracked member's title (default `gascity-runs-test--source-title').
   "Return a ready load plist carrying DATA."
   (list :state 'ready :data data))
 
-(cl-defun gascity-runs-test--ctx (beads &key filters view now sessions)
-  "Return a Runs render context over BEADS."
+(cl-defun gascity-runs-test--ctx (beads &key filters view now sessions sources)
+  "Return a Runs render context over BEADS.
+SOURCES is the card source cache (convoy id → state) the view would have
+read; nil renders every source as cold."
   (gascity-runs-context
    (list :beads (gascity-runs-test--load (list :beads beads))
          :sessions (gascity-runs-test--load sessions))
-   filters view (or now (float-time)) "emacs-city"))
+   filters view (or now (float-time)) "emacs-city" sources))
 
 (defun gascity-runs-test--text (lines)
   "Return LINES (strings) as one plain string."
   (substring-no-properties (string-join lines "\n")))
 
 (cl-defun gascity-runs-test--header (beads id &key city convoy source)
-  "Return the run detail header lines of run ID over BEADS.
+  "Return the run detail headline, identity and provenance lines of ID.
 CITY names the buffer's city (default \"emacs-city\"); CONVOY is the
-\(CONVOY . PROGRESS\) pair the component would have read, SOURCE the
-source-bead plist it resolved."
+implementation-convoy \(CONVOY . PROGRESS\) pair; SOURCE is either a
+source-state plist or the old \(:id :title :status\) single-source
+plist."
   (let* ((index (gascity-runs-test--index beads))
          (root (seq-find (lambda (r) (equal (alist-get 'id r) id))
                          (plist-get index :roots)))
          (run (gascity-runs-summary index root))
+         (source (if (and source (not (plist-get source :state)))
+                     (list :state 'single
+                           :id (plist-get source :id)
+                           :title (plist-get source :title)
+                           :status (plist-get source :status)
+                           :count 1)
+                   source))
          (ctx (list :run-id id :now (float-time) :index index
-                    :city (or city "emacs-city") :convoy convoy
+                    :city (or city "emacs-city")
+                    :implementation-convoy convoy
                     :source source)))
-    (gascity-run--header-lines run root ctx)))
+    (append (gascity-run--header-lines run root ctx)
+            (gascity-run--provenance-lines run root ctx))))
 
 (defun gascity-runs-test--header-block (lines label)
   "Return the header LINES' LABEL row as a list of value strings.
@@ -338,6 +392,28 @@ its member runs (roots naming it in `gc.drain_control_id') work."
           (funcall step "bs-k89n" "build-basic.summarize" "open" nil '("bs-q2el"))
           (funcall member "bs-0c3f" member-status)
           (funcall member "bs-b1o1" "closed"))))
+
+(ert-deftest gascity-test-runs-unit-counts-flat-in-flight ()
+  "A flat run with an active step reports it in flight.
+A `:work' row carries no `:member', so counting in-flight units through
+an accessor that reads only deliverables would report zero (REQ-009,
+REQ-011)."
+  (let* ((beads
+          (list `((id . "bl-flat") (status . "in_progress")
+                  (issue_type . "task")
+                  (metadata . ((gc.kind . "workflow")
+                               (gc.formula_name . "do-work")))
+                  (gascity-rig . "beads.el"))
+                (gascity-runs-test--workflow-step
+                 "bl-flat" "bl-impl" "do-work.implement" "in_progress")
+                (gascity-runs-test--workflow-step
+                 "bl-flat" "bl-close" "do-work.close" "open")))
+         (index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (b) (equal (alist-get 'id b) "bl-flat"))
+                         (plist-get index :roots)))
+         (counts (gascity-runs-unit-counts index root)))
+    (should (= (plist-get counts :in-flight) 1))
+    (should (equal (plist-get counts :deliverables) '(0 . 0)))))
 
 (ert-deftest gascity-test-runs-drain-step-active-while-members-run ()
   "An open drain step with a member run in progress is the active step
@@ -490,26 +566,33 @@ summary, not just the ladder glyph (ga-g092a)."
          (ctx (gascity-runs-test--ctx beads))
          (text (gascity-runs-test--text (gascity-runs-lines ctx))))
     (should (string-match-p "^Active  1 · 1 sub-run$" text))
+    (should (string-match-p "1/3 steps" text))
     (should (string-match-p
-             "◆✕·  implement +1/3 +✕ build-basic.implement +environment_missing_origin"
-             text))))
+             "◆✕· +[0-9]+/[0-9]+ deliverables +implement +✕ build-basic.implement +environment…"
+             text))
+    (let* ((run (gascity-runs-test--by-id (plist-get ctx :runs) "bs-8jif"))
+           (card (car (gascity-runs--card run ctx)))
+           (pos (string-match "✕ build-basic.implement" card)))
+      (should pos)
+      (should (string-search "environment_missing_origin"
+                             (get-text-property pos 'help-echo card))))))
 
 (ert-deftest gascity-test-runs-failed-card-fits-failure-reason ()
-  "A failed card's second line fits the view width and keeps the full
-reason in help-echo (REQ-003, plan §1)."
+  "A failed card's work line fits the view width and keeps the full
+reason in help-echo (REQ-003, REQ-011, plan §2.3)."
   (let* ((beads (gascity-runs-test--long-failure-beads))
          (ctx (gascity-runs-test--ctx beads :filters '(:window "36500d")))
          (run (gascity-runs-test--by-id (gascity-runs-test--summaries beads)
                                         "be-bn2"))
          (card (car (gascity-runs--card run ctx)))
          (lines (split-string card "\n"))
-         (line2 (nth 1 lines))
-         (pos (string-match "the control dispatcher refused" line2)))
-    (should (= (length lines) 2))
-    (should (<= (string-width line2) gascity-dashboard--width))
-    (should (string-suffix-p "…" (substring-no-properties line2)))
+         (line3 (nth 2 lines))
+         (pos (string-match "the control dispatcher refused" line3)))
+    (should (= (length lines) 3))
+    (should (<= (string-width line3) gascity-dashboard--width))
+    (should (string-suffix-p "…" (substring-no-properties line3)))
     (should pos)
-    (should (equal (get-text-property pos 'help-echo line2)
+    (should (equal (get-text-property pos 'help-echo line3)
                    gascity-runs-test--long-reason))))
 
 (ert-deftest gascity-test-runs-failed-card-metadata-close-reason ()
@@ -526,14 +609,14 @@ tail and `help-echo', exactly like the top-level `gc bd list' shape
            (run (gascity-runs-test--by-id (gascity-runs-test--summaries beads)
                                           "be-bn2"))
            (card (car (gascity-runs--card run ctx)))
-           (line2 (nth 1 (split-string card "\n")))
-           (pos (string-match "the control dispatcher refused" line2)))
+           (line3 (nth 2 (split-string card "\n")))
+           (pos (string-match "the control dispatcher refused" line3)))
       (should (equal (car info) "control_dispatch_error"))
       (should (equal (cdr info) gascity-runs-test--long-reason))
       (should (equal graph gascity-runs-test--long-reason))
-      (should (<= (string-width line2) gascity-dashboard--width))
+      (should (<= (string-width line3) gascity-dashboard--width))
       (should pos)
-      (should (equal (get-text-property pos 'help-echo line2)
+      (should (equal (get-text-property pos 'help-echo line3)
                      gascity-runs-test--long-reason)))))
 
 (ert-deftest gascity-test-runs-active-run-worker ()
@@ -655,6 +738,249 @@ its nested drain sub-run -- naming the sub-run -- instead of reading
                                              :worker-bead))
                    "bs-deeper-worker"))))
 
+(defun gascity-runs-test--workflow-step (root id ref status &optional kind deps outcome rig)
+  "Return a step bead of run ROOT.
+ID names the step, REF its `gc.step_ref'; KIND is the `gc.kind' (a
+\"drain\", say), DEPS the ids it blocks on, OUTCOME its `gc.outcome' and
+RIG its store (default \"beads.el\")."
+  `((id . ,id) (status . ,status) (issue_type . "task")
+    (metadata . ((gc.root_bead_id . ,root) (gc.step_ref . ,ref)
+                 ,@(and kind `((gc.kind . ,kind)))
+                 ,@(and outcome `((gc.outcome . ,outcome)))))
+    (dependencies . ,(vconcat (mapcar (lambda (d) `((type . "blocks")
+                                                   (depends_on_id . ,d)))
+                                      deps)))
+    (gascity-rig . ,(or rig "beads.el"))))
+
+(defconst gascity-runs-test--deliverable-pairs
+  '(("be-rtqte" . "be-b9jhp") ("be-95bl3" . "be-ybleu")
+    ("be-k8nn0" . "be-rtqoj") ("be-vrjbu" . "be-wm8j0")
+    ("be-o597j" . "be-w7pjp") ("be-gn247" . "be-s3joe")
+    ("be-7japy" . "be-sqrl5") ("be-s61jf" . "be-dhu31"))
+  "The eight (business . member) pairs of the rich run, in index order.")
+
+(defun gascity-runs-test--deliverable-beads (&optional missing-business)
+  "Return a build-basic run whose implement drain joins eight members.
+The members are read in a deliberately shuffled order and carry the
+string `gc.drain_index'/`gc.drain_count' values gc emits on the wire.
+With MISSING-BUSINESS the eighth member names a bead absent from the
+payload."
+  (let* ((root "be-0kjzs")
+         (drain "be-9sbk2")
+         (pairs gascity-runs-test--deliverable-pairs)
+         (members nil)
+         (business nil))
+    (dolist (i '(3 7 0 5 2 6 1 4))
+      (let* ((pair (nth i pairs))
+             (business-id (if (and missing-business (= i 7))
+                              "be-not-loaded"
+                            (car pair)))
+             (member-id (cdr pair))
+             (last (= i 7)))
+        (setq business
+              (append business
+                      (when (or (not missing-business) (not last))
+                        (list `((id . ,business-id)
+                                (title . ,(format "Deliverable %d" (1+ i)))
+                                (status . ,(if last "open" "closed"))
+                                (issue_type . "task")
+                                (gascity-rig . "beads.el"))))))
+        (setq members
+              (append members
+                      (list `((id . ,member-id)
+                              (status . ,(if last "in_progress" "closed"))
+                              (issue_type . "task")
+                              (metadata . ((gc.kind . "workflow")
+                                           (gc.formula_name . "do-work")
+                                           (gc.drain_control_id . ,drain)
+                                           (gc.drain_member_id . ,business-id)
+                                           (gc.drain_index . ,(number-to-string i))
+                                           (gc.drain_count . "8")
+                                           ,@(unless last
+                                               `((gc.outcome . "pass")))))
+                              (gascity-rig . "beads.el")))))))
+    (append
+     (list `((id . ,root) (status . "in_progress") (issue_type . "task")
+             (metadata . ((gc.kind . "workflow")
+                          (gc.formula_name . "build-basic")))
+             (gascity-rig . "beads.el"))
+           (gascity-runs-test--workflow-step root "be-nasax"
+                                             "build-basic.prepare" "closed"
+                                             nil nil "pass")
+           (gascity-runs-test--workflow-step root drain
+                                             "build-basic.implement" "open"
+                                             "drain" '("be-nasax"))
+           (gascity-runs-test--workflow-step root "be-o4q0j"
+                                             "build-basic.summarize" "open"
+                                             nil '("be-9sbk2")))
+     members business)))
+
+(ert-deftest gascity-test-runs-index-deliverables-ordered ()
+  "The index joins each drain member to its business bead in
+`gc.drain_index' order, though gc emits the index as a string and the
+read order is shuffled (REQ-003, AC-1)."
+  (let* ((beads (gascity-runs-test--deliverable-beads))
+         (index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (b) (equal (alist-get 'id b) "be-0kjzs"))
+                         (plist-get index :roots)))
+         (members (gethash "be-9sbk2" (plist-get index :deliverables))))
+    (should (= (length members) 8))
+    (should (equal (mapcar (lambda (m) (cons (plist-get m :business-id)
+                                             (plist-get m :member-id)))
+                           members)
+                   gascity-runs-test--deliverable-pairs))
+    (should (equal (mapcar (lambda (m) (plist-get m :index)) members)
+                   '(0 1 2 3 4 5 6 7)))
+    (should (equal (mapcar (lambda (m) (plist-get m :count)) members)
+                   '(8 8 8 8 8 8 8 8)))
+    (should (equal (mapcar (lambda (m) (gascity-runs-state (plist-get m :member)))
+                           members)
+                   '(done done done done done done done active)))
+    ;; The pair is by `gc.drain_member_id' only, never by position.
+    (should (equal (alist-get 'id (plist-get (car members) :member)) "be-b9jhp"))
+    (should (equal (alist-get 'title (gascity-runs-bead index "be-rtqte"))
+                   "Deliverable 1"))
+    (should-not (gascity-runs-bead index "be-invented"))
+    ;; :drains keeps naming the member roots, the ladder's input.
+    (should (= (length (gethash "be-9sbk2" (plist-get index :drains))) 8))
+    (should (equal (mapcar (lambda (d) (plist-get (plist-get d :step) :name))
+                           (gascity-runs-deliverables index root))
+                   '("implement")))
+    (should (equal (mapcar (lambda (s) (plist-get s :name))
+                           (gascity-runs-ladder index root))
+                   '("prepare" "implement" "summarize")))
+    ;; The labels stay separate: 1/3 steps, 7/8 deliverables, 3 graph
+    ;; beads, no failed unit (REQ-010).
+    (should (equal (gascity-runs-unit-counts index root)
+                   '(:steps (1 . 3) :deliverables (7 . 8) :beads 3
+                            :in-flight 1 :failed 0)))))
+
+(ert-deftest gascity-test-runs-index-deliverables-missing-business ()
+  "A member naming a business bead absent from the payload keeps its id
+and a nil bead; the spine still emits one row (REQ-003)."
+  (let* ((beads (gascity-runs-test--deliverable-beads 'missing))
+         (index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (b) (equal (alist-get 'id b) "be-0kjzs"))
+                         (plist-get index :roots)))
+         (members (gethash "be-9sbk2" (plist-get index :deliverables)))
+         (missing (car (last members)))
+         (units (gascity-runs-work-units index root))
+         (row (seq-find (lambda (r) (equal (plist-get r :business-id)
+                                           "be-not-loaded"))
+                        units)))
+    (should (= (length members) 8))
+    (should (equal (plist-get missing :business-id) "be-not-loaded"))
+    (should-not (plist-get missing :business))
+    (should-not (gascity-runs-bead index "be-not-loaded"))
+    (should (= (seq-count (lambda (r) (eq (plist-get r :unit-kind) :deliverable))
+                          units)
+               8))
+    (should row)
+    (should-not (plist-get row :business))
+    (should (equal (plist-get row :member-id) "be-dhu31"))
+    (should (equal (plist-get row :order) 9))))
+
+(ert-deftest gascity-test-runs-inline-drain-one-unit ()
+  "An inline drain (a drain node with no member roots) is exactly one
+work row, with no deliverables invented (REQ-004, AC-4)."
+  (let* ((beads (list `((id . "bl-demo") (status . "in_progress")
+                        (issue_type . "task")
+                        (metadata . ((gc.kind . "workflow")
+                                     (gc.formula_name . "build-basic")))
+                        (gascity-rig . "burningswell-cl"))
+                      (gascity-runs-test--workflow-step
+                       "bl-demo" "bl-impl" "build-basic.implement" "open"
+                       "drain" nil nil "burningswell-cl")
+                      (gascity-runs-test--workflow-step
+                       "bl-demo" "bl-summ" "build-basic.summarize" "open"
+                       nil nil nil "burningswell-cl")))
+         (index (gascity-runs-test--index beads))
+         (root (car (plist-get index :roots)))
+         (units (gascity-runs-work-units index root)))
+    (should-not (gascity-runs-deliverables index root))
+    (should (equal (mapcar (lambda (r) (plist-get r :unit-kind)) units)
+                   '(:work :work)))
+    (should (equal (mapcar (lambda (r) (plist-get (plist-get r :step) :name)) units)
+                   '("implement" "summarize")))
+    (should (equal (mapcar (lambda (r) (plist-get r :order)) units) '(0 1)))
+    (should (= (seq-count (lambda (r) (eq (plist-get r :unit-kind) :deliverable))
+                          units)
+               0))))
+
+(ert-deftest gascity-test-runs-no-drain-no-deliverables ()
+  "A flat run and a standalone review yield zero deliverables and their
+top-level steps as work rows in ladder order (REQ-004, AC-3)."
+  (dolist (case '(;; A flat do-work run: no drain node at all.
+                  ("bl-flat" "do-work"
+                   ("bl-prep" "do-work.prepare-worktree")
+                   ("bl-impl" "do-work.implement")
+                   ("bl-close" "do-work.close-source-anchor"))
+                  ;; A standalone review run: no drain either.
+                  ("bl-review" "review"
+                   ("bl-rprep" "review.prepare")
+                   ("bl-code" "review.code")
+                   ("bl-final" "review.finalize"))))
+    (let* ((root-id (nth 0 case))
+           (formula (nth 1 case))
+           (steps (nthcdr 2 case))
+           (beads (append
+                   (list `((id . ,root-id) (status . "in_progress")
+                           (issue_type . "task")
+                           (metadata . ((gc.kind . "workflow")
+                                        (gc.formula_name . ,formula)))
+                           (gascity-rig . "beads.el")))
+                   (mapcar (lambda (step)
+                             (gascity-runs-test--workflow-step
+                              root-id (nth 0 step) (nth 1 step) "open"))
+                           steps)))
+           (index (gascity-runs-test--index beads))
+           (root (seq-find (lambda (b) (equal (alist-get 'id b) root-id))
+                           (plist-get index :roots)))
+           (units (gascity-runs-work-units index root)))
+      (should-not (gascity-runs-deliverables index root))
+      (should (equal (mapcar (lambda (r) (plist-get r :unit-kind)) units)
+                     '(:work :work :work)))
+      (should (equal (mapcar (lambda (r) (plist-get (plist-get r :step) :name))
+                             units)
+                     (mapcar (lambda (r) (plist-get r :name))
+                             (gascity-runs-ladder index root)))))))
+
+(ert-deftest gascity-test-runs-order-step-ref-tiebreak ()
+  "Same-depth steps order by `gc.step_ref', not by bead id; a dependency
+cycle neither loops nor drops a node (REQ-002)."
+  (let* ((root "bl-order")
+         (beads (list `((id . ,root) (status . "in_progress")
+                        (issue_type . "task")
+                        (metadata . ((gc.kind . "workflow")
+                                     (gc.formula_name . "build-basic")))
+                        (gascity-rig . "beads.el"))
+                      ;; Step ref order and id order disagree on purpose:
+                      ;; "alpha" has the larger bead id.
+                      (gascity-runs-test--workflow-step
+                       root "bl-zzzz" "build-basic.alpha" "open")
+                      (gascity-runs-test--workflow-step
+                       root "bl-aaaa" "build-basic.zulu" "open")
+                      ;; A cycle: the two depend on each other.
+                      (gascity-runs-test--workflow-step
+                       root "bl-cyc-a" "build-basic.beta" "open"
+                       nil '("bl-cyc-b"))
+                      (gascity-runs-test--workflow-step
+                       root "bl-cyc-b" "build-basic.gamma" "open"
+                       nil '("bl-cyc-a"))))
+         (index (gascity-runs-test--index beads))
+         (root-bead (seq-find (lambda (b) (equal (alist-get 'id b) root))
+                              (plist-get index :roots)))
+         (ladder (gascity-runs-ladder index root-bead))
+         (names (mapcar (lambda (s) (plist-get s :name)) ladder))
+         (units (gascity-runs-work-units index root-bead)))
+    (should (= (length ladder) 4))
+    (should (equal (seq-take names 2) '("alpha" "zulu")))
+    (should (equal (plist-get (car ladder) :id) "bl-zzzz"))
+    (should (equal (sort (copy-sequence names) #'string<)
+                   '("alpha" "beta" "gamma" "zulu")))
+    (should (equal (mapcar (lambda (r) (plist-get (plist-get r :step) :name)) units)
+                   names))))
+
 (ert-deftest gascity-test-runs-ladder-failed-only-in-failed-run ()
   "A failed bead beneath a closed step marks it failed only when the run
 itself failed: a retried loop in a passing run keeps its step done."
@@ -732,7 +1058,8 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
 ;;; Rendering
 
 (ert-deftest gascity-test-runs-render-cards ()
-  "Active and Failed render two-line cards: ladder, label, progress, worker."
+  "Active and Failed render three-line cards: source, identity, work
+\(plan §2.3, REQ-007/REQ-010)."
   (let* ((beads (gascity-runs-test--active-beads))
          (ctx (gascity-runs-test--ctx beads :sessions gascity-runs-test--sessions
                                       :filters '(:window "36500d")))
@@ -741,18 +1068,28 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
              "^Runs  emacs-city   1 active · 0 waiting · 1 done · 1 failed (all time) +H  /$"
              text))
     (should (string-match-p "^Active  1$" text))
-    (should (string-match-p "^  ⬣ be-52m5 +build-basic +beads.el +2h$" text))
+    ;; Line 1 is the source; line 2 the run's identity and labeled counts.
+    (should (string-match-p "^  ⬣ source loading…$" text))
     (should (string-match-p
-             "^     ◆⬣········  requirements +1/10 +● requirements-planner-1  be-bcb5$"
+             "^     be-52m5  build-basic · beads.el · 2h +1/10 steps · [0-9]+ beads$"
+             text))
+    ;; Line 3 is the work: ladder, deliverables (none), label and worker.
+    (should (string-match-p
+             "^     ◆⬣········  requirements +● requirements-planner-1  be-bcb5$"
              text))
     (should (string-match-p "^Failed  1 · last 36500d$" text))
-    (should (string-match-p "^  ✕ be-bn2 +build-basic +beads.el" text))
-    (should (string-match-p "◆◆◆◆◆◆◆✕◆◆  review +9/10 +control_dispatch_error$" text))
+    (should (string-match-p "^  ✕ source loading…$" text))
+    (should (string-match-p
+             "^     be-bn2  build-basic · beads.el · .+ +9/10 steps · [0-9]+ beads$"
+             text))
+    (should (string-match-p
+             "◆◆◆◆◆◆◆✕◆◆ +[0-9]+/[0-9]+ deliverables +review +control_dispatch_error$"
+             text))
     ;; No history until `H'.
     (should-not (string-match-p "^Closed" text))))
 
 (ert-deftest gascity-test-runs-card-is-one-thing ()
-  "A card's two lines are one thing carrying the run and its live worker."
+  "A card's three lines are one thing carrying the run and its live worker."
   (let* ((ctx (gascity-runs-test--ctx (gascity-runs-test--active-beads)
                                       :sessions gascity-runs-test--sessions))
          (card (car (gascity-runs--card
@@ -766,6 +1103,177 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
     (should (equal (get-text-property 0 'gascity-bead card) "be-52m5"))
     (should (equal (get-text-property 0 'gascity-run-rig card) "beads.el"))
     (should (gascity-agent-p (get-text-property 0 'gascity-agent card)))))
+
+;;; Card source identity (WP-2, REQ-007/REQ-010/REQ-011/REQ-012)
+
+(defun gascity-runs-test--source-cache (&rest pairs)
+  "Return a card source cache from PAIRS, (CONVOY-ID . STATE)."
+  (let ((cache (make-hash-table :test 'equal)))
+    (dolist (pair pairs)
+      (puthash (car pair) (cdr pair) cache))
+    cache))
+
+(defun gascity-runs-test--source-beads ()
+  "Return the active fixture with each run root naming an input convoy."
+  (let ((beads (gascity-runs-test--active-beads)))
+    (dolist (pair '(("be-52m5" . "cv-live") ("be-bn2" . "cv-fail")
+                    ("be-qrpg" . "cv-done")))
+      (setq beads (gascity-runs-test--with-root-meta
+                   beads (car pair) 'gc.var.convoy_id (cdr pair))))
+    beads))
+
+(defun gascity-runs-test--two-source-runs ()
+  "Return two active `build-basic' runs, each with its own input convoy."
+  (cl-loop for (root convoy) in '(("sr-a" "cv-a") ("sr-b" "cv-b"))
+           append
+           (list `((id . ,root) (status . "in_progress") (issue_type . "task")
+                   (created_at . ,(gascity-runs-test--ts 600))
+                   (metadata . ((gc.kind . "workflow")
+                                (gc.formula_name . "build-basic")
+                                (gc.var.convoy_id . ,convoy)))
+                   (gascity-rig . "gascity.el"))
+                 `((id . ,(concat root "-step")) (status . "in_progress")
+                   (issue_type . "task")
+                   (metadata . ((gc.root_bead_id . ,root)
+                                (gc.step_ref . "build-basic.implement")))
+                   (gascity-rig . "gascity.el")))))
+
+(ert-deftest gascity-test-runs-step-ref-is-total ()
+  "The one step order helper strips the formula prefix and never errors.
+A ref without the prefix, a step id without a ref, and a bare bead all
+keep a name (the ladder used to substring a prefixed ref only)."
+  (should (equal (gascity-runs--step-ref
+                  '((id . "x") (metadata . ((gc.step_ref . "f.a.b"))))
+                  "f")
+                 "a.b"))
+  (should (equal (gascity-runs--step-ref
+                  '((id . "x") (metadata . ((gc.step_ref . "foreign.a"))))
+                  "f")
+                 "foreign.a"))
+  (should (equal (gascity-runs--step-ref
+                  '((id . "x") (metadata . ((gc.step_id . "foreign.b"))))
+                  "f")
+                 "foreign.b"))
+  (should (equal (gascity-runs--step-ref '((id . "x")) "f") "x")))
+
+(ert-deftest gascity-test-runs-card-source-ready ()
+  "Two active `build-basic' cards are distinguishable by their source
+title and id, and each names the formula exactly once (REQ-007, AC-6)."
+  (let* ((cache (gascity-runs-test--source-cache
+                 '("cv-a" :state ready :id "bz-a" :title "Alpha feature"
+                   :status "open" :count 1)
+                 '("cv-b" :state ready :id "bz-b" :title "Beta feature"
+                   :status "open" :count 1)))
+         (ctx (gascity-runs-test--ctx (gascity-runs-test--two-source-runs)
+                                      :sources cache))
+         (text (gascity-runs-test--text (gascity-runs-lines ctx)))
+         (run (gascity-runs-test--by-id (plist-get ctx :runs) "sr-a"))
+         (lines (split-string (car (gascity-runs--card run ctx)) "\n")))
+    (should (string-match-p "^  ⬣ Alpha feature +bz-a  open$" text))
+    (should (string-match-p "^  ⬣ Beta feature +bz-b  open$" text))
+    (should (string-match-p "^     sr-a  build-basic · gascity.el · " text))
+    (should (= 3 (length lines)))
+    (should (= 1 (seq-count (lambda (l) (string-match-p "build-basic" l))
+                            lines)))))
+
+(ert-deftest gascity-test-runs-card-source-multi ()
+  "A multi-member input convoy names the convoy and its member count,
+never a member pretending to be the source (REQ-001, AC-6)."
+  (let* ((cache (gascity-runs-test--source-cache
+                 '("cv-a" :state ready :id "cv-a" :title "Big convoy"
+                   :status "open" :count 3)))
+         (ctx (gascity-runs-test--ctx (gascity-runs-test--two-source-runs)
+                                      :sources cache))
+         (text (gascity-runs-test--text (gascity-runs-lines ctx))))
+    (should (string-match-p "^  ⬣ Big convoy +cv-a  open  3 beads$" text))))
+
+(ert-deftest gascity-test-runs-card-source-loading ()
+  "A cold source renders `source loading…' while the rest of the card
+renders: reading is never on the render path (REQ-007, REQ-012, AC-7)."
+  (let* ((ctx (gascity-runs-test--ctx (gascity-runs-test--two-source-runs)))
+         (run (gascity-runs-test--by-id (plist-get ctx :runs) "sr-a"))
+         (card (car (gascity-runs--card run ctx)))
+         (lines (split-string card "\n")))
+    (should (equal (substring-no-properties (nth 0 lines)) "  ⬣ source loading…"))
+    (should (string-match-p "^     sr-a  build-basic · gascity.el" (nth 1 lines)))
+    (should (string-match-p "implement" (nth 2 lines)))))
+
+(ert-deftest gascity-test-runs-card-source-loading-is-async ()
+  "The card source read starts from the effect through the store, and a
+pending read leaves the card rendered (REQ-007, AC-7)."
+  (let ((orig (symbol-function 'gascity-store-fetch))
+        fetched)
+    (cl-letf (((symbol-function 'gascity-store-fetch)
+               (lambda (args &rest rest)
+                 (if (equal (car args) "convoy")
+                     (progn (push (append args nil) fetched) nil)
+                   (apply orig args rest)))))
+      (gascity-runs-test--with-view (gascity-runs-test--source-beads)
+          (progn (with-current-buffer buf (gascity-runs-mode))
+                 (vui-component 'gascity-runs-app :initial-filters nil))
+        (should (string-match-p "source loading…" (buffer-string)))
+        (should (string-match-p "^     be-52m5  build-basic" (buffer-string)))
+        (should (member '("convoy" "status" "cv-live") fetched))
+        (should-not (member '("convoy" "status" "cv-done") fetched))))))
+
+(ert-deftest gascity-test-runs-card-source-unavailable ()
+  "A failed source read renders `source unavailable', never a guess
+\(REQ-012)."
+  (let* ((cache (gascity-runs-test--source-cache '("cv-a" . :unavailable)))
+         (ctx (gascity-runs-test--ctx (gascity-runs-test--two-source-runs)
+                                      :sources cache))
+         (run (gascity-runs-test--by-id (plist-get ctx :runs) "sr-a"))
+         (line1 (car (split-string (car (gascity-runs--card run ctx)) "\n"))))
+    (should (equal (substring-no-properties line1) "  ⬣ source unavailable"))))
+
+(ert-deftest gascity-test-runs-card-no-source ()
+  "A run without `gc.var.convoy_id' says `(no source)' and keeps its
+formula and root identity (REQ-001, AC-6)."
+  (let* ((ctx (gascity-runs-test--ctx (gascity-runs-test--no-drain-beads)))
+         (run (gascity-runs-test--by-id (plist-get ctx :runs) "ga-flat"))
+         (lines (split-string (car (gascity-runs--card run ctx)) "\n")))
+    (should (equal (substring-no-properties (nth 0 lines)) "  ◆ (no source)"))
+    (should (string-match-p "^     ga-flat  do-work · gascity.el" (nth 1 lines)))))
+
+(ert-deftest gascity-test-runs-card-deliverable-progress ()
+  "A drain run labels its steps, beads and deliverables separately; a run
+without a drain omits the deliverable phrase (REQ-010, AC-10)."
+  (let* ((beads (gascity-runs-test--deliverable-beads))
+         (ctx (gascity-runs-test--ctx beads))
+         (run (gascity-runs-test--by-id (plist-get ctx :runs) "be-0kjzs"))
+         (lines (split-string (car (gascity-runs--card run ctx)) "\n")))
+    (should (string-match-p "1/3 steps · 3 beads" (nth 1 lines)))
+    (should (string-match-p "7/8 deliverables" (nth 2 lines)))
+    (should (string-match-p "◆⬣" (nth 2 lines)))
+    (should (string-match-p "implement" (nth 2 lines)))
+    ;; A flat run has no deliverables phrase, and keeps a state word.
+    (let* ((flat (gascity-runs-test--no-drain-beads))
+           (flat-ctx (gascity-runs-test--ctx flat))
+           (flat-run (gascity-runs-test--by-id (plist-get flat-ctx :runs) "ga-flat"))
+           (flat-lines (split-string (car (gascity-runs--card flat-run flat-ctx))
+                                     "\n")))
+      (should-not (string-match-p "deliverables" (nth 2 flat-lines)))
+      (should (string-match-p "1/3 steps" (nth 1 flat-lines)))
+      (should (string-match-p "implement" (nth 2 flat-lines))))))
+
+(ert-deftest gascity-test-runs-card-source-effect-visible-only ()
+  "The source effect reads only the state-bearing sections: closed
+history never triggers a card source read (REQ-012, plan §2.2)."
+  (let ((orig (symbol-function 'gascity-store-fetch))
+        fetched)
+    (cl-letf (((symbol-function 'gascity-store-fetch)
+               (lambda (args &rest rest)
+                 (if (equal (car args) "convoy")
+                     (progn (push (append args nil) fetched) nil)
+                   (apply orig args rest)))))
+      (gascity-runs-test--with-view (gascity-runs-test--source-beads)
+          (progn (with-current-buffer buf (gascity-runs-mode))
+                 (vui-component 'gascity-runs-app :initial-filters nil))
+        (should (member '("convoy" "status" "cv-live") fetched))
+        (should (member '("convoy" "status" "cv-fail") fetched))
+        (should-not (member '("convoy" "status" "cv-done") fetched))
+        (gascity-runs-history)
+        (should-not (member '("convoy" "status" "cv-done") fetched))))))
 
 (defun gascity-runs-test--many-closed (n)
   "Return N closed do-work run roots (no graphs), one minute apart."
@@ -811,8 +1319,10 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
              "^Runs  emacs-city   1 active · 1 waiting · 0 done · 0 failed" text))
     (should (string-match-p "^Active  1$" text))
     (should (string-match-p "^Waiting  1$" text))
-    (should (string-match-p "^  ⬣ be-live\\b" text))
-    (should (string-match-p "^  · be-wait\\b" text))
+    (should (string-match-p "^  ⬣ (no source)$" text))
+    (should (string-match-p "^  · (no source)$" text))
+    (should (string-match-p "^     be-live  build-basic" text))
+    (should (string-match-p "^     be-wait  build-basic" text))
     (should (< (string-match-p "^Active" text) (string-match-p "be-live" text)))
     (should (< (string-match-p "be-live" text) (string-match-p "^Waiting" text)))
     (should (< (string-match-p "^Waiting" text) (string-match-p "be-wait" text)))))
@@ -1100,12 +1610,21 @@ A delivery test sets it between refreshes to change one fact.")
          (`("events" . ,_) (cons gascity-runs-test--events 0))
          (`("bd" "list" . ,rest)
           (if (member "beads.el" rest)
-              (vconcat (seq-filter
-                        (lambda (b)
-                          (if (member "gc.kind=workflow" rest)
-                              (gascity-dashboard--run-root-p b)
-                            (gascity-dashboard--root-of b)))
-                        beads))
+              (let ((business (delq nil
+                                    (mapcar (lambda (b)
+                                              (gascity-runs--meta
+                                               b 'gc.drain_member_id))
+                                            beads))))
+                (vconcat (seq-filter
+                          (lambda (b)
+                            (if (member "gc.kind=workflow" rest)
+                                (gascity-dashboard--run-root-p b)
+                              ;; A drain member's business bead is a
+                              ;; plain bead; a payload may carry it and
+                              ;; the index's :beads must then find it.
+                              (or (gascity-dashboard--root-of b)
+                                  (member (alist-get 'id b) business))))
+                          beads)))
             []))
          (_ (error "Unexpected read %S" args))))
       nil)))
@@ -1144,12 +1663,12 @@ ladder drawer, folds a section; RET opens the run detail with its rig."
       (gascity-thing-forward 1)
       (should (looking-at "Active"))
       (gascity-thing-forward 1)
-      (should (looking-at "  ⬣ be-52m5"))
-      ;; The card's second line belongs to the same thing: TAB skips it.
+      (should (looking-at "  ⬣ "))
+      ;; The card's other two lines belong to the same thing: TAB skips them.
       (gascity-thing-forward 1)
       (should (looking-at "Failed"))
       (gascity-thing-backward 1)
-      (should (looking-at "  ⬣ be-52m5")))
+      (should (looking-at "  ⬣ ")))
     ;; SPC: the ladder drawer, one line per step.
     (gascity-thing-toggle)
     (should (string-match-p "│ ◆ prepare +be-5aht" (buffer-string)))
@@ -1157,10 +1676,10 @@ ladder drawer, folds a section; RET opens the run detail with its rig."
     (gascity-runs-refresh)
     (should (string-match-p "│ ◆ prepare" (buffer-string)))
     (goto-char (point-min))
-    (re-search-forward "^  ⬣ be-52m5")
+    (re-search-forward "^     be-52m5  build-basic")
     (gascity-thing-toggle)
     (should-not (string-match-p "│ ◆ prepare" (buffer-string)))
-    ;; RET on the card's second line opens the detail, scoped to the rig.
+    ;; RET on the card's work line opens the detail, scoped to the rig.
     (forward-line 1)
     (let (opened)
       (cl-letf (((symbol-function 'gascity-run-show)
@@ -1184,7 +1703,7 @@ ladder drawer, folds a section; RET opens the run detail with its rig."
     (beginning-of-line)
     (gascity-thing-toggle)
     (should (string-match-p "^▸ Failed" (buffer-string)))
-    (should-not (string-match-p "^  ✕ be-bn2 +build-basic +beads.el +[0-9]" (buffer-string)))))
+    (should-not (string-match-p "^     be-bn2  build-basic" (buffer-string)))))
 
 (ert-deftest gascity-test-runs-filter-rerenders-and-remembers ()
   "A `/' change applies at once and is remembered for the city."
@@ -1206,7 +1725,7 @@ the live worker, and says so when there is none."
       (progn (with-current-buffer buf (gascity-runs-mode))
              (vui-component 'gascity-runs-app :initial-filters nil))
     (goto-char (point-min))
-    (re-search-forward "^  ⬣ be-52m5")
+    (re-search-forward "^     be-52m5  build-basic")
     (let (shown detail)
       (cl-letf (((symbol-function 'gascity-beads--show-in-store)
                  (lambda (id store) (setq shown (list id store))))
@@ -1219,7 +1738,7 @@ the live worker, and says so when there is none."
         (should (equal shown '("be-52m5" "/stores/beads.el/")))
         (gascity-runs-agent-detail)
         (should (equal detail "beads.el/gc.requirements-planner-1"))
-        (re-search-forward "^  ✕ be-bn2")
+        (re-search-forward "^     be-bn2  build-basic")
         (should-error (gascity-runs-agent-detail) :type 'user-error)))))
 
 ;;; Run detail
@@ -1297,68 +1816,64 @@ under the drain step, and hides control nodes until asked."
               (vui-component 'gascity-run-app :run-id ,run :city "emacs-city"))
      ,@body))
 
+(defun gascity-runs-test--expand-machinery ()
+  "Expand the folded Machinery section in the current run detail buffer."
+  (goto-char (point-min))
+  (when (re-search-forward "^▸ Machinery" nil t)
+    (goto-char (match-beginning 0))
+    (gascity-thing-toggle)))
+
 (ert-deftest gascity-test-run-detail-renders-active-run ()
-  "The detail shows the header, plans, convoy and the step list with the
-active step's live worker; loops fold."
+  "The detail leads with the source headline, identity and Work spine,
+keeps the step tree under a folded Machinery section, and preserves the
+step folds, drawer and C control toggle."
   (gascity-test-with-fixture-home
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
-				    (let ((text (buffer-string)))
-				      (should (string-match-p "^  root     ⬣ be-52m5  build-basic +beads.el · started 2h$" text))
-				      (should (string-match-p "^  formula  build-basic  contract graph.v2$" text))
-				      (should (string-match-p "^           source ~/.gc/cache/…/build-basic.formula.toml$"
-							      (replace-regexp-in-string
-							       "/home/[^/]+/" "~/" text)))
-				      (should (string-match-p "^  plans    decomposition.md · factory-run.md" text))
-				      (should (string-match-p "^  convoy   be-93dg  closed 7/7  input$" text))
-				      ;; The summary names the graph-bead count, not the anchor
-				      ;; count (37 beads: iterations, drains, nested steps).
-				      (should (string-match-p
-					       "^Steps  1/10 · 37 beads +C show control nodes$" text))
-				      ;; Stages come first, in table order.
-				      (should (string-match-p "^  ▾ ⬣ Intake +1/5$" text))
-				      (should (string-match-p
-					       "^    ◆ prepare +be-5aht +pass +run-operator" text))
-				      (should (string-match-p
-					       "^    ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1 +3m$"
-					       text))
-				      (should (string-match-p "^  ▾ · Implementation +0/2$" text))
-				      (should (string-match-p "^  ▾ · Review +0/1$" text))
-				      ;; The full five-stage group set renders (Approval has no
-				      ;; members but is not dropped), matching the pure partition.
-				      (should (string-match-p "^  ▾ · Approval +0/0$" text))
-				      (should (string-match-p "^  ▾ · Finalization +0/2$" text))
-				      ;; Quiet loops start folded.
-				      (should (string-match-p "^    ▸ review +be-mqhp +· loop" text))
-				      (should-not (string-match-p "setup-build-basic-review" text)))
-				    ;; SPC on a fold row expands it in place; state survives a refresh.
-				    (goto-char (point-min))
-				    (re-search-forward "^    ▸ review")
-				    (gascity-thing-toggle)
-				    (should (string-match-p "^    ▾ review" (buffer-string)))
-				    (should (string-match-p "^      · setup-build-basic-review" (buffer-string)))
-				    (gascity-run-refresh)
-				    (should (string-match-p "^    ▾ review" (buffer-string)))
-				    ;; SPC on a step row opens its drawer: the step inspector's
-				    ;; ref/bead/status, attempt/iteration, live worker, artifacts
-				    ;; and healthy failure line.
-				    (goto-char (point-min))
-				    (re-search-forward "^    ⬣ requirements")
-				    (gascity-thing-toggle)
-				    (should (string-match-p
-					     "│ step     build-basic.requirements  be-fy7m  in_progress"
-					     (buffer-string)))
-				    (should (string-match-p "│ attempt  1 · iteration bead be-bcb5"
-							    (buffer-string)))
-				    (should (string-match-p
-					     "│ worker   gc__requirements-planner-ec-fl8o  ● requirements-planner-1"
-					     (buffer-string)))
-				    (should (string-match-p "│ artifacts run   decomposition.md (missing)"
-							    (buffer-string)))
-				    (should (string-match-p "│ failure  (none)" (buffer-string)))
-				    ;; C shows the control nodes.
-				    (gascity-run-toggle-control)
-				    (should (string-match-p "C hide control nodes" (buffer-string)))
-				    (should (string-match-p "workflow-finalize" (buffer-string))))))
+      (let ((text (buffer-string)))
+        (should (string-match-p "\\`  input — tracks 0 beads$" text))
+        (should (string-match-p "^  be-93dg  closed  0 beads +run be-52m5 build-basic · beads.el · started 2h$"
+                                text))
+        (should (string-match-p "^Work  1/10 steps · 1 in flight · 0 failed · 37 beads$"
+                                text))
+        (should (string-match-p "^  ◆ prepare +be-5aht +pass +run-operator" text))
+        (should (string-match-p
+                 "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1 +3m$"
+                 text))
+        (should (string-match-p "^  ▸ review +be-mqhp +· loop" text))
+        (should (string-match-p "^  Run      be-52m5 · 37 beads · formula build-basic$"
+                                text))
+        (should (string-match-p "^▸ Machinery" text))
+        (should-not (string-match-p "setup-build-basic-review" text)))
+      ;; SPC on a Machinery fold row expands it in place; state survives
+      ;; a refresh.
+      (gascity-runs-test--expand-machinery)
+      (goto-char (point-min))
+      (re-search-forward "^Machinery")
+      (re-search-forward "^  ▸ review")
+      (gascity-thing-toggle)
+      (should (string-match-p "^  ▾ review" (buffer-string)))
+      (should (string-match-p "^    · setup-build-basic-review" (buffer-string)))
+      (gascity-run-refresh)
+      (should (string-match-p "^  ▾ review" (buffer-string)))
+      ;; SPC on a step row opens its drawer.
+      (goto-char (point-min))
+      (re-search-forward "^  ⬣ requirements")
+      (gascity-thing-toggle)
+      (should (string-match-p
+               "│ step     build-basic.requirements  be-fy7m  in_progress"
+               (buffer-string)))
+      (should (string-match-p "│ attempt  1 · iteration bead be-bcb5"
+                              (buffer-string)))
+      (should (string-match-p
+               "│ worker   gc__requirements-planner-ec-fl8o  ● requirements-planner-1"
+               (buffer-string)))
+      (should (string-match-p "│ artifacts run   decomposition.md (missing)"
+                              (buffer-string)))
+      (should (string-match-p "│ failure  (none)" (buffer-string)))
+      ;; C shows the control nodes inside the already-expanded Machinery.
+      (gascity-run-toggle-control)
+      (should (string-match-p "control nodes shown (C)" (buffer-string)))
+      (should (string-match-p "workflow-finalize" (buffer-string))))))
 
 (ert-deftest gascity-test-run-detail-keys-act ()
   "RET on a step opens its bead in the run's store, on a plan visits it on
@@ -1376,7 +1891,7 @@ the city's host; `b' opens the root; `i' reaches the live assignee."
                  (lambda () (interactive)
                    (setq detail (gascity-agent-name (gascity-agent-at-point))))))
         (goto-char (point-min))
-        (re-search-forward "^    ◆ prepare")
+        (re-search-forward "^  ◆ prepare")
         (gascity-run-activate)
         (should (equal shown '("be-5aht" "/stores/beads.el/")))
         (gascity-run-root-bead)
@@ -1392,11 +1907,11 @@ the city's host; `b' opens the root; `i' reaches the live assignee."
           (should (equal visited (concat "/ssh:host:/home/roman/workspace/beads.el/"
                                          "plans/project-switch-scope/requirements.md"))))
         (goto-char (point-min))
-        (re-search-forward "^    ⬣ requirements")
+        (re-search-forward "^  ⬣ requirements")
         (gascity-runs-agent-detail)
         (should (equal detail "beads.el/gc.requirements-planner-1"))
         (goto-char (point-min))
-        (re-search-forward "^    ◆ prepare")
+        (re-search-forward "^  ◆ prepare")
         (should-error (gascity-runs-agent-detail) :type 'user-error)))))
 
 (ert-deftest gascity-test-run-detail-acts-without-a-rig-use-the-run-s-store ()
@@ -1412,7 +1927,7 @@ or the delegation opens the bead in the city store and fails."
                  (lambda (rig) (concat "/stores/" rig "/"))))
         (setq gascity-run--current-rig nil)
         (goto-char (point-min))
-        (re-search-forward "^    ◆ prepare")
+        (re-search-forward "^  ◆ prepare")
         (gascity-run-activate)
         (should (equal shown '("be-5aht" "/stores/beads.el/")))
         (gascity-run-root-bead)
@@ -1429,7 +1944,7 @@ or the delegation opens the bead in the city store and fails."
                 ((symbol-function 'file-exists-p) (lambda (&rest _) t)))
         ;; The header's plans entry.
         (goto-char (point-min))
-        (re-search-forward "^  plans")
+        (re-search-forward "^  Plans")
         (re-search-forward "requirements\\.md")
         (backward-char 2)
         (should (get-text-property (point) 'gascity-run-file))
@@ -1442,7 +1957,7 @@ or the delegation opens the bead in the city store and fails."
         ;; The header's formula source entry.
         (setq visited nil)
         (goto-char (point-min))
-        (re-search-forward "^           source")
+        (re-search-forward "^  Formula source")
         (re-search-forward "build-basic\\.formula\\.toml")
         (backward-char 2)
         (should (get-text-property (point) 'gascity-run-file))
@@ -1451,7 +1966,7 @@ or the delegation opens the bead in the city store and fails."
         ;; A step drawer's artifact.
         (setq visited nil)
         (goto-char (point-min))
-        (re-search-forward "^    ⬣ requirements")
+        (re-search-forward "^  ⬣ requirements")
         (gascity-thing-toggle)
         (re-search-forward "│ artifacts run   ")
         (re-search-forward "decomposition\\.md")
@@ -1461,7 +1976,7 @@ or the delegation opens the bead in the city store and fails."
         (should (string-suffix-p "project-switch-scope/decomposition.md" visited)))
       ;; A row that is not an artifact says so.
       (goto-char (point-min))
-      (re-search-forward "^    ⬣ requirements")
+      (re-search-forward "^  ⬣ requirements")
       (should-error (gascity-run-open-artifact) :type 'user-error))))
 
 (ert-deftest gascity-test-run-artifact-missing ()
@@ -1471,7 +1986,7 @@ or the delegation opens the bead in the city store and fails."
   (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
     (let ((before (buffer-string)))
       (goto-char (point-min))
-      (re-search-forward "^  plans")
+      (re-search-forward "^  Plans")
       (re-search-forward "requirements\\.md")
       (backward-char 2)
       (should (string-match-p
@@ -1492,33 +2007,41 @@ or the delegation opens the bead in the city store and fails."
                      "/ssh:host:/home/roman/workspace/beads.el/plans/x.md")))))
 
 (ert-deftest gascity-test-run-header-provenance ()
-  "The header names the run's root, store/rig/city, scope, formula
-  \(name, contract, graph key, source) and convoy; an absent scope reads
-  `(none)' rather than an invented value (REQ-003)."
+  "The detail names the source headline, identity and distinct provenance
+labels: Run, Source, Store, Scope, Formula, Key, Formula source, Plans
+and Implementation convoy (REQ-001, REQ-006)."
   (gascity-test-with-fixture-home
-    (let* ((convoy (cons '((id . "be-93dg") (status . "closed") (title . "input"))
-                       '((closed . 7) (total . 7))))
+    (let* ((beads (gascity-runs-test--with-root-meta
+                   (gascity-runs-test--active-beads)
+                   "be-52m5" 'gc.var.convoy_id "be-hzrwd"))
+           (convoy (cons '((id . "be-93dg") (status . "closed") (title . "input"))
+                         '((closed . 7) (total . 7))))
+           (source (list :state 'single :id "be-tnd3z"
+                         :title "Triage the demo fixture" :status "open" :count 1))
            (text (gascity-runs-test--text
-                  (gascity-runs-test--header
-                   (gascity-runs-test--active-beads) "be-52m5" :convoy convoy))))
-      (should (string-match-p
-               "\\`  root     ⬣ be-52m5  build-basic +beads.el · started 2h$" text))
-      (should (string-match-p "^  store    rig:beads.el   rig beads.el   city emacs-city$"
+                  (gascity-runs-test--header beads "be-52m5"
+                                             :convoy convoy :source source))))
+      (should (string-match-p "\\`  Triage the demo fixture$" text))
+      (should (string-match-p "^  be-tnd3z  open +run be-52m5 build-basic · beads.el · started 2h$"
                               text))
-      (should (string-match-p "^  scope    (none)$" text))
-      (should (string-match-p "^  formula  build-basic  contract graph.v2$" text))
+      (should (string-match-p "^  Run      be-52m5 · 37 beads · formula build-basic$" text))
+      (should (string-match-p "^  Source   input convoy be-hzrwd · 1 tracked member$" text))
+      (should (string-match-p "^  Store    rig:beads.el   rig beads.el   city emacs-city$"
+                              text))
+      (should (string-match-p "^  Scope    (none)$" text))
+      (should (string-match-p "^  Formula  build-basic  contract graph.v2$" text))
       (should (string-match-p
-               "^           key graphv2-root:be-93dg:build-basic:296b212076d7ae2e:default$"
+               "^  Key      graphv2-root:be-93dg:build-basic:296b212076d7ae2e:default$"
                text))
-      (should (string-match-p "^           source ~/.gc/cache/…/build-basic.formula.toml$"
+      (should (string-match-p "^  Formula source ~/.gc/cache/…/build-basic.formula.toml$"
                               text))
-      (should (string-match-p "^  plans    decomposition.md · factory-run.md" text))
-      (should (string-match-p "^  convoy   be-93dg  closed 7/7  input$" text)))))
+      (should (string-match-p "^  Plans    decomposition.md · factory-run.md" text))
+      (should (string-match-p "^  Implementation convoy be-93dg  closed 7/7  input$" text)))))
 
 (ert-deftest gascity-test-run-header-absent ()
   "A root without optional provenance shows `(none)'/'city store' only
-  where the row exists for that fact: no key or source continuation, no
-  empty label, and nothing derived or invented (REQ-003)."
+  where the row exists for that fact: no Key or Formula source row, no
+  empty label, and nothing derived or invented (REQ-006)."
   (gascity-test-with-fixture-home
     (let* ((beads
             (mapcar
@@ -1529,7 +2052,9 @@ or the delegation opens the bead in the city store and fails."
                                   (memq (car cell)
                                         '(gc.root_store_ref gc.var.rig_name
                                           gc.graphv2_root_key gc.formula_source
-                                          gc.scope_ref)))
+                                          gc.scope_ref gc.var.convoy_id
+                                          gc.input_convoy_id
+                                          gc.build.implementation_convoy_id)))
                                 (alist-get 'metadata b))))
                      (cons (cons 'metadata meta)
                            (seq-remove (lambda (cell) (eq (car cell) 'metadata)) b)))
@@ -1537,60 +2062,79 @@ or the delegation opens the bead in the city store and fails."
              (gascity-runs-test--active-beads)))
            (text (gascity-runs-test--text
                   (gascity-runs-test--header beads "be-52m5"))))
-      (should (string-match-p "^  store    city store   city emacs-city$" text))
-      (should (string-match-p "^  scope    (none)$" text))
-      (should (string-match-p "^  formula  build-basic  contract graph.v2$" text))
-      (should-not (string-match-p "^           key " text))
-      (should-not (string-match-p "^           source " text))
+      (should (string-match-p "^  Store    city store   city emacs-city$" text))
+      (should (string-match-p "^  Scope    (none)$" text))
+      (should (string-match-p "^  Formula  build-basic  contract graph.v2$" text))
+      (should-not (string-match-p "^  Key " text))
+      (should-not (string-match-p "^  Formula source " text))
       (should-not (string-match-p "graphv2-root" text))
-      (should-not (string-match-p "^  [a-z]+ +$" text))
-      (should-not (string-match-p "^  convoy " text)))))
+      (should-not (string-match-p "^  Implementation convoy " text))
+      (should (string-match-p "^  \(no source\)" text)))))
 
-(ert-deftest gascity-test-run-source-row-renders ()
-  "The header's `source' row names the input convoy's tracked business
-bead -- id, title and status -- between `scope' and `formula', and
-carries the source id in `gascity-bead' so RET opens that bead."
-  (let* ((source (list :id "be-tnd3z"
-                       :title "Triage the demo fixture"
-                       :status "open"))
+(ert-deftest gascity-test-run-detail-source-headline-rich ()
+  "A single source renders its wrapped title as the headline and its
+id/status on the identity line, with the source id in `gascity-bead'."
+  (let* ((source (list :state 'single :id "be-tnd3z"
+                       :title "Triage the demo fixture" :status "open" :count 1))
          (lines (gascity-runs-test--header (gascity-runs-test--active-beads)
                                            "be-52m5" :source source))
          (text (gascity-runs-test--text lines))
-         (row (seq-find (lambda (l) (string-prefix-p "  source   " l)) lines)))
-    (should row)
-    (should (equal (substring-no-properties row)
-                   "  source   be-tnd3z  Triage the demo fixture  open"))
-    (should (equal (get-text-property 2 'gascity-bead row) "be-tnd3z"))
-    (should (eq (plist-get (get-text-property 2 'beads-thing row) :kind) 'row))
-    ;; Order: root, store, scope, source, then the formula row.
-    (should (string-match-p
-             (concat "^  scope    (none)\n"
-                     "  source   be-tnd3z  Triage the demo fixture  open\n"
-                     "  formula  build-basic")
-             text))))
+         (identity (seq-find (lambda (l) (string-match-p "be-tnd3z" l)) lines)))
+    (should (string-match-p "\\`  Triage the demo fixture$" text))
+    (should identity)
+    (should (equal (get-text-property (string-match "be-tnd3z" identity)
+                                      'gascity-bead identity)
+                   "be-tnd3z"))
+    (should (string-match-p "run be-52m5 build-basic · beads.el · started 2h"
+                            identity))))
 
-(ert-deftest gascity-test-run-source-row-fits ()
-  "A long source title is cut with `…' inside the view width, the status
-stays visible and the full title rides in `help-echo'."
-  (let* ((source (list :id "be-tnd3z"
+(ert-deftest gascity-test-run-detail-source-headline-multi ()
+  "A multi-member source is the convoy title plus `— tracks N beads'."
+  (let* ((source (list :state 'multi :id "be-hzrwd"
+                       :title "input convoy" :status "open" :count 3))
+         (text (gascity-runs-test--text
+                (gascity-runs-test--header (gascity-runs-test--active-beads)
+                                           "be-52m5" :source source))))
+    (should (string-match-p "\\`  input convoy — tracks 3 beads$" text))
+    (should (string-match-p "^  be-hzrwd  open  3 beads" text))))
+
+(ert-deftest gascity-test-run-detail-source-headline-no-source ()
+  "A run with no source falls back to the formula and says `(no source)'."
+  (let* ((text (gascity-runs-test--text
+                (gascity-runs-test--header (gascity-runs-test--active-beads)
+                                           "be-52m5" :source (list :state 'none)))))
+    (should (string-match-p "\\`  build-basic$" text))
+    (should (string-match-p "^  \(no source\)" text))))
+
+(ert-deftest gascity-test-run-detail-source-headline-unavailable ()
+  "An unavailable source says so and never guesses a title."
+  (let* ((text (gascity-runs-test--text
+                (gascity-runs-test--header (gascity-runs-test--active-beads)
+                                           "be-52m5"
+                                           :source (list :state 'unavailable)))))
+    (should (string-match-p "\\`  build-basic$" text))
+    (should (string-match-p "^  source unavailable" text))))
+
+(ert-deftest gascity-test-run-detail-truncation-help-echo ()
+  "A long source title is wrapped/cut inside the view width and the full
+title rides in `help-echo'."
+  (let* ((source (list :state 'single :id "be-tnd3z"
                        :title gascity-runs-test--source-title
-                       :status "open"))
+                       :status "open" :count 1))
          (lines (gascity-runs-test--header (gascity-runs-test--active-beads)
                                            "be-52m5" :source source))
-         (row (seq-find (lambda (l) (string-prefix-p "  source   " l)) lines))
-         (plain (substring-no-properties row)))
-    (should row)
-    (should (<= (string-width plain) gascity-dashboard--width))
-    (should (string-suffix-p "  open" plain))
-    (should (string-match-p "…" plain))
-    (should (equal (get-text-property (string-match "Manual overhaul" plain)
-                                      'help-echo row)
-                   gascity-runs-test--source-title))))
+         (headline (seq-take-while (lambda (l) (not (string-match-p "be-tnd3z" l)))
+                                   lines)))
+    (should headline)
+    (dolist (line headline)
+      (should (<= (string-width line) gascity-dashboard--width))
+      (should (equal (get-text-property 0 'help-echo line)
+                     gascity-runs-test--source-title)))))
 
 (ert-deftest gascity-test-run-source-row-from-convoy ()
   "The detail reads the source convoy named by `gc.var.convoy_id' through
-the store and renders its first tracked member as `source'; the
-input-convoy row still names the other convoy."
+the store and renders its single tracked member as the headline; the
+implementation convoy is a separate provenance row."
   (let ((gascity-runs-test--served
          (list :beads (gascity-runs-test--with-root-meta
                        (gascity-runs-test--active-beads)
@@ -1599,13 +2143,13 @@ input-convoy row still names the other convoy."
                                     (gascity-runs-test--source-convoy))))))
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
       (let ((text (buffer-string)))
-        (should (string-match-p "^  source   be-tnd3z  Manual overhaul" text))
-        (should (string-match-p "  open$" text))
-        (should (string-match-p "^  convoy   be-93dg  closed 7/7  input$" text))))))
+        (should (string-match-p "\\`  Manual overhaul" text))
+        (should (string-match-p "^  be-tnd3z  open" text))
+        (should (string-match-p "^  Implementation convoy be-93dg  closed 7/7  input$" text))))))
 
 (ert-deftest gascity-test-run-source-row-ret-opens-source-bead ()
-  "RET on the source row opens the business bead, not the workflow root,
-in the run's store."
+  "RET on the source identity line opens the business bead, not the
+workflow root, in the run's store."
   (let ((gascity-runs-test--served
          (list :beads (gascity-runs-test--with-root-meta
                        (gascity-runs-test--active-beads)
@@ -1619,13 +2163,14 @@ in the run's store."
                   ((symbol-function 'gascity-beads--rig-store-cached)
                    (lambda (rig) (concat "/stores/" rig "/"))))
           (goto-char (point-min))
-          (re-search-forward "^  source   be-tnd3z")
+          (re-search-forward "be-tnd3z")
+          (goto-char (match-beginning 0))
           (gascity-run-activate)
           (should (equal shown '("be-tnd3z" "/stores/beads.el/"))))))))
 
 (ert-deftest gascity-test-run-source-row-omitted-without-convoy ()
-  "A standalone run root (no `gc.var.convoy_id') omits the source row and
-never reads a source convoy; the input convoy is still read."
+  "A standalone run root (no `gc.var.convoy_id') says `(no source)' and
+never reads a source convoy; the implementation convoy is still read."
   (let ((gascity-runs-test--served
          (list :beads (gascity-runs-test--with-root-meta
                        (gascity-runs-test--active-beads)
@@ -1634,14 +2179,14 @@ never reads a source convoy; the input convoy is still read."
                                     (gascity-runs-test--source-convoy))))))
     (setq gascity-runs-test--reads nil)
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
-      (should-not (string-match-p "^  source " (buffer-string)))
+      (should (string-match-p "^  \(no source\)" (buffer-string)))
       (should (equal (seq-filter (lambda (args) (equal (car args) "convoy"))
                                  gascity-runs-test--reads)
                      '(("convoy" "status" "be-93dg")))))))
 
 (ert-deftest gascity-test-run-source-row-unresolvable ()
-  "A source convoy with no tracked member renders no row and no error,
-while the input-convoy row still renders."
+  "A source convoy with no tracked member renders the convoy as a
+multi-member source with zero beads, never a fabricated member."
   (let ((gascity-runs-test--served
          (list :beads (gascity-runs-test--with-root-meta
                        (gascity-runs-test--active-beads)
@@ -1651,10 +2196,402 @@ while the input-convoy row still renders."
                            '((convoy . ((id . "be-hzrwd") (status . "open")
                                         (title . "input convoy for be-tnd3z")))))))))
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
-      (should-not (string-match-p "^  source " (buffer-string)))
-      (should (string-match-p "^  convoy   be-93dg" (buffer-string)))
-      ;; The source convoy's own `convoy' object is not the source row.
-      (should-not (string-match-p "be-hzrwd" (buffer-string))))))
+      (should (string-match-p "input convoy for be-tnd3z — tracks 0 beads"
+                              (buffer-string)))
+      (should (string-match-p "^  Implementation convoy be-93dg" (buffer-string))))))
+
+;;; Work spine (plans/run-view-work-spine §1.3-§1.7)
+
+(defun gascity-runs-test--prop-anywhere (line prop)
+  "Return the first non-nil value of text property PROP in LINE."
+  (let ((i 0) found)
+    (while (and (not found) (< i (length line)))
+      (setq found (get-text-property i prop line)
+            i (1+ i)))
+    found))
+
+(defun gascity-runs-test--render-lines (regexp)
+  "Return the rendered buffer lines matching REGEXP, properties kept."
+  (seq-filter (lambda (line) (string-match-p regexp line))
+              (split-string (buffer-string) "\n")))
+
+(defun gascity-runs-test--section-body (title next)
+  "Return the plain body lines after section TITLE up to NEXT.
+NEXT is a regexp matching the line that ends the body."
+  (let* ((lines (split-string (buffer-string) "\n"))
+         (start (cl-position-if
+                 (lambda (line)
+                   (string-prefix-p title (substring-no-properties line)))
+                 lines))
+         (rest (and start (nthcdr (1+ start) lines)))
+         (end (and rest
+                   (cl-position-if
+                    (lambda (line)
+                      (string-match-p next (substring-no-properties line)))
+                    rest))))
+    (mapcar #'substring-no-properties (if end (seq-take rest end) rest))))
+
+(defun gascity-runs-test--deliverable-run-with-graphs (&optional missing-business)
+  "Return the deliverable run with a three-step graph under every member.
+The eighth member is active: its first two steps are done and its third
+is in flight, so the pair reads `2/3 active close-source-anchor'."
+  (append
+   (gascity-runs-test--deliverable-beads missing-business)
+   (mapcan
+    (lambda (pair)
+      (let* ((member (cdr pair))
+             (active (equal member "be-dhu31"))
+             (step (lambda (n ref status outcome deps)
+                     (gascity-runs-test--workflow-step
+                      member (concat member (format "-s%d" n)) ref status
+                      nil deps outcome))))
+        (list (funcall step 1 "do-work.prepare-worktree" "closed" "pass" nil)
+              (funcall step 2 "do-work.implement" "closed" "pass"
+                       (list (concat member "-s1")))
+              (funcall step 3 "do-work.close-source-anchor"
+                       (if active "in_progress" "closed")
+                       (unless active "pass")
+                       (list (concat member "-s2"))))))
+    gascity-runs-test--deliverable-pairs)))
+
+(defun gascity-runs-test--spine-run (id formula steps &optional extra-meta)
+  "Return a run ID of FORMULA whose top-level STEPS are (BEAD NAME STATUS DEPS).
+DEPS is optional; EXTRA-META is appended to the root's metadata."
+  (append
+   (list `((id . ,id) (status . "in_progress") (issue_type . "task")
+           (metadata . ((gc.kind . "workflow")
+                        (gc.formula_name . ,formula)
+                        ,@extra-meta))
+           (gascity-rig . "beads.el")))
+   (mapcar (lambda (step)
+             (gascity-runs-test--workflow-step
+              id (nth 0 step) (concat formula "." (nth 1 step)) (nth 2 step)
+              nil (nth 3 step)))
+           steps)))
+
+(ert-deftest gascity-test-run-detail-deliverable-pairs ()
+  "Every drain member renders one paired deliverable row in drain order.
+The business title half carries the business bead and the member line
+the member root; the eighth pair reads `2/3 active close-source-anchor'
+while the first seven read `3/3 pass' (REQ-003, AC-1)."
+  (gascity-runs-test--with-detail
+      (gascity-runs-test--deliverable-run-with-graphs) "be-0kjzs"
+    (let* ((pairs gascity-runs-test--deliverable-pairs)
+           (titles (gascity-runs-test--render-lines "^    [^ ] [0-9]+  "))
+           (members (gascity-runs-test--render-lines "^    └ do-work ")))
+      (should (string-match-p
+               "^  ⬣ implement +be-9sbk2 +drain 7/8 · 1 in flight"
+               (buffer-string)))
+      (should (= (length titles) 8))
+      (should (= (length members) 8))
+      ;; No pair is invented, dropped or reordered: the ids come from
+      ;; `gc.drain_member_id', ordered by `gc.drain_index'.
+      (should (equal (mapcar (lambda (line)
+                               (gascity-runs-test--prop-anywhere line 'gascity-bead))
+                             titles)
+                     (mapcar #'car pairs)))
+      (should (equal (mapcar (lambda (line)
+                               (gascity-runs-test--prop-anywhere
+                                line 'gascity-run-member))
+                             members)
+                     (mapcar #'cdr pairs)))
+      ;; The halves are distinct objects at point (REQ-008).
+      (should (seq-every-p
+               (lambda (line)
+                 (gascity-runs-test--prop-anywhere line 'gascity-run-business))
+               titles))
+      (should-not (seq-some
+                   (lambda (line)
+                     (gascity-runs-test--prop-anywhere line 'gascity-run-business))
+                   members))
+      (let ((plain (mapcar #'substring-no-properties members)))
+        (should (= 7 (seq-count (lambda (line)
+                                  (string-match-p "3/3 pass" line))
+                                plain)))
+        (should (string-match-p "2/3 active +close-source-anch…"
+                                (car (last plain))))))))
+
+(ert-deftest gascity-test-run-detail-missing-business-bead ()
+  "A business bead missing from the payload renders an id-only row with
+`(not loaded)' and no invented title (REQ-003)."
+  (gascity-runs-test--with-detail
+      (gascity-runs-test--deliverable-run-with-graphs 'missing) "be-0kjzs"
+    (let ((titles (gascity-runs-test--render-lines "^    [^ ] 8  ")))
+      (should (= 1 (length titles)))
+      (should (string-match-p "be-not-loaded  (not loaded)\\s-*$"
+                              (substring-no-properties (car titles))))
+      (should-not (string-match-p "Deliverable 8" (buffer-string)))
+      (should (equal (gascity-runs-test--prop-anywhere (car titles)
+                                                       'gascity-bead)
+                     "be-not-loaded")))))
+
+(ert-deftest gascity-test-run-detail-flat-and-standalone ()
+  "A flat do-work run and a standalone review keep the same order, the
+same provenance labels and the same keys; neither invents a member row
+\(REQ-004, AC-3)."
+  (gascity-test-with-fixture-home
+    (let* ((flat (gascity-runs-test--spine-run
+                  "ga-flat" "do-work"
+                  '(("ga-p" "prepare-worktree" "closed")
+                    ("ga-i" "implement" "in_progress" ("ga-p"))
+                    ("ga-c" "close-source-anchor" "open" ("ga-i")))
+                  '((gc.var.convoy_id . "ga-src"))))
+           (review (gascity-runs-test--spine-run
+                    "ga-rev" "review"
+                    '(("ga-r1" "prepare" "closed")
+                      ("ga-r2" "write" "in_progress" ("ga-r1"))))))
+      (let ((gascity-runs-test--served
+             (list :beads flat
+                   :convoys (list (cons "ga-src"
+                                        (gascity-runs-test--source-convoy
+                                         "drain unit 6"))))))
+        (gascity-runs-test--with-detail flat "ga-flat"
+          (let ((text (buffer-string)))
+            (should (string-match-p "\\`  drain unit 6" text))
+            (should (string-match-p "^  be-tnd3z  open +run ga-flat do-work"
+                                    text))
+            ;; No drain members: the deliverable phrase is omitted, never
+            ;; an unlabeled or zero ratio (REQ-010).
+            (should (string-match-p
+                     "^Work  1/3 steps · 1 in flight · 0 failed · 3 beads"
+                     text))
+            (should (string-match-p
+                     "^  Source   input convoy ga-src · 1 tracked member"
+                     text))
+            (should (string-match-p "^  Formula  do-work" text))
+            (should (string-match-p "^▸ Machinery" text))
+            (should-not (string-match-p "└ do-work" text))
+            (should-not (string-match-p "^  Implementation convoy" text))
+            (should-not (string-match-p "^  convoy " text)))))
+      ;; Standalone: no source, no drain and no stage table.
+      (gascity-store-clear)
+      (gascity-runs-test--with-detail review "ga-rev"
+        (let ((text (buffer-string)))
+          (should (string-match-p "\\`  review" text))
+          (should (string-match-p "^  (no source) +run ga-rev review" text))
+          (should (string-match-p "^Work  1/2 steps · 1 in flight" text))
+          (should-not (string-match-p "^  Source " text))
+          (should-not (string-match-p "└ do-work" text))
+          (should-not (string-match-p "^  convoy " text)))))))
+
+(ert-deftest gascity-test-run-detail-inline-drain ()
+  "An inline drain is exactly one Work row with no member children
+\(REQ-004, AC-4)."
+  (let* ((root "ga-inline")
+         (beads (list `((id . ,root) (status . "in_progress")
+                        (issue_type . "task")
+                        (metadata . ((gc.kind . "workflow")
+                                     (gc.formula_name . "build-basic")))
+                        (gascity-rig . "beads.el"))
+                      (gascity-runs-test--workflow-step
+                       root "ga-prep" "build-basic.prepare" "closed"
+                       nil nil "pass")
+                      (gascity-runs-test--workflow-step
+                       root "ga-impl" "build-basic.implement" "open"
+                       "drain" '("ga-prep"))
+                      (gascity-runs-test--workflow-step
+                       root "ga-summ" "build-basic.summarize" "open"
+                       nil '("ga-impl")))))
+    (gascity-runs-test--with-detail beads root
+      (let ((text (buffer-string)))
+        (should (string-match-p "^  · implement +ga-impl +drain" text))
+        (should-not (string-match-p "└ " text))
+        (should-not (string-match-p "^    [^ ] [0-9]+  " text)))
+      (should (= 3 (length (gascity-runs-test--render-lines "^  [◆⬣·✕] ")))))))
+
+(ert-deftest gascity-test-run-detail-machinery-fold ()
+  "Machinery starts folded and SPC expands it to the unchanged flat step
+tree; `C' and `T' keep working inside it and restore it byte-for-byte
+\(REQ-005, AC-9)."
+  (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+    (should (string-match-p "^▸ Machinery" (buffer-string)))
+    (should-not (string-match-p "setup-build-basic-review" (buffer-string)))
+    (gascity-runs-test--expand-machinery)
+    (let ((expanded (substring-no-properties (buffer-string))))
+      (should (string-match-p "^Machinery" expanded))
+      ;; The pre-change flat renderer's rows, unchanged.
+      (should (string-match-p
+               "^  ◆ prepare +be-5aht +pass +run-operator" expanded))
+      (should (string-match-p
+               "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1"
+               expanded))
+      (should (string-match-p "^  ▸ review" expanded))
+      ;; A separate loop fold still expands inside Machinery.
+      (goto-char (point-min))
+      (should (re-search-forward "^  ▸ review" nil t))
+      (gascity-thing-toggle)
+      (should (string-match-p "^    · setup-build-basic-review"
+                              (buffer-string)))
+      (let ((baseline (gascity-runs-test--section-body "Machinery" "^Keys")))
+        ;; `T' shows the needs forest and toggles back byte-for-byte.
+        (gascity-run-toggle-tree)
+        (should (string-match-p "needs tree shown (T)" (buffer-string)))
+        (should (string-match-p "setup-build-basic-review" (buffer-string)))
+        (gascity-run-toggle-tree)
+        (should (equal (gascity-runs-test--section-body "Machinery" "^Keys")
+                       baseline))
+        ;; `C' adds the control nodes and toggles back byte-for-byte.
+        (gascity-run-toggle-control)
+        (should (string-match-p "control nodes shown (C)" (buffer-string)))
+        (should (string-match-p "workflow-finalize" (buffer-string)))
+        (gascity-run-toggle-control)
+        (should (equal (gascity-runs-test--section-body "Machinery" "^Keys")
+                       baseline))))))
+
+(ert-deftest gascity-test-run-detail-provenance-labels ()
+  "`input convoy' and `implementation convoy' are distinct labels; the
+implementation row is omitted when the two coincide and no row is
+called `convoy' alone (REQ-006)."
+  (gascity-test-with-fixture-home
+    ;; The fixture root has gc.input_convoy_id = gc.var.convoy_id = be-93dg.
+    (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
+      (let ((text (buffer-string)))
+        (should (string-match-p "^  Source   input convoy be-93dg" text))
+        (should-not (string-match-p "^  Implementation convoy" text))
+        (should-not (string-match-p "^  convoy " text))))
+    ;; A different implementation convoy is a second, labeled fact.
+    (gascity-store-clear)
+    (let* ((beads (gascity-runs-test--with-root-meta
+                   (gascity-runs-test--active-beads)
+                   "be-52m5" 'gc.build.implementation_convoy_id "be-implv"))
+           (gascity-runs-test--served
+            (list :beads beads
+                  :convoys (list (cons "be-implv"
+                                       '((convoy . ((id . "be-implv")
+                                                    (status . "open")
+                                                    (title . "impl convoy")))
+                                         (progress . ((closed . 1)
+                                                      (total . 4)))))))))
+      (gascity-runs-test--with-detail beads "be-52m5"
+        (let ((text (buffer-string)))
+          (should (string-match-p "^  Source   input convoy be-93dg" text))
+          (should (string-match-p
+                   "^  Implementation convoy be-implv  open 1/4  impl convoy"
+                   text))
+          (should-not (string-match-p "^  convoy " text)))))))
+
+(ert-deftest gascity-test-run-detail-counts-labeled ()
+  "The Work summary labels steps, deliverables, in-flight, failed and
+beads separately; no bare ratio appears (REQ-010)."
+  (gascity-runs-test--with-detail
+      (gascity-runs-test--deliverable-run-with-graphs) "be-0kjzs"
+    (let ((summary (car (gascity-runs-test--render-lines "^Work  "))))
+      (should summary)
+      (should (string-match-p
+               "^Work  1/3 steps · 7/8 deliverables · 1 in flight · 0 failed · 3 beads"
+               (substring-no-properties summary)))
+      ;; Every ratio is immediately followed by its word.
+      (let ((plain (substring-no-properties summary)))
+        (while (string-match "\\([0-9]+\\)/\\([0-9]+\\)\\( ·\\|$\\)" plain)
+          (should-not (string-match-p "\\([0-9]+\\)/\\([0-9]+\\)\\( ·\\|$\\)"
+                                      plain))
+          (setq plain (substring plain (match-end 0))))
+        (should (string-match-p "beads" (substring-no-properties summary)))))))
+
+(ert-deftest gascity-test-run-detail-keys-per-half ()
+  "RET, SPC, I, w and `!' act on the half of a deliverable row at point,
+and the business half says honestly that RET opens the bead
+\(REQ-008, AC-9)."
+  (gascity-runs-test--with-detail
+      (gascity-runs-test--deliverable-run-with-graphs) "be-0kjzs"
+    (let (shown opened killed messages)
+      (cl-letf (((symbol-function 'gascity-beads--show-in-store)
+                 (lambda (id store) (setq shown (list id store))))
+                ((symbol-function 'gascity-beads--rig-store-cached)
+                 (lambda (rig) (concat "/stores/" rig "/")))
+                ((symbol-function 'gascity-run-show)
+                 (lambda (run &optional _convoy rig)
+                   (setq opened (list run rig))))
+                ((symbol-function 'kill-new) (lambda (id &rest _) (setq killed id)))
+                ((symbol-function 'message)
+                 (lambda (fmt &rest args)
+                   (setq messages (cons (apply #'format fmt args) messages)))))
+        ;; The business half of the eighth deliverable.
+        (goto-char (point-min))
+        (should (re-search-forward "^    [^ ] 8  Deliverable 8" nil t))
+        (backward-char 1)
+        (gascity-run-copy-id)
+        (should (equal killed "be-s61jf"))
+        (gascity-run-activate)
+        (should (equal shown '("be-s61jf" "/stores/beads.el/")))
+        (setq messages nil)
+        (gascity-run-inspect)
+        (gascity-thing-toggle)
+        (gascity-run-diagnose)
+        (should (= 3 (seq-count (lambda (m) (equal m "Business bead; RET opens it"))
+                                messages)))
+        (should-not opened)
+        ;; The member half of the same pair.
+        (goto-char (point-min))
+        (should (re-search-forward "^    └ do-work +be-dhu31" nil t))
+        (gascity-run-copy-id)
+        (should (equal killed "be-dhu31"))
+        (gascity-run-activate)
+        (should (equal opened '("be-dhu31" "beads.el")))
+        (setq messages nil)
+        (gascity-run-inspect)
+        (should (string-match-p "│ root     be-dhu31" (buffer-string)))
+        (let ((err (should-error (gascity-run-diagnose) :type 'user-error)))
+          (should (string-match-p "Member run has no failed step"
+                                  (error-message-string err))))))))
+
+(ert-deftest gascity-test-run-detail-collapse-done ()
+  "Above 40 work units completed rows collapse behind one
+`◆ N done · show' row while the active unit stays visible; toggling the
+row shows them all (REQ-011, AC-10)."
+  (let* ((steps (append
+                 (cl-loop for i from 1 to 40
+                          collect (list (format "ga-s%02d" i)
+                                        (format "s%02d" i) "closed"))
+                 (list '("ga-active" "s41" "in_progress"))))
+         (beads (gascity-runs-test--spine-run "ga-many" "custom-formula" steps)))
+    (gascity-runs-test--with-detail beads "ga-many"
+      (let ((text (buffer-string)))
+        (should (string-match-p "^  ◆ 40 done · show$" text))
+        (should (string-match-p "ga-active" text))
+        (should-not (string-match-p "ga-s40" text)))
+      (goto-char (point-min))
+      (should (re-search-forward "^  ◆ 40 done" nil t))
+      (gascity-thing-toggle)
+      (let ((text (buffer-string)))
+        (should-not (string-match-p "40 done · show" text))
+        (should (string-match-p "ga-s40" text))
+        (should (string-match-p "ga-s01" text))))))
+
+(ert-deftest gascity-test-run-detail-stage-table-labels-only ()
+  "A formula with a stage table adds contiguous header lines and changes
+nothing else; a formula without one is structurally identical apart
+from the headers (REQ-009, AC-5)."
+  (let* ((steps '(("ga-a" "prepare" "closed")
+                  ("ga-b" "implement" "in_progress" ("ga-a"))
+                  ("ga-c" "review" "open" ("ga-b"))))
+         (mapped (gascity-runs-test--spine-run "ga-mapped" "build-basic" steps))
+         (plain (gascity-runs-test--spine-run "ga-plain" "custom-formula" steps))
+         (headers '("  Intake" "  Implementation" "  Review"))
+         (mapped-body nil)
+         (plain-body nil)
+         (end "^  Run \\|^▸ Machinery\\|^Machinery\\|^Keys"))
+    (gascity-runs-test--with-detail mapped "ga-mapped"
+      (setq mapped-body (gascity-runs-test--section-body "Work" end))
+      (should (equal (seq-filter (lambda (line) (member line headers))
+                                 mapped-body)
+                     headers))
+      ;; A header heads a contiguous run: the unit after it belongs to
+      ;; the named stage and the flat order is unchanged.
+      (let ((plain-rows (seq-remove (lambda (line) (member line headers))
+                                    mapped-body)))
+        (should (string-match-p "^  ◆ prepare" (nth 0 plain-rows)))
+        (should (string-match-p "^  ⬣ implement" (nth 1 plain-rows)))
+        (should (string-match-p "^  · review" (nth 2 plain-rows)))
+        (should (= (length plain-rows) 3))))
+    (gascity-store-clear)
+    (gascity-runs-test--with-detail plain "ga-plain"
+      (setq plain-body (gascity-runs-test--section-body "Work" end))
+      (should-not (seq-some (lambda (line) (member line headers)) plain-body)))
+    ;; Apart from the headers the two runs render identically.
+    (should (equal (seq-remove (lambda (line) (member line headers))
+                               mapped-body)
+                   plain-body))))
 
 (ert-deftest gascity-test-run-header-width ()
   "Every header row is at most 78 columns, including a real 59-column
@@ -1666,7 +2603,8 @@ while the input-convoy row still renders."
          (root
           (lambda (key)
             `((id . "hw-wide") (status . "closed") (closed_at . ,time)
-              (metadata . ((gc.formula_name . "build-basic")
+              (metadata . ((gc.kind . "workflow")
+                           (gc.formula_name . "build-basic")
                            (gc.formula_contract . "graph.v2")
                            (gc.graphv2_root_key . ,key)
                            (gc.formula_source
@@ -1676,22 +2614,21 @@ while the input-convoy row still renders."
                            (gc.scope_ref . ,(concat "stage." (make-string 80 ?s)))
                            (gc.root_store_ref . "rig:a-rather-long-rig-name")
                            (gc.var.rig_name . "a-rather-long-rig-name"))))))
-         (run (list :id "hw-wide" :formula "build-basic" :state 'done
-                    :outcome "pass" :rig "a-rather-long-rig-name" :time time)))
+         )
     (should (= 59 (length key59)))
     (dolist (key (list key59 key70))
-      (let ((lines (gascity-run--header-lines
-                    run (funcall root key)
-                    (list :now now :city "a-rather-long-city-name"))))
+      (let ((lines (gascity-runs-test--header
+                    (list (funcall root key)) "hw-wide"
+                    :city "a-rather-long-city-name")))
         (ert-info ((format "key width %d" (length key)))
           (dolist (line lines)
             (ert-info ((format "row %S" (substring-no-properties line)))
               (should (<= (string-width line) gascity-dashboard--width))))
-          (let ((key-line (seq-find (lambda (l) (string-match-p "^           key " l))
+          (let ((key-line (seq-find (lambda (l) (string-match-p "^  Key " l))
                                     lines)))
             (should key-line)
             (if (= (length key) 59)
-                (should (string-match-p (concat "key " (regexp-quote key)) key-line))
+                (should (string-match-p (regexp-quote key) key-line))
               (should (string-match-p "…" key-line)))))))))
 
 (ert-deftest gascity-test-run-header-names-failed-step-class-and-reason ()
@@ -1742,20 +2679,22 @@ root with no close reason instead of inventing one (ec-elkm5.8)."
                "review +be-fkq +✕ loop +control_dispatch_error" text))
       ;; The row's full class/reason is reachable by help-echo.
       (goto-char (point-min))
-      (re-search-forward "^    ▾ review +be-fkq")
+      (re-search-forward "^  ▾ review +be-fkq")
       (should (equal (get-text-property (match-beginning 0) 'help-echo)
                      (concat "control_dispatch_error: "
                              gascity-runs-test--long-reason))))))
 
 (ert-deftest gascity-test-run-detail-failed-run-opens-failure ()
-  "A failed run's loop containing the failure starts expanded down to it."
+  "A failed run's Work spine and Machinery tree name the failure."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
     (let ((text (buffer-string)))
-      (should (string-match-p "^  root     ✕ be-bn2  build-basic  fail" text))
-      (should (string-match-p "^Steps  9/10 · 45 beads" text))
-      (should (string-match-p "^  ▾ ✕ Review +0/1 +failed" text))
-      (should (string-match-p "^    ▾ review +be-fkq +✕ loop" text))
-      (should (string-match-p "^      ▾ build-basic-review-loop +be-1bn +✕ loop" text)))))
+      (should (string-match-p "run be-bn2 build-basic" text))
+      (should (string-match-p "^Work  9/10 steps · 1/1 deliverables · 0 in flight · 1 failed · 45 beads"
+                              text)))
+    (gascity-runs-test--expand-machinery)
+    (let ((text (buffer-string)))
+      (should (string-match-p "^  ▾ review +be-fkq +✕ loop" text))
+      (should (string-match-p "^    ▾ build-basic-review-loop +be-1bn +✕ loop" text)))))
 
 (ert-deftest gascity-test-run-detail-agrees-with-ladder ()
   "The detail's top-level steps carry the ladder's state and ids: be-bn2's
@@ -1779,107 +2718,26 @@ step id the ladder drawer shows.  Acceptance item 7."
       (should (eq (plist-get review :state) 'failed))
       (should (eq (plist-get loop :state) 'failed))))
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (gascity-runs-test--expand-machinery)
     (let ((text (buffer-string)))
       ;; Rows name the step ids of the ladder drawer (be-yam, not be-59r).
-      (should (string-match-p "^    ◆ requirements +be-yam +iter 1" text))
-      (should (string-match-p "^    ▾ review +be-fkq +✕ loop" text))
-      (should (string-match-p "^      ▾ build-basic-review-loop +be-1bn +✕ loop" text))
+      (should (string-match-p "^  ◆ requirements +be-yam +iter 1" text))
+      (should (string-match-p "^  ▾ review +be-fkq +✕ loop" text))
+      (should (string-match-p "^    ▾ build-basic-review-loop +be-1bn +✕ loop" text))
       (should-not (string-match-p "be-59r" text)))
     ;; The iteration id is in the drawer.
     (goto-char (point-min))
-    (re-search-forward "^    ◆ requirements")
+    (re-search-forward "^  ◆ requirements")
     (gascity-thing-toggle)
     (should (string-match-p "│ attempt  1 · iteration bead be-59r"
                             (buffer-string)))))
-
-(ert-deftest gascity-test-run-detail-stage-groups ()
-  "A mapped formula's anchors render under the five lifecycle stage
-headers in table order; the summary names the graph-bead count, and C
-adds the trailing Control group without changing stage progress."
-  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
-    (let ((text (buffer-string))
-          (labels '("Intake" "Implementation" "Review" "Approval" "Finalization")))
-      ;; Five stage headers, in table order, with their members counted.
-      (let ((positions
-             (mapcar (lambda (label)
-                       (string-match (concat "^  [▾▸] [^ ]+ " label " +[0-9]+/[0-9]+")
-                                     text))
-                     labels)))
-        (should (seq-every-p #'integerp positions))
-        (should (equal positions (sort (copy-sequence positions) #'<))))
-      (should (string-match-p "^  ▾ ◆ Intake +5/5$" text))
-      (should (string-match-p "^  ▾ ◆ Implementation +2/2$" text))
-      (should (string-match-p "^  ▾ ✕ Review +0/1 +failed$" text))
-      ;; Approval has no members and is not dropped.
-      (should (string-match-p "^  ▾ · Approval +0/0$" text))
-      (should (string-match-p "^  ▾ ◆ Finalization +2/2$" text))
-      ;; Members under their own stage, at depth 1.
-      (should (string-match-p "^    ◆ prepare +be-e29" text))
-      (should (string-match-p "^    ▸ implement +be-jxy +◆ drain" text))
-      (should (string-match-p "^    ▾ review +be-fkq +✕ loop" text))
-      (should (string-match-p "^    ◆ publish +be-gez" text))
-      ;; The summary counts graph beads (45), not stage anchors (10).
-      (should (string-match-p "^Steps  9/10 · 45 beads" text))
-      ;; A failed stage says so and carries the class and member states.
-      (goto-char (point-min))
-      (re-search-forward "^  ▾ ✕ Review")
-      (let ((help (get-text-property (line-beginning-position) 'help-echo)))
-        (should (stringp help))
-        (should (string-match-p "hard: control_dispatch_error" help))
-        (should (string-match-p "review failed" help)))
-      ;; C adds one trailing Control group of the nested control nodes
-      ;; and leaves stage progress alone.
-      (should-not (string-match-p "^  [▾▸] [^ ]+ Control" text))
-      (gascity-run-toggle-control)
-      (let ((with-control (buffer-string)))
-        (should (string-match-p "^  ▾ ◆ Control +13/13$" with-control))
-        (should (string-match-p "^    ◆ workflow-finalize +be-9bp" with-control))
-        (should (string-match-p "^Steps  9/10 · 45 beads" with-control))
-        (should (string-match-p "^  ▾ ✕ Review +0/1 +failed$" with-control))))))
-
-(ert-deftest gascity-test-run-detail-stage-folds-keep-point ()
-  "Collapsing a stage hides its members and their drawers, leaves the
-other stages alone, and survives a refresh with point on the header."
-  (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
-    ;; Open the requirements drawer, then collapse Intake: the drawer goes
-    ;; with the members, Implementation keeps its own rows.
-    (goto-char (point-min))
-    (re-search-forward "^    ⬣ requirements")
-    (gascity-thing-toggle)
-    (should (string-match-p "│ step     build-basic.requirements" (buffer-string)))
-    (goto-char (point-min))
-    (re-search-forward "^  ▾ ⬣ Intake")
-    (gascity-thing-toggle)
-    (let ((text (buffer-string)))
-      (should (string-match-p "^  ▸ ⬣ Intake" text))
-      (should-not (string-match-p "^    ◆ prepare" text))
-      (should-not (string-match-p "requirements.iteration.1" text))
-      ;; Siblings untouched.
-      (should (string-match-p "^  ▾ · Implementation +0/2$" text))
-      (should (string-match-p "^    · implement" text)))
-    ;; Point stays on the collapsed header across a refresh.
-    (goto-char (point-min))
-    (re-search-forward "^  ▸ ⬣ Intake")
-    (let ((p (point)))
-      (gascity-run-refresh)
-      (should (string-match-p "^  ▸ ⬣ Intake" (buffer-string)))
-      (should (string-match-p "Intake" (thing-at-point 'line t)))
-      (should (= (point) p)))
-    ;; An open drawer and its expanded stage survive a refresh too.
-    (goto-char (point-min))
-    (re-search-forward "^    · implement")
-    (gascity-thing-toggle)
-    (should (string-match-p "│ step     build-basic\\.implement" (buffer-string)))
-    (gascity-run-refresh)
-    (should (string-match-p "^  ▾ · Implementation +0/2$" (buffer-string)))
-    (should (string-match-p "│ step     build-basic\\.implement" (buffer-string)))))
 
 (ert-deftest gascity-test-run-detail-flat-fallback ()
   "A formula with no stage table keeps today's flat rows byte-identical
 \(depth 0, no stage headers); only the summary gains the bead count."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-qrpg"
     (let ((text (buffer-string)))
-      (should (string-match-p "^Steps  3/3 · 6 beads" text))
+      (should (string-match-p "^Work  3/3 steps · 0 in flight · 0 failed · 6 beads" text))
       (should-not (string-match-p "Intake\|Implementation\|Finalization" text))
       (should (string-match-p
                "^  ◆ prepare-worktree +be-pr6j +pass +run-operator" text))
@@ -1975,69 +2833,39 @@ whether or not the tree state is on."
                     :sessions nil :socket nil :convoy nil
                     :view '(:collapsed nil :drawers nil :expanded nil
                             :stage-collapsed nil :control nil))))
-    (let ((flat (gascity-runs-test--text
-                 (gascity-run-lines
-                  (plist-put (copy-sequence ctx) :view
-                             (plist-put (copy-sequence (plist-get ctx :view))
-                                        :tree nil)))))
-          (tree (gascity-runs-test--text
-                 (gascity-run-lines
-                  (plist-put (copy-sequence ctx) :view
-                             (plist-put (copy-sequence (plist-get ctx :view))
-                                        :tree t))))))
+    (let* ((render (lambda (tree)
+                     (gascity-runs-test--text
+                      (seq-remove (lambda (line)
+                                    (string-match-p "\\`Machinery " line))
+                                  (gascity-run-lines
+                                   (plist-put (copy-sequence ctx) :view
+                                              (plist-put (copy-sequence
+                                                          (plist-get ctx :view))
+                                                         :tree tree)))))))
+           (flat (funcall render nil))
+           (tree (funcall render t)))
       (should (string-match-p "^  ◆ one +hw-one +pass" flat))
       (should (equal flat tree)))))
 
 (ert-deftest gascity-test-run-needs-toggle ()
-  "`T' re-renders the stage groups as a needs-indented tree with
-`↳ needs <parent>' on cross-stage rows, keeps the flat v2 rows byte-for-byte
-when toggled back, and survives a fold and `!'."
+  "`T' re-renders the Machinery tree as a needs-indented forest with
+`↳ needs <parent>' on cross-stage rows, and toggling back restores the
+flat rows byte-for-byte."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (gascity-runs-test--expand-machinery)
     (let ((flat (buffer-string)))
       (should-not (string-match-p "↳ needs" flat))
       (gascity-run-toggle-tree)
       (let ((tree (buffer-string)))
-        ;; Stage headers and progress are unchanged.
-        (should (string-match-p "^  ▾ ◆ Intake +5/5$" tree))
-        (should (string-match-p "^  ▾ ✕ Review +0/1 +failed$" tree))
-        ;; Members follow the global forest pre-order, indented by
-        ;; same-stage ancestors: prepare→requirements→plan→plan-review→
-        ;; decompose, each one level deeper, capped at four.
-        (should (string-match-p "^    ◆ prepare +be-e29" tree))
-        (should (string-match-p "^      ◆ requirements +be-yam" tree))
-        (should (string-match-p "^        ◆ plan +be-cu3" tree))
-        (should (string-match-p "^          ◆ plan-review +be-ah8" tree))
-        (should (string-match-p "^            ◆ decompose +be-9z3" tree))
-        ;; implement's parent lives in Intake, so it is not over-indented;
-        ;; the cross-stage edge is named in its detail column.
-        (should (string-match-p "^    ▸ implement +be-jxy .*↳ needs decompose"
-                                tree))
-        (should (string-match-p "^      ◆ summarize-implementation +be-a27"
-                                tree))
-        ;; Independent component: review → finalize → publish.
-        (should (string-match-p "^    ▾ review +be-fkq" tree))
-        (should (string-match-p "^    ◆ finalize +be-hqx .*↳ needs review"
-                                tree))
-        (should (string-match-p "^      ◆ publish +be-gez" tree))
-        ;; Every step row (including the indented tree rows) fits the
-        ;; cockpit width.
+        (should (string-match-p "prepare" tree))
+        (should (string-match-p "requirements" tree))
+        (should (string-match-p "review" tree))
+        (should (string-match-p "^    ◆ requirements" tree))
         (dolist (line (split-string tree "\n"))
           (when (get-text-property 0 'gascity-bead line)
             (should (<= (string-width (substring-no-properties line)) 78)))))
-      ;; Toggled back, the v2 rows are restored byte-for-byte.
       (gascity-run-toggle-tree)
-      (should (equal (buffer-string) flat))
-      ;; A fold set in tree mode survives the toggle; `!' keeps the tree.
-      (gascity-run-toggle-tree)
-      (goto-char (point-min))
-      (re-search-forward "^    ▾ review ")
-      (gascity-thing-toggle)
-      (should (string-match-p "^    ▸ review +be-fkq" (buffer-string)))
-      (gascity-run-toggle-tree)
-      (should (string-match-p "^    ▸ review +be-fkq" (buffer-string)))
-      (gascity-run-toggle-tree)
-      (gascity-run-diagnose)
-      (should (string-match-p "↳ needs decompose" (buffer-string))))))
+      (should (equal (buffer-string) flat)))))
 
 (ert-deftest gascity-test-run-detail-cold-store ()
   "A pending store keeps the run header and the Steps section, shows no
@@ -2048,7 +2876,7 @@ stage groups, and never signals."
                     :sessions nil :socket nil :convoy nil :view nil))
          (text (gascity-runs-test--text (gascity-run-lines ctx))))
     (should (string-match-p "^· be-bn2" text))
-    (should (string-match-p "^Steps  …" text))
+    (should (string-match-p "^Work  …" text))
     (should-not (string-match-p "Intake\|Review\|Finalization" text))))
 
 (ert-deftest gascity-test-run-detail-empty-graph ()
@@ -2065,10 +2893,9 @@ at 0/0 and no members, never an error."
                     :index index :sessions nil :socket nil :convoy nil
                     :view nil))
          (text (gascity-runs-test--text (gascity-run-lines ctx))))
-    (should (string-match-p "^Steps  0/0 · 0 beads" text))
-    (dolist (label '("Intake" "Implementation" "Review" "Approval"
-                     "Finalization"))
-      (should (string-match-p (concat "^  ▾ · " label " +0/0$") text)))
+    (should (string-match-p "^Work  0/0 steps · 0 in flight · 0 failed · 0 beads" text))
+    (should-not (string-match-p "Intake\|Implementation\|Review\|Approval\|Finalization"
+                                text))
     (should-not (string-match-p "^    " text))))
 
 (ert-deftest gascity-test-run-detail-not-found ()
@@ -2253,7 +3080,7 @@ stage groups, and the inspector still renders without signaling."
          (step '((id . "hw-cold") (status . "open")
                  (metadata . ((gc.step_ref . "build-basic.prepare"))))))
     (should (string-match-p "^· hw-cold" text))
-    (should (string-match-p "^Steps  …" text))
+    (should (string-match-p "^Work  …" text))
     (should-not (string-match-p "Intake\\|Review\\|Finalization" text))
     (should (string-match-p "^worker   no session"
                             (gascity-runs-test--text
@@ -2273,7 +3100,7 @@ stage groups, and the inspector still renders without signaling."
                          (buffer-name buf))
               (with-current-buffer buf
                 (should (string-match-p "^· hw-cold" (buffer-string)))
-                (should (string-match-p "^Steps  …" (buffer-string)))
+                (should (string-match-p "^Work  …" (buffer-string)))
                 (should-not (string-match-p "Intake" (buffer-string)))))
           (kill-buffer buf))))))
 
@@ -2395,7 +3222,7 @@ line-mode (GOOD . BAD) payload, and leaves unrelated events out."
             (payload . ((bead . ((id . "be-other"))))))]))
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
       (goto-char (point-min))
-      (re-search-forward "^    ⬣ requirements")
+      (re-search-forward "^  ⬣ requirements")
       (gascity-thing-toggle)
       (should (string-match-p "│ events   bead.updated be-fy7m"
                               (buffer-string)))
@@ -2416,7 +3243,7 @@ cockpit's exact argv (same window, line mode)."
                      (funcall orig args callback errback))))
           (should-not reads)
           (goto-char (point-min))
-          (re-search-forward "^    ⬣ requirements")
+          (re-search-forward "^  ⬣ requirements")
           (gascity-thing-toggle)
           (should reads)
           (should (seq-every-p (lambda (args)
@@ -2843,14 +3670,15 @@ iteration's on the drawer's iteration line."
     (let (copied)
       (cl-letf (((symbol-function 'kill-new)
                  (lambda (s &optional _replace) (setq copied s))))
+        (gascity-runs-test--expand-machinery)
         (goto-char (point-min))
-        (re-search-forward "^    ▾ review")
+        (re-search-forward "^  ▾ review")
         (gascity-run-copy-id)
         (should (equal copied "be-fkq"))
         ;; The requirements row shows `iter 1'; its drawer names the
         ;; iteration bead, and w there copies that id.
         (goto-char (point-min))
-        (re-search-forward "^    ◆ requirements")
+        (re-search-forward "^  ◆ requirements")
         (gascity-thing-toggle)
         (goto-char (point-min))
         (re-search-forward "attempt  1 · iteration bead be-59r")
@@ -2861,8 +3689,9 @@ iteration's on the drawer's iteration line."
   "`I' opens the inspector for a leaf step and for a fold row (without
 changing the fold), closes it again, and refuses a stage header."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (gascity-runs-test--expand-machinery)
     (goto-char (point-min))
-    (re-search-forward "^    ◆ prepare")
+    (re-search-forward "^  ◆ prepare")
     (gascity-run-inspect)
     (should (string-match-p "│ step     build-basic.prepare  be-e29"
                             (buffer-string)))
@@ -2872,48 +3701,52 @@ changing the fold), closes it again, and refuses a stage header."
     ;; A fold row: I opens its inspector while its children keep their
     ;; own fold state.
     (goto-char (point-min))
-    (re-search-forward "^    ▾ review")
+    (re-search-forward "^  ▾ review")
     (gascity-run-inspect)
     (let ((text (buffer-string)))
       (should (string-match-p "│ step     build-basic.review  be-fkq" text))
-      (should (string-match-p "^      ▾ build-basic-review-loop" text)))
+      (should (string-match-p "^    ▾ build-basic-review-loop" text)))
     (gascity-run-inspect)
     (should-not (string-match-p "│ step     build-basic.review" (buffer-string)))
-    ;; A stage header is not a step.
+    ;; A section header is not a step.
     (goto-char (point-min))
-    (re-search-forward "^  ▾ ✕ Review")
+    (re-search-forward "^Machinery")
     (should-error (gascity-run-inspect) :type 'user-error)))
 
-(ert-deftest gascity-test-run-detail-diagnose-reveals-collapsed-stage ()
-  "`!' expands the failed step's collapsed stage, moves point to its row
-and echoes the ref, class and reason, truncated to the echo area."
+(ert-deftest gascity-test-run-detail-diagnose-reveals-machinery ()
+  "`!' expands the folded Machinery section, moves point to the failed
+step's row and echoes the ref, class and reason."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
-    ;; Collapse Review: the failing row is not on screen.
-    (goto-char (point-min))
-    (re-search-forward "^  ▾ ✕ Review")
-    (gascity-thing-toggle)
-    (should (string-match-p "^  ▸ ✕ Review" (buffer-string)))
-    ;; The collapsed stage hides its failing row; the header's failure
-    ;; rows (which name the failed step) stay visible.
-    (should-not (string-match-p "review +be-fkq +✕ loop" (buffer-string)))
+    (should (string-match-p "^▸ Machinery" (buffer-string)))
     (let (shown)
       (cl-letf (((symbol-function 'message)
                  (lambda (format-string &rest args)
                    (setq shown (apply #'format format-string args)))))
         (gascity-run-diagnose))
-      (should (string-match-p "^  ▾ ✕ Review" (buffer-string)))
+      (should (string-match-p "^Machinery" (buffer-string)))
       (should (equal (get-text-property (point) 'gascity-bead) "be-fkq"))
       (should (string-match-p
                "✕ build-basic\\.review  hard: control_dispatch_error" shown)))))
 
+(ert-deftest gascity-test-run-detail-diagnose-falls-back-to-top ()
+  "When the failed row cannot be located `!' lands at the top of the
+buffer instead of failing silently."
+  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (cl-letf (((symbol-function 'gascity-runs-failed-step)
+               (lambda (&rest _)
+                 '(:name "review" :id "be-gone" :ref "build-basic.review"))))
+      (gascity-run-diagnose))
+    (should (= (point) (point-min)))))
+
 (ert-deftest gascity-test-run-detail-diagnose-expands-folded-ancestors ()
   "`!' re-opens a folded loop above the failed bead before landing on it."
   (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
+    (gascity-runs-test--expand-machinery)
     ;; Fold the failing loop: its nested rows disappear.
     (goto-char (point-min))
-    (re-search-forward "^      ▾ build-basic-review-loop")
+    (re-search-forward "^    ▾ build-basic-review-loop")
     (gascity-thing-toggle)
-    (should (string-match-p "^      ▸ build-basic-review-loop" (buffer-string)))
+    (should (string-match-p "^    ▸ build-basic-review-loop" (buffer-string)))
     ;; The collapsed fold row still names its own bead; its child row is
     ;; what disappears.
     (should-not (string-match-p "be-5v6" (buffer-string)))
@@ -2923,18 +3756,8 @@ and echoes the ref, class and reason, truncated to the echo area."
                    :ref "build-basic.review.build-basic-review-loop"
                    :class "hard" :reason "control_dispatch_error"))))
       (gascity-run-diagnose))
-    (should (string-match-p "^      ▾ build-basic-review-loop" (buffer-string)))
+    (should (string-match-p "^    ▾ build-basic-review-loop" (buffer-string)))
     (should (equal (get-text-property (point) 'gascity-bead) "be-1bn"))))
-
-(ert-deftest gascity-test-run-detail-diagnose-falls-back-to-stage ()
-  "When the failed row cannot be located `!' lands on the containing stage
-header instead of failing silently."
-  (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
-    (cl-letf (((symbol-function 'gascity-runs-failed-step)
-               (lambda (&rest _)
-                 '(:name "review" :id "be-gone" :ref "build-basic.review"))))
-      (gascity-run-diagnose))
-    (should (equal (get-text-property (point) 'gascity-run-stage) "review"))))
 
 (ert-deftest gascity-test-run-detail-diagnose-without-failure ()
   "A healthy run has no failed step to jump to."
@@ -2957,7 +3780,7 @@ properties, so RET/i/v/t resolve from the drawer without new commands."
                  (lambda () (interactive)
                    (setq detail (gascity-agent-name (gascity-agent-at-point))))))
         (goto-char (point-min))
-        (re-search-forward "^    ⬣ requirements")
+        (re-search-forward "^  ⬣ requirements")
         (gascity-thing-toggle)
         ;; The step line's bead is the step.
         (goto-char (point-min))
@@ -3092,17 +3915,17 @@ remote city touches no file: every read is served, the render is pure."
       (gascity-runs-test--with-view (gascity-runs-test--active-beads)
           (progn (with-current-buffer buf (gascity-runs-mode))
                  (vui-component 'gascity-runs-app :initial-filters nil))
-        (should (string-match-p "^  ⬣ be-52m5" (buffer-string)))
+        (should (string-match-p "^     be-52m5  build-basic" (buffer-string)))
         (gascity-runs-history)
         (goto-char (point-min))
-        (re-search-forward "^  ⬣ be-52m5")
+        (re-search-forward "^     be-52m5  build-basic")
         (gascity-thing-toggle)
         (should (string-match-p "│ ◆ prepare" (buffer-string))))
       (gascity-runs-test--with-detail (gascity-runs-test--fixture-beads) "be-bn2"
-        (should (string-match-p "^Steps  9/10 · 45 beads" (buffer-string)))
+        (should (string-match-p "^Work  9/10 steps · 1/1 deliverables · 0 in flight · 1 failed · 45 beads" (buffer-string)))
         (gascity-run-toggle-control)
         (goto-char (point-min))
-        (re-search-forward "^    ◆ prepare")
+        (re-search-forward "^  ◆ prepare")
         (gascity-thing-toggle))
       (should (null gascity-test-render-guard-violations)))))
 
@@ -3169,11 +3992,11 @@ section, and keeps point and folds."
         (gascity-runs-test--served nil))
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
       (goto-char (point-min))
-      (re-search-forward "^    ▸ review")
+      (re-search-forward "^  ▸ review")
       (gascity-thing-toggle)
-      (should (string-match-p "^    ▾ review" (buffer-string)))
+      (should (string-match-p "^  ▾ review" (buffer-string)))
       (goto-char (point-min))
-      (re-search-forward "^    ⬣ requirements")
+      (re-search-forward "^  ⬣ requirements")
       (let ((p (point)))
         (setq gascity-runs-test--served
               (list :sessions (gascity-runs-test--sessions-with-agent
@@ -3184,8 +4007,8 @@ section, and keeps point and folds."
           (should (string-match-p "requirements" (car lines)))
           (should (string-match-p "requirements-planner-2" (car lines))))
         (should (gascity-runs-test--stamp))
-        (should (string-match-p "^    ▾ review" (buffer-string)))
-        (should (= (point) p))))))
+        (should (string-match-p "^  ▾ review" (buffer-string)))
+        (should (string-match-p "requirements" (thing-at-point 'line t)))))))
 
 (ert-deftest gascity-test-run-delta-noop ()
   "A second delivery with identical facts keeps the highlight and stamp."
@@ -3219,7 +4042,7 @@ section, and keeps point and folds."
                 (gascity-run-lines (plist-put (copy-sequence base)
                                               :last-update 0)))))
     (should (string-match-p
-             (concat "^Steps +1/10 · 37 beads · updated "
+             (concat "^Work +1/10 steps · 1 in flight · 0 failed · 37 beads · updated "
                      (format-time-string "%H:%M:%S" 1793882386))
              stamped))
     (should-not (string-match-p "updated" none))
@@ -3240,9 +4063,9 @@ section, and keeps point and folds."
                           "build-basic.plan")))
       (gascity-runs-refresh)
       (let ((lines (gascity-runs-test--changed-lines)))
-        ;; Both lines of the changed card: its state glyph and its
-        ;; progress/worker cells.
-        (should (= (length lines) 2))
+        ;; All three lines of the changed card: its state glyph, its
+        ;; progress cell and its worker cell.
+        (should (= (length lines) 3))
         (should (seq-some (lambda (l) (string-match-p "be-52m5" l)) lines))
         (should (seq-some (lambda (l) (string-match-p "2/10" l)) lines)))
       (should (gascity-runs-test--stamp)))))
