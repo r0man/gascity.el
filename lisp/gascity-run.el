@@ -1484,13 +1484,9 @@ the run has no drain members."
     (_ "pending")))
 
 (defun gascity-run--work-unit-done-p (unit)
-  "Return non-nil when work UNIT is done."
-  (pcase (plist-get unit :unit-kind)
-    (:deliverable
-     (let ((member (plist-get unit :member)))
-       (and member (eq (gascity-runs-state member) 'done))))
-    (:work (eq (plist-get (plist-get unit :step) :state) 'done))
-    (_ nil)))
+  "Return non-nil when work UNIT is done (a drain header never is)."
+  (and (not (eq (plist-get unit :unit-kind) :drain))
+       (eq (gascity-runs--unit-state unit) 'done)))
 
 (defun gascity-run--drain-row (unit ctx)
   "Return the drain header row of work UNIT in CTX."
