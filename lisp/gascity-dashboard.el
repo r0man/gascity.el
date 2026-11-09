@@ -87,6 +87,7 @@
 (declare-function gascity-run-show "gascity-run")
 (declare-function gascity-runs-read-beads "gascity-runs")
 (declare-function gascity-runs-index "gascity-runs")
+(declare-function gascity-runs--step-ref "gascity-runs")
 (declare-function gascity-runs-ladder "gascity-runs")
 (declare-function gascity-runs-last-activity "gascity-runs")
 (declare-function gascity-runs-parent-id "gascity-runs")
@@ -673,7 +674,8 @@ its step done).  The ladder and the run detail both read it."
   "Return the step ladder of run ROOT from its GRAPH beads.
 GRAPH is every bead anchored to ROOT (`gc.root_bead_id'), any status.
 Returns a list of plists (:name :id :state), one per top-level step, in
-formula order (by blocks-dependency depth).  A step's state is its
+formula order (blocks-dependency depth, then authored `gc.step_ref'
+with the formula prefix stripped, then bead id).  A step's state is its
 latest iteration bead's (`gc.logical_bead_id' → step, max
 `gc.attempt'), else its own.  In a failed run (root `gc.outcome'
 fail) a closed step with a failed bead beneath it (a nested loop that
@@ -704,9 +706,7 @@ progress is active."
                      (state (if (and iter (not (eq own 'done)))
                                 (gascity-dashboard--bead-state iter)
                               own))
-                     (name (substring (alist-get 'gc.step_ref
-                                                 (gascity-dashboard--meta step))
-                                      (1+ (length formula)))))
+                     (name (gascity-runs--step-ref step formula)))
                 (when (and (eq state 'done)
                            (gascity-dashboard--failed-beneath-p name failed-paths))
                   (setq state 'failed))
@@ -717,9 +717,13 @@ progress is active."
                 (list :name name :id id :state state)))
             (sort steps (lambda (a b)
                           (let ((da (gethash (alist-get 'id a) depth 0))
-                                (db (gethash (alist-get 'id b) depth 0)))
-                            (if (/= da db) (< da db)
-                              (string< (alist-get 'id a) (alist-get 'id b)))))))))
+                                (db (gethash (alist-get 'id b) depth 0))
+                                (ra (gascity-runs--step-ref a formula))
+                                (rb (gascity-runs--step-ref b formula)))
+                            (cond ((/= da db) (< da db))
+                                  ((not (equal ra rb)) (string< ra rb))
+                                  (t (string< (alist-get 'id a)
+                                              (alist-get 'id b))))))))))
 
 (defun gascity-dashboard--ladder-string (ladder)
   "Return LADDER as glyphs `◆⬣········' with every step in `help-echo'."
