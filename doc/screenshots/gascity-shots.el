@@ -14,9 +14,9 @@
 ;;
 ;;   GASCITY_REPO        repo root (default: derived from this file)
 ;;   BEADS_REPO          beads.el checkout (default: ~/workspace/beads.el)
-;;   GASCITY_SHOT_THEME  theme symbol, e.g. ef-deuteranopia-dark
+;;   GASCITY_SHOT_THEME  theme token, e.g. default (no theme loaded)
 ;;   GASCITY_SHOT_OUTDIR directory for the raw PNGs
-;;   GASCITY_SHOT_SUFFIX appended to every shot name, e.g. -dark
+;;   GASCITY_SHOT_SUFFIX appended to every shot name, e.g. -default
 ;;   GASCITY_SHOT_VIEWS  space-separated view names; empty = all
 ;;   GASCITY_SHOT_DIR    directory `gc' resolves the city from
 ;;   GASCITY_SHOT_RIG    rig to feature in the rig dashboard
@@ -75,11 +75,28 @@
 
 (setq screenshot-output-dir
       (gascity-shots-getenv "GASCITY_SHOT_OUTDIR" temporary-file-directory)
-      screenshot-theme
-      (intern (gascity-shots-getenv "GASCITY_SHOT_THEME" "ef-deuteranopia-dark"))
-      screenshot-theme-library "ef-themes"
       screenshot-async-process-regexp "gascity-gc"
       screenshot-log-function #'gascity-shots--progress)
+;; The capture uses stock Emacs's built-in default faces: the `default' and
+;; `none' tokens mean no theme is loaded, so an `emacs -Q' reader sees the
+;; same colours.  Any other token is a real theme symbol.
+(let ((theme (gascity-shots-getenv "GASCITY_SHOT_THEME" "default")))
+  (setq screenshot-theme
+        (unless (member theme '("default" "none")) (intern theme))))
+
+;; `tabulated-list-print' lays its columns out to the width of the window it
+;; is displayed in, and `display-buffer' splits a 220-column capture frame
+;; side by side once `split-width-threshold' (160) is exceeded.  Whether the
+;; split happened before a list's first print was a race: `session-list' was
+;; laid out for a ~109-column half-window in some runs and for the full
+;; 220-column frame in others, so the fitted image came out ~101 or ~170
+;; columns wide with different column x positions.  Pin the layout (never
+;; split) so every list prints at the full capture frame and the fitted
+;; frame is a pure function of the fixture.
+;; Only the width matters: `display-buffer' enters its side-by-side branch
+;; on a wide frame, while a vertical split is deterministic at the fixed
+;; capture height (and the terminal shot depends on it).
+(setq split-width-threshold nil)
 
 ;;; Deterministic role ids and terminal normalization (defense in depth)
 ;;
@@ -211,7 +228,7 @@ at most SECONDS (default 20)."
 ;; call site rather than as changes to the engine.
 (advice-add 'screenshot-export :before
             (lambda (buffer _name &optional _fixed-rows)
-              (when-let ((buf (get-buffer buffer)))
+              (when-let* ((buf (get-buffer buffer)))
                 (gascity-shots--await-stable buf))
               (gascity-shots--normalize-buffer (get-buffer buffer))))
 (advice-add 'screenshot-fit-frame :after
@@ -382,8 +399,8 @@ the cold menu.  Returns nil so the whole frame is captured
 (defun gascity-shots--sling-plain-frame ()
   "The sling menu pre-seeded with fixture work: the plain shape."
   (gascity-shots--sling-frame
-   (list :work "demo-task-manual"
-         :work-title "Write the task-organized manual")))
+   (list :work "demo-3"
+         :work-title "Fix crash when opening an empty store")))
 
 (defun gascity-shots--sling-cold-frame ()
   "The sling menu with nothing pre-seeded."
@@ -396,8 +413,8 @@ the cold menu.  Returns nil so the whole frame is captured
 (defun gascity-shots--sling-on-frame ()
   "The targeted shape: a formula picked with fixture work in scope."
   (gascity-shots--sling-frame
-   (list :work "demo-task-manual"
-         :work-title "Write the task-organized manual"
+   (list :work "demo-3"
+         :work-title "Fix crash when opening an empty store"
          :formula "mol-do-work")))
 
 (defun gascity-shots--sling-preview-buffer ()
@@ -405,8 +422,8 @@ the cold menu.  Returns nil so the whole frame is captured
   (switch-to-buffer (gascity-shots--await (gascity-shots--cockpit-buffer)))
   (gascity-sling--full-preview
    (list :city default-directory
-         :work "demo-task-manual"
-         :work-title "Write the task-organized manual"
+         :work "demo-3"
+         :work-title "Fix crash when opening an empty store"
          :formula "mol-do-work"
          :target "demo-rig/gc.implementation-worker")
    nil)

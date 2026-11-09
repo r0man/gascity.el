@@ -24,11 +24,18 @@ screenshots/
    desktop. Windows are floated so Emacs's requested frame size is
    honored (sway tiles by default, which would force every frame to fill
    the output).
-3. Runs a **graphical** Emacs once per theme. It loads the package, the
-   engine, and the shot list; renders each view; waits for the view's
+3. Runs a **graphical** Emacs once, with stock Emacs's built-in default
+   theme (no theme package is loaded). It loads the package, the engine,
+   and the shot list; renders each view; waits for the view's
    asynchronous `gc` data to settle; normalizes any residual run-generated
    value to a role token; fits the frame tightly to the rendered content;
-   and exports a raw PNG with `x-export-frames`.
+   and exports a raw PNG with `x-export-frames`. It also pins the window
+   width layout (`split-width-threshold` is nil; the fixed capture height
+   keeps the vertical split deterministic): a `tabulated-list-mode` view
+   lays its columns out to the width of the window it is printed in, so
+   letting `display-buffer` split the 220-column capture frame made
+   `session-list` come out ~101 or ~170 columns wide between `--verify`
+   runs.
 4. **Compresses** each raw PNG to an 8-bit-palette full image plus a
    small thumbnail under `../images/` (committed). The raw PNGs are
    throwaway.
@@ -44,8 +51,10 @@ the `@shot` macro in `../gascity.texi`).
 | `sway` (wlroots headless) | private capture display | 1.11 |
 | ImageMagick `convert` | compress + thumbnail | 6.9 |
 | `gc` CLI + `git` | fixture city + `--scope changed` | — |
-| `ef-themes` | the capture themes | 2.1.0 |
 | a `beads.el` checkout | gascity's non-ELPA dependency | — |
+
+The capture uses the built-in default theme: no theme package is
+installed or loaded, so an `emacs -Q` reader sees the same faces.
 
 `x-export-frames` needs a real frame, so this runs a **graphical** Emacs,
 never `--batch`.
@@ -89,7 +98,16 @@ only opens dashboards; it never mutates.
 
 `--verify <scope>` runs the scope twice into two `$TMPDIR` staging dirs and
 fails, naming the first drifting file, unless every output is
-byte-identical. It then runs the subset-isolation check.
+byte-identical. It then runs the subset-isolation check. `--verify` compares
+only the two fresh runs, so after a recapture also assert that the committed
+images are the ones just produced:
+
+```sh
+./doc/screenshots/capture.sh --scope all
+git diff --exit-code doc/images
+```
+
+A non-empty diff means a stale or race-variant image is committed.
 
 `--check-isolation <scope>` regenerates the scope into a throwaway copy of
 the committed `doc/images` and asserts that every image **outside** the
@@ -165,16 +183,14 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-ef-deuteranopia-dark  -dark   cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
-ef-cyprus             -light  cockpit
+default  -default  cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 ```
 
-Each line is `THEME  SUFFIX  view view …`. `ef-deuteranopia-dark` is the
-standard dark theme for every view; `ef-cyprus` is kept for the single
-deliberate light capture, `cockpit-light`, which is captured alongside
-`cockpit-dark` to show theming. A view named under two themes is captured
-twice. Image geometry (widths, palette sizes) is set just below the
-manifest.
+Each line is `THEME  SUFFIX  view view …`. The single `default` row
+captures every view from stock Emacs's built-in default theme;
+`GASCITY_SHOT_THEME=default` maps to `screenshot-theme` nil, so no theme
+package is loaded. A view named under two themes is captured twice.
+Image geometry (widths, palette sizes) is set just below the manifest.
 
 ## Provenance (reused engine)
 
@@ -214,12 +230,10 @@ this section) whenever it changes:
   `images/<view>-<theme>.png` plus the `<view>-<theme>-thumb.png`
   preview, under the repo-local image directory (`doc/images/` here,
   `docs/manual/images/` in `beads.el`).
-- **Theme** `ef-deuteranopia-dark` is the standard dark theme in the
-  manifest and the `GASCITY_SHOT_THEME` fallback, with
-  `screenshot-theme-library` kept at `ef-themes`. `ef-cyprus` is used for
-  exactly one deliberate light capture, `cockpit-light`, paired with
-  `cockpit-dark`, to demonstrate theming; every other view is a `-dark`
-  capture of `ef-deuteranopia-dark`.
+- **Theme** the built-in default theme, suffix `-default`, no theme
+  package. `GASCITY_SHOT_THEME=default` (and `none`) maps to
+  `screenshot-theme` nil, so every image is a `-default` capture of
+  stock Emacs's default faces.
 
 Regenerate and verify (from the repo root):
 
@@ -243,6 +257,8 @@ sibling pipeline (see [Provenance](#provenance-reused-engine)) and must
 stay byte-identical. Upstream
 `beads.el/docs/manual/screenshots/screenshot.el`, digest
 `sha256:dd8b3313a1f440d04bd48986aa0c02e6bcbc4fa73fbe26d8e31bd3f3775459b1`.
+Its generic `screenshot-theme-library` hook is intentionally unused here:
+the capture loads no theme package.
 
 Reconcile any divergence here, in one place.
 
@@ -283,10 +299,10 @@ transient popups).
   large baseline before each shot so a paginated list opens at full size
   before being fitted down (otherwise it inherits the previous shot's
   tiny frame and paginates into many short pages).
-- **ef-themes load path.** The theme `*-theme.el` files may live outside
-  the default `custom-theme-load-path` (e.g. a Guix profile);
-  `screenshot-theme-library` adds the library's directory so `load-theme`
-  finds them.
+- **No theme package.** The manifest's `default` token maps to
+  `screenshot-theme` nil, so `screenshot-init` leaves the stock faces
+  alone. The engine's `screenshot-theme-library` hook remains generic
+  plumbing and is deliberately unset.
 - **Empty views are not faked.** A view whose data genuinely cannot be
   produced from the fixture is excluded with a reason in
   `fixtures/README.md` rather than shown empty.
