@@ -51,6 +51,7 @@ the `@shot` macro in `../gascity.texi`).
 | `sway` (wlroots headless) | private capture display | 1.11 |
 | ImageMagick `convert` | compress + thumbnail | 6.9 |
 | `gc` CLI + `git` | fixture city + `--scope changed` | — |
+| `flock` (util-linux) | serialize runs on the shared fixture | 2.42 |
 | a `beads.el` checkout | gascity's non-ELPA dependency | — |
 
 The capture uses the built-in default theme: no theme package is
@@ -68,7 +69,7 @@ never `--batch`.
 ./capture.sh --verify cockpit         # capture twice, assert byte-identical
 ./capture.sh --check-isolation cockpit # prove other committed images untouched
 ./capture.sh --list-scope --scope all # print the selected view names
-./capture.sh --self-test              # unit-check scope + isolation (no GUI)
+./capture.sh --self-test              # unit-check scope, isolation and lock (no GUI)
 ./capture.sh --compress               # recompress existing raws only
 make screenshots                      # top-level target (delegates here)
 ```
@@ -82,6 +83,36 @@ tree. This is a **local/graphical** target; CI never runs it (the committed
 The committed image footprint is small (≈0.8 MiB for 20 views, full +
 thumbnail). The capture is read-only with respect to the fixture city — it
 only opens dashboards; it never mutates.
+
+## Shared fixture lock
+
+The demo project is one fixed path per `$TMPDIR`
+(`${TMPDIR:-/tmp}/demo-project`), and the sibling beads.el manual captures
+against the same path. Running both pipelines at once would otherwise have
+one run rebuild or tear down the other's project mid-capture.
+
+Both pipelines therefore serialize on the same advisory lock file,
+`${TMPDIR:-/tmp}/demo-project.lock` (next to, never inside, the project —
+teardown removes the project):
+
+- `fixture.sh --create/--seed/--teardown/--verify` acquires the lock for the
+  command's duration and waits at most `FIXTURE_LOCK_TIMEOUT` seconds
+  (default 600) before failing with a clear message naming the lock file.
+- `capture.sh` acquires the same lock after scope resolution and holds it for
+  the whole capture, including the nested `fixture.sh` create/seed/teardown
+  calls. It waits at most `GASCITY_SHOT_LOCK_TIMEOUT` seconds (default 1800).
+  A caller-provided `GASCITY_SHOT_DIR` is an explicit reuse escape hatch: it is
+  neither locked nor torn down.
+- After acquiring the lock, `capture.sh` exports `FIXTURE_LOCK_HELD=1`; the
+  nested `fixture.sh` calls see it and skip acquisition, so they cannot
+  deadlock against their own parent. Do not set it by hand.
+- A second concurrent run waits at the log line instead of sharing the
+  project. `fixture.sh --self-test` proves this offline: a held lock makes
+  `--create` time out, while `FIXTURE_LOCK_HELD=1` proceeds past the lock.
+
+`--list-scope`, `--self-test` and `--compress` take no fixture lock (they do
+not touch the project), so they remain runnable while another capture holds
+it.
 
 ## Scopes, verification and isolation
 
@@ -162,6 +193,7 @@ catch up with `set-frame-size`.
 | `GASCITY_SHOT_STAGING` | `/tmp/gascity-shots` | raw PNG staging dir |
 | `GASCITY_SHOT_IMAGES` | `../images` | committed image directory |
 | `GASCITY_SHOT_BASE` | `HEAD` | git ref for `--scope changed` |
+| `GASCITY_SHOT_LOCK_TIMEOUT` | `1800` | seconds `capture.sh` waits for another run's fixture lock |
 | `GASCITY_SHOT_ENGINE` | — | capture executable override for tests |
 | `GASCITY_SHOT_TERMINAL_SESSION` | `demo-agent` | tmux session for `terminal-attach` |
 | `GASCITY_SHOT_GC_HOME` | — | fixture `GC_HOME` for the Cities view |
@@ -174,6 +206,10 @@ fixture city), points `TMUX_TMPDIR` at a fixture-private tmux server, and
 unsets any inherited `TMUX`: the Cities view and the terminal-attach shot
 are then scoped to the fixture and never read or touch the developer's own
 cities or tmux sessions.
+
+`fixture.sh` also honors `FIXTURE_LOCK_TIMEOUT` (its own bounded lock wait,
+default 600 s) and the `FIXTURE_LOCK_HELD=1` inherited-lock marker, which
+`capture.sh` sets only after it owns the lock; do not set it by hand.
 
 Source→view ownership for `--scope changed` is the `VIEW_SOURCES` map in
 `capture.sh`; keep it in sync with the `@shot` invocations in

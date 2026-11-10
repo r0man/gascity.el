@@ -998,12 +998,63 @@ static half; `fixture.sh --verify` is the live half."
     ;; The offline shell check covers that guard without a live city.
     (should (string-match-p "--self-test" fixture))))
 
+(ert-deftest gascity-test-manual-fixture-lock-contract ()
+  "Both pipelines serialize on the one shared demo-project lock.
+The project at `${TMPDIR}/demo-project' is also beads.el's fixture path,
+so a run must not rebuild or tear it down under a concurrent run.  The
+fixture holds an advisory flock for every mutating command, capture.sh
+holds the same lock for a whole capture, and the inherited
+FIXTURE_LOCK_HELD marker keeps nested calls from deadlocking.  The live
+serialization check is part of `fixture.sh --self-test'."
+  (let ((fixture (gascity-manual-test--read "doc/screenshots/fixture.sh"))
+        (capture (gascity-manual-test--read "doc/screenshots/capture.sh"))
+        (readme (gascity-manual-test--read "doc/screenshots/README.md"))
+        (gitignore (gascity-manual-test--read ".gitignore")))
+    ;; One normalized TMPDIR, one shared lock path, one bounded wait.
+    (dolist (text (list fixture capture))
+      (should (string-match-p "FIXTURE_TMPDIR=\"\\${TMPDIR:-/tmp}\"" text))
+      (should (string-match-p "demo-project\\.lock" text)))
+    (should (string-match-p
+             "FIXTURE_LOCK_TIMEOUT=\"\\${FIXTURE_LOCK_TIMEOUT:-600}\""
+             fixture))
+    (should (string-match-p "flock -w" fixture))
+    (should (string-match-p "timed out after" fixture))
+    (should (string-match-p "FIXTURE_LOCK_HELD" fixture))
+    ;; Every mutating command acquires the lock before it runs; the offline
+    ;; commands do not need the project and stay runnable while another
+    ;; capture holds it.  The command itself runs directly, not through a
+    ;; helper, so `set -e' keeps failing assertions fatal.
+    (dolist (command '("create_fixture" "seed_fixture"
+                       "teardown_fixture" "verify_fixture"))
+      (should (string-match-p
+               (concat "acquire_fixture_lock; " command) fixture)))
+    (should-not (string-match-p "with_lock" fixture))
+    (let ((acquire (string-match "^if \\[ -z \"\\$PROJECT\" \\]; then\n  acquire_fixture_lock" capture))
+          (self-test (string-match "--self-test)" capture))
+          (compress (string-match "COMPRESS_ONLY\" = 1" capture)))
+      (should acquire)
+      (should self-test)
+      (should compress)
+      (should (< self-test acquire))
+      (should (< compress acquire)))
+    ;; capture.sh holds the lock for the whole run and marks nested calls.
+    (should (string-match-p "acquire_fixture_lock" capture))
+    (should (string-match-p "export FIXTURE_LOCK_HELD=1" capture))
+    (should (string-match-p "GASCITY_SHOT_LOCK_TIMEOUT" capture))
+    (should (string-match-p "GASCITY_SHOT_LOCK_TIMEOUT" readme))
+    (should (string-match-p "demo-project\\.lock" readme))
+    (should (string-match-p "serialize" readme))
+    ;; Split `makeinfo --split-size' outputs are build artifacts too.
+    (should (string-match-p "^/doc/gascity\\.info$" gitignore))
+    (should (string-match-p "^/doc/gascity\\.info-\\*$" gitignore))))
+
 (ert-deftest gascity-test-manual-fixture-self-test ()
-  "fixture.sh --self-test proves the teardown guard without a city (REQ-004).
+  "fixture.sh --self-test proves the guards without a city (REQ-004).
 The shared `demo-project' path is also beads.el's fixture path, so a
 project without our marker must never be deleted; the check also proves
-repeated teardown is idempotent.  Running the tracked shell check here
-keeps the guarantee exercised by `make check' without a live gc."
+repeated teardown is idempotent and that a held lock serializes a second
+create instead of sharing the project.  Running the tracked shell check
+here keeps the guarantee exercised by `make check' without a live gc."
   (let ((res (gascity-manual-test--call "bash" "doc/screenshots/fixture.sh"
                                         "--self-test")))
     (should (equal 0 (plist-get res :status)))

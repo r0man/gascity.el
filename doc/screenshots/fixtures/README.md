@@ -91,12 +91,21 @@ the city tree.  The command records the city path in
 argument.  Pass `--city <dir>` (or set `FIXTURE_STATE`) to address a fixture
 explicitly.  `FIXTURE_STATE` isolates only the city/state file: the demo
 project is one fixed `$TMPDIR/demo-project` checkout, so give each parallel
-fixture its own `TMPDIR` (or run them serially).  A capture run that created
-the fixture tears it down on exit (`teardown_project`); to remove one by hand
-use `doc/screenshots/fixture.sh --teardown --city DIR`.  `--self-test` runs the
-teardown marker guard and repeated-teardown idempotence in a scratch
-`TMPDIR`, without creating a city, so `make check` can assert the guard
-without `gc`.
+fixture its own `TMPDIR` or let runs serialize on the lock.  Mutating commands
+(`--create`, `--seed`, `--teardown`, `--verify`) hold an advisory `flock` on
+`${TMPDIR:-/tmp}/demo-project.lock` for their duration and wait at most
+`FIXTURE_LOCK_TIMEOUT` seconds (default 600) before failing with a message
+naming the lock; the lock is shared with beads.el's pipeline, which uses the
+same project path.  `capture.sh` holds the lock for a whole capture run and
+exports `FIXTURE_LOCK_HELD=1`, so its nested fixture calls skip acquisition
+instead of deadlocking (see `../README.md`).  A capture run that created the
+fixture tears it down on exit (`teardown_project`); to remove one by hand use
+`doc/screenshots/fixture.sh --teardown --city DIR`.  `--self-test` runs the
+teardown marker guard, repeated-teardown idempotence, and the lock
+serialization checks in a scratch `TMPDIR`, without creating a city, so
+`make check` can assert the guard without `gc`.  `--verify` and
+`--self-test` are unaffected in their data and image output: the lock only
+orders whole runs.
 
 The project is one pinned README commit (`2025-01-01T00:00:00Z`, one file).
 `gc rig add` runs `bd init`, which initializes the rig's `.beads` store in the

@@ -56,6 +56,20 @@ SHOTS_EL="$HERE/gascity-shots.el"
 FIXTURE_SH="$HERE/fixture.sh"
 WATCHDOG="${GASCITY_SHOT_WATCHDOG:-400}"
 
+# The shared fixture contract: one project path and one lock path, computed
+# exactly as fixture.sh does so a nested create/seed/teardown agrees with us.
+# ${TMPDIR}/demo-project is also beads.el's fixture path, so a run that
+# creates the fixture holds the lock for the whole capture; a caller-provided
+# GASCITY_SHOT_DIR is an explicit reuse escape hatch and is neither locked
+# nor torn down.
+FIXTURE_TMPDIR="${TMPDIR:-/tmp}"
+while [ "${FIXTURE_TMPDIR%/}" != "$FIXTURE_TMPDIR" ]; do
+  FIXTURE_TMPDIR="${FIXTURE_TMPDIR%/}"
+done
+[ -n "$FIXTURE_TMPDIR" ] || FIXTURE_TMPDIR="/"
+FIXTURE_LOCK_FILE="$FIXTURE_TMPDIR/demo-project.lock"
+FIXTURE_LOCK_TIMEOUT="${GASCITY_SHOT_LOCK_TIMEOUT:-1800}"
+
 export BEADS_REPO="${BEADS_REPO:-$HOME/workspace/beads.el}"
 export GASCITY_REPO="$REPO"
 export GASCITY_SHOT_RIG="${GASCITY_SHOT_RIG:-gascity.el}"
@@ -117,6 +131,11 @@ usage_error() {
   exit 2
 }
 
+fatal() {
+  printf 'capture.sh: %s\n' "$*" >&2
+  exit 1
+}
+
 usage() {
   cat <<'EOF'
 Usage: capture.sh [--scope SCOPE] [--verify [SCOPE]] [--check-isolation SCOPE]
@@ -144,6 +163,9 @@ Environment:
   GASCITY_SHOT_ENGINE    capture executable override (used by the tests;
                          skips the compositor and Emacs)
   GASCITY_SHOT_WATCHDOG  seconds before a capture Emacs kills itself (400)
+  GASCITY_SHOT_LOCK_TIMEOUT
+                         seconds to wait for another run's fixture lock
+                         (default: 1800)
 
 The capture theme is the manifest row's theme token: `default` (and
 `none') mean stock Emacs's built-in default faces, with no theme package
@@ -297,6 +319,27 @@ is_selected_output() {
 
 PROJECT="${GASCITY_SHOT_DIR:-}"
 CREATED_PROJECT=""
+
+# Serialize runs on the shared, fixed fixture path.  The lock is held for the
+# whole capture (fd 9 stays open), and FIXTURE_LOCK_HELD tells the nested
+# fixture.sh create/seed/teardown calls not to lock the same file again and
+# deadlock against their own parent.
+acquire_fixture_lock() {
+  [ -r "$FIXTURE_SH" ] || usage_error "fixture.sh not found: $FIXTURE_SH"
+  command -v flock >/dev/null 2>&1 \
+    || usage_error "flock (util-linux) is required to serialize the shared fixture"
+  log "waiting up to ${FIXTURE_LOCK_TIMEOUT}s for the fixture lock: $FIXTURE_LOCK_FILE"
+  mkdir -p -- "$FIXTURE_TMPDIR" \
+    || fatal "cannot create the fixture parent: $FIXTURE_TMPDIR"
+  exec 9>"$FIXTURE_LOCK_FILE" \
+    || fatal "cannot open the fixture lock: $FIXTURE_LOCK_FILE"
+  if ! flock -w "$FIXTURE_LOCK_TIMEOUT" 9; then
+    exec 9>&-
+    fatal "timed out after ${FIXTURE_LOCK_TIMEOUT}s waiting for another capture (lock: $FIXTURE_LOCK_FILE)"
+  fi
+  export FIXTURE_LOCK_HELD=1
+  log "holding the fixture lock: $FIXTURE_LOCK_FILE"
+}
 
 ensure_project() {
   if [ -n "$PROJECT" ]; then
@@ -693,6 +736,10 @@ if [ "$COMPRESS_ONLY" = 1 ]; then
   compress "$STAGING"
   log "done."
   exit 0
+fi
+
+if [ -z "$PROJECT" ]; then
+  acquire_fixture_lock
 fi
 
 ensure_project

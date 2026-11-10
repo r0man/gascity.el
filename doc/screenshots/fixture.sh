@@ -25,6 +25,14 @@
 # (~/emacs-city), or the remote test city (~/bright-lights); marker files and a
 # path-prefix check make --teardown refuse to delete anything else.
 #
+# Because `${TMPDIR:-/tmp}/demo-project' is one fixed path that beads.el's
+# screenshot pipeline uses too, every mutating command (create, seed,
+# teardown, verify) holds an advisory flock on
+# `${TMPDIR:-/tmp}/demo-project.lock' for its duration.  `capture.sh' holds
+# the same lock for a whole capture run and exports FIXTURE_LOCK_HELD=1, so
+# its nested fixture calls skip acquisition instead of deadlocking against
+# their own parent.  FIXTURE_LOCK_TIMEOUT (default 600 s) bounds the wait.
+#
 # Isolation: the four variables below can reroute `bd'/`gc' at a shared
 # production store.  They are unset before every `bd'/`gc' call and hardcoded
 # here because a POSIX shell cannot read beads.el's Lisp constant
@@ -51,15 +59,23 @@ readonly REPO="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 readonly SEED_SCRIPT="$SCRIPT_DIR/fixtures/gascity-fixture.sh"
 readonly CITY_CONFIG="$SCRIPT_DIR/fixtures/city.toml"
 
-readonly TMP_ROOT="${TMPDIR:-/tmp}"
+# One shared, fixed project path for both manuals.  Normalize a trailing
+# slash so capture.sh derives the identical lock path.
+FIXTURE_TMPDIR="${TMPDIR:-/tmp}"
+while [ "${FIXTURE_TMPDIR%/}" != "$FIXTURE_TMPDIR" ]; do
+  FIXTURE_TMPDIR="${FIXTURE_TMPDIR%/}"
+done
+[ -n "$FIXTURE_TMPDIR" ] || FIXTURE_TMPDIR="/"
+readonly FIXTURE_TMPDIR
+readonly TMP_ROOT="$FIXTURE_TMPDIR"
 # A FIXED directory name, not `mktemp -d': gc derives the city name and every
 # header/mode line from the directory basename, and header lines are not buffer
 # text, so a random suffix could not be normalized out of a committed image.
 # A stable path keeps every capture byte-reproducible.  `--create' removes a
 # stale fixture at this path first.  `FIXTURE_STATE' only isolates the city
 # record and its state file: the demo-project checkout below is one fixed path
-# per $TMPDIR, so parallel fixtures need separate `TMPDIR's (or must run
-# serially).
+# per $TMPDIR, so parallel fixtures need separate `TMPDIR's or serialize on
+# the shared advisory lock (see acquire_fixture_lock below).
 readonly FIXTURE_DIR_PREFIX="gascity-fixture"
 readonly FIXTURE_MARKER=".gascity-fixture-city"
 # The shared demo project: the same path the beads.el manual uses, so both
@@ -69,6 +85,11 @@ readonly FIXTURE_MARKER=".gascity-fixture-city"
 readonly FIXTURE_PROJECT_NAME="demo-project"
 readonly FIXTURE_PROJECT_MARKER=".gascity-fixture-project"
 readonly FIXTURE_PROJECT="$TMP_ROOT/$FIXTURE_PROJECT_NAME"
+# The shared advisory lock lives next to, never inside, the project (teardown
+# deletes the project).  capture.sh computes the same path from the same
+# normalized TMPDIR.
+readonly FIXTURE_LOCK_FILE="$FIXTURE_TMPDIR/$FIXTURE_PROJECT_NAME.lock"
+readonly FIXTURE_LOCK_TIMEOUT="${FIXTURE_LOCK_TIMEOUT:-600}"
 # Name the fixture city in the fixture `GC_HOME' registry, so the Cities
 # view (`gc cities', which reads `$GC_HOME/cities.toml') lists the fixture
 # and never the machine's live cities.  capture.sh exports GC_HOME to the
@@ -117,6 +138,13 @@ Commands:
   print-isolation-vars   Print the hardcoded isolation variable names.
   help, --help, -h       Show this help.
 
+Environment:
+  TMPDIR                Parent of the shared demo-project and its lock file
+                        (default: /tmp).
+  FIXTURE_LOCK_TIMEOUT  Seconds to wait for the fixture lock (default: 600).
+  FIXTURE_LOCK_HELD     Set by capture.sh, which already holds the lock; a
+                        nested create/seed/teardown then skips acquisition.
+
 --seed and --teardown use the fixture remembered by --create; pass --city to
 address one explicitly.  The recorded city and the shared project at
 ${TMPDIR:-/tmp}/demo-project are the only things removed, and only when they
@@ -143,6 +171,37 @@ unset_gc_location_vars() {
 
 print_isolation_vars() {
   printf '%s\n' "${ISOLATION_ENV_VARS[@]}"
+}
+
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
+
+# Acquire the shared advisory lock.  `${TMPDIR}/demo-project' is one fixed
+# path per $TMPDIR, shared with beads.el's pipeline, so two runs must
+# serialize instead of rebuilding or tearing down each other's project.  A
+# nested invocation made by capture.sh already inherits the lock through
+# FIXTURE_LOCK_HELD=1, so it must not open a second flock on the same file
+# and block against its own parent.
+#
+# The lock is acquired here, then the command runs directly: wrapping the
+# command in `cmd || status=$?' would suppress `set -e' inside it and hide a
+# failing --verify assertion.  fd 9 stays open until the process exits, so
+# the lock covers the whole command.
+acquire_fixture_lock() {
+  if [ -n "${FIXTURE_LOCK_HELD:-}" ]; then
+    return 0
+  fi
+  require_tool flock
+  mkdir -p -- "$FIXTURE_TMPDIR" \
+    || die "cannot create the fixture parent: $FIXTURE_TMPDIR"
+  exec 9>"$FIXTURE_LOCK_FILE" \
+    || die "cannot open the lock file: $FIXTURE_LOCK_FILE"
+  if ! flock -w "$FIXTURE_LOCK_TIMEOUT" 9; then
+    exec 9>&-
+    die "timed out after ${FIXTURE_LOCK_TIMEOUT}s waiting for $FIXTURE_LOCK_FILE"
+  fi
+  printf 'fixture.sh: holding %s\n' "$FIXTURE_LOCK_FILE" >&2
 }
 
 record_fixture() {
@@ -375,6 +434,56 @@ self_test_fixture() {
     || die "self-test: teardown after restoring the marker failed"
   TMPDIR="$scratch" bash "$script" --teardown --city "$city" >/dev/null 2>&1 \
     || die "self-test: a second teardown failed (not idempotent)"
+
+  # Serialization on the shared demo-project.  The project path is one fixed
+  # path per $TMPDIR, so a second run must wait on the advisory lock instead
+  # of rebuilding (or tearing down) the project under the first.  Hold the
+  # lock in a subshell, prove `--create' times out with the documented
+  # message, then prove FIXTURE_LOCK_HELD=1 skips acquisition so a nested
+  # capture call cannot deadlock against its own parent.
+  if command -v flock >/dev/null 2>&1; then
+    local lock_holder lock_err held_err holder i bash_bin
+    bash_bin=$(command -v bash)
+    lock_holder="$scratch/lock-held"
+    lock_err="$scratch/lock.err"
+    held_err="$scratch/held.err"
+    rm -f -- "$lock_holder"
+    (
+      exec 9>"$scratch/$FIXTURE_PROJECT_NAME.lock"
+      flock -x 9
+      : >"$lock_holder"
+      sleep 30
+    ) &
+    holder=$!
+    i=0
+    while [ ! -e "$lock_holder" ] && [ $i -lt 100 ]; do
+      sleep 0.1; i=$((i+1))
+    done
+    [ -e "$lock_holder" ] \
+      || die "self-test: lock holder did not start"
+    if TMPDIR="$scratch" env FIXTURE_LOCK_TIMEOUT=1 \
+        bash "$script" --create >/dev/null 2>"$lock_err"; then
+      die "self-test: create ignored a held fixture lock"
+    fi
+    grep -q "timed out after 1s waiting for" "$lock_err" \
+      || die "self-test: create did not report the lock timeout: $(cat "$lock_err")"
+    # PATH without gc keeps this offline: reaching `require_tool gc' proves
+    # the lock was skipped rather than waited on.
+    mkdir -p "$scratch/empty-bin"
+    if TMPDIR="$scratch" env PATH="$scratch/empty-bin" \
+        FIXTURE_LOCK_TIMEOUT=1 FIXTURE_LOCK_HELD=1 \
+        "$bash_bin" "$script" --create >/dev/null 2>"$held_err"; then
+      die "self-test: FIXTURE_LOCK_HELD=1 create unexpectedly succeeded"
+    fi
+    if grep -q "timed out" "$held_err"; then
+      die "self-test: FIXTURE_LOCK_HELD=1 still waited on the lock: $(cat "$held_err")"
+    fi
+    grep -q "required tool not found on PATH: gc" "$held_err" \
+      || die "self-test: FIXTURE_LOCK_HELD=1 did not proceed: $(cat "$held_err")"
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+  fi
+
   rm -rf -- "$scratch"
   trap - EXIT
   printf 'fixture.sh: self-test: PASS\n' >&2
@@ -527,20 +636,37 @@ else:
              % (rig_name, demo_rig.get("default_branch")))
 
 # --- The seeded bead set ----------------------------------------------------
+# The rig store holds the canonical dataset plus every role object that
+# `gascity-fixture.sh' imports from its run graph: the run itself, its
+# convoys, the role workflows and their steps, the eight pool members and
+# their work units, and the alternate run shapes (flat/inline/std).  Pin the
+# whole graph, not just the original thirteen run steps, so a seed change
+# cannot slip an unreviewed bead into every committed screenshot.
 run_ids = {
-    "demo-run",
-    "demo-prep",
-    "demo-reqs",
-    "demo-plan",
-    "demo-plrv",
-    "demo-dcmp",
-    "demo-impl",
-    "demo-isms",
-    "demo-sumi",
-    "demo-revw",
-    "demo-rev1",
-    "demo-finz",
-    "demo-publ",
+    "demo-biz-1", "demo-biz-2", "demo-biz-3",
+    "demo-biz-4", "demo-biz-5", "demo-biz-6",
+    "demo-biz-7", "demo-biz-8", "demo-convoy",
+    "demo-dcmp", "demo-finz", "demo-flat",
+    "demo-flat-close", "demo-flat-convoy", "demo-flat-impl",
+    "demo-flat-iter1", "demo-flat-prep", "demo-flat-src",
+    "demo-impl", "demo-impl-convoy", "demo-inline",
+    "demo-inline-finz", "demo-inline-impl", "demo-inline-prep",
+    "demo-inline-sumi", "demo-isms", "demo-member-1",
+    "demo-member-1-close", "demo-member-1-impl", "demo-member-1-prep",
+    "demo-member-2", "demo-member-2-close", "demo-member-2-impl",
+    "demo-member-2-prep", "demo-member-3", "demo-member-3-close",
+    "demo-member-3-impl", "demo-member-3-prep", "demo-member-4",
+    "demo-member-4-close", "demo-member-4-impl", "demo-member-4-prep",
+    "demo-member-5", "demo-member-5-close", "demo-member-5-impl",
+    "demo-member-5-prep", "demo-member-6", "demo-member-6-close",
+    "demo-member-6-impl", "demo-member-6-prep", "demo-member-7",
+    "demo-member-7-close", "demo-member-7-impl", "demo-member-7-prep",
+    "demo-member-8", "demo-member-8-close", "demo-member-8-impl",
+    "demo-member-8-prep", "demo-plan", "demo-plrv",
+    "demo-prep", "demo-publ", "demo-reqs",
+    "demo-rev1", "demo-revw", "demo-run",
+    "demo-std", "demo-std-ctx", "demo-std-finz",
+    "demo-std-iter1", "demo-std-report", "demo-sumi",
 }
 # The rig export carries the canonical dataset plus the role run graph.  The
 # mail bead is a message (`bd export' drops message rows) and the session
@@ -763,11 +889,15 @@ main() {
   done
 
   case "${command:-create}" in
-    --create | create) create_fixture ;;
-    --seed | seed) seed_fixture ;;
-    --teardown | teardown) teardown_fixture ;;
+    --create | create)
+      acquire_fixture_lock; create_fixture ;;
+    --seed | seed)
+      acquire_fixture_lock; seed_fixture ;;
+    --teardown | teardown)
+      acquire_fixture_lock; teardown_fixture ;;
+    --verify | verify)
+      acquire_fixture_lock; verify_fixture ;;
     --self-test | self-test) self_test_fixture ;;
-    --verify | verify) verify_fixture ;;
     print-isolation-vars) print_isolation_vars ;;
     help | --help | -h) usage ;;
     *) die "unknown command: $command (see --help)" ;;

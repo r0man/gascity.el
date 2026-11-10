@@ -11,6 +11,7 @@
 
 # Built manual outputs (sources and images under doc/ are tracked)
 /doc/gascity.info
+/doc/gascity.info-*
 /doc/gascity.html/
 /doc/gascity.pdf
 /doc/build.log
