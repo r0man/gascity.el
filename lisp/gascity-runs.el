@@ -382,10 +382,122 @@ is never idle."
           (t 'waiting))))
 
 (defun gascity-runs--time (root)
-  "Return the time a run ROOT is dated by: closed, else created."
+  "Return the absolute time a run ROOT is ordered by: closed, else created.
+This is the sort and window anchor; what a run's time *cell* says is
+`gascity-runs-timing' (running/took), never this timestamp."
   (if (equal (alist-get 'status root) "closed")
       (or (alist-get 'closed_at root) (alist-get 'updated_at root))
     (alist-get 'created_at root)))
+
+;;; Duration-primary time (ga-txnfs)
+
+(defconst gascity-runs--time-width 11
+  "Width of a duration-primary time cell.
+`running 59m' is 11 columns, the widest label `gascity-ui-duration'
+can produce; `took 2m' pads into the same cell.")
+
+(defun gascity-runs--timing-state (bead)
+  "Return BEAD's timing state: `active', `done', `failed' or `pending'.
+The state is the bead's own status and `gc.outcome', so a step's latest
+iteration reads done/failed even while its loop is still open."
+  (let ((status (alist-get 'status bead)))
+    (cond ((equal status "in_progress") 'active)
+          ((equal status "closed")
+           (if (equal (gascity-runs--meta bead 'gc.outcome) "fail")
+               'failed
+             'done))
+          (t 'pending))))
+
+(defun gascity-runs--timing-stamp (bead key)
+  "Return BEAD's KEY timestamp string, or nil when it is absent."
+  (let ((ts (alist-get key bead)))
+    (and (stringp ts) (not (string-empty-p ts)) ts)))
+
+(defun gascity-runs-timing (bead now)
+  "Return BEAD's duration-primary timing at NOW, as a plist.
+Keys:
+
+  :state     `active', `done', `failed' or `pending'
+  :start     start time (float) or nil
+  :end       end time (float) or nil
+  :seconds   elapsed seconds, nil when unknown
+  :verb      \"running\" or \"took\" (nil when pending)
+  :label     \"running 2m\", \"took 2m\", or the dim `—'
+  :inferred  non-nil when :start fell back to `created_at'
+  :queue-seconds  claim wait (`started_at' minus `created_at'), or nil
+  :help      absolute timestamps plus the relative age
+
+The start is the bead's `started_at'.  A begun bead without one (a
+closed step from an older payload, a run root) falls back to
+`created_at', marked inferred with a `~' before the duration.  A step
+that has not begun is pending: `—', never its creation age and never
+zero.  The end is `closed_at' (else `updated_at') for a closed bead,
+NOW for an active one.  A run root and a step use one rule; a root's
+fallback start is its `created_at' (ga-txnfs).  The absolute start and
+end and the relative age of the last update (or close) stay in
+:help."
+  (let* ((bead (or bead '((status . "open"))))
+         (state (gascity-runs--timing-state bead))
+         (closed (memq state '(done failed)))
+         (created (gascity-runs--timing-stamp bead 'created_at))
+         (started (gascity-runs--timing-stamp bead 'started_at))
+         (closed-at (gascity-runs--timing-stamp bead 'closed_at))
+         (updated (gascity-runs--timing-stamp bead 'updated_at))
+         (start-ts (unless (eq state 'pending) (or started created)))
+         (end-ts (if closed (or closed-at updated) nil))
+         (start (and start-ts (gascity-ui-parse-time start-ts)))
+         (end (cond (closed (and end-ts (gascity-ui-parse-time end-ts)))
+                    ((eq state 'active) now)
+                    (t nil)))
+         (seconds (and start end (max 0 (- end start))))
+         (verb (pcase state
+                 ('active "running")
+                 ((or 'done 'failed) "took")))
+         (inferred (and start-ts (null started) (not (null created))
+                        t))
+         (queue-seconds
+          (let ((c (and created (gascity-ui-parse-time created)))
+                (s (and started (gascity-ui-parse-time started))))
+            (and c s (> s c) (- s c))))
+         (label (cond ((and verb seconds)
+                       (format "%s %s%s"
+                               verb (if inferred "~" "")
+                               (gascity-ui-duration seconds)))
+                      ((eq state 'pending) "—")
+                      (t "—")))
+         (age-ts (if closed end-ts updated))
+         (age (and age-ts
+                   (substring-no-properties (gascity-ui-ago age-ts now)))))
+    (list :state state
+          :start start :end end :seconds seconds :verb verb :label label
+          :inferred inferred :queue-seconds queue-seconds
+          :help
+          (string-join
+           (delq nil
+                 (list (cond ((eq state 'pending) "not started")
+                             ((null start-ts) "start not recorded")
+                             (t (format "started %s%s" start-ts
+                                        (if inferred " (created)" ""))))
+                       (and closed end-ts (format "closed %s" end-ts))
+                       (and verb seconds label)
+                       (and age (not (string-empty-p age))
+                            (format "%s %s"
+                                    (if closed "closed" "updated") age))))
+           " · "))))
+
+(defun gascity-runs--timing-cell (bead now &optional width)
+  "Return BEAD's duration-primary cell at NOW, padded to WIDTH columns.
+The label carries the timing plist's absolute + relative help string.
+A pending bead's `—' is dim."
+  (let* ((timing (gascity-runs-timing bead now))
+         (label (plist-get timing :label))
+         (help (plist-get timing :help))
+         (text (if (eq (plist-get timing :state) 'pending)
+                   (propertize label 'face 'gascity-dim 'help-echo help)
+                 (propertize label 'help-echo help))))
+    (if width
+        (concat (make-string (max 0 (- width (string-width label))) ?\s) text)
+      text)))
 
 (defun gascity-runs--close-reason (bead)
   "Return BEAD's non-empty close reason, or nil.
@@ -742,12 +854,6 @@ An assignee without a live session is its tmux name
   (let ((short (gascity-dashboard--short-agent name)))
     (if (string-match "\\`gc__\\(.+\\)\\'" short) (match-string 1 short) short)))
 
-(defun gascity-runs--time-cell (ts now)
-  "Return TS relative to NOW, left-padded to 9 columns (no trailing pad).
-The rig column before it then lines up whatever the time's width."
-  (let ((time (gascity-ui-time ts now)))
-    (concat (make-string (max 0 (- 9 (string-width time))) ?\s) time)))
-
 (defun gascity-runs--worker-facts (bead sessions socket)
   "Return the live-worker facts of in-progress BEAD.
 A plist: :session (the raw live session row or nil), :display (the
@@ -948,7 +1054,7 @@ parent's (`└', indented)."
                  (concat source-head
                          (gascity-ui-truncate (car source) source-room))
                  (gascity-dashboard--dim source-right)))
-         (time (gascity-ui-time (plist-get run :time) now))
+         (time (gascity-runs--timing-cell (plist-get run :root) now))
          (beads (or (plist-get run :beads) 0))
          (right (concat
                  (let ((steps (gascity-dashboard--dim
@@ -1144,8 +1250,10 @@ worker value (run-view-v3 §D, REQ-005)."
                              " " (gascity-ui-fit (or (plist-get run :outcome) "") 8))
                      (concat (gascity-dashboard--dim
                               (gascity-ui-fit (or (plist-get run :rig) "city") 10))
-                             " " (gascity-runs--time-cell
-                                  (plist-get run :time) (plist-get ctx :now)))
+                             ;; History rows are closed runs: `took 12d' is 8
+                             ;; columns, so the v2 line keeps its 9-column cell.
+                             " " (gascity-runs--timing-cell
+                                  (plist-get run :root) (plist-get ctx :now) 9))
                      props))
          (facts (apply #'gascity-dashboard--line
                        (gascity-runs--facts-line

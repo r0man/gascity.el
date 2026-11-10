@@ -116,6 +116,11 @@
     ("[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T[0-9:.]\\{8,\\}Z?"
      . "1970-01-01T00:00:00Z")
     ("\\b[0-9]+[smhd] ago\\b" . "0s ago")
+    ;; Duration-primary cells (`running 3h', `took ~2m'): the wall clock
+    ;; between a pinned start and the capture's now is not pinnable.
+    ("\\brunning [0-9]+[smhd]\\b" . "running 0s")
+    ("\\btook [0-9]+[smhd]\\b" . "took 0s")
+    ("~[0-9]+[smhd]" . "~0s")
     ("reconnecting ([0-9]+s)" . "reconnecting (0s)")
     ;; A failed gc call renders its exit status only when the process
     ;; reported one, so the suffix appears or vanishes between runs.
@@ -124,7 +129,8 @@
 Each entry is (REGEXP . REPLACEMENT); REPLACEMENT is a literal string.
 The default covers run-generated `<prefix>-<hash>' bead ids, the throwaway
 fixture path, ISO-8601 timestamps, wall-clock relative ages (`3m ago',
-which no fixture can pin), the live stream's `reconnecting (Ns)'
+which no fixture can pin), duration-primary run/step cells (`running 3h',
+`took ~2m'), the live stream's `reconnecting (Ns)'
 retry countdown, and the `(exit N)' suffix a failed gc call renders only
 when the child reported a status.  Any drift the fixture genuinely cannot
 pin must be enumerated in README.md and asserted by `--verify', not

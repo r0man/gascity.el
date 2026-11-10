@@ -1474,7 +1474,7 @@ live worker nested once (a looping step and its iteration share a worker)."
                   (gascity-dashboard--moving-lines ctx)))))
     (should (string-match-p "^Moving  1 run · 1 worker" text))
     (should (string-match-p
-             "⬣ be-52m5 +build-basic +◆⬣········ +requirements +1/10 +2h +beads.el"
+             "⬣ be-52m5 +build-basic +◆⬣········ +requirements +1/10 +running ~2h +beads.el"
              text))
     (should (string-match-p "└ ● requirements-planner-1 +be-bcb5 +Generate requirements"
                             text))

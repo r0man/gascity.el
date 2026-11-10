@@ -1089,8 +1089,15 @@ dashboard:
 @end multitable
 
 @cindex relative times
-Times are relative (@samp{3m}, @samp{2h}, @samp{yesterday},
-@samp{Sep 22}) with the ISO timestamp as a tooltip.
+@cindex durations
+Run and step time cells are durations: @samp{running 2m} while work is
+active, @samp{took 2m} once it is done (or failed), and a dim @samp{—}
+for a step that has not begun.  A leading @samp{~} marks a duration whose
+start was inferred from the bead's creation time, so it is never
+presented as a measured claim.  Everywhere else times are relative
+(@samp{3m}, @samp{2h}, @samp{yesterday}, @samp{Sep 22}).  The absolute
+start and end and the relative age of the last update (or close) are in
+the cell's tooltip.
 
 @cindex section states
 Every section shows its load the same way:
@@ -1221,15 +1228,17 @@ workers under it:
 
 @example
 Moving  2 runs · 2 sub-runs · 2 workers
-  ⬣ bs-f0ay   build-basic  ◆◆◆◆◆⬣····  implement      5/10   1h
-    └ ⬣ bs-rj3o  do-work  ◆⬣·  implement  1/3   18m
+  ⬣ bs-f0ay   build-basic  ◆◆◆◆◆⬣····  implement      5/10   running 1h
+    └ ⬣ bs-rj3o  do-work  ◆⬣·  implement  1/3   running 18m
         └ ● implementation-worker-1  bs-8qj7  Implement owned work  14s
 @end example
 
 @noindent
 The header counts the top-level runs, then the sub-runs and workers;
 the row cap, @kbd{+}/@kbd{-} and @samp{@dots{} N more} count top-level
-runs.  A member whose parent is not active stays at the top level.  An
+runs.  A run row's time cell is its elapsed duration
+(@samp{running 21m}); its tooltip carries the absolute start and the
+last update.  A member whose parent is not active stays at the top level.  An
 in-progress bead with no assignee reads @samp{unassigned} and counts as
 no worker.
 @item Agents
@@ -2097,13 +2106,13 @@ Runs  gascity-fixture   3 active · 0 waiting · 8 done · 1 failed (all time)
 
 Active  2 · 1 sub-run
   ⬣ (no source)
-     demo-inline  build-basic · demo-rig · 2025-01-01   1/4 steps · 4 beads
+     demo-inline  build-basic · demo-rig · running 21m   1/4 steps · 4 beads
      ◆···  implement             ○ run-operator  demo-inline-impl
   ⬣ Epic: rewrite the user manual                      demo-10  open
-     demo-run  build-basic · demo-rig · 2025-01-01      7/11 steps · 12 beads
+     demo-run  build-basic · demo-rig · running 21m      7/11 steps · 12 beads
      ◆◆◆◆◆◆◆⬣✕·  7/8 deliverables  review  ✕ build-basic.review  code_revi…
     └ ⬣ (no source)                                     demo-member-8  open
-         demo-member-8  do-work · demo-rig · 2025-01-01 2/3 steps · 4 beads
+         demo-member-8  do-work · demo-rig · running 3m 2/3 steps · 4 beads
          ◆◆·  close-source-anchor  2/3   close-source-an…
 Failed  none · last 24h
 @end example
@@ -2122,8 +2131,11 @@ read.  A run with no source says @samp{(no source)}; a cold read says
 unavailable}.  The card never guesses a title.
 
 The second line names the run itself: its root bead, formula, rig and
-start or close time, with the labeled step and bead counts on the
-right.  The third line is the step ladder (@pxref{Visual language}),
+duration --- @samp{running 21m} while active, @samp{took 3h} once
+closed, with a leading @samp{~} when the start was inferred from the
+bead's creation time --- with the labeled step and bead counts on the
+right.  The absolute start and end and the relative age stay in the
+time cell's tooltip.  The third line is the step ladder (@pxref{Visual language}),
 the @samp{N/M deliverables} progress, and the current (failed or
 active) step and worker on it; on a failed card the last cell is the
 run's failure reason
@@ -2207,7 +2219,7 @@ Detail, peek and attach for the run's worker at point.
 
 @example
   Epic: rewrite the user manual
-  demo-10  open                   run demo-run build-basic · demo-rig · started 2025-01-01
+  demo-10  open                 run demo-run build-basic · demo-rig · running 21m
   step     build-basic.review  demo-revw
   class    code_review
   reason   two blocking findings: the render path stats a file and the header
@@ -2215,13 +2227,13 @@ Detail, peek and attach for the run's worker at point.
 
 Work  7/11 steps · 7/8 deliverables · 1 in flight · 1 failed · 12 beads
   Intake
-  ◆ prepare                   demo-prep   pass      run-operator      2025-01-01
-  ◆ requirements              demo-reqs   pass      run-operator      2025-01-01
-  ◆ plan                      demo-plan   pass      run-operator      2025-01-01
-  ◆ plan-review               demo-plrv   pass      run-operator      2025-01-01
-  ◆ decompose                 demo-dcmp   pass      run-operator      2025-01-01
+  ◆ prepare                   demo-prep   pass      run-operator        took ~2m
+  ◆ requirements              demo-reqs   pass      run-operator        took ~2m
+  ◆ plan                      demo-plan   pass      run-operator        took ~2m
+  ◆ plan-review               demo-plrv   pass      run-operator        took ~2m
+  ◆ decompose                 demo-dcmp   pass      run-operator        took ~2m
   Implementation
-  ⬣ implement                 demo-impl   drain 7/8 · 1 in flight      2025-01-01
+  ⬣ implement                 demo-impl   drain 7/8 · 1 in flight    running ~11m
     ◆ 1  Retarget the demo fixture to the shared contract
          demo-biz-1  closed    └ do-work demo-member-1  ◆◆◆ 3/3 pass
     ◆ 2  Remove third-party themes from the capture path
@@ -2229,13 +2241,13 @@ Work  7/11 steps · 7/8 deliverables · 1 in flight · 1 failed · 12 beads
     ...
     ⬣ 8  Pin the new manual contracts in tests and land green gates
          demo-biz-8  open      └ do-work demo-member-8  ◆◆· 2/3 active  close-source-anchor
-  ◆ implement-same-session    demo-isms   pass      run-operator      2025-01-01
-  ◆ summarize-implementation  demo-sumi   pass      run-operator      2025-01-01
+  ◆ implement-same-session    demo-isms   pass      run-operator        took ~1m
+  ◆ summarize-implementation  demo-sumi   pass      run-operator        took ~1m
   Review
-  ✕ review                    demo-revw   iter 1    code_review reviewer  2025-01-01
+  ✕ review                    demo-revw   iter 1    code_review reviewer took ~4m
   Finalization
-  · finalize                  demo-finz             run-operator      2025-01-01
-  · publish                   demo-publ             run-operator      2025-01-01
+  · finalize                  demo-finz             run-operator        —
+  · publish                   demo-publ             run-operator        —
   Run      demo-run · 12 beads · formula build-basic
   Source   input convoy demo-convoy · 1 tracked member
   Store    rig:demo-rig   rig demo-rig   city gascity-fixture
@@ -2254,7 +2266,10 @@ The page opens with the work's headline: the source business bead's
 title (wrapped at the view width, full text in help-echo) when the
 run has one, otherwise the formula name or the run's title.  The
 identity line below puts the source's id and status on the left and
-the run's id, formula, rig and start (or close) time on the right.
+the run's id, formula, rig and duration on the right: @samp{running 21m}
+while it is active, @samp{took 3h} once closed, and a leading @samp{~}
+when the start was inferred from creation.  The absolute start and end
+and the relative age are in the time cell's tooltip.
 When the root names a source convoy, the source is its single tracked
 member; a multi-member convoy shows the convoy title and
 @samp{--- tracks N beads}, never one member pretending to be the
@@ -2330,8 +2345,9 @@ row, opens the @dfn{step inspector}, a drawer under the row:
 @example
     │ step     build-basic.review  demo-revw  open
     │ attempt  1 · iteration bead demo-rev1
+    │ timing   took ~4m  ·  started 2025-01-01T00:16:00Z (created)  ·  closed 2025-01-01T00:20:00Z
     │ attempts
-    │   1   fail      ○ reviewer         2025-01-01 code_review: two bl…
+    │   1   fail      ○ reviewer         took ~4m code_review: two bl…
     │ worker   demo-rig/gc.reviewer  ○ reviewer  assignee/session gone
     │ events   events unavailable
     │ failure  code_review: two blocking findings on demo-10/demo-11: the render
@@ -2346,6 +2362,13 @@ The inspector's lines are:
 The step's ref, bead id, status and @code{gc.outcome}.
 @item attempt
 The attempt number, iteration number and iteration bead, when present.
+@item timing
+The step's duration in the same words as its row (@samp{running 2m} or
+@samp{took 2m}), the absolute start (with @samp{(created)} when it was
+inferred) and, for a closed step, the absolute close.
+@item queue
+How long the step waited between creation and its real claim, when the
+payload records both.  An inferred start has no queue fact.
 @item attempts
 The step's @dfn{attempt history}: one row per iteration or attempt
 bead, oldest first, under a dim @samp{attempts} heading.  A bead is an
@@ -2355,9 +2378,11 @@ a direct @samp{@var{step}.iteration.@var{N}} or
 from the run's already-loaded bead
 graph --- the drawer reads nothing.  The columns are the attempt
 number, its outcome (@code{gc.outcome}, else status, else
-@samp{(none)}), its worker, its relative time and its failure class
+@samp{(none)}), its worker, its own duration (@samp{running 2m} /
+@samp{took 2m}, or @samp{—} when it has no start) and its failure class
 and reason; a healthy attempt reads @samp{(none)}, even when it
-carries a close reason.  There is no heading at all when a step has no
+carries a close reason.  The absolute stamps and the relative age are in
+the duration cell's tooltip.  There is no heading at all when a step has no
 attempt beads, and the collapsed row keeps its @samp{iter
 @var{N}} summary.
 @item worker
@@ -5670,8 +5695,8 @@ Resolves the current city and rig from @code{default-directory}.
 @item gascity-section.el
 The shared vui base mode and the section model.
 @item gascity-ui.el
-The shared visual language: glyphs, relative times, section states and
-the filter-menu builders.
+The shared visual language: glyphs, relative times and durations,
+section states and the filter-menu builders.
 @item gascity-pulse.el
 What open cockpits publish for the session (Needs you totals, run
 counts, store-size samples) and the mode-line lighter.

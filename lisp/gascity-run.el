@@ -596,15 +596,12 @@ it."
             ('pending "source loading…")
             ('unavailable "source unavailable")
             (_ "(no source)")))
-         (run-state (plist-get run :state))
          (right (concat "run " (plist-get run :id) " "
                         (or (plist-get run :formula) "")
                         " · " (or (plist-get run :rig) "city")
                         " · "
-                        (if (memq run-state '(done failed)) "closed" "started")
-                        " "
-                        (gascity-ui-time (plist-get run :time)
-                                         (plist-get ctx :now)))))
+                        (gascity-runs--timing-cell (plist-get run :root)
+                                                   (plist-get ctx :now)))))
     (list (gascity-dashboard--row
            (concat "  " left)
            (gascity-dashboard--dim right)))))
@@ -864,8 +861,8 @@ still carries a close reason, so only failed beads are candidates."
 (defconst gascity-run--attempt-widths
   '((number . 3) (outcome . 9) (worker . 18) (failure . 20))
   "Fixed column widths of an attempt-history row.
-With the two-space indent, four separators and the nine-column time
-cell, a row is at most 65 columns -- inside `gascity-dashboard--width'
+With the two-space indent, four separators and the eleven-column time
+cell, a row is at most 67 columns -- inside `gascity-dashboard--width'
 at every drawer depth the step tree reaches.")
 
 (defun gascity-run--attempt-number (bead)
@@ -945,9 +942,11 @@ ec-elkm5.8)."
 (defun gascity-run--attempt-line (bead ctx)
   "Return the attempt-history row of BEAD in CTX.
 Columns: number, outcome (`gc.outcome', else status, else `(none)'),
-worker, relative time, and failure (`(none)' when healthy).  The
-worker carries `●'/`○' only when CTX has a live-session payload; the
-time is `closed_at', else `updated_at', relative to CTX's :now.  Only
+worker, its duration (running/took) and failure (`(none)' when healthy).
+The worker carries `●'/`○' only when CTX has a live-session payload;
+the duration is the attempt's own `started_at' to `closed_at' (or
+`created_at' when it has no start, marked inferred), at CTX's :now.  The
+absolute stamps and the relative age ride in the time cell's help-echo.  Only
 an attempt whose `gc.outcome' is fail names a class/reason; a healthy
 one reads `(none)' even when it carries a close reason."
   (let* ((status (alist-get 'status bead))
@@ -959,9 +958,6 @@ one reads `(none)' even when it carries a close reason."
                              (concat (gascity-ui-glyph (if session 'ok 'idle)) " ")
                            "")
                          (plist-get facts :display)))
-         (time (if (equal status "closed")
-                   (alist-get 'closed_at bead)
-                 (alist-get 'updated_at bead)))
          ;; A healthy attempt is `(none)' even though its close reason is
          ;; set; only a failed attempt names a class and reason.
          (failure (if (equal (gascity-run--meta bead 'gc.outcome) "fail")
@@ -976,7 +972,8 @@ one reads `(none)' even when it carries a close reason."
             " "
             (gascity-ui-fit worker (alist-get 'worker gascity-run--attempt-widths))
             " "
-            (gascity-runs--time-cell time (plist-get ctx :now))
+            (gascity-runs--timing-cell bead (plist-get ctx :now)
+                                        gascity-runs--time-width)
             " "
             (gascity-ui-truncate failure
                                  (alist-get 'failure gascity-run--attempt-widths)))))
@@ -1208,10 +1205,44 @@ and never reads gc on the render path."
               newest))
      (t (list "events   (no recent events)")))))
 
+(defun gascity-run--timing-lines (step iteration ctx)
+  "Return the inspector's duration facts for STEP and latest ITERATION.
+CTX supplies the render clock.  The row's time cell is the iteration's
+duration; these lines keep the
+absolute start and end and, when the payload records a claim, the
+queue wait from creation to start (ga-txnfs)."
+  (let* ((bead (or iteration step))
+         (timing (gascity-runs-timing bead (plist-get ctx :now)))
+         (state (plist-get timing :state))
+         (label (plist-get timing :label))
+         (started (gascity-runs--timing-stamp bead 'started_at))
+         (created (gascity-runs--timing-stamp bead 'created_at))
+         (closed (gascity-runs--timing-stamp bead 'closed_at))
+         (queue (plist-get timing :queue-seconds))
+         (fact (cond ((eq state 'pending)
+                      (concat "timing   " label "  ·  not started"))
+                     (started (concat "timing   " label "  ·  started " started))
+                     (created (concat "timing   " label "  ·  started " created
+                                      " (created)"))
+                     (t (concat "timing   " label "  ·  start not recorded"))))
+         (fact (if (and (not (eq state 'pending)) closed)
+                   (concat fact "  ·  closed " closed)
+                 fact))
+         (queue-line (and queue
+                          (format "queue    %s  (created %s → started %s)"
+                                  (gascity-ui-duration queue)
+                                  (or created "?") (or started "?")))))
+    (mapcar (lambda (line)
+              (propertize (gascity-ui-truncate
+                           line gascity-dashboard--drawer-width)
+                          'help-echo (plist-get timing :help)))
+            (delq nil (list fact queue-line)))))
+
 (defun gascity-run--step-drawer (step iteration ctx)
   "Return the inspector lines of STEP and its latest ITERATION bead in CTX.
 In order: the step's ref, bead, status and outcome; its attempt and
-iteration; its stacked attempt history (one row per iteration/attempt
+iteration; its duration facts (running/took, start/end, queue wait);
+its stacked attempt history (one row per iteration/attempt
 bead, oldest first; no heading when there is none); its worker with
 the session's liveness and, separately, the
 bead's claim lease and heartbeat; the run's and the step's artifacts
@@ -1251,6 +1282,7 @@ payload in hand; the only I/O is a local file stat."
           (list (if iteration-id
                     (propertize attempt-line 'gascity-bead iteration-id)
                   attempt-line)))
+     (gascity-run--timing-lines step iteration ctx)
      (gascity-run--attempt-lines step ctx)
      (list (gascity-run--worker-line step iteration ctx))
      (gascity-run--artifact-lines step iteration ctx)
@@ -1280,7 +1312,8 @@ index, so opening or refreshing the drawer reads nothing."
               (or (and state (symbol-name state)) "?"))
       (concat "formula  " (or (plist-get run :formula) "-")
               "  " (or (plist-get run :progress) "-")
-              "  " (gascity-ui-time (plist-get run :time) (plist-get ctx :now))
+              "  " (gascity-runs--timing-cell (plist-get run :root)
+                                              (plist-get ctx :now))
               "  " (or (plist-get run :rig) "city"))
       (concat "worker   " (if worker (car worker) "no live worker")))
      (gascity-run--failure-line (gascity-ui-failure-text info))
@@ -1363,10 +1396,8 @@ indentation; every row machinery is inherited from
          (name-width (if note
                          (max 10 (- name-width (1+ (string-width note))))
                        name-width))
-         (time (gascity-ui-time (if (equal (alist-get 'status shown) "closed")
-                                    (alist-get 'closed_at shown)
-                                  (alist-get 'updated_at shown))
-                                (plist-get ctx :now)))
+         (timing (gascity-runs-timing shown (plist-get ctx :now)))
+         (time (gascity-runs--timing-cell shown (plist-get ctx :now)))
          (detail (gascity-ui-fit
                   (if fold
                       (concat (gascity-ui-glyph
@@ -1389,6 +1420,10 @@ indentation; every row machinery is inherited from
                        (or (car-safe failure-info) (cdr-safe failure-info))))
          (failure-help (and failure-info
                             (gascity-ui-failure-text failure-info)))
+         (row-help (and (or (plist-get timing :help) failure-help)
+                        (string-join
+                         (delq nil (list (plist-get timing :help) failure-help))
+                         " · ")))
          (left (concat (make-string (+ 2 (* 2 depth)) ?\s)
                        (if fold
                            (gascity-ui-glyph (if open 'expanded 'folded))
@@ -1406,17 +1441,18 @@ indentation; every row machinery is inherited from
                            (gascity-dashboard--dim
                             (gascity-ui-truncate
                              failure
-                             (max 8 (- gascity-dashboard--width 2
+                             (max 1 (- gascity-dashboard--width 4
                                        (string-width left)
+                                       (string-width time)
                                        ;; leave the worker its room
-                                       (if who 10 0))))))
+                                       (if who 11 0))))))
                  left))
          ;; The worker gets what the row has left before the time.
          (left (if who
                    (let* ((mark (if agent (concat (gascity-ui-glyph 'ok) " ") ""))
                           (name (gascity-ui-truncate
                                  (gascity-runs-agent-name who)
-                                 (max 8 (- gascity-dashboard--width 2
+                                 (max 1 (- gascity-dashboard--width 3
                                            (string-width left)
                                            (string-width mark)
                                            (string-width time))))))
@@ -1432,7 +1468,7 @@ indentation; every row machinery is inherited from
                       (if fold 'fold 'row) thing-id
                       (lambda () (gascity-dashboard--flip
                                   (if fold :expanded :drawers) thing-id)))
-                     (append (and failure-help (list 'help-echo failure-help))
+                     (append (and row-help (list 'help-echo row-help))
                              (and agent (list 'gascity-agent agent))))))
     (cons row
           (append
@@ -1504,9 +1540,8 @@ the run has no drain members."
                                 (eq (gascity-runs-state (plist-get m :member)) 'active))
                               members))
          (bead (gascity-runs-bead index id))
-         (time (gascity-ui-time (or (alist-get 'updated_at bead)
-                                    (alist-get 'created_at bead))
-                                (plist-get ctx :now)))
+         (timing (gascity-runs-timing bead (plist-get ctx :now)))
+         (time (gascity-runs--timing-cell bead (plist-get ctx :now)))
          (left (concat "  " (gascity-runs--state-glyph state) " "
                        (gascity-ui-fit name 25) " "
                        (gascity-ui-fit id 9) "  drain "
@@ -1516,6 +1551,7 @@ the run has no drain members."
                          ""))))
     (gascity-dashboard--row
      left (gascity-dashboard--dim time)
+     'help-echo (plist-get timing :help)
      'gascity-bead id
      'beads-thing (gascity-dashboard--thing
                    'row (concat "step:" id)
@@ -1589,11 +1625,14 @@ carries the member run's object and its own drawer."
                                      (concat "  " (gascity-ui-truncate label 18))
                                    "")
                                  (if worker (concat "  " (car worker)) "")))
-                   (right (gascity-ui-time (plist-get member-run :time)
-                                           (plist-get ctx :now))))
+                   (timing (gascity-runs-timing
+                            (plist-get member-run :root) (plist-get ctx :now)))
+                   (right (gascity-runs--timing-cell
+                           (plist-get member-run :root) (plist-get ctx :now))))
               (cons
                (gascity-dashboard--row
                 left (gascity-dashboard--dim right)
+                'help-echo (plist-get timing :help)
                 'gascity-run-member id
                 'gascity-run-member-rig (plist-get member-run :rig)
                 'gascity-bead id

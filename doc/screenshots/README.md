@@ -166,8 +166,9 @@ and asserted by `--verify`; it must never be passed unconditionally.
 at the call site). `gascity-shots-normalization-rules` maps
 `demo-<hash>` run-generated bead ids to `demo-role`, the throwaway fixture
 path to `/tmp/gascity-fixture`, ISO-8601 timestamps to a fixed epoch,
-wall-clock relative ages (`3m ago`) to `0s ago`, the live stream's
-`reconnecting (Ns)` countdown to `(0s)`, and the `(exit N)` suffix (present
+wall-clock relative ages (`3m ago`) to `0s ago`, duration-primary run and
+step cells (`running 3h`, `took ~2m`) to `running 0s` / `took ~0s`, the
+live stream's `reconnecting (Ns)` countdown to `(0s)`, and the `(exit N)` suffix (present
 only when a child reported a status) to nothing. The cockpit **header
 line** is a `(:eval ...)` form outside the buffer text, so
 `gascity-shots--normalize-header-line` freezes it to a normalized literal

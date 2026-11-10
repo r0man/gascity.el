@@ -103,6 +103,8 @@ under requirements-planner-1, everything else open."
         ((equal (alist-get 'id b) "be-52m5")
          (append `((status . "in_progress")
                    (created_at . ,(gascity-runs-test--ts 7200))
+                   (started_at . ,(gascity-runs-test--ts 7200))
+                   (updated_at . ,(gascity-runs-test--ts 60))
                    (metadata . ,(cons '(gc.outcome . nil) meta)))
                  b))
         ((not (equal (alist-get 'gc.root_bead_id meta) "be-52m5")) b)
@@ -111,6 +113,7 @@ under requirements-planner-1, everything else open."
         ((member ref '("build-basic.requirements" "requirements.iteration.1"))
          (append `((status . "in_progress")
                    (assignee . "gc__requirements-planner-ec-fl8o")
+                   (started_at . ,(gascity-runs-test--ts 180))
                    (updated_at . ,(gascity-runs-test--ts 180))
                    (metadata . ,(cons '(gc.outcome . nil) meta)))
                  b))
@@ -1071,7 +1074,7 @@ history.  be-bn2 closed 2026-09-25T12:23:58Z."
     ;; Line 1 is the source; line 2 the run's identity and labeled counts.
     (should (string-match-p "^  ⬣ source loading…$" text))
     (should (string-match-p
-             "^     be-52m5  build-basic · beads.el · 2h +1/10 steps · [0-9]+ beads$"
+             "^     be-52m5  build-basic · beads.el · running 2h +1/10 steps · [0-9]+ beads$"
              text))
     ;; Line 3 is the work: ladder, deliverables (none), label and worker.
     (should (string-match-p
@@ -1831,13 +1834,13 @@ step folds, drawer and C control toggle."
     (gascity-runs-test--with-detail (gascity-runs-test--active-beads) "be-52m5"
       (let ((text (buffer-string)))
         (should (string-match-p "\\`  input — tracks 0 beads$" text))
-        (should (string-match-p "^  be-93dg  closed  0 beads +run be-52m5 build-basic · beads.el · started 2h$"
+        (should (string-match-p "^  be-93dg  closed  0 beads +run be-52m5 build-basic · beads.el · running 2h$"
                                 text))
         (should (string-match-p "^Work  1/10 steps · 1 in flight · 0 failed · 37 beads$"
                                 text))
         (should (string-match-p "^  ◆ prepare +be-5aht +pass +run-operator" text))
         (should (string-match-p
-                 "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1 +3m$"
+                 "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-… +running 3m$"
                  text))
         (should (string-match-p "^  ▸ review +be-mqhp +· loop" text))
         (should (string-match-p "^  Run      be-52m5 · 37 beads · formula build-basic$"
@@ -2022,7 +2025,7 @@ and Implementation convoy (REQ-001, REQ-006)."
                   (gascity-runs-test--header beads "be-52m5"
                                              :convoy convoy :source source))))
       (should (string-match-p "\\`  Triage the demo fixture$" text))
-      (should (string-match-p "^  be-tnd3z  open +run be-52m5 build-basic · beads.el · started 2h$"
+      (should (string-match-p "^  be-tnd3z  open +run be-52m5 build-basic · beads.el · running 2h$"
                               text))
       (should (string-match-p "^  Run      be-52m5 · 37 beads · formula build-basic$" text))
       (should (string-match-p "^  Source   input convoy be-hzrwd · 1 tracked member$" text))
@@ -2085,7 +2088,7 @@ id/status on the identity line, with the source id in `gascity-bead'."
     (should (equal (get-text-property (string-match "be-tnd3z" identity)
                                       'gascity-bead identity)
                    "be-tnd3z"))
-    (should (string-match-p "run be-52m5 build-basic · beads.el · started 2h"
+    (should (string-match-p "run be-52m5 build-basic · beads.el · running 2h"
                             identity))))
 
 (ert-deftest gascity-test-run-detail-source-headline-multi ()
@@ -2413,7 +2416,7 @@ tree; `C' and `T' keep working inside it and restore it byte-for-byte
       (should (string-match-p
                "^  ◆ prepare +be-5aht +pass +run-operator" expanded))
       (should (string-match-p
-               "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-planner-1"
+               "^  ⬣ requirements +be-fy7m +iter 1 +● requirements-…"
                expanded))
       (should (string-match-p "^  ▸ review" expanded))
       ;; A separate loop fold still expands inside Machinery.
@@ -2676,13 +2679,14 @@ root with no close reason instead of inventing one (ec-elkm5.8)."
     (let ((text (buffer-string)))
       ;; The failing ladder step names the class the Runs card shows too.
       (should (string-match-p
-               "review +be-fkq +✕ loop +control_dispatch_error" text))
+               "review +be-fkq +✕ loop +control_dispatc" text))
       ;; The row's full class/reason is reachable by help-echo.
       (goto-char (point-min))
       (re-search-forward "^  ▾ review +be-fkq")
-      (should (equal (get-text-property (match-beginning 0) 'help-echo)
-                     (concat "control_dispatch_error: "
-                             gascity-runs-test--long-reason))))))
+      (should (string-suffix-p
+               (concat " · control_dispatch_error: "
+                       gascity-runs-test--long-reason)
+               (get-text-property (match-beginning 0) 'help-echo))))))
 
 (ert-deftest gascity-test-run-detail-failed-run-opens-failure ()
   "A failed run's Work spine and Machinery tree name the failure."
@@ -3008,33 +3012,35 @@ artifact says so without erroring, and check/input paths stay out."
                            "step     build-basic.requirements  hw-step  in_progress"))
             (should (equal (nth 1 lines)
                            "attempt  2 · iteration 1 · iteration bead hw-iter"))
-            (should (equal (substring-no-properties (nth 2 lines)) "attempts"))
-            (should (equal (substring-no-properties (nth 3 lines))
-                           "  2   in_progr… ● requirements-pl…           (none)"))
-            (should (equal (nth 4 lines)
+            (should (string-prefix-p "timing   "
+                                     (substring-no-properties (nth 2 lines))))
+            (should (equal (substring-no-properties (nth 3 lines)) "attempts"))
+            (should (equal (substring-no-properties (nth 4 lines))
+                           "  2   in_progr… ● requirements-pl…           — (none)"))
+            (should (equal (nth 5 lines)
                            (concat "worker   gc__requirements-planner-ec-fl8o"
                                    "  ● requirements-planner-1"
                                    "  session live · active 20s ago"
                                    "  claim lease 3m left · heartbeat 30s ago")))
-            (should (equal (nth 5 lines)
-                           "artifacts run   requirements.md (12 KB, 3m)"))
             (should (equal (nth 6 lines)
+                           "artifacts run   requirements.md (12 KB, 3m)"))
+            (should (equal (nth 7 lines)
                            "artifacts step  publish.md (500 B, 3m) · summary.md (missing)"))
             ;; The three newest matching events, newest first; older and
             ;; unrelated events are left out.
             (should (equal (mapcar (lambda (line) (nth 1 (split-string line)))
-                                   (seq-take (seq-drop lines 7) 3))
+                                   (seq-take (seq-drop lines 8) 3))
                            '("bead.updated" "bead.claimed" "bead.closed")))
             (should-not (string-match-p "bead\\.reopened" text))
-            (should (equal (nth 10 lines) "failure  (none)"))
-            (should (= (length lines) 11))
+            (should (equal (nth 11 lines) "failure  (none)"))
+            (should (= (length lines) 12))
             ;; The check script and the formula input are never artifacts.
             (should-not (string-match-p "nope\\." text))
             ;; The root plan is shown once, and RET visits the local file.
-            (should-not (string-match-p "requirements\\.md" (nth 6 lines)))
-            (let ((offset (string-match "requirements\\.md" (nth 5 lines))))
+            (should-not (string-match-p "requirements\\.md" (nth 7 lines)))
+            (let ((offset (string-match "requirements\\.md" (nth 6 lines))))
               (should (equal (get-text-property offset 'gascity-run-file
-                                                (nth 5 lines))
+                                                (nth 6 lines))
                              plan)))))
       (delete-directory tmp t))))
 
@@ -3269,6 +3275,136 @@ must not claim there are no recent events before it has read them."
     (should (equal (gascity-run--event-lines step iteration ready)
                    '("events   (no recent events)")))))
 
+;;; Duration-primary timing (ga-txnfs)
+
+(defun gascity-runs-test--timing-bead (status outcome start end &optional created)
+  "Return a bead for the duration-primary timing tests.
+START and END are ISO strings (or nil), CREATED the `created_at'."
+  (list (cons 'id "hw-time")
+        (cons 'status status)
+        (cons 'created_at created)
+        (cons 'started_at start)
+        (cons 'closed_at end)
+        (cons 'updated_at (or end start created))
+        (cons 'metadata (list (cons 'gc.outcome outcome)))))
+
+(ert-deftest gascity-test-runs-timing-states ()
+  "One timing renderer: running for active, took for done and failed,
+`—' for pending, and `~' for a start inferred from `created_at'."
+  (let* ((now (gascity-ui-parse-time "2026-09-25T20:00:00Z"))
+         (timing (lambda (bead) (gascity-runs-timing bead now))))
+    ;; Done: closed - started.
+    (let ((result (funcall timing
+                      (gascity-runs-test--timing-bead
+                       "closed" "pass"
+                       "2026-09-25T19:55:00Z" "2026-09-25T19:57:00Z"
+                       "2026-09-25T19:50:00Z"))))
+      (should (eq (plist-get result :state) 'done))
+      (should (equal (plist-get result :label) "took 2m"))
+      (should (equal (plist-get result :verb) "took"))
+      (should-not (plist-get result :inferred))
+      (should (string-match-p "started 2026-09-25T19:55:00Z" (plist-get result :help)))
+      (should (string-match-p "closed 2026-09-25T19:57:00Z" (plist-get result :help)))
+      (should (string-match-p "closed 3m ago" (plist-get result :help))))
+    ;; Active: now - started.
+    (let ((result (funcall timing
+                      (gascity-runs-test--timing-bead
+                       "in_progress" nil
+                       "2026-09-25T19:58:00Z" nil
+                       "2026-09-25T19:40:00Z"))))
+      (should (eq (plist-get result :state) 'active))
+      (should (equal (plist-get result :label) "running 2m"))
+      (should (equal (plist-get result :verb) "running"))
+      (should (string-match-p "running 2m" (plist-get result :help)))
+      (should (string-match-p "started 2026-09-25T19:58:00Z" (plist-get result :help))))
+    ;; Failed: time to failure, same wording as done.
+    (let ((result (funcall timing
+                      (gascity-runs-test--timing-bead
+                       "closed" "fail"
+                       "2026-09-25T19:55:00Z" "2026-09-25T19:57:00Z"))))
+      (should (eq (plist-get result :state) 'failed))
+      (should (equal (plist-get result :label) "took 2m")))
+    ;; Pending: no fabricated duration, not its creation age.
+    (let ((result (funcall timing
+                      (gascity-runs-test--timing-bead
+                       "open" nil nil nil "2026-09-25T19:50:00Z"))))
+      (should (eq (plist-get result :state) 'pending))
+      (should (equal (plist-get result :label) "—"))
+      (should-not (plist-get result :start))
+      (should-not (plist-get result :seconds))
+      (should (string-match-p "not started" (plist-get result :help))))
+    ;; Missing started_at: fall back to created_at, marked inferred.
+    (let ((result (funcall timing
+                      (gascity-runs-test--timing-bead
+                       "closed" "pass" nil "2026-09-25T19:57:00Z"
+                       "2026-09-25T19:50:00Z"))))
+      (should (plist-get result :inferred))
+      (should (equal (plist-get result :label) "took ~7m"))
+      (should (string-match-p "(created)" (plist-get result :help))))
+    ;; A closed bead with no start and no creation time stays unknown.
+    (let ((result (funcall timing
+                      (gascity-runs-test--timing-bead
+                       "closed" "pass" nil "2026-09-25T19:57:00Z"))))
+      (should (equal (plist-get result :label) "—"))
+      (should-not (plist-get result :seconds)))
+    ;; Queue wait: the real gap between creation and a real claim.
+    (let ((result (funcall timing
+                      (gascity-runs-test--timing-bead
+                       "closed" "pass"
+                       "2026-09-25T19:55:00Z" "2026-09-25T19:57:00Z"
+                       "2026-09-25T19:50:00Z"))))
+      (should (= (plist-get result :queue-seconds) 300)))))
+
+(ert-deftest gascity-test-runs-timing-cell-help-and-width ()
+  "The time cell is at most 11 columns and carries the absolute and
+relative stamps in its help-echo."
+  (let* ((now (gascity-ui-parse-time "2026-09-25T20:00:00Z"))
+         (bead (gascity-runs-test--timing-bead
+                "closed" "pass"
+                "2026-09-25T19:55:00Z" "2026-09-25T19:57:00Z"))
+         (cell (gascity-runs--timing-cell bead now 11)))
+    (should (= (string-width cell) 11))
+    (should (equal (substring-no-properties cell) "    took 2m"))
+    (let ((help (get-text-property (string-match "took" cell) 'help-echo cell)))
+      (should (string-match-p "2026-09-25T19:55:00Z" help))
+      (should (string-match-p "closed 3m ago" help)))))
+
+(ert-deftest gascity-test-runs-card-timing-wording ()
+  "The Runs card and history row say `running' for an active run and
+`took' for a closed one, with the relative age in help-echo."
+  (let* ((beads (gascity-runs-test--active-beads))
+         (ctx (gascity-runs-test--ctx beads))
+         (lines (gascity-runs-lines ctx))
+         (line (seq-find (lambda (l) (string-match-p "be-52m5  build-basic" l))
+                         lines)))
+    (should line)
+    (should (string-match-p "running 2h" line))
+    (should-not (string-match-p "started 2h" line))
+    (let ((help (get-text-property (string-match "running" line) 'help-echo line)))
+      (should (string-match-p "started 20" help))
+      (should (string-match-p "updated [0-9]+[smhd] ago" help))))
+  ;; A closed fixture run took its whole wall time (its history row).
+  (let* ((beads (gascity-runs-test--fixture-beads))
+         (index (gascity-runs-test--index beads))
+         (root (seq-find (lambda (b) (equal (alist-get 'id b) "be-52m5")) beads))
+         (run (gascity-runs-summary index root))
+         (ctx (list :now (float-time) :index index))
+         (line (car (gascity-runs--history-row run ctx))))
+    (should (string-match-p "took 3h" line))
+    (let ((help (get-text-property (string-match "took" line) 'help-echo line)))
+      (should (string-match-p "started 2026-09-25T10:46:49Z" help))
+      (should (string-match-p "closed 2026-09-25T14:02:44Z" help)))))
+
+(ert-deftest gascity-test-runs-timing-no-created-age-for-pending-step ()
+  "A pending step shows `—', never the age of its creation.
+The same helper powers the Runs card, the cockpit and the detail."
+  (let* ((now (gascity-ui-parse-time "2026-09-25T20:00:00Z"))
+         (bead (gascity-runs-test--timing-bead
+                "open" nil nil nil "2026-09-25T19:00:00Z"))
+         (timing (gascity-runs-timing bead now)))
+    (should (equal (plist-get timing :label) "—"))
+    (should-not (string-match-p "took\\|running" (plist-get timing :help)))))
+
 ;;; Attempt history (run-view-v3 §A, REQ-001)
 
 (defun gascity-runs-test--attempts-run (now)
@@ -3294,6 +3430,8 @@ unrelated step are not attempts.  NOW pins every timestamp."
        (assignee . "gc__run-operator-ec-a1")
        ;; A healthy attempt's close reason must not read as a failure.
        (close_reason . "passed with notes")
+       (created_at . ,(funcall ts 9000))
+       (started_at . ,(funcall ts 9000))
        (closed_at . ,(funcall ts 7200))
        (metadata . ((gc.root_bead_id . "hw-attempts")
                     (gc.step_ref . "review.iteration.1")
@@ -3302,6 +3440,8 @@ unrelated step are not attempts.  NOW pins every timestamp."
                     (gc.outcome . "pass"))))
      `((id . "hw-a2") (status . "closed")
        (assignee . "gc__implementer-1-ec-a2")
+       (created_at . ,(funcall ts 5400))
+       (started_at . ,(funcall ts 5400))
        (closed_at . ,(funcall ts 3600))
        (metadata . ((gc.root_bead_id . "hw-attempts")
                     (gc.step_ref . "review.iteration.2")
@@ -3312,6 +3452,8 @@ unrelated step are not attempts.  NOW pins every timestamp."
                     (gc.failure_reason . "control_dispatch_error"))))
      `((id . "hw-a3") (status . "closed")
        (assignee . "gc__implementer-2-ec-a3")
+       (created_at . ,(funcall ts 1860))
+       (started_at . ,(funcall ts 1860))
        (closed_at . ,(funcall ts 60))
        (metadata . ((gc.root_bead_id . "hw-attempts")
                     (gc.step_ref . "review.iteration.3")
@@ -3365,9 +3507,9 @@ iteration are not attempts, and no row exceeds the dashboard width."
                    '("hw-a1" "hw-a2" "hw-a3")))
     (should (equal (substring-no-properties (car lines)) "attempts"))
     (should (equal rows
-                   '("  1   pass      ● run-operator-1          2h (none)"
-                     "  2   fail      ● implementer-1           1h hard: control_dispa…"
-                     "  3   pass      ● implementer-2           1m (none)")))
+                   '("  1   pass      ● run-operator-1      took 30m (none)"
+                     "  2   fail      ● implementer-1       took 30m hard: control_dispa…"
+                     "  3   pass      ● implementer-2       took 30m (none)")))
     (should (seq-every-p (lambda (row) (<= (string-width row) 68)) rows))
     ;; Without a live-session payload the rows name the assignee's role
     ;; and carry no liveness glyph.
@@ -3394,13 +3536,13 @@ its worker, keeping the step line and collapsed row shape unchanged."
     ;; Step line, the step's own attempt line, then the stacked block.
     (should (equal (substring-no-properties (nth 1 drawer)) "attempt  3"))
     (should (equal
-             (mapcar #'substring-no-properties (seq-take (seq-drop drawer 2) 4))
+             (mapcar #'substring-no-properties (seq-take (seq-drop drawer 3) 4))
              '("attempts"
-               "  1   pass      ● run-operator-1          2h (none)"
-               "  2   fail      ● implementer-1           1h hard: control_dispa…"
-               "  3   pass      ● implementer-2           1m (none)")))
+               "  1   pass      ● run-operator-1      took 30m (none)"
+               "  2   fail      ● implementer-1       took 30m hard: control_dispa…"
+               "  3   pass      ● implementer-2       took 30m (none)")))
     (should (string-prefix-p "worker   " (substring-no-properties
-                                          (nth 6 drawer))))
+                                          (nth 7 drawer))))
     (should (string-prefix-p "failure  " (substring-no-properties
                                           (car (last drawer)))))
     (should (string-suffix-p "hard: control_dispatch_error" text))))
@@ -4005,7 +4147,9 @@ section, and keeps point and folds."
         (let ((lines (gascity-runs-test--changed-lines)))
           (should (= (length lines) 1))
           (should (string-match-p "requirements" (car lines)))
-          (should (string-match-p "requirements-planner-2" (car lines))))
+          ;; The wider duration cell truncates the long worker name; the
+          ;; changed marker still identifies the changed worker row.
+          (should (string-match-p "requirements-" (car lines))))
         (should (gascity-runs-test--stamp))
         (should (string-match-p "^  ▾ review" (buffer-string)))
         (should (string-match-p "requirements" (thing-at-point 'line t)))))))
