@@ -873,21 +873,38 @@ answer from it afterwards."
    (gascity-domain-decode-list 'gascity-rig
                                (alist-get 'rigs (gascity-command-rig-list!)))))
 
+(defun gascity-beads--view-city-root (&optional dir)
+  "Return the city root the current view belongs to, or nil.
+DIR defaults to `default-directory'.  When DIR does not sit inside a
+city — a view buffer whose `default-directory' was changed under it,
+the reported `j b' failure (ga-n81xm) — fall back to the buffer's
+pinned view root (`gascity-context-project-root'), the identity
+`gascity-view-get-buffer-create' gave it.  A buffer that is not a
+gascity view has no pinned root and answers nil, as does a view whose
+pinned root is itself outside every city.  Memoized walk only: never
+spawns gc."
+  (let ((dir (expand-file-name (or dir default-directory))))
+    (or (gascity-context-city-root dir)
+        (and gascity-context-project-root
+             (gascity-context-city-root gascity-context-project-root)))))
+
 (defun gascity-rig-names-for-prompt ()
   "Return the city's rig names for a completion prompt, never blocking.
 Answers from the rig memo (`gascity-rigs-cached'); the store's
 `gc rig list' entry is refreshed in the background (fresh entries answer
 at once and update the memo first), so a cold memo offers no candidates
 this time — free entry still works — and fills in for the next prompt
-\(dashboard-v3 §8.5)."
-  (let ((dir default-directory))
+\(dashboard-v3 §8.5).  The refresh runs in the view's own city
+\(`gascity-beads--view-city-root'), so a buffer whose ambient directory
+was lost cannot memoize another city's rigs (ga-n81xm)."
+  (let ((dir (or (gascity-beads--view-city-root) default-directory)))
     (gascity-store-fetch
      '("rig" "list")
      (lambda (payload)
        (gascity-rigs-remember
         (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload))
         dir))
-     #'ignore)
+     #'ignore :dir dir)
     (delq nil (mapcar #'gascity-rig-name (gascity-rigs-cached dir)))))
 
 (defun gascity-beads--rig-path (rig)
@@ -961,27 +978,32 @@ the `gascity-rigs-cached' list — no spawn."
 RIG is a rig name or a `gascity-rig'.  From the object's own path or
 the rig memo at once; with a cold memo the rig list is read through the
 store (async, D9: no synchronous `gc rig list' on the command loop) and
-FN runs when it arrives, in this buffer's city.  An unknown rig echoes
-and FN is not called."
-  (let ((store (if (gascity-rig-p rig)
-                   (gascity-beads--rig-path rig)
-                 (gascity-beads--rig-store-cached rig))))
+FN runs when it arrives, in the view's own city
+\(`gascity-beads--view-city-root') — the same city the memo and the
+store entry are keyed by, so a buffer whose ambient directory was lost
+still resolves its rigs (ga-n81xm).  An unknown rig echoes and FN is
+not called."
+  (let* ((dir (or (gascity-beads--view-city-root) default-directory))
+         (store (if (gascity-rig-p rig)
+                    (gascity-beads--rig-path rig)
+                  (gascity-beads--rig-store-cached rig))))
     (if store
         (funcall fn store)
-      (let ((dir default-directory))
-        (message "Resolving rig %s…" rig)
-        (gascity-store-fetch
-         '("rig" "list")
-         (lambda (payload)
-           (let ((default-directory dir))
-             (gascity-rigs-remember
-              (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload)))
-             (if-let* ((store (gascity-beads--rig-store-cached rig)))
-                 (funcall fn store)
-               (message "Could not resolve the bead store for rig %s" rig))))
-         (lambda (err)
-           (message "gc rig list: %s"
-                    (car (split-string (format "%s" err) "\n" t)))))))))
+      (message "Resolving rig %s…" rig)
+      (gascity-store-fetch
+       '("rig" "list")
+       (lambda (payload)
+         (let ((default-directory dir))
+           (gascity-rigs-remember
+            (gascity-domain-decode-list 'gascity-rig (alist-get 'rigs payload))
+            dir)
+           (if-let* ((store (gascity-beads--rig-store-cached rig)))
+               (funcall fn store)
+             (message "Could not resolve the bead store for rig %s" rig))))
+       (lambda (err)
+         (message "gc rig list: %s"
+                  (car (split-string (format "%s" err) "\n" t))))
+       :dir dir))))
 
 (defun gascity-beads--bead-path-cached (id)
   "Return the store directory owning bead ID, or nil.
@@ -1003,8 +1025,12 @@ opens the store eldoc named (REQ-013)."
 The city root directory itself (`gascity-context-city-root') — the tree
 holding the city-level `.beads' store gc routes prefix-less city beads
 through — re-prefixed for a remote city exactly like rig stores are
-\(`gascity-remote-localize-path').  Nil when DIR sits outside any city."
-  (when-let* ((root (gascity-context-city-root dir)))
+\(`gascity-remote-localize-path').  DIR resolves through
+`gascity-beads--view-city-root', so a gascity view buffer keeps
+answering from the city it was opened for even when its ambient
+`default-directory' was changed under it (ga-n81xm).  Nil when neither
+DIR nor the view belongs to a city."
+  (when-let* ((root (gascity-beads--view-city-root dir)))
     (file-name-as-directory
      (expand-file-name (gascity-remote-localize-path root)))))
 

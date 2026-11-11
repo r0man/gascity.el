@@ -343,6 +343,74 @@ city before it reaches `gascity-rig-beads' (ga-40tbg.2)."
     (should-not rig-arg)
     (should (equal (plist-get city-args :directory) "/city/.beads/"))))
 
+(ert-deftest gascity-test-jump-beads-unresolved-city-store-refuses ()
+  "With no city store in reach, `j b' refuses instead of opening an unscoped board.
+`beads-dashboard' with no `:directory' renders whatever store the
+ambient `default-directory' happens to see — the launcher checkout or
+`~' — whose bd calls then fail with a misleading exit code 1, the P7
+report that filed ga-n81xm.  Better a clear refusal than a wrong store."
+  (let (dashboard-called)
+    (cl-letf (((symbol-function 'gascity-rig-at-point) (lambda () nil))
+              ((symbol-function 'gascity-rig-names-for-prompt) (lambda () nil))
+              ((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+              ((symbol-function 'gascity-dashboard--rig-store-names)
+               (lambda (_rigs) nil))
+              ((symbol-function 'completing-read) (lambda (&rest _) ""))
+              ((symbol-function 'gascity-beads--city-store)
+               (lambda (&optional _dir) nil))
+              ((symbol-function 'beads-dashboard)
+               (lambda (&rest _) (setq dashboard-called t))))
+      (should-error (call-interactively #'gascity-jump-beads)
+                    :type 'user-error))
+    (should-not dashboard-called)))
+
+(ert-deftest gascity-test-beads-city-store-falls-back-to-view-root ()
+  "A view whose ambient directory was lost still resolves its own city store.
+`gascity-context-project-root' is the identity the view factory pinned
+for the buffer; the city store must keep answering from it when
+`default-directory' no longer resolves (ga-n81xm)."
+  (cl-letf (((symbol-function 'gascity-context-city-root)
+             (lambda (&optional dir)
+               (let ((dir (file-name-as-directory
+                           (expand-file-name (or dir default-directory)))))
+                 (and (equal dir "/city/") "/city/")))))
+    (let ((default-directory "/launcher/")
+          (gascity-context-project-root "/city/"))
+      (should (equal (gascity-beads--city-store) "/city/")))))
+
+(ert-deftest gascity-test-beads-rig-store-fetches-in-view-city ()
+  "A cold rig memo re-reads `gc rig list' in the view's city, not a stray directory.
+The typed `j b' answer must resolve against the city the view belongs
+to; a read in the launcher checkout's context never carries the rig
+and echoes \"Could not resolve the bead store\" (ga-n81xm)."
+  (let (fetched-dir)
+    (cl-letf (((symbol-function 'gascity-beads--rig-store-cached)
+               (lambda (_name) nil))
+              ((symbol-function 'gascity-beads--view-city-root)
+               (lambda (&optional _dir) "/city/"))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (_args _cb &optional _err &rest kwargs)
+                 (setq fetched-dir (plist-get kwargs :dir))))
+              ((symbol-function 'message) #'ignore))
+      (let ((default-directory "/launcher/"))
+        (gascity-beads-call-with-rig-store "demo-rig" #'ignore)))
+    (should (equal fetched-dir "/city/"))))
+
+(ert-deftest gascity-test-rig-prompt-fetches-in-view-city ()
+  "The rig prompt refreshes its candidates from the view's city.
+A refresh run in a stray `default-directory' memoizes another city's
+rigs, so `j b' offers and then cannot resolve the typed rig (ga-n81xm)."
+  (let (fetched-dir)
+    (cl-letf (((symbol-function 'gascity-rigs-cached) (lambda (&rest _) nil))
+              ((symbol-function 'gascity-beads--view-city-root)
+               (lambda (&optional _dir) "/city/"))
+              ((symbol-function 'gascity-store-fetch)
+               (lambda (_args _cb &optional _err &rest kwargs)
+                 (setq fetched-dir (plist-get kwargs :dir)))))
+      (let ((default-directory "/launcher/"))
+        (gascity-rig-names-for-prompt)))
+    (should (equal fetched-dir "/city/"))))
+
 (ert-deftest gascity-test-jump-beads-choice-routes-to-rig ()
   "A real `j b' choice still opens that rig's board, not the city (ga-40tbg.2)."
   (let (rig-arg city-called)

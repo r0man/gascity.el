@@ -2882,7 +2882,11 @@ Candidates come from the rig memo only (§8.5), refreshed in the
 background for the next prompt.  A blank answer (RET on an empty prompt)
 selects the city: an empty string is truthy in Elisp, so a rig named \"\"
 would otherwise reach `gascity-rig-beads' and report a bogus unresolved
-store (ga-40tbg.2)."
+store (ga-40tbg.2).  The city answer opens the city's own store, never
+beads.el's ambient default: with no resolvable city store (a view that
+somehow lost its city) the jump refuses with a `user-error' instead of
+rendering an unrelated store whose every bd call then fails with exit
+code 1 (ga-n81xm)."
   (interactive)
   (gascity-jump--scoped
    (lambda ()
@@ -2901,6 +2905,9 @@ store (ga-40tbg.2)."
        (if rig
            (gascity-rig-beads rig)
          (let ((store (gascity-beads--city-store)))
+           (unless store
+             (user-error
+              "Cannot resolve this view's city bead store — open the view from a city"))
            (unless (fboundp 'beads-dashboard) (require 'beads-dashboard nil t))
            (beads-dashboard :directory store)))))))
 
