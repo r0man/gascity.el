@@ -80,7 +80,7 @@ when invoked by absolute path from anywhere, including from a VPATH build
 tree. This is a **local/graphical** target; CI never runs it (the committed
 `doc/images/` are the shipped artifact).
 
-The committed image footprint is small (≈0.8 MiB for 20 views, full +
+The committed image footprint is small (≈1.3 MiB for 26 views, full +
 thumbnail). The capture is read-only with respect to the fixture city — it
 only opens dashboards; it never mutates.
 
@@ -165,7 +165,9 @@ and asserted by `--verify`; it must never be passed unconditionally.
 `screenshot-export-frame` (the engine is reused verbatim, so the hook lives
 at the call site). `gascity-shots-normalization-rules` maps
 `demo-<hash>` run-generated bead ids to `demo-role`, the throwaway fixture
-path to `/tmp/gascity-fixture`, ISO-8601 timestamps to a fixed epoch,
+path to `/tmp/gascity-fixture`, ISO-8601 timestamps to a fixed epoch, gc's
+Go log prefix (`2025/01/01 00:00:00`) and an elapsed millisecond count
+(`0ms`) in a failed read's stderr line to fixed tokens,
 wall-clock relative ages (`3m ago`) to `0s ago`, duration-primary run and
 step cells (`running 3h`, `took ~2m`) to `running 0s` / `took ~0s`, the
 live stream's `reconnecting (Ns)` countdown to `(0s)`, and the `(exit N)` suffix (present
@@ -223,7 +225,7 @@ The capture **manifest** — which views are shot in which theme — is a
 short here-doc near the top of `capture.sh`:
 
 ```
-default  -default  cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+default  -default  cockpit dispatch agents runs run-detail agent-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 ```
 
 Each line is `THEME  SUFFIX  view view …`. The single `default` row

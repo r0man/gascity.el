@@ -347,7 +347,7 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 @item Buffers and navigation (move/toggle, jump prefix, filter menus, visual language, objects at point) @tab cockpit-default, dispatch-default @tab Non-visual keys and glyphs; the cockpit and its dispatch menu exercise them.
 @item Lists: pagination, sorting, detail @tab order-list-default @tab A paginated tabulated list with the shared list keys.
 @item Cockpit @tab cockpit-default @tab The triage buffer.
-@item Agents (table, detail) @tab agents-default @tab The agents table; the detail opens from the list.
+@item Agents (table, detail) @tab agents-default, agent-detail-default @tab The agents table, and one seeded session opened in the detail.
 @item Rig dashboard @tab rig-dashboard-default @tab The single-rig counterpart to the cockpit.
 @item Health @tab health-default @tab Plumbing, versions, store and doctor.
 @item Cities @tab cities-default @tab Every reachable city and host.
@@ -359,7 +359,7 @@ captured from the throwaway fixture city by @code{doc/screenshots/}
 @item Mail (inbox, thread, compose) @tab mail-inbox-default @tab The inbox; thread and compose are the same buffer family.
 @item Tabulated lists (rigs, sessions, convoys, orders, mail, dolt) @tab rig-list-default, session-list-default, convoy-list-default, order-list-default, mail-inbox-default, dolt-list-default @tab One image per list.
 @item Formula sling and dispatch @tab sling-plain-default, sling-cold-default, sling-formula-default, sling-on-default, sling-preview-default @tab The dispatch transient across its shapes and the full preview buffer.
-@item Session/polecat detail and terminal attach @tab session-list-default, terminal-attach-default @tab The session list, and a terminal buffer attached to a tmux session.
+@item Session/polecat detail and terminal attach @tab session-list-default, agent-detail-default, terminal-attach-default @tab The session list, the polecat detail it drills into, and a terminal buffer attached to a tmux session.
 @item Remote/TRAMP cities @tab remote-cities-default @tab The Cities list: one row per city and host, the host-qualified surface remote cities appear in.
 @item Bookmarks @tab bookmarks-default @tab The bookmark list with gascity views.
 @end multitable
@@ -1451,6 +1451,14 @@ Your mail from or to this agent.
 @item History
 The agent's recently closed beads.
 @end table
+
+@noindent
+The captured image is the fixture's sleeping review session: no
+controller runs there, so the header reads @samp{asleep} and the
+Transcript section shows the honest offline diagnostic instead of a log
+(@pxref{The demo city}).
+
+@shot{agent-detail-default, One agent in detail --- its work transcript mail and history (built-in default theme)}
 
 @cindex work_dir
 @noindent

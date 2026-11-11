@@ -170,6 +170,7 @@ Never seeded, never touched: the repository `.beads/`, `~/emacs-city`,
 | `bookmarks` | two gascity bookmarks set in-session | the shot list, not the fixture |
 | `runs`, `run-detail` | a source-bearing rich `build-basic on demo-10` run (`demo-run`) with eight deliverables (`demo-biz-1..8`) and their member runs (`demo-member-1..8`; the last is on `close-source-anchor`), a flat `do-work` run (`demo-flat`), a standalone `review` run (`demo-std`) and an inline drain (`demo-inline`); the rich run's review loop's iteration 1 is closed failed, source `demo-10` | `bd import` |
 | `session-list` | two seeded session rows, enriched to `asleep` (no runtime) | `bd import` into the city store |
+| `agent-detail` | the `demo-session-review` row drilled into: Work joins `demo-3`/`demo-4`, History from the run graph, empty Mail, honest Transcript failure | `bd import` session rows + `work_dir` metadata |
 | `agents` | the config-derived agents, all `stopped` (no controller) | the city's agent config |
 
 The run fixture adds role-addressed beads (`demo-biz-*`, `demo-member-*` and the two convoys) without renaming the canonical `demo-1` … `demo-12` data; `demo-convoy` tracks the canonical `demo-10` epic.
@@ -205,18 +206,24 @@ offline `gc`/`bd` commands is excluded with a reason rather than synthesized.
   read `false`/empty offline. The cockpit still renders its config-derived
   sections; the capture records that degraded state rather than faking a
   running controller.
-- **`agent-detail`** is still out of the 25-view capture manifest.  The seeded
-  session rows give it a real row to open (store-level `gc session list
-  --json --state all` returns both), but whether the view renders is Phase 7's
-  manual-only check.  Follow-up bead `ga-9ewjs` tracks capturing it (and
-  `mail-thread`) once that check passes; this phase deliberately does not add
-  a view or change the image count.
-- **`mail-thread`** stays out of the manifest.  The `demo-mail-review` message
-  bead exists, but `gc mail inbox` resolves the *current agent's* session /
-  the supervisor API, which the offline fixture does not have: `gc mail inbox
-  human --json` returns an empty inbox even with the bead present.  The bead
-  stays as fixture data for a future session-backed capture; the follow-up
-  bead above covers it.
+- **`agent-detail`** is a captured manual-only view (bead `ga-9ewjs`).  The
+  seeded `demo-session-review` row gives the session list a real row to drill
+  into, and the detail renders its Work join (`demo-3` in progress, `demo-4`
+  blocked through the `work_dir` metadata), History, an honest empty Mail
+  section (`gc mail inbox --json` returns no messages with no session in the
+  environment) and an honest Transcript failure: `gc session logs` cannot
+  attach offline, so the section prints the diagnostic instead of a log.  The
+  diagnostic carries gc's wall-clock log prefix and an elapsed millisecond
+  count, which the shot list's normalization maps to fixed tokens (see
+  `../README.md`); no other content of the captured detail is wall-clock.
+- **`mail-thread`** stays out of the manifest, re-checked for this view pass.
+  The `demo-mail-review` message bead exists, but `gc mail inbox` resolves the
+  *current agent's* session / the supervisor API, which the offline fixture
+  does not have: `gc mail inbox human --json` returns an empty inbox even with
+  the bead present, so the inbox has no row to open a thread from.  `gc mail
+  thread demo-mail-review --json` also returns an empty message list, so a
+  thread buffer opened from the bead would render no messages.  The bead stays
+  as fixture data for a future session-backed capture.
 - **Runs and run-detail** need no controller: the fixture seeds the rich
   `build-basic on demo-10` run (with its source convoy, business beads and
   member runs), the flat `do-work` run, the standalone `review` run and the

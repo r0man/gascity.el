@@ -88,7 +88,7 @@ THUMB_COLORS=128  # a preview needs fewer colours
 # <view>-<theme>-thumb.png.  The single row captures every view from stock
 # Emacs's built-in default theme; no theme package is loaded or required.
 read -r -d '' MANIFEST <<'EOF' || true
-default  -default  cockpit dispatch agents runs run-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
+default  -default  cockpit dispatch agents runs run-detail agent-detail events health rig-dashboard session-list convoy-list dolt-list lighter costs bookmarks mail-inbox cities rig-list order-list remote-cities terminal-attach sling-plain sling-cold sling-formula sling-on sling-preview
 EOF
 
 # Owning source file(s) per view, for `--scope changed` (plan-review P2).
@@ -101,6 +101,7 @@ declare -A VIEW_SOURCES=(
   [agents]="lisp/gascity-agents.el lisp/gascity-tabulated.el"
   [runs]="lisp/gascity-runs.el lisp/gascity-tabulated.el"
   [run-detail]="lisp/gascity-run.el lisp/gascity-run-stage.el lisp/gascity-runs.el"
+  [agent-detail]="lisp/gascity-session.el lisp/gascity-tabulated.el"
   [events]="lisp/gascity-events.el lisp/gascity-tabulated.el"
   [health]="lisp/gascity-health.el"
   [rig-dashboard]="lisp/gascity-rig.el"

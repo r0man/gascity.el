@@ -115,6 +115,13 @@
     ("/tmp/gascity-fixture\\.[A-Za-z0-9]\\{6,\\}" . "/tmp/gascity-fixture")
     ("[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T[0-9:.]\\{8,\\}Z?"
      . "1970-01-01T00:00:00Z")
+    ;; gc's own Go `log' prefix (`2026/11/11 19:37:03') and an elapsed
+    ;; millisecond count (`1.48ms') in the stderr line a failed read
+    ;; renders.  Both are wall-clock/scheduler values the fixture cannot
+    ;; pin, and only a diagnostic line carries them.
+    ("[0-9]\\{4\\}/[0-9]\\{2\\}/[0-9]\\{2\\} [0-9]\\{2\\}:[0-9]\\{2\\}:[0-9]\\{2\\}"
+     . "2025-01-01 00:00:00")
+    ("[0-9]+\\(?:\\.[0-9]+\\)?ms\\b" . "0ms")
     ("\\b[0-9]+[smhd] ago\\b" . "0s ago")
     ;; Duration-primary cells (`running 3h', `took ~2m'): the wall clock
     ;; between a pinned start and the capture's now is not pinnable.
@@ -128,9 +135,10 @@
   "Post-render text rules mapping generated values to stable tokens.
 Each entry is (REGEXP . REPLACEMENT); REPLACEMENT is a literal string.
 The default covers run-generated `<prefix>-<hash>' bead ids, the throwaway
-fixture path, ISO-8601 timestamps, wall-clock relative ages (`3m ago',
-which no fixture can pin), duration-primary run/step cells (`running 3h',
-`took ~2m'), the live stream's `reconnecting (Ns)'
+fixture path, ISO-8601 timestamps, gc's Go log prefix and elapsed
+milliseconds in a failed read's stderr line, wall-clock relative ages
+(`3m ago', which no fixture can pin), duration-primary run/step cells
+(`running 3h', `took ~2m'), the live stream's `reconnecting (Ns)'
 retry countdown, and the `(exit N)' suffix a failed gc call renders only
 when the child reported a status.  Any drift the fixture genuinely cannot
 pin must be enumerated in README.md and asserted by `--verify', not
@@ -461,6 +469,22 @@ the cold menu.  Returns nil so the whole frame is captured
    nil)
   (gascity-shots--await (gascity-shots--selected-buffer)))
 
+(defun gascity-shots--agent-detail-buffer ()
+  "Open the seeded review session's agent detail.
+The fixture seeds `demo-session-review' (agent `demo-rig/gc.reviewer')
+in the city store, so the session list has a real row to drill into and
+the detail joins the canonical `demo-3'/`demo-4' beads through its
+work_dir.  No controller runs, so the header honestly reads `asleep';
+the transcript and mail sections show exactly what gc reported."
+  (gascity-session-list)
+  (let ((list (gascity-shots--await (gascity-shots--selected-buffer))))
+    (with-current-buffer list
+      (goto-char (point-min))
+      (unless (search-forward "gc.reviewer" nil t)
+        (user-error "The fixture session list has no demo-rig/gc.reviewer row"))
+      (gascity-polecat-detail-at-point))
+    (gascity-shots--selected-buffer)))
+
 (defun gascity-shots--run-detail-buffer ()
   "Open the fixture's build-basic run detail, revealing the failed step.
 The `!' command (`gascity-run-diagnose') expands the machinery, opens
@@ -484,6 +508,7 @@ The fixture has no controller, so the inspector's worker line reads
    (list "cockpit" #'gascity-shots--cockpit-buffer :settle 15)
    (list "runs" #'gascity-shots--runs-buffer :settle 15)
    (list "run-detail" #'gascity-shots--run-detail-buffer :settle 15)
+   (list "agent-detail" #'gascity-shots--agent-detail-buffer :settle 15)
    (list "health" (gascity-shots--view #'gascity-health) :settle 15)
    (list "costs" (gascity-shots--view #'gascity-costs) :settle 12)
    (list "rig-dashboard"

@@ -515,12 +515,12 @@ README's documentation of it as intentionally unused stay (plan D8)."
 (ert-deftest gascity-test-manual-image-inventory ()
   "doc/images holds exactly the manifest's outputs and nothing stale (REQ-007).
 Every manifest view contributes `<view>-default.png' and
-`<view>-default-thumb.png' --- 25 views, 50 files --- and no `-dark',
+`<view>-default-thumb.png' --- 26 views, 52 files --- and no `-dark',
 `-light' or other orphan image survives a theme or view rename."
   (let ((outputs (gascity-manual-test--output-names))
         (files (gascity-manual-test--image-files))
         expected)
-    (should (= 25 (length outputs)))
+    (should (= 26 (length outputs)))
     (dolist (name outputs)
       (push (concat name ".png") expected)
       (push (concat name "-thumb.png") expected))
@@ -617,7 +617,7 @@ variable contract and the step structure stay untouched."
 (ert-deftest gascity-test-manual-capture-project-export ()
   "capture.sh exports the shared project path only for a consuming shot.
 `GASCITY_SHOT_DIR' stays the city gc resolves from the fixture.  The
-25-view manifest resolves rigs through gc, so `GASCITY_SHOT_PROJECT' has
+manifest resolves rigs through gc, so `GASCITY_SHOT_PROJECT' has
 no consumer and must not be exported as dead configuration (REQ-005)."
   (let ((text (gascity-manual-test--read "doc/screenshots/capture.sh")))
     (should (string-match-p "export GASCITY_SHOT_DIR" text))
