@@ -111,6 +111,89 @@ The `manual' TTL (doctor) never expires; FORCE always re-reads."
         (should (equal (plist-get snap :error) "boom"))
         (should-not (plist-get snap :pending))))))
 
+(defconst gascity-test-store--good-status
+  '((ok . t) (partial . nil)
+    (agents . [((qualified_name . "demo-rig/core.control-dispatcher")
+                (running . :json-false))]))
+  "A fully observed `gc status' payload (no partial probe).")
+
+(defconst gascity-test-store--partial-status
+  '((ok . t) (partial . t)
+    (partial_errors . ["runtime status probe incomplete"])
+    (agents . [((qualified_name . "demo-rig/core.control-dispatcher")
+                (running . :json-false))]))
+  "The same city with a timed-out liveness probe: `partial' is set.")
+
+(ert-deftest gascity-test-store-partial-status-keeps-last-good-roster ()
+  "ga-0onhi: a partial `gc status' refresh must not replace a good roster.
+A timed-out liveness probe marks the whole payload partial, which the
+shared classifier reads as `unknown' for every agent it did not observe.
+Letting that payload replace a settled one makes the roster flip to
+`unknown' in whichever view refreshes next while another view still
+renders `stopped' - the QA saw exactly that (cockpit/Agents `stopped',
+rig dashboard `unknown', same idle agent).  The store keeps the last
+fully observed roster and answers callers and subscribers with it, so
+every view agrees through a flaky probe.  A cold store has no better
+payload, so it takes the partial one (ec-elkm5.9)."
+  (let ((gascity-store-degraded-grace 30))
+    (gascity-test-with-store-stubs reads _actions
+      (let ((default-directory "/tmp/city/") seen got)
+        (gascity-store-subscribe '("status")
+                                 (lambda (snap) (push (plist-get snap :data) seen)))
+        (gascity-store-fetch '("status") (lambda (d) (push d got)))
+        (funcall (nth 1 (car reads)) gascity-test-store--good-status)
+        ;; Past the status TTL: the next request reads again.
+        (setf (gascity-store-entry-fetched-at
+               (gascity-store--entry "/tmp/city/" '("status")))
+              (- (float-time) 60))
+        (gascity-store-fetch '("status") (lambda (d) (push d got)))
+        (funcall (nth 1 (car reads)) gascity-test-store--partial-status)
+        ;; The store, the caller and the subscriber all keep the roster.
+        (should (equal (gascity-store-entry-data
+                        (gascity-store--entry "/tmp/city/" '("status")))
+                       gascity-test-store--good-status))
+        (should (equal (car got) gascity-test-store--good-status))
+        (should (equal (car seen) gascity-test-store--good-status))
+        (should (eq (plist-get (gascity-store-get '("status")) :status) 'ready))
+        ;; Other kinds are not status: a partial-looking payload lands.
+        (gascity-store-fetch '("convoy" "list") #'ignore)
+        (funcall (nth 1 (car reads)) '((partial . t)))
+        (should (equal (gascity-store-entry-data
+                        (gascity-store--entry "/tmp/city/" '("convoy" "list")))
+                       '((partial . t))))
+        ;; A cold store has nothing better to show: take the partial one.
+        (gascity-store-clear)
+        (setq seen nil got nil)
+        (gascity-store-fetch '("status") (lambda (d) (push d got)))
+        (funcall (nth 1 (car reads)) gascity-test-store--partial-status)
+        (should (equal (car got) gascity-test-store--partial-status))))))
+
+(ert-deftest gascity-test-store-partial-status-accepted-after-grace ()
+  "A partial status refreshes replace the roster once the grace window ends.
+Holding the last good roster forever would freeze the UI at the last
+observed state if the probe never answers again, so the degraded
+payload is adopted after `gascity-store-degraded-grace' seconds."
+  (let ((gascity-store-degraded-grace 30))
+    (gascity-test-with-store-stubs reads _actions
+      (let ((default-directory "/tmp/city/") got)
+        (gascity-store-fetch '("status") #'ignore)
+        (funcall (nth 1 (car reads)) gascity-test-store--good-status)
+        (let ((entry (gascity-store--entry "/tmp/city/" '("status"))))
+          (setf (gascity-store-entry-fetched-at entry) (- (float-time) 60))
+          (gascity-store-fetch '("status") (lambda (d) (push d got)))
+          (funcall (nth 1 (car reads)) gascity-test-store--partial-status)
+          ;; Held through the grace window...
+          (should (equal (gascity-store-entry-data entry)
+                         gascity-test-store--good-status))
+          ;; ...then the probe that still does not answer is the truth.
+          (setf (gascity-store-entry-degraded-since entry) (- (float-time) 31)
+                (gascity-store-entry-fetched-at entry) (- (float-time) 60))
+          (gascity-store-fetch '("status") (lambda (d) (push d got)))
+          (funcall (nth 1 (car reads)) gascity-test-store--partial-status)
+          (should (equal (gascity-store-entry-data entry)
+                         gascity-test-store--partial-status))
+          (should (equal (car got) gascity-test-store--partial-status)))))))
+
 (ert-deftest gascity-test-store-invalidate-refetches-watched-entries ()
   "Invalidation re-reads entries with live subscribers; others go stale.
 Routing by event type maps `session.' onto the session/status kinds."

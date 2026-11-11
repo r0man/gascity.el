@@ -1246,7 +1246,10 @@ Running agents first, by recent activity, then stalled and unknown
 ones, then idle ones; stopped agents fold into one @samp{▸ stopped}
 line.  The section starts at @code{gascity-dashboard-agent-rows}
 (eight) rows, and the fold counts as one of them.  Named sessions such
-as the mayor are agents too.
+as the mayor are agents too.  @samp{unknown} means @command{gc}'s
+liveness probe never answered for that agent and no complete payload is
+held yet (@pxref{Customization and Theming}); it is a degraded verdict,
+counted apart from @samp{stopped} and never folded with it.
 @item Work
 In-progress work first, oldest claim first, each row naming its
 assignee and the age since it was claimed (@samp{gone} after the
@@ -1848,6 +1851,16 @@ Payloads are shared by every view of a city and fresh for a few seconds
 per kind of read (@code{gascity-store-ttl-alist}: @code{gc status} five
 seconds, @code{gc bd} reads fifteen, doctor until you run it again).
 @kbd{g} always re-reads.
+
+@vindex gascity-store-degraded-grace
+A refresh that answers with incomplete evidence does not replace what
+the views already show.  When @command{gc status} reports @samp{partial}
+(a liveness probe timed out), the @samp{unknown} verdicts it returns for
+the agents the probe never reached are held off by the last complete
+payload for a short grace period (@code{gascity-store-degraded-grace}),
+so one flaky probe cannot make the roster flip to @samp{unknown} in one
+view while another still shows @samp{stopped}.  After the grace period
+the degraded payload is shown as it is.
 
 @node Finding gc
 @subsection Finding @command{gc} on the host
@@ -5375,6 +5388,24 @@ the symbol @code{manual} (fresh until invalidated); kinds not listed use
 @defopt gascity-store-default-ttl
 Freshness in seconds of a read kind absent from
 @code{gascity-store-ttl-alist} (default 5).
+@end defopt
+
+@vindex gascity-store-degraded-grace
+@defopt gascity-store-degraded-grace
+Seconds a degraded read answer is held off by the last complete one
+(default 30; @code{nil} holds it off for as long as the degraded
+answers last).  A read can answer without failing and still be
+incomplete: when @command{gc status} reports @code{partial}, a liveness
+probe timed out and every agent it never reached is @samp{unknown}, not
+@samp{stopped} (@pxref{Agents}).  Replacing a settled status payload
+with one of those would flip the whole roster to @samp{unknown} in
+whichever view refreshes next, and a view that rendered a moment
+earlier would still say @samp{stopped}: the same idle agent with two
+states on two surfaces (ga-0onhi).  The store keeps the last complete
+payload for at most this long --- the normal TTL still refreshes, so a
+complete probe lands immediately --- and then accepts the degraded one,
+so a probe that never answers again is shown for what it is instead of
+freezing the views on a stale roster.
 @end defopt
 
 @vindex gascity-store-offline-backoff

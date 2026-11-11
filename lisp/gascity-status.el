@@ -27,6 +27,10 @@
 ;;   verdict (a bead's assignee session, the agent's qualified name, or a
 ;;   `gc.routed_to' pool slot), so the rig dashboard and the cockpit hook
 ;;   the same bead to the same agent.
+;; - `gascity-store-payload-degraded-p' marks a `gc status' payload whose
+;;   liveness probe timed out (`partial') as degraded evidence, so one
+;;   flaky probe cannot flip a settled roster to `unknown' on one surface
+;;   while another still renders `stopped' (ga-0onhi).
 ;;
 ;; The former agent-tree toolkit (city -> rig -> pool -> agent grouping
 ;; and its vnodes) was retired with the Agents tree (ga-2mmet); only the
@@ -34,9 +38,11 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'seq)
 (require 'gascity-ui)                 ; relative-time parsing for the idle age
 (require 'gascity-domain)             ; typed session/agent objects
+(require 'gascity-store)              ; the degraded-payload rule (ga-0onhi)
 
 ;;; Data shaping (pure)
 
@@ -129,6 +135,21 @@ cockpit, the Agents view and the rig dashboard agree (ec-elkm5.10).  Pure."
      ((and partial (not running)) 'unknown)
      (running 'stalled)
      (t 'stopped))))
+
+(cl-defmethod gascity-store-payload-degraded-p ((_kind (eql 'status)) payload)
+  "Return non-nil when PAYLOAD is a degraded `gc status' payload.
+gc marks a status payload `partial' when its liveness probe timed out
+for any agent; every agent it did not observe then reads `running: nil'
+with nothing learned, which `gascity-status--agent-state' reports as
+`unknown' (ec-elkm5.9).  That is honest for a cold store, but it must not
+replace a fully observed payload: doing so flips a settled roster to
+`unknown' and lets two views that rendered at different moments disagree
+about the same agent (ga-0onhi).  The store holds the last non-degraded
+payload for `gascity-store-degraded-grace' seconds instead.  Pure."
+  (and (consp payload)
+       (or (alist-get 'partial payload)
+           (alist-get 'partial_errors payload))
+       t))
 
 (defun gascity-status--state-label (state)
   "Return the user-facing label of agent STATE (`running' reads active)."

@@ -139,6 +139,9 @@ are in @ref{Customization and Theming}; this table only enumerates them.
 @item @code{gascity-store-default-ttl}
 @tab @code{5}
 @tab @code{number}
+@item @code{gascity-store-degraded-grace}
+@tab @code{30}
+@tab @code{choice}
 @item @code{gascity-store-offline-backoff}
 @tab @code{(2 5 15 60)}
 @tab @code{repeat of number}

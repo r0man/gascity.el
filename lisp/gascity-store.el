@@ -22,6 +22,11 @@
 ;;   (in-flight dedup).  Freshness is a TTL per read kind
 ;;   (`gascity-store-ttl-alist'); the kind is the argv's first token
 ;;   (`status', `bd', `session', …).
+;;   An answer that is not a failure but is degraded evidence (the
+;;   domain's `gascity-store-payload-degraded-p': a `gc status' with a
+;;   timed-out liveness probe) does not replace a non-degraded payload
+;;   until `gascity-store-degraded-grace' elapses, so one flaky probe
+;;   cannot flip a settled roster to `unknown' (ga-0onhi).
 ;;
 ;; - Scheduling.  Jobs run per host (the TRAMP prefix, \"\" for local)
 ;;   in two lanes — reads and actions — each capped at
@@ -120,6 +125,24 @@ re-reads."
   :type 'number
   :group 'gascity)
 
+(defcustom gascity-store-degraded-grace 30
+  "Seconds a degraded payload is held off by the last non-degraded one.
+Some reads answer with a payload that is not a failure but is degraded
+evidence: `gc status' with `partial' set reports `unknown' for every
+agent whose liveness probe did not answer, though that probe may answer
+again a moment later.  Replacing a settled payload with one of those
+flips a whole roster to `unknown', and two views of the store that last
+rendered at different moments then disagree about the same agent
+\(ga-0onhi) - the reason `gascity-store-payload-degraded-p' exists.
+The store keeps the last non-degraded payload for at most this long
+\(the normal TTL still schedules the refresh, so a sustained
+improvement lands at once); after it the degraded payload is accepted,
+so a probe that never answers again is shown for what it is instead of
+freezing the views on a stale roster.  Nil keeps the last good payload
+for as long as degraded refreshes last."
+  :type '(choice (natnum :tag "Seconds") (const :tag "Keep forever" nil))
+  :group 'gascity)
+
 (defcustom gascity-store-offline-backoff '(2 5 15 60)
   "Seconds between reconnect probes of an offline host.
 The Nth retry waits the Nth element; the last element repeats."
@@ -168,6 +191,22 @@ hardening, item 4).")
 Normally a remote completion is deferred (`gascity-timer-at' 0) so it
 never runs inside a TRAMP operation.")
 
+;;; Payload quality
+
+(cl-defgeneric gascity-store-payload-degraded-p (kind payload)
+  "Return non-nil when PAYLOAD of read KIND is degraded evidence.
+A degraded payload is not a failed read: it arrived, but its facts are
+incomplete in a way a consumer must not present as definite (for `gc
+status', a timed-out liveness probe: the payload is `partial' and every
+agent the probe never reached reads `unknown').  Replacing a settled
+payload with one of those is what
+`gascity-store-degraded-grace' exists to avoid.  The domain that owns
+KIND provides the method; with none, every payload is trusted.")
+
+(cl-defmethod gascity-store-payload-degraded-p (_kind _payload)
+  "Trust every payload of a KIND that defines no degradation rule."
+  nil)
+
 ;;; Data structures
 
 (cl-defstruct (gascity-store-entry (:constructor gascity-store--make-entry)
@@ -175,6 +214,7 @@ never runs inside a TRAMP operation.")
   "One cached read."
   key dir args lines loader kind
   data has-data error timed-out fetched-at stale
+  degraded-since
   job waiters subscribers rerun appended-at)
 
 (cl-defstruct (gascity-store--host (:constructor gascity-store--make-host)
@@ -742,18 +782,47 @@ action, the plist of `gascity-reader-run-async'."
                                 (gascity-store--request entry :force t))))))
     (pcase (car result)
       (:ok
-       (setf (gascity-store-entry-data entry) (cadr result)
-             (gascity-store-entry-has-data entry) t
-             (gascity-store-entry-error entry) nil
-             (gascity-store-entry-timed-out entry) nil
-             (gascity-store-entry-stale entry) nil
-             (gascity-store-entry-fetched-at entry) (float-time))
-       (puthash (gascity-store-entry-dir entry) t gascity-store--good-dirs)
-       (unless (eq (gascity-store--job-lane job) 'virtual)
-         (gascity-store--go-online host))
-       (dolist (w (reverse waiters))
-         (when (car w) (gascity-store--safe-call (car w) (cadr result))))
-       (gascity-store--notify entry))
+       (let* ((now (float-time))
+              (kind (gascity-store-entry-kind entry))
+              (fresh (cadr result))
+              ;; A degraded answer (see
+              ;; `gascity-store-payload-degraded-p') does not replace a
+              ;; non-degraded payload while the grace window lasts: the
+              ;; refresh is still scheduled by the TTL, so an improved
+              ;; probe lands on the next one, and no view ever renders
+              ;; the roster as `unknown' just because one probe timed
+              ;; out (ga-0onhi).
+              (degraded (gascity-store-payload-degraded-p kind fresh))
+              (hold (and degraded
+                         (gascity-store-entry-has-data entry)
+                         (not (gascity-store-payload-degraded-p
+                               kind (gascity-store-entry-data entry)))
+                         (let ((since (gascity-store-entry-degraded-since entry)))
+                           (cond ((null since)
+                                  (setf (gascity-store-entry-degraded-since entry)
+                                        now)
+                                  t)
+                                 ((or (null gascity-store-degraded-grace)
+                                      (<= (- now since)
+                                          gascity-store-degraded-grace))
+                                  t)
+                                 (t nil)))))
+              (answer (if hold (gascity-store-entry-data entry) fresh)))
+         (unless hold
+           (setf (gascity-store-entry-data entry) fresh
+                 (gascity-store-entry-has-data entry) t
+                 (gascity-store-entry-degraded-since entry)
+                 (and degraded now)))
+         (setf (gascity-store-entry-error entry) nil
+               (gascity-store-entry-timed-out entry) nil
+               (gascity-store-entry-stale entry) nil
+               (gascity-store-entry-fetched-at entry) now)
+         (puthash (gascity-store-entry-dir entry) t gascity-store--good-dirs)
+         (unless (eq (gascity-store--job-lane job) 'virtual)
+           (gascity-store--go-online host))
+         (dolist (w (reverse waiters))
+           (when (car w) (gascity-store--safe-call (car w) answer)))
+         (gascity-store--notify entry)))
       (:error
        (let ((msg (cadr result)))
          (if (and own
