@@ -998,6 +998,26 @@ static half; `fixture.sh --verify` is the live half."
     ;; The offline shell check covers that guard without a live city.
     (should (string-match-p "--self-test" fixture))))
 
+(ert-deftest gascity-test-manual-fixture-warms-pack-cache ()
+  "`fixture.sh --create' warms the fixture GC_HOME's pack-import cache.
+A cold cache made the first cockpit paint report the status probe
+incomplete and every agent `unknown' (ga-dkxzm).  The fixture's imports
+are the bundled packs, so the install is offline; it must run with the
+fixture GC_HOME, never the caller's."
+  (let ((fixture (gascity-manual-test--read "doc/screenshots/fixture.sh"))
+        (manual (gascity-manual-test--read "doc/gascity.texi")))
+    (should (string-match-p "install_fixture_imports" fixture))
+    (should (string-match-p
+             "GC_HOME=\"\\$home\" gc --city \"\\$city\" import install"
+             fixture))
+    (should (string-match-p
+             "seed_gc_home \"\\$city\"\n  install_fixture_imports \"\\$city\""
+             fixture))
+    ;; The manual no longer asks the reader to run the install by hand.
+    (should-not (string-match-p "gc import install   # first run only" manual))
+    (should (string-match-p
+             "warms\nthe fixture @env{GC_HOME}'s pack-import cache" manual))))
+
 (ert-deftest gascity-test-manual-fixture-lock-contract ()
   "Both pipelines serialize on the one shared demo-project lock.
 The project at `${TMPDIR}/demo-project' is also beads.el's fixture path,

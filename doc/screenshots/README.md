@@ -206,7 +206,10 @@ When the capture creates its own fixture, `capture.sh` also exports
 fixture city), points `TMUX_TMPDIR` at a fixture-private tmux server, and
 unsets any inherited `TMUX`: the Cities view and the terminal-attach shot
 are then scoped to the fixture and never read or touch the developer's own
-cities or tmux sessions.
+cities or tmux sessions.  `fixture.sh --create` also warms that
+`GC_HOME`'s pack-import cache (`gc import install` against the fixture
+city), so the first cockpit paint resolves the seeded agents; the
+fixture's imports are the bundled packs, so the install needs no network.
 
 `fixture.sh` also honors `FIXTURE_LOCK_TIMEOUT` (its own bounded lock wait,
 default 600 s) and the `FIXTURE_LOCK_HELD=1` inherited-lock marker, which

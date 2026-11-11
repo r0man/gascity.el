@@ -758,20 +758,20 @@ doc/screenshots/fixture.sh --create
 doc/screenshots/fixture.sh --seed
 export GC_HOME="$@{TMPDIR:-/tmp@}/gascity-fixture/gc-home"
 cd "$@{TMPDIR:-/tmp@}/gascity-fixture"
-gc import install   # first run only: the fixture GC_HOME is a cold cache
 @end example
 
 @noindent
 @code{--create} prints the same path as @code{FIXTURE_GC_HOME}.  Export
 it (or start Emacs with it in the environment): without it @command{gc}
 falls back to your real @env{GC_HOME}, and the Cities view lists your
-own cities instead of the fixture alone.  @code{gc import install} is
-the only step that may need the network; it caches the city's pack
-imports so the first cockpit paint resolves the agents instead of
-reporting them @samp{unknown}.  On a cold or slow first paint the
-cockpit can also show a @samp{store health: runtime status probe
-incomplete} row while the status probe warms up; @kbd{g} refreshes it,
-and the states in the tour below are the settled ones.
+own cities instead of the fixture alone.  @code{--create} also warms
+the fixture @env{GC_HOME}'s pack-import cache (the city's bundled
+@samp{bd} and @samp{core} imports), so the first cockpit paint resolves
+the agents instead of reporting them @samp{unknown}; because those
+packs ship with @command{gc}, the install needs no network.  On a slow
+first paint the cockpit can still show a @samp{store health: runtime
+status probe incomplete} row while the status probe warms up; @kbd{g}
+refreshes it, and the states in the tour below are the settled ones.
 
 The two seeded sessions attach to tmux sessions on the city's tmux
 socket, which @code{gascity-tmux-socket} auto-detects as the city name

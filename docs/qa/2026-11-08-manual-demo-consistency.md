@@ -136,6 +136,13 @@ runtime/fixture work, filed separately:
 - `ga-dkxzm` — a cold fixture `GC_HOME` starts with uninstalled city
   imports (fixture, documented in the manual for now).
 
+## Follow-up (2026-11-11)
+
+`ga-dkxzm` is fixed: `fixture.sh --create` now warms the fixture
+`GC_HOME`'s pack-import cache with an offline `gc import install`, and
+the manual's demo recipe no longer asks the reader to run it.  See
+`docs/qa/2026-11-11-fixture-warm-cache-ga-dkxzm.md`.
+
 ## Limitations
 
 - This pass covers the local fixture city. The remote-city and

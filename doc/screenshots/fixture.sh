@@ -311,6 +311,7 @@ create_fixture() {
   }
   : >"$city/$FIXTURE_MARKER"
   seed_gc_home "$city"
+  install_fixture_imports "$city"
   record_fixture "$city"
   printf 'FIXTURE_CITY=%s\nFIXTURE_PROJECT=%s\nFIXTURE_RIG=%s\nFIXTURE_RIG_NAME=%s\nFIXTURE_GC_HOME=%s\n' \
     "$city" "$FIXTURE_PROJECT" "$FIXTURE_PROJECT" "$FIXTURE_RIG_NAME" "$city/gc-home"
@@ -328,6 +329,19 @@ seed_gc_home() {
   path = "$city"
   name = "$FIXTURE_CITY_NAME"
 EOF
+}
+
+# Warm the fixture GC_HOME's pack-import cache.  `gc init' writes the city's
+# `packs.lock' but does not materialize the cache; a cold cache makes the
+# first cockpit paint report the status probe incomplete and every agent
+# `unknown'.  The fixture's only imports are the bundled `bd' and `core'
+# packs, which the gc binary ships, so this install is offline.  Run it with
+# the fixture GC_HOME so the cache lands under the fixture, never the
+# caller's.
+install_fixture_imports() {
+  local city="$1" home="$city/gc-home"
+  GC_HOME="$home" gc --city "$city" import install 1>&2 \
+    || die "failed to warm the fixture GC_HOME pack cache: $home (run 'GC_HOME=$home gc --city $city import install')"
 }
 
 # ---------------------------------------------------------------------------
@@ -595,6 +609,17 @@ if (canonical_timestamps[:1] != ["2025-01-01T09:00:00Z"]
         or canonical_timestamps[-1:] != ["2025-01-06T16:00:00Z"]):
     fail("canonical timestamp span changed: %s"
          % [canonical_timestamps[:1], canonical_timestamps[-1:]])
+
+# --- The fixture GC_HOME pack cache ----------------------------------------
+# `--create' warms the cache so the first cockpit paint resolves the seeded
+# agents instead of reporting them `unknown'.  A cold cache is the bug this
+# fixture-side fix closes (ga-dkxzm).
+cache = os.path.join(city, "gc-home", "cache", "repos")
+if not os.path.isdir(cache):
+    fail("fixture GC_HOME pack cache is missing: %s" % cache)
+elif not any(os.path.isdir(os.path.join(cache, entry))
+             for entry in os.listdir(cache)):
+    fail("fixture GC_HOME pack cache is cold: %s" % cache)
 
 # --- The shared demo project ------------------------------------------------
 if not os.path.isdir(project):
