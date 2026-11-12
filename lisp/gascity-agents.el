@@ -23,7 +23,7 @@
 ;;   agents, and pool topology, if wanted later, reads better as a
 ;;   grouping option on this table than as a second view.
 ;;
-;; The sling's Who completion (REQ-005, plans/sling-command WI-2) also
+;; The sling's Who completion (REQ-005, WI-2) also
 ;; reads here: `gascity-agents-roster' returns the same agent plists
 ;; ordered city-first then per rig, over the very same store reads —
 ;; the sling's `T' target picker candidates (`gascity-agents-roster-candidates'),

@@ -490,8 +490,7 @@ aliases; the registry test carries that sanctioned exception explicitly
 ### Unified sling transient (the staged adaptive menu — sling redesign)
 
 `gascity-sling-dispatch` remains the **single** sling menu; the sling
-redesign (approved design `plans/sling-command/design.md`, signed-off
-mockups `plans/sling-command/menu-mockups.md`, 2026-09-27 — this
+redesign (approved design and signed-off mockups, 2026-09-27 — this
 subsection describes that redesign and supersedes the earlier unified
 layout above) reshapes it into staged, adaptive groups —
 What → Who → How → Preview → Launch → Follow — where a stage collapses

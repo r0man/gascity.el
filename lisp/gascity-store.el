@@ -1261,7 +1261,7 @@ is left to a running stream, which keeps it current."
     (when prefixes
       (gascity-store-invalidate-event prefixes dir))
     ;; A rig add/remove/enable action changes which store owns a bead-id
-    ;; prefix (plans/beads-eldoc-prefix §D).  Not every verb emits an event,
+    ;; prefix (beads-eldoc-prefix design §D).  Not every verb emits an event,
     ;; so refresh the map from here as well as from the live stream.
     (when (and (eq (gascity-store-kind args) 'rig)
                (fboundp 'gascity-beads-eldoc--invalidate))

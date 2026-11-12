@@ -6,7 +6,7 @@
 
 ;;; Commentary:
 
-;; The one prefix -> bead-store map of a gascity city (plans/beads-eldoc-prefix
+;; The one prefix -> bead-store map of a gascity city (beads-eldoc-prefix
 ;; §A, §H item 1).  beads.el's eldoc resolves a bead id by handing a store
 ;; directory to `bd'; gascity knows which store owns an id from the id's
 ;; prefix, and that knowledge is a property of the city, not of the buffer

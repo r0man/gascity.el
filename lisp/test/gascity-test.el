@@ -18,7 +18,7 @@
 (require 'gascity)
 (require 'gascity-test-helpers)     ; fresh store per test, mock TRAMP, render guard
 
-;; Redesign APIs (plans/sling-command WI-3..WI-7).  These exist only
+;; Redesign APIs (WI-3..WI-7).  These exist only
 ;; once the sling redesign lands; the ported tests that use them skip
 ;; otherwise (`gascity-test-sling-redesign-p').
 (declare-function gascity-sling-dispatch-preview "gascity-action")

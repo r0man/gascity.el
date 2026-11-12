@@ -2203,7 +2203,7 @@ multi-member source with zero beads, never a fabricated member."
                               (buffer-string)))
       (should (string-match-p "^  Implementation convoy be-93dg" (buffer-string))))))
 
-;;; Work spine (plans/run-view-work-spine §1.3-§1.7)
+;;; Work spine (run-view work spine §1.3-§1.7)
 
 (defun gascity-runs-test--prop-anywhere (line prop)
   "Return the first non-nil value of text property PROP in LINE."

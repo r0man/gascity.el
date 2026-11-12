@@ -7,7 +7,7 @@
 ;;; Commentary:
 
 ;; The sling command's own suite.  Two generations live here side by
-;; side because the sling redesign (plans/sling-command/) lands as
+;; side because the sling redesign (sling-command) lands as
 ;; parallel work items while this suite (WI-10, REQ-013) is written
 ;; against the redesign's specified behavior:
 ;;
@@ -22,7 +22,7 @@
 ;;   target memory (the Who default's memory tier — previews never
 ;;   record), `x' clears the infix values alongside the scope, and
 ;;   the remembered state still re-opens at `S'.
-;; - The launch follow offer of the sling redesign (plans/sling-command,
+;; - The launch follow offer of the sling redesign (sling-command,
 ;;   WI-8 / REQ-009): a successful formula sling echoes
 ;;   `Launched workflow <id> (<formula> on <work>) — F: run view' and
 ;;   binds `F', for one keypress, to `gascity-run-show' on the created
@@ -51,7 +51,7 @@
 (require 'gascity)
 (require 'gascity-test-helpers)
 
-;; Redesign APIs (plans/sling-command WI-1..WI-9).  These exist only
+;; Redesign APIs (WI-1..WI-9).  These exist only
 ;; once the redesign lands; the tests that use them skip otherwise.
 (declare-function gascity-sling--shape "gascity-formula")
 (declare-function gascity-sling--binding-targets-p "gascity-formula")

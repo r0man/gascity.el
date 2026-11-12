@@ -1313,7 +1313,7 @@ City start/stop keep their streaming `async-shell-command' buffer.")
                 (goto-char (point-max))
                 (insert "body")
                 (gascity-compose-finish)))))
-      ;; The redesign's `P' full preview (plans/sling-command WI-7): an
+      ;; The redesign's `P' full preview (WI-7): an
       ;; input-free suffix that paints its buffer client-side and starts
       ;; the dry-run on the action lane.  It joins the guard when the
       ;; redesigned layout is loaded (`gascity-test-sling-redesign-p').

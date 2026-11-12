@@ -7,7 +7,7 @@
 ;;; Commentary:
 
 ;; The optional stage labels behind the run detail's Work spine
-;; (plans/run-view-work-spine/implementation-plan.md §1.3): formula name →
+;; (run-view work spine §1.3): formula name →
 ;; ordered lifecycle stages, and the anchor lookup that labels a work
 ;; unit.  This is enrichment only (REQ-009, OOS-005): a label may head a
 ;; contiguous run of units, and it never reorders, splits or hides one.

@@ -49,7 +49,7 @@
 ;; no `pattern' → no check, no metadata → no choices.
 ;;
 ;; The sling redesign's pre-launch validators (REQ-010, mockup §5;
-;; plans/sling-command WI-2) live here too: `gascity-sling--v2-trap-p'
+;; WI-2) live here too: `gascity-sling--v2-trap-p'
 ;; (the bl-bdj \"unknown formulas v2 target\" trap),
 ;; `gascity-sling--cross-store-p' and the §5c missing-pieces checks —
 ;; pure predicates over the cached recipe, the roster's scope string

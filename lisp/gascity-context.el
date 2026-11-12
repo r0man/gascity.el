@@ -50,8 +50,8 @@
 ;; takes the same value as its qualifier from the view factory.  Any
 ;; future city-scoped cache MUST key by `gascity-context-scope-key' too —
 ;; one keying scheme, one API (next consumer: the formula catalog/recipe
-;; caches of the formula-sling-ui work, plans/formula-sling-ui; REQ-010
-;; of plans/multi-city-keying/requirements.md).
+;; caches of the formula-sling-ui work; REQ-010 of the multi-city-keying
+;; requirements).
 ;;
 ;; The rig-list memo (`gascity-rigs-cached') serves the paths that must
 ;; never spawn gc synchronously — a terminal buffer wiring beads eldoc
@@ -136,7 +136,7 @@ re-resolution."
   ;; gascity-context back to gascity-beads-sling.
   (when (boundp 'gascity-beads-sling--city)
     (setq gascity-beads-sling--city nil))
-  ;; The bead-id prefix to store map (plans/beads-eldoc-prefix §D) is
+  ;; The bead-id prefix to store map (beads-eldoc-prefix design §D) is
   ;; downstream state too.  An explicit clear DROPS it rather than marking
   ;; it stale, so no buffer keeps a stale city's prefixes (REQ-010).
   (when (fboundp 'gascity-beads-eldoc-clear-cache)
@@ -348,7 +348,7 @@ with a local `default-directory' — new views must come through here."
     (with-current-buffer buf
       (setq default-directory dir)
       ;; Remote shells spawned from this view must not append to the
-      ;; host's ~/.tramp_history (plans/tramp-history-flood, W3):
+      ;; host's ~/.tramp_history (tramp-history-flood W3):
       ;; buffer-locally append HISTFILE=/dev/null to the environment
       ;; TRAMP reads for spawns from this buffer.  Re-applied on every
       ;; call, healing a buffer re-pinned from another context.
@@ -450,7 +450,7 @@ Never spawns gc — the city-root walk is the memoized
 `gascity-context--root-cache' lookup.  This is the ONE keying identity
 for city-scoped caches and buffer names; document any new cache keyed
 by it here in this commentary (first consumer outside this file: the
-formula catalog/recipe caches, plans/formula-sling-ui)."
+formula catalog/recipe caches)."
   (or (gascity-context-city-root dir)
       (file-remote-p (or dir default-directory)) ""))
 

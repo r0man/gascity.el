@@ -50,8 +50,7 @@ SHA-256 is pinned by the manual's tests.  Screenshots are captured with
 Emacs's built-in default theme and published as `<view>-default.png`,
 replacing the `-dark`/`-light` names, which changes the public image
 URLs for every view.  A black-box, manual-only QA pass over the seeded
-fixture is recorded in `docs/qa/2026-11-08-manual-demo-consistency.md`.
-See `plans/manual-demo-consistency/implementation-plan.md`
+fixture is recorded in `docs/qa/2026-11-08-manual-demo-consistency.md`
 (REQ-001–REQ-015).
 
 ### The cockpit's Agents section leads with live workers

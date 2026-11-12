@@ -7,7 +7,7 @@
 ;;; Commentary:
 
 ;; Gas City's downstream registration on beads.el's public sling seams
-;; (plans/beads-sling-integration/implementation-plan.md, workstream B).
+;; (beads-sling integration, workstream B).
 ;; The dependency stays one-way: gascity.el requires beads.el; beads.el
 ;; never requires gascity.el.
 ;;

@@ -303,7 +303,7 @@ and both return nil (no process was started)."
        ,@body)))
 
 (defun gascity-test-sling-redesign-p ()
-  "Non-nil when the redesigned sling layout (plans/sling-command) is loaded.
+  "Non-nil when the redesigned sling layout (sling-command) is loaded.
 The sling redesign lands as parallel work items (WI-1..WI-9 rewrite the
 layout; WI-10 ports this suite), so the suite runs against whichever
 layout the load path presents: the redesigned transient has the
@@ -320,7 +320,7 @@ run under both."
 (defun gascity-test-sling-header-text (scope recipe)
   "Return every string of the sling layout's header group for SCOPE, joined.
 RECIPE is what `gascity-formula-recipe-cached' answers for the scope's
-formula (nil: none cached).  The redesigned first group (plans/sling-command
+formula (nil: none cached).  The redesigned first group (sling-command
 mockup §1) carries the city title, the one-sentence header and the live
 footer; joining all of them lets a test match any of the three regardless
 of how the renderer splits its `:info' specs.  The layout's reads run

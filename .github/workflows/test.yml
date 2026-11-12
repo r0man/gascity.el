@@ -7,7 +7,7 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Autotools conversion (plans/gnu-toolchain, W8): the workflow bootstraps the
+# Autotools conversion (W8): the workflow bootstraps the
 # GNU build system (`./autogen.sh`, `./configure`, `make`, `make check`) instead
 # of installing and running Eldev.  The byte-compile is the warnings-as-errors
 # gate (REQ-002) and `make check` runs the whole ERT suite (REQ-003), so a

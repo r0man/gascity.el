@@ -6,7 +6,7 @@
 
 ;;; Commentary:
 
-;; plans/run-view-work-spine/implementation-plan.md §1.3 and §1.7: the
+;; The run-view work spine §1.3 and §1.7: the
 ;; optional stage table the run detail's Work spine consumes through
 ;; `gascity-runs--stage-label'.  The stage-group information architecture
 ;; is gone (REQ-009, OOS-005), so only the table and the anchor/label

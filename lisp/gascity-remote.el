@@ -54,8 +54,7 @@
 ;;   through TRAMP's `make-process' :file-handler, so their handler is
 ;;   whatever the connection has — by default the tramp-sh channel
 ;;   handler, which multiplexes every spawn over the ONE pooled ssh
-;;   connection.  This is measured, not assumed (W1, ga-o98t — see
-;;   plans/tramp-history-flood/implementation-summary-ga-o98t.md; REQ-002):
+;;   connection.  This is measured, not assumed (W1, ga-o98t; REQ-002):
 ;;   on a live /ssh:localhost: city, N = 10 consecutive async reads spawned
 ;;   exactly one ssh process (at connection establishment, before the
 ;;   burst) and appended zero new ssh login lines to the host's

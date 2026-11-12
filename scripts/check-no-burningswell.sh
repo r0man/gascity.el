@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# REQ-009 / plan W7 (decisions D4, D5) of plans/manual-standard.  The
+# REQ-009 / plan W7 (decisions D4, D5) of the manual-standard work.  The
 # private `burningswell' host and city name must never appear in the
 # manual sources, the tracked build inputs or the published HTML.  This
 # gate greps an explicit tracked-source set with plain POSIX `sh' and

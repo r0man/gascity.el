@@ -87,7 +87,7 @@
 (declare-function gascity-formula-invalidate "gascity-formula")
 (declare-function gascity-formula-refresh-async "gascity-formula")
 (declare-function gascity-mail-inbox-refresh "gascity-mail")
-;; The live footer (REQ-007/REQ-010, plans/sling-command WI-6) also
+;; The live footer (REQ-007/REQ-010, WI-6) also
 ;; reaches into the sibling work items of the sling redesign, which
 ;; land as their own commits: the shape sentence (WI-1) and the
 ;; client-side validators with their warning builders (WI-2) in
@@ -1671,7 +1671,7 @@ call, D9); an unknown, freeform or cold WORK yields nil."
                                        (plist-get payload :convoys)))))
           (alist-get 'title row))))))
 
-;;; The launch follow offer (plans/sling-command WI-8, REQ-009)
+;;; The launch follow offer (WI-8, REQ-009)
 ;;
 ;; A successful formula sling creates a workflow, and its root —
 ;; reported by the `gc sling --json' payload — is offered for one
@@ -2367,8 +2367,7 @@ carries the sentence."
                (plist-get derived :target)))
          recipe)))
 
-;; The live footer (REQ-007/REQ-010, mockup §1–§5, plans/sling-command
-;; WI-6): the second header line, always visible, recomputed as each
+;; The live footer (REQ-007/REQ-010, mockup §1–§5, WI-6): the second header line, always visible, recomputed as each
 ;; answer changes.  The footer composes; the WI-2 validators decide and
 ;; their builders word (`gascity-sling--v2-trap-warning' & co.), the
 ;; WI-1 shape inference names the shape.  Full warning detail lives in
